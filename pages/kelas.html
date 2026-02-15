@@ -1,0 +1,82 @@
+<style>
+  .kelas-subtab-wrap {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .kelas-subtab-btn {
+    border: 1px solid #cbd5e1;
+    background: #fff;
+    color: #334155;
+    border-radius: 999px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .kelas-subtab-btn.active {
+    background: #d4d456ff;
+    border-color: #d4d456ff;
+    color: #0f172a;
+  }
+  .kelas-subtab-pane {
+    display: none;
+  }
+  .kelas-subtab-pane.active {
+    display: block;
+  }
+</style>
+
+<div id="kelas-pane-data-kelas" class="kelas-subtab-pane active">
+  <div style="margin-bottom:20px; display:flex; justify-content:flex-end;">
+    <button type="button" onclick="openAddKelasModal()" title="Tambah Kelas" aria-label="Tambah Kelas" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
+      +
+    </button>
+  </div>
+
+  <div id="list-kelas">Loading...</div>
+</div>
+
+<div id="kelas-pane-guru-mapel" class="kelas-subtab-pane">
+  <div style="margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <button type="button" onclick="setKelasSubtab('guru-mapel')" title="Data Mapel" aria-label="Data Mapel" style="height:36px; border-radius:999px; border:1px solid #d4d456ff; background:#d4d456ff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#0f172a; padding:0 14px;">
+        Data Mapel
+      </button>
+      <button type="button" onclick="setKelasSubtab('distribusi-mapel')" title="Distribusi Mapel" aria-label="Distribusi Mapel" style="height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155; padding:0 14px;">
+        Distribusi Mapel
+      </button>
+    </div>
+    <button type="button" onclick="openAddMapelModal()" title="Tambah Mapel" aria-label="Tambah Mapel" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
+      +
+    </button>
+  </div>
+  <div id="list-mapel">Loading...</div>
+</div>
+
+<div id="kelas-pane-distribusi-mapel" class="kelas-subtab-pane">
+  <div style="margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <button type="button" onclick="setKelasSubtab('guru-mapel')" title="Data Mapel" aria-label="Data Mapel" style="height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155; padding:0 14px;">
+        Data Mapel
+      </button>
+      <button type="button" onclick="setKelasSubtab('distribusi-mapel')" title="Distribusi Mapel" aria-label="Distribusi Mapel" style="height:36px; border-radius:999px; border:1px solid #d4d456ff; background:#d4d456ff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#0f172a; padding:0 14px;">
+        Distribusi Mapel
+      </button>
+    </div>
+    <div id="distribusi-search-tools" style="position:relative; display:flex; align-items:center; gap:8px;">
+      <button type="button" onclick="toggleDistribusiSortBox()" title="Sortir" aria-label="Sortir" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
+        &#8645;
+      </button>
+      <button type="button" onclick="openAddDistribusiMapelModal()" title="Tambah Distribusi Mapel" aria-label="Tambah Distribusi Mapel" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
+        +
+      </button>
+
+      <div id="distribusi-sort-box" style="display:none; position:absolute; top:40px; right:0; background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:12px; width:280px; box-shadow:0 8px 24px rgba(15,23,42,0.12); z-index:20;">
+        <div style="font-weight:600; margin-bottom:8px;">Sortir Distribusi</div>
+        <div id="distribusi-sort-content">Loading...</div>
+      </div>
+    </div>
+  </div>
+  <div id="list-distribusi-mapel">Loading...</div>
+</div>

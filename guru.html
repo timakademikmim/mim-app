@@ -1,0 +1,66 @@
+﻿<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Panel Guru</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="guru.css">
+</head>
+
+<body data-role="guru">
+  <div class="layout">
+    <aside class="sidebar">
+      <img src="00 Logo MIM .png" alt="Logo Guru" class="sidebar-logo">
+      <button class="guru-nav-btn" data-page="dashboard" onclick="loadGuruPage('dashboard')">Dashboard</button>
+      <button class="guru-nav-btn" data-page="tugas" onclick="loadGuruPage('tugas')">Tugas Harian</button>
+      <button class="guru-nav-btn" data-page="jadwal" onclick="loadGuruPage('jadwal')">Jadwal</button>
+      <button class="guru-nav-btn" data-page="mapel" onclick="loadGuruPage('mapel')">Mapel</button>
+      <button class="guru-nav-btn guru-parent-btn" data-page="input" onclick="toggleGuruInputMenu()">Input</button>
+      <div id="guru-input-submenu" class="guru-submenu">
+        <button class="guru-submenu-btn" data-page="input-nilai" onclick="loadGuruInputFromSidebar('input-nilai')">Input Nilai</button>
+        <button class="guru-submenu-btn" data-page="input-absensi" onclick="loadGuruInputFromSidebar('input-absensi')">Input Absen</button>
+      </div>
+      <button class="guru-nav-btn guru-parent-btn" data-page="laporan" onclick="toggleGuruLaporanMenu()">Laporan</button>
+      <div id="guru-laporan-submenu" class="guru-submenu">
+        <button class="guru-submenu-btn" data-page="laporan-pekanan" onclick="loadGuruLaporanFromSidebar('laporan-pekanan')">Laporan Pekanan</button>
+        <button class="guru-submenu-btn" data-page="laporan-bulanan" onclick="loadGuruLaporanFromSidebar('laporan-bulanan')">Laporan Bulanan</button>
+      </div>
+      <button class="guru-nav-btn" id="guru-nav-rapor" data-page="rapor" onclick="loadGuruPage('rapor')">Rapor</button>
+    </aside>
+
+    <main class="content">
+      <div class="topbar">
+        <div id="guru-topbar-title" class="topbar-title">Dashboard</div>
+        <div class="topbar-user-menu-wrap">
+          <button type="button" class="topbar-user-trigger" onclick="toggleTopbarUserMenu()">
+            <span id="welcome" class="topbar-user-name"></span>
+            <span class="topbar-user-arrow">&#9662;</span>
+          </button>
+          <div id="topbar-user-menu" class="topbar-user-menu">
+            <button type="button" onclick="openGuruProfile()">Profil</button>
+            <button type="button" onclick="logout()">Logout</button>
+          </div>
+        </div>
+      </div>
+      <div id="guru-content" class="content-area">Loading...</div>
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="role-page.js"></script>
+  <script src="guru.js"></script>
+
+  <div id="app-popup-overlay" class="app-popup-overlay" aria-hidden="true">
+    <div class="app-popup-card" role="dialog" aria-modal="true" aria-labelledby="app-popup-message">
+      <div id="app-popup-message" class="app-popup-message"></div>
+      <div id="app-popup-actions" class="app-popup-actions">
+        <button type="button" id="app-popup-ok-btn">OK</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+
+

@@ -1,0 +1,76 @@
+<style>
+  .jadwal-subtab-wrap {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .jadwal-subtab-btn {
+    border: 1px solid #cbd5e1;
+    background: #fff;
+    color: #334155;
+    border-radius: 999px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .jadwal-subtab-btn.active {
+    background: #d4d456ff;
+    border-color: #d4d456ff;
+    color: #0f172a;
+  }
+  .jadwal-subtab-pane {
+    display: none;
+  }
+  .jadwal-subtab-pane.active {
+    display: block;
+  }
+  .jadwal-top-btn {
+    transition: transform 0.08s ease, box-shadow 0.12s ease;
+  }
+  .jadwal-top-btn:active {
+    transform: translateY(1px) scale(0.96);
+    box-shadow: inset 0 2px 4px rgba(15, 23, 42, 0.18);
+  }
+</style>
+
+<div class="jadwal-subtab-wrap">
+  <button type="button" class="jadwal-subtab-btn active" data-jadwal-tab="jadwal" onclick="setJadwalSubtab('jadwal')">Jadwal Pelajaran</button>
+  <button type="button" class="jadwal-subtab-btn" data-jadwal-tab="jam-pelajaran" onclick="setJadwalSubtab('jam-pelajaran')">Jam Pelajaran</button>
+</div>
+
+<div id="jadwal-pane-jadwal" class="jadwal-subtab-pane active">
+  <div style="margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+    <div id="jadwal-filters" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+      <input class="jadwal-field" type="text" id="jadwal-search-input" placeholder="Cari kelas / mapel / guru" style="width:240px;">
+      <select class="jadwal-field" id="jadwal-filter-hari" style="width:150px;">
+        <option value="">Semua Hari</option>
+        <option value="senin">Senin</option>
+        <option value="selasa">Selasa</option>
+        <option value="rabu">Rabu</option>
+        <option value="kamis">Kamis</option>
+        <option value="jumat">Jumat</option>
+        <option value="sabtu">Sabtu</option>
+        <option value="minggu">Minggu</option>
+      </select>
+      <select class="jadwal-field" id="jadwal-filter-kelas" style="width:170px;">
+        <option value="">Semua Kelas</option>
+      </select>
+      <button type="button" class="modal-btn modal-btn-secondary" onclick="resetJadwalFilter()">Reset</button>
+    </div>
+
+    <button type="button" class="jadwal-top-btn" onclick="openAddJadwalModal()" title="Tambah Jadwal" aria-label="Tambah Jadwal" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
+      +
+    </button>
+  </div>
+  <div id="list-jadwal">Loading...</div>
+</div>
+
+<div id="jadwal-pane-jam-pelajaran" class="jadwal-subtab-pane">
+  <div style="margin-bottom:16px; display:flex; justify-content:flex-end;">
+    <button type="button" class="jadwal-top-btn" onclick="openAddJamPelajaranModal()" title="Tambah Jam Pelajaran" aria-label="Tambah Jam Pelajaran" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
+      +
+    </button>
+  </div>
+  <div id="list-jam-pelajaran">Loading...</div>
+</div>

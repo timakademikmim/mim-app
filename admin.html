@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Admin Panel</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="admin.css">
+</head>
+
+<body data-role="admin">
+
+  <div class="layout">
+
+    <aside class="sidebar">
+      <img src="00 Logo MIM .png" alt="Logo Admin" class="sidebar-logo">
+
+      <button class="sidebar-nav-btn" data-page="dashboard" onclick="loadPage('dashboard')">Dashboard</button>
+      <button class="sidebar-nav-btn" data-page="tahun-ajaran" onclick="loadPage('tahun-ajaran')">Tahun Ajaran</button>
+      <button class="sidebar-nav-btn sidebar-parent-btn" data-page="akademik" onclick="toggleAkademikSidebarMenu()">
+        Data Akademik
+      </button>
+      <div id="sidebar-akademik-submenu" class="sidebar-submenu">
+        <button class="sidebar-submenu-btn" data-page="kelas" onclick="loadAkademikFromSidebar('kelas')">Data Kelas</button>
+        <button class="sidebar-submenu-btn" data-page="kelas-guru-mapel" onclick="loadAkademikFromSidebar('guru-mapel')">Data Mapel</button>
+        <button class="sidebar-submenu-btn" data-page="jadwal" onclick="loadAkademikFromSidebar('jadwal')">Jadwal Pelajaran</button>
+        <button class="sidebar-submenu-btn" data-page="guru" onclick="loadAkademikFromSidebar('guru')">Data Guru</button>
+        <button class="sidebar-submenu-btn" data-page="santri" onclick="loadAkademikFromSidebar('santri')">Data Siswa</button>
+      </div>
+      <button class="sidebar-nav-btn" data-page="karyawan" onclick="loadPage('karyawan')">Data Karyawan</button>
+    </aside>
+
+    <main class="content">
+      <div class="topbar">
+        <div id="topbar-title" class="topbar-title">Dashboard</div>
+        <div class="topbar-user-menu-wrap">
+          <button type="button" class="topbar-user-trigger" onclick="toggleTopbarUserMenu()">
+            <span id="welcome" class="topbar-user-name"></span>
+            <span class="topbar-user-arrow">&#9662;</span>
+          </button>
+          <div id="topbar-user-menu" class="topbar-user-menu">
+            <button type="button" onclick="logout()">Logout</button>
+          </div>
+        </div>
+      </div>
+      <div id="content-area">
+        <h1>Loading...</h1>
+      </div>
+    </main>
+
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="role-page.js"></script>
+  <script src="admin.js"></script>
+
+  <div id="app-popup-overlay" class="app-popup-overlay" aria-hidden="true">
+    <div class="app-popup-card" role="dialog" aria-modal="true" aria-labelledby="app-popup-message">
+      <div id="app-popup-message" class="app-popup-message"></div>
+      <div id="app-popup-actions" class="app-popup-actions">
+        <button type="button" id="app-popup-ok-btn">OK</button>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="login-page">
+    <div class="login-card">
+      <img src="00 Logo MIM .png" alt="Logo MIM" class="brand-logo">
+      <h1>Portal Akademik</h1>
+      <p class="login-subtitle">Silakan login untuk melanjutkan ke sistem.</p>
+
+      <h2>Login</h2>
+      <label for="id_karyawan">ID Karyawan</label>
+      <input type="text" id="id_karyawan" placeholder="Masukkan ID Karyawan" autocomplete="username">
+
+      <label for="password">Password</label>
+      <input type="password" id="password" placeholder="Masukkan Password" autocomplete="current-password">
+
+      <button onclick="login()">Masuk</button>
+      <p id="error"></p>
+    </div>
+  </div>
+
+  <!-- Supabase -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="login.js"></script>
+</body>
+</html>

@@ -1,0 +1,74 @@
+<div class="guru-detail-header">
+  <button class="guru-detail-back-btn" type="button" onclick="backToGuruList()">&lt;</button>
+  <div id="guru-detail-header-name" class="guru-detail-header-name">Detail Guru</div>
+</div>
+
+<style>
+  .guru-detail-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .guru-detail-back-btn {
+    width: 36px;
+    height: 36px;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    background: #fff;
+    color: #0f172a;
+    cursor: pointer;
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .guru-detail-back-btn:hover {
+    background: #f8fafc;
+  }
+  .guru-detail-header-name {
+    font-size: 16px;
+    font-weight: 700;
+    color: #0f172a;
+  }
+  .guru-detail-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .guru-detail-tab-btn {
+    border: 1px solid #cbd5e1;
+    background: #fff;
+    color: #334155;
+    border-radius: 999px;
+    padding: 7px 14px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .guru-detail-tab-btn.active {
+    background: #d4d456ff;
+    border-color: #d4d456ff;
+    color: #0f172a;
+  }
+  .guru-detail-pane {
+    display: none;
+  }
+  .guru-detail-pane.active {
+    display: block;
+  }
+</style>
+
+<div style="border:1px solid #ddd; padding:14px;">
+  <div class="guru-detail-tabs">
+    <button type="button" class="guru-detail-tab-btn active" data-guru-detail-tab="biodata" onclick="setGuruDetailTab('biodata')">Biodata</button>
+    <button type="button" class="guru-detail-tab-btn" data-guru-detail-tab="jadwal" onclick="setGuruDetailTab('jadwal')">Jadwal Pelajaran</button>
+  </div>
+
+  <div id="guru-detail-pane-biodata" class="guru-detail-pane active">
+    <div id="guru-detail-biodata-container">Loading...</div>
+  </div>
+
+  <div id="guru-detail-pane-jadwal" class="guru-detail-pane">
+    <div id="guru-detail-jadwal-container">Loading...</div>
+  </div>
+</div>

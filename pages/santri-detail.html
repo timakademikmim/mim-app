@@ -1,0 +1,91 @@
+<div class="santri-detail-header">
+  <button class="santri-detail-back-btn" type="button" onclick="backToSantriList()">&lt;</button>
+  <div id="santri-detail-header-name" class="santri-detail-header-name">Detail Santri</div>
+</div>
+
+<style>
+  .santri-detail-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .santri-detail-back-btn {
+    width: 36px;
+    height: 36px;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    background: #fff;
+    color: #0f172a;
+    cursor: pointer;
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .santri-detail-back-btn:hover {
+    background: #f8fafc;
+  }
+  .santri-detail-header-name {
+    font-size: 16px;
+    font-weight: 700;
+    color: #0f172a;
+  }
+  .santri-detail-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .santri-detail-tab-btn {
+    border: 1px solid #cbd5e1;
+    background: #fff;
+    color: #334155;
+    border-radius: 999px;
+    padding: 7px 14px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .santri-detail-tab-btn.active {
+    background: #d4d456ff;
+    border-color: #d4d456ff;
+    color: #0f172a;
+  }
+  .santri-detail-pane {
+    display: none;
+  }
+  .santri-detail-pane.active {
+    display: block;
+  }
+  #santri-detail-biodata-container {
+    font-size: 13px;
+    color: #0f172a;
+  }
+  #santri-detail-biodata-container label {
+    font-size: 13px;
+    color: #334155;
+    font-weight: 600;
+  }
+  #santri-detail-biodata-container input,
+  #santri-detail-biodata-container select,
+  #santri-detail-biodata-container button,
+  #santri-detail-biodata-container p,
+  #santri-detail-biodata-container div,
+  #santri-detail-biodata-container h3 {
+    font-size: 13px;
+  }
+</style>
+
+<div style="border:1px solid #ddd; padding:14px;">
+  <div class="santri-detail-tabs">
+    <button type="button" class="santri-detail-tab-btn active" data-santri-detail-tab="biodata" onclick="setSantriDetailTab('biodata')">Biodata</button>
+    <button type="button" class="santri-detail-tab-btn" data-santri-detail-tab="nilai" onclick="setSantriDetailTab('nilai')">Nilai</button>
+  </div>
+
+  <div id="santri-detail-pane-biodata" class="santri-detail-pane active">
+    <div id="santri-detail-biodata-container">Loading...</div>
+  </div>
+
+  <div id="santri-detail-pane-nilai" class="santri-detail-pane">
+    <div id="santri-detail-nilai-container">Loading...</div>
+  </div>
+</div>
