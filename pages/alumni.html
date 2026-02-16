@@ -1,0 +1,33 @@
+<style>
+  .alumni-field {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    background: #f8fafc;
+    box-sizing: border-box;
+    outline: none;
+    font-size: 13px;
+  }
+  .alumni-field:focus {
+    border-color: #16a34a;
+    box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.25);
+  }
+</style>
+
+<div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+    <input id="alumni-search" class="alumni-field" type="text" placeholder="Cari nama / NISN" style="width:220px;">
+    <select id="alumni-filter-angkatan" class="alumni-field" style="width:180px;">
+      <option value="">Semua Angkatan</option>
+    </select>
+    <select id="alumni-filter-lulus" class="alumni-field" style="width:180px;">
+      <option value="">Semua Tahun Lulus</option>
+    </select>
+  </div>
+  <button type="button" onclick="loadAlumni(true)" style="border:none; border-radius:999px; padding:8px 14px; font-size:12px; font-weight:700; cursor:pointer; background:#2563eb; color:#fff;">
+    Refresh
+  </button>
+</div>
+
+<div id="list-alumni">Loading...</div>

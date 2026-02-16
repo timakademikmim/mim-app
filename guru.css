@@ -135,9 +135,236 @@ body {
 }
 
 .topbar-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
   font-size: 18px;
   font-weight: 700;
   color: #0f172a;
+}
+
+.topbar-title-main {
+  color: #0f172a;
+}
+
+.topbar-title-sep {
+  display: inline-block;
+  width: 1px;
+  height: 22px;
+  background: #cbd5e1;
+}
+
+.topbar-title-year {
+  font-size: 15px;
+  font-weight: 600;
+  color: #64748b;
+  letter-spacing: 0.2px;
+}
+
+.topbar-title-date-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #64748b;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+}
+
+.topbar-title-date-btn:hover {
+  color: #334155;
+}
+
+.topbar-title-date-btn:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.topbar-calendar-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+  display: none;
+  align-items: flex-start;
+  justify-content: center;
+  z-index: 10000;
+  padding: 16px 12px 12px;
+  box-sizing: border-box;
+}
+
+.topbar-calendar-card {
+  width: min(920px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  min-height: 640px;
+  overflow: auto;
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  padding: 14px;
+}
+
+.topbar-calendar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.topbar-calendar-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.topbar-calendar-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  background: #2563eb;
+  color: #fff;
+}
+
+.topbar-calendar-btn-secondary {
+  background: #fff;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+}
+
+.topbar-calendar-btn-close {
+  width: 36px;
+  padding: 8px 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.topbar-calendar-month {
+  width: 170px;
+  padding: 9px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #f8fafc;
+  box-sizing: border-box;
+  outline: none;
+  font-size: 13px;
+}
+
+.topbar-calendar-month:focus {
+  border-color: #16a34a;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.25);
+}
+
+.topbar-calendar-title {
+  margin-top: 4px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.topbar-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.topbar-calendar-day-head {
+  text-align: center;
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 700;
+  padding: 6px 0;
+}
+
+.topbar-calendar-day {
+  min-height: 66px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  padding: 6px;
+  text-align: left;
+}
+
+.topbar-calendar-day.empty {
+  background: #f8fafc;
+  cursor: default;
+}
+
+.topbar-calendar-day.active {
+  box-shadow: 0 0 0 2px #2563eb33 inset;
+  border-color: #93c5fd;
+}
+
+.topbar-calendar-day-num {
+  display: inline-flex;
+  min-width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.topbar-calendar-day-dots {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.topbar-calendar-day-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+}
+
+.topbar-calendar-detail {
+  margin-top: 10px;
+}
+
+.topbar-calendar-event {
+  border: 1px solid #e2e8f0;
+  border-left: 4px solid #2563eb;
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 8px;
+  background: #fff;
+}
+
+.topbar-calendar-event-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.topbar-calendar-event-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.topbar-calendar-event-meta {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.topbar-calendar-event-detail {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #334155;
 }
 
 .topbar-user-menu-wrap {

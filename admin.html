@@ -18,18 +18,26 @@
       <img src="00 Logo MIM .png" alt="Logo Admin" class="sidebar-logo">
 
       <button class="sidebar-nav-btn" data-page="dashboard" onclick="loadPage('dashboard')">Dashboard</button>
+      <button class="sidebar-nav-btn" data-page="kalender-akademik" onclick="loadPage('kalender-akademik')">Kalender Akademik</button>
       <button class="sidebar-nav-btn" data-page="tahun-ajaran" onclick="loadPage('tahun-ajaran')">Tahun Ajaran</button>
       <button class="sidebar-nav-btn sidebar-parent-btn" data-page="akademik" onclick="toggleAkademikSidebarMenu()">
         Data Akademik
       </button>
       <div id="sidebar-akademik-submenu" class="sidebar-submenu">
         <button class="sidebar-submenu-btn" data-page="kelas" onclick="loadAkademikFromSidebar('kelas')">Data Kelas</button>
+        <button class="sidebar-submenu-btn" data-page="santri" onclick="loadAkademikFromSidebar('santri')">Data Siswa</button>
+        <button class="sidebar-submenu-btn" data-page="alumni" onclick="loadAkademikFromSidebar('alumni')">Data Alumni</button>
         <button class="sidebar-submenu-btn" data-page="kelas-guru-mapel" onclick="loadAkademikFromSidebar('guru-mapel')">Data Mapel</button>
         <button class="sidebar-submenu-btn" data-page="jadwal" onclick="loadAkademikFromSidebar('jadwal')">Jadwal Pelajaran</button>
-        <button class="sidebar-submenu-btn" data-page="guru" onclick="loadAkademikFromSidebar('guru')">Data Guru</button>
-        <button class="sidebar-submenu-btn" data-page="santri" onclick="loadAkademikFromSidebar('santri')">Data Siswa</button>
       </div>
-      <button class="sidebar-nav-btn" data-page="karyawan" onclick="loadPage('karyawan')">Data Karyawan</button>
+      <button class="sidebar-nav-btn" data-page="mutabaah-karyawan" onclick="loadPage('set-tugas')">Mutabaah Karyawan</button>
+      <button class="sidebar-nav-btn sidebar-parent-btn" data-page="karyawan" onclick="toggleKaryawanSidebarMenu()">
+        Data Karyawan
+      </button>
+      <div id="sidebar-karyawan-submenu" class="sidebar-submenu">
+        <button class="sidebar-submenu-btn" data-page="karyawan" onclick="loadKaryawanFromSidebar('karyawan')">Data Semua Karyawan</button>
+        <button class="sidebar-submenu-btn" data-page="kehadiran-guru" onclick="loadKaryawanFromSidebar('kehadiran-guru')">Kehadiran Karyawan</button>
+      </div>
     </aside>
 
     <main class="content">

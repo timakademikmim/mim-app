@@ -1,0 +1,151 @@
+<style>
+  .ka-card {
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    background: #fff;
+    padding: 14px;
+    margin-bottom: 14px;
+  }
+  .ka-field {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    background: #f8fafc;
+    box-sizing: border-box;
+    outline: none;
+    font-size: 13px;
+  }
+  .ka-field:focus {
+    border-color: #16a34a;
+    box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.25);
+  }
+  .ka-btn {
+    border: none;
+    border-radius: 999px;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    background: #2563eb;
+    color: #fff;
+  }
+  .ka-btn.secondary {
+    background: #fff;
+    color: #334155;
+    border: 1px solid #cbd5e1;
+  }
+  .ka-icon-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 999px;
+    border: 1px solid #cbd5e1;
+    background: #fff;
+    color: #334155;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .ka-popup-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.35);
+    display: none;
+    align-items: flex-start;
+    justify-content: center;
+    z-index: 9999;
+    padding: 16px 12px 12px;
+    box-sizing: border-box;
+  }
+  .ka-popup-card {
+    width: min(920px, calc(100vw - 24px));
+    max-height: calc(100vh - 24px);
+    overflow: auto;
+    background: #fff;
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
+    padding: 14px;
+    min-height: 640px;
+  }
+  .ka-calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .ka-day-head {
+    text-align: center;
+    font-size: 11px;
+    color: #64748b;
+    font-weight: 700;
+    padding: 6px 0;
+  }
+  .ka-day-cell {
+    min-height: 66px;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    background: #fff;
+    cursor: pointer;
+    padding: 6px;
+    text-align: left;
+  }
+  .ka-day-cell.empty {
+    background: #f8fafc;
+    cursor: default;
+  }
+  .ka-day-cell.active {
+    box-shadow: 0 0 0 2px #2563eb33 inset;
+    border-color: #93c5fd;
+  }
+  .ka-day-number {
+    display: inline-flex;
+    min-width: 22px;
+    height: 22px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #0f172a;
+  }
+  .ka-day-dot-wrap {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-top: 6px;
+  }
+  .ka-day-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+  }
+</style>
+
+<div class="ka-card">
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+    <strong style="font-size:15px;">Data Kegiatan Akademik</strong>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <button type="button" class="ka-icon-btn" id="ka-calendar-toggle-btn" onclick="openKalenderAkademikPopup()" title="Kalender" aria-label="Kalender">📅</button>
+      <button type="button" class="ka-btn" onclick="openKalenderAkademikModal()">Tambah Kegiatan</button>
+      <button type="button" class="ka-btn" onclick="loadKalenderAkademik(true)">Refresh</button>
+    </div>
+  </div>
+  <div id="ka-list" style="margin-top:10px;">Loading...</div>
+</div>
+
+<div id="ka-calendar-popup" class="ka-popup-overlay" onclick="closeKalenderAkademikPopup(event)">
+  <div class="ka-popup-card" onclick="event.stopPropagation()">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+      <strong style="font-size:15px;">Kalender Akademik</strong>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button type="button" class="ka-btn secondary" onclick="shiftKalenderAkademikMonth(-1)">Bulan Sebelumnya</button>
+        <input id="ka-month-filter" class="ka-field" type="month" style="max-width:170px;">
+        <button type="button" class="ka-btn secondary" onclick="shiftKalenderAkademikMonth(1)">Bulan Berikutnya</button>
+        <button type="button" class="ka-btn secondary" onclick="closeKalenderAkademikPopup()" style="width:36px; padding:8px 0; font-size:18px; line-height:1;">×</button>
+      </div>
+    </div>
+    <div id="ka-calendar-title" style="margin-top:4px; font-weight:700; color:#0f172a;">Loading...</div>
+    <div id="ka-calendar-grid" class="ka-calendar-grid">Loading...</div>
+    <div id="ka-calendar-detail" style="margin-top:10px;">Pilih tanggal untuk melihat detail kegiatan.</div>
+  </div>
+</div>

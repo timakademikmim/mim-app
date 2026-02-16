@@ -8,7 +8,7 @@
   }
 </style>
 
-<div style="margin-bottom:20px; display:flex; justify-content:flex-end;">
+<div style="margin-bottom:20px; display:flex; justify-content:flex-end; align-items:center; gap:8px; flex-wrap:wrap;">
   <div id="santri-search-tools" style="position:relative; display:flex; align-items:center; gap:8px;">
     <button type="button" class="santri-top-btn" onclick="openAddSantriModal()" title="Tambah Santri" aria-label="Tambah Santri" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
       +
@@ -43,6 +43,8 @@
           <option value="">Semua Status</option>
           <option value="aktif">Aktif</option>
           <option value="tidak_aktif">Tidak Aktif</option>
+          <option value="naik_kelas">Naik Kelas</option>
+          <option value="lulus">Lulus</option>
         </select>
         <button type="button" onclick="resetSantriSortOrder()">Reset</button>
       </div>

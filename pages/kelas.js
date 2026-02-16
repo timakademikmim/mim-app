@@ -19,6 +19,9 @@ const DISTRIBUSI_MAPEL_CACHE_TTL_MS = 2 * 60 * 1000
 const MAPEL_CACHE_KEY = 'mapel:list'
 const MAPEL_CACHE_TTL_MS = 2 * 60 * 1000
 let kelasActiveSubtab = 'data-kelas'
+let kelasSelectedTahunId = ''
+let mapelSelectedTahunId = ''
+let mapelSupportsTahunAjaran = null
 
 function parseRoleList(rawRole) {
   if (Array.isArray(rawRole)) {
@@ -353,7 +356,7 @@ function resetDistribusiSortOrder() {
   distribusiSearchKeyword = ''
   distribusiSelectFilters.tingkatan = ''
   distribusiSelectFilters.kelas = ''
-  distribusiSelectFilters.semester = ''
+  distribusiSelectFilters.semester = String(currentDistribusiPayload?.semesterAktif?.id || '')
   distribusiSelectFilters.guru = ''
 
   const container = document.getElementById('list-distribusi-mapel')
@@ -400,6 +403,43 @@ async function getTahunAktifKelas() {
   return data
 }
 
+async function getTahunAjaranList() {
+  const { data, error } = await sb
+    .from('tahun_ajaran')
+    .select('id, nama, aktif')
+    .order('nama', { ascending: false })
+
+  if (error) {
+    console.error(error)
+    return []
+  }
+
+  return data || []
+}
+
+function getEffectiveSelectedTahunId(selectedId, tahunAktif, tahunList) {
+  if (selectedId && (tahunList || []).some(item => String(item.id) === String(selectedId))) {
+    return String(selectedId)
+  }
+  if (tahunAktif?.id && (tahunList || []).some(item => String(item.id) === String(tahunAktif.id))) {
+    return String(tahunAktif.id)
+  }
+  return String(tahunList?.[0]?.id || '')
+}
+
+async function checkMapelSupportsTahunAjaran() {
+  if (mapelSupportsTahunAjaran !== null) return mapelSupportsTahunAjaran
+  const { error } = await sb
+    .from('mapel')
+    .select('id, tahun_ajaran_id')
+    .limit(1)
+  mapelSupportsTahunAjaran = !error
+  if (error) {
+    console.warn('Kolom mapel.tahun_ajaran_id belum tersedia, fallback tanpa filter tahun.', error)
+  }
+  return mapelSupportsTahunAjaran
+}
+
 async function loadGuruOptions(selectEl, selectedId = '') {
   if (!selectEl) return
 
@@ -431,14 +471,18 @@ async function loadGuruOptions(selectEl, selectedId = '') {
   })
 }
 
-async function getKelasListForDistribusi() {
-  const tahunAktif = await getTahunAktifKelas()
-  if (!tahunAktif) return []
+async function getKelasListForDistribusi(tahunAjaranId = '') {
+  let effectiveTahunId = String(tahunAjaranId || '')
+  if (!effectiveTahunId) {
+    const tahunAktif = await getTahunAktifKelas()
+    if (!tahunAktif) return []
+    effectiveTahunId = String(tahunAktif.id)
+  }
 
   const { data, error } = await sb
     .from('kelas')
     .select('id, nama_kelas, tingkat')
-    .eq('tahun_ajaran_id', tahunAktif.id)
+    .eq('tahun_ajaran_id', effectiveTahunId)
     .order('tingkat', { ascending: true })
     .order('nama_kelas')
 
@@ -449,23 +493,32 @@ async function getKelasListForDistribusi() {
   return data || []
 }
 
-async function getMapelList() {
+async function getMapelList(tahunAjaranId = '') {
+  const tahunKey = String(tahunAjaranId || 'all')
+  const cacheKey = `${MAPEL_CACHE_KEY}:${tahunKey}`
   if (typeof getCachedData === 'function') {
-    const cached = getCachedData(MAPEL_CACHE_KEY, MAPEL_CACHE_TTL_MS)
+    const cached = getCachedData(cacheKey, MAPEL_CACHE_TTL_MS)
     if (Array.isArray(cached)) return cached
   }
 
-  const { data, error } = await sb
+  const supportTahunAjaran = await checkMapelSupportsTahunAjaran()
+  let query = sb
     .from('mapel')
     .select('*')
     .order('nama')
+
+  if (supportTahunAjaran && tahunAjaranId) {
+    query = query.eq('tahun_ajaran_id', tahunAjaranId)
+  }
+
+  const { data, error } = await query
 
   if (error) {
     console.error(error)
     return []
   }
   const rows = data || []
-  if (typeof setCachedData === 'function') setCachedData(MAPEL_CACHE_KEY, rows)
+  if (typeof setCachedData === 'function') setCachedData(cacheKey, rows)
   return rows
 }
 
@@ -496,6 +549,21 @@ async function getSemesterList() {
   return data || []
 }
 
+async function getSemesterAktif() {
+  const { data, error } = await sb
+    .from('semester')
+    .select('*')
+    .eq('aktif', true)
+    .limit(1)
+
+  if (error) {
+    console.error(error)
+    return null
+  }
+
+  return (data || [])[0] || null
+}
+
 function renderSimpleOptions(selectEl, rows, placeholder, labelGetter, selectedId = '') {
   if (!selectEl) return
   selectEl.innerHTML = `<option value="">${placeholder}</option>`
@@ -508,6 +576,120 @@ function renderSimpleOptions(selectEl, rows, placeholder, labelGetter, selectedI
     }
     selectEl.appendChild(opt)
   })
+}
+
+function buildTahunOptionsHtml(tahunList, selectedId = '') {
+  return (tahunList || [])
+    .map(item => {
+      const isActive = Boolean(item?.aktif)
+      const selected = String(item.id) === String(selectedId) ? ' selected' : ''
+      const suffix = isActive ? ' (Aktif)' : ''
+      return `<option value="${item.id}"${selected}>${item.nama || '-'}${suffix}</option>`
+    })
+    .join('')
+}
+
+function renderKelasYearFilter(tahunList, selectedId = '') {
+  const selectEl = document.getElementById('kelas-tahun-filter')
+  if (!selectEl) return
+
+  if (!tahunList || tahunList.length === 0) {
+    selectEl.innerHTML = '<option value="">Tahun belum tersedia</option>'
+    selectEl.value = ''
+    return
+  }
+
+  selectEl.innerHTML = buildTahunOptionsHtml(tahunList, selectedId)
+  selectEl.value = String(selectedId || tahunList[0]?.id || '')
+}
+
+function renderTahunAjaranOptions(selectEl, tahunList, selectedId = '', placeholder = '-- Pilih Tahun Ajaran --') {
+  if (!selectEl) return
+  if (!tahunList || tahunList.length === 0) {
+    selectEl.innerHTML = `<option value="">${placeholder}</option>`
+    return
+  }
+
+  const options = tahunList
+    .map(item => {
+      const selected = String(item.id) === String(selectedId) ? ' selected' : ''
+      const suffix = item?.aktif ? ' (Aktif)' : ''
+      return `<option value="${item.id}"${selected}>${item.nama || '-'}${suffix}</option>`
+    })
+    .join('')
+
+  selectEl.innerHTML = `<option value="">${placeholder}</option>${options}`
+  if (selectedId) {
+    selectEl.value = String(selectedId)
+  }
+}
+
+function onKelasTahunFilterChange() {
+  const el = document.getElementById('kelas-tahun-filter')
+  kelasSelectedTahunId = el?.value || ''
+  loadKelas(true)
+}
+
+function onMapelTahunFilterChange() {
+  const el = document.getElementById('mapel-tahun-filter')
+  mapelSelectedTahunId = el?.value || ''
+  loadMapel(true)
+}
+
+function onDistribusiTahunFilterChange() {
+  const el = document.getElementById('distribusi-filter-tahun')
+  const selected = el?.value || ''
+  kelasSelectedTahunId = selected
+  mapelSelectedTahunId = selected
+  distribusiSelectFilters.kelas = ''
+  loadDistribusiMapel(true)
+}
+
+async function clearMapelCacheByTahun() {
+  if (typeof clearCachedData !== 'function') return
+  clearCachedData(MAPEL_CACHE_KEY)
+  clearCachedData(`${MAPEL_CACHE_KEY}:all`)
+  const tahunList = await getTahunAjaranList()
+  ;(tahunList || []).forEach(item => {
+    clearCachedData(`${MAPEL_CACHE_KEY}:${item.id}`)
+  })
+}
+
+async function clearKelasCacheByTahun() {
+  if (typeof clearCachedData !== 'function') return
+  clearCachedData(KELAS_CACHE_KEY)
+  clearCachedData(`${KELAS_CACHE_KEY}:all`)
+  const tahunList = await getTahunAjaranList()
+  ;(tahunList || []).forEach(item => {
+    clearCachedData(`${KELAS_CACHE_KEY}:${item.id}`)
+  })
+}
+
+async function countRelasiByMapel(tableName, mapelId) {
+  try {
+    const { count, error } = await sb
+      .from(tableName)
+      .select('id', { count: 'exact', head: true })
+      .eq('mapel_id', mapelId)
+
+    if (error) {
+      const msg = String(error.message || '')
+      if (
+        msg.toLowerCase().includes('does not exist') ||
+        msg.toLowerCase().includes('could not find the table') ||
+        msg.toLowerCase().includes('schema cache')
+      ) {
+        return 0
+      }
+      console.error(error)
+      return 0
+    }
+
+    return Number(count || 0)
+  } catch (e) {
+    console.error(e)
+    return 0
+  }
 }
 
 async function loadDistribusiFormOptions(options = {}) {
@@ -524,9 +706,10 @@ async function loadDistribusiFormOptions(options = {}) {
     selectedSemesterId = ''
   } = options
 
+  const tahunDistribusi = String(kelasSelectedTahunId || mapelSelectedTahunId || '')
   const [kelasList, mapelList, guruList, semesterList] = await Promise.all([
-    getKelasListForDistribusi(),
-    getMapelList(),
+    getKelasListForDistribusi(tahunDistribusi),
+    getMapelList(tahunDistribusi),
     getGuruList(),
     getSemesterList()
   ])
@@ -719,7 +902,7 @@ async function modalEditKelas() {
     return
   }
 
-  if (typeof clearCachedData === 'function') clearCachedData(KELAS_CACHE_KEY)
+  await clearKelasCacheByTahun()
   if (typeof clearCachedData === 'function') clearCachedData(DISTRIBUSI_MAPEL_CACHE_KEY)
   closeEditModal()
   loadKelas(true)
@@ -736,7 +919,8 @@ async function tambahKelas() {
   }
 
   const tahunAktif = await getTahunAktifKelas()
-  if (!tahunAktif) {
+  const tahunAjaranId = String(kelasSelectedTahunId || tahunAktif?.id || '')
+  if (!tahunAjaranId) {
     alert('Tidak ada Tahun Ajaran aktif')
     return
   }
@@ -746,7 +930,7 @@ async function tambahKelas() {
     .insert([{
       nama_kelas: nama,
       tingkat: tingkat,
-      tahun_ajaran_id: tahunAktif.id,
+      tahun_ajaran_id: tahunAjaranId,
       wali_kelas_id: wali_kelas_id || null
     }])
 
@@ -756,7 +940,7 @@ async function tambahKelas() {
     return
   }
 
-  if (typeof clearCachedData === 'function') clearCachedData(KELAS_CACHE_KEY)
+  await clearKelasCacheByTahun()
   if (typeof clearCachedData === 'function') clearCachedData(DISTRIBUSI_MAPEL_CACHE_KEY)
   closeAddKelasModal()
   loadKelas(true)
@@ -779,7 +963,7 @@ async function hapusKelas(id) {
     return
   }
 
-  if (typeof clearCachedData === 'function') clearCachedData(KELAS_CACHE_KEY)
+  await clearKelasCacheByTahun()
   if (typeof clearCachedData === 'function') clearCachedData(DISTRIBUSI_MAPEL_CACHE_KEY)
   loadKelas(true)
 }
@@ -1054,6 +1238,7 @@ function createAddMapelModal() {
   modal.innerHTML = `
     <div style="background:#fff; margin:80px auto; padding:24px; border-radius:8px; width:320px; box-shadow:0 2px 12px #0002; position:relative;">
       <h3>Tambah Mapel</h3>
+      <select class="kelas-field" id="modal-add-mapel-tahun" style="${getInsetFieldStyle('margin-bottom:8px;')}"></select>
       <input class="kelas-field" type="text" id="modal-add-mapel-nama" placeholder="Nama Mapel" style="${getInsetFieldStyle('margin-bottom:8px;')}">
       <select class="kelas-field" id="modal-add-mapel-tingkatan" style="${getInsetFieldStyle('margin-bottom:8px;')}"></select>
       <input class="kelas-field" type="text" id="modal-add-mapel-kategori" placeholder="Kategori (opsional)" style="${getInsetFieldStyle('margin-bottom:12px;')}">
@@ -1067,8 +1252,19 @@ function createAddMapelModal() {
   return modal
 }
 
-function openAddMapelModal() {
+async function openAddMapelModal() {
   createAddMapelModal()
+  const [tahunAktif, tahunList] = await Promise.all([
+    getTahunAktifKelas(),
+    getTahunAjaranList()
+  ])
+  const selectedTahunId = getEffectiveSelectedTahunId(mapelSelectedTahunId, tahunAktif, tahunList)
+  renderTahunAjaranOptions(
+    document.getElementById('modal-add-mapel-tahun'),
+    tahunList,
+    selectedTahunId,
+    '-- Pilih Tahun Ajaran --'
+  )
   document.getElementById('add-mapel-modal').style.display = 'block'
 }
 
@@ -1095,6 +1291,7 @@ function createEditMapelModal() {
   modal.innerHTML = `
     <div style="background:#fff; margin:80px auto; padding:24px; border-radius:8px; width:320px; box-shadow:0 2px 12px #0002; position:relative;">
       <h3>Edit Mapel</h3>
+      <select class="kelas-field" id="modal-edit-mapel-tahun" style="${getInsetFieldStyle('margin-bottom:8px;')}"></select>
       <input class="kelas-field" type="text" id="modal-edit-mapel-nama" placeholder="Nama Mapel" style="${getInsetFieldStyle('margin-bottom:8px;')}">
       <select class="kelas-field" id="modal-edit-mapel-tingkatan" style="${getInsetFieldStyle('margin-bottom:8px;')}"></select>
       <input class="kelas-field" type="text" id="modal-edit-mapel-kategori" placeholder="Kategori (opsional)" style="${getInsetFieldStyle('margin-bottom:12px;')}">
@@ -1116,23 +1313,30 @@ function closeEditMapelModal() {
 }
 
 async function tambahMapel() {
+  const tahunAjaranId = String(document.getElementById('modal-add-mapel-tahun')?.value || '')
   const nama = (document.getElementById('modal-add-mapel-nama')?.value || '').trim()
   const tingkatan = normalizeMapelTingkatan(document.getElementById('modal-add-mapel-tingkatan')?.value || '')
   const kategori = (document.getElementById('modal-add-mapel-kategori')?.value || '').trim()
 
-  if (!nama || !tingkatan) {
-    alert('Nama mapel dan tingkatan wajib diisi')
+  if (!tahunAjaranId || !nama || !tingkatan) {
+    alert('Tahun ajaran, nama mapel, dan tingkatan wajib diisi')
     return
   }
 
+  const supportTahunAjaran = await checkMapelSupportsTahunAjaran()
+  const payload = { nama, tingkatan, kategori: kategori || null }
+  if (supportTahunAjaran) payload.tahun_ajaran_id = tahunAjaranId
+
   let { error } = await sb
     .from('mapel')
-    .insert([{ nama, tingkatan, kategori: kategori || null }])
+    .insert([payload])
 
   if (error && String(error.message || '').toLowerCase().includes('tingkatan')) {
+    const retryPayload = { nama, jenjang: tingkatan, kategori: kategori || null }
+    if (supportTahunAjaran) retryPayload.tahun_ajaran_id = tahunAjaranId
     const retry = await sb
       .from('mapel')
-      .insert([{ nama, jenjang: tingkatan, kategori: kategori || null }])
+      .insert([retryPayload])
     error = retry.error
   }
 
@@ -1142,8 +1346,9 @@ async function tambahMapel() {
     return
   }
 
-  if (typeof clearCachedData === 'function') clearCachedData(MAPEL_CACHE_KEY)
+  await clearMapelCacheByTahun()
   if (typeof clearCachedData === 'function') clearCachedData(DISTRIBUSI_MAPEL_CACHE_KEY)
+  mapelSelectedTahunId = tahunAjaranId
   closeAddMapelModal()
   loadMapel(true)
 }
@@ -1158,6 +1363,17 @@ async function showEditMapelForm(id) {
   }
 
   currentEditMapelId = id
+  const [tahunAktif, tahunList] = await Promise.all([
+    getTahunAktifKelas(),
+    getTahunAjaranList()
+  ])
+  const selectedTahunId = String(mapel.tahun_ajaran_id || getEffectiveSelectedTahunId(mapelSelectedTahunId, tahunAktif, tahunList))
+  renderTahunAjaranOptions(
+    document.getElementById('modal-edit-mapel-tahun'),
+    tahunList,
+    selectedTahunId,
+    '-- Pilih Tahun Ajaran --'
+  )
   document.getElementById('modal-edit-mapel-nama').value = mapel.nama ?? ''
   renderMapelTingkatanOptions(
     document.getElementById('modal-edit-mapel-tingkatan'),
@@ -1170,24 +1386,31 @@ async function showEditMapelForm(id) {
 async function modalEditMapel() {
   if (!currentEditMapelId) return
 
+  const tahunAjaranId = String(document.getElementById('modal-edit-mapel-tahun')?.value || '')
   const nama = (document.getElementById('modal-edit-mapel-nama')?.value || '').trim()
   const tingkatan = normalizeMapelTingkatan(document.getElementById('modal-edit-mapel-tingkatan')?.value || '')
   const kategori = (document.getElementById('modal-edit-mapel-kategori')?.value || '').trim()
 
-  if (!nama || !tingkatan) {
-    alert('Nama mapel dan tingkatan wajib diisi')
+  if (!tahunAjaranId || !nama || !tingkatan) {
+    alert('Tahun ajaran, nama mapel, dan tingkatan wajib diisi')
     return
   }
 
+  const supportTahunAjaran = await checkMapelSupportsTahunAjaran()
+  const payload = { nama, tingkatan, kategori: kategori || null }
+  if (supportTahunAjaran) payload.tahun_ajaran_id = tahunAjaranId
+
   let { error } = await sb
     .from('mapel')
-    .update({ nama, tingkatan, kategori: kategori || null })
+    .update(payload)
     .eq('id', currentEditMapelId)
 
   if (error && String(error.message || '').toLowerCase().includes('tingkatan')) {
+    const retryPayload = { nama, jenjang: tingkatan, kategori: kategori || null }
+    if (supportTahunAjaran) retryPayload.tahun_ajaran_id = tahunAjaranId
     const retry = await sb
       .from('mapel')
-      .update({ nama, jenjang: tingkatan, kategori: kategori || null })
+      .update(retryPayload)
       .eq('id', currentEditMapelId)
     error = retry.error
   }
@@ -1198,8 +1421,9 @@ async function modalEditMapel() {
     return
   }
 
-  if (typeof clearCachedData === 'function') clearCachedData(MAPEL_CACHE_KEY)
+  await clearMapelCacheByTahun()
   if (typeof clearCachedData === 'function') clearCachedData(DISTRIBUSI_MAPEL_CACHE_KEY)
+  mapelSelectedTahunId = tahunAjaranId
   closeEditMapelModal()
   loadMapel(true)
 }
@@ -1210,6 +1434,24 @@ async function hapusMapel(id) {
     : confirm('Yakin ingin hapus mapel ini?')
   if (!confirmed) return
 
+  const [jumlahDistribusi, jumlahNilaiAkademik, jumlahInputNilai, jumlahAbsensi] = await Promise.all([
+    countRelasiByMapel('distribusi_mapel', id),
+    countRelasiByMapel('nilai_akademik', id),
+    countRelasiByMapel('nilai_input_akademik', id),
+    countRelasiByMapel('absensi_santri', id)
+  ])
+
+  const blockerLines = []
+  if (jumlahDistribusi > 0) blockerLines.push(`- Distribusi Mapel: ${jumlahDistribusi} data`)
+  if (jumlahNilaiAkademik > 0) blockerLines.push(`- Nilai Akademik: ${jumlahNilaiAkademik} data`)
+  if (jumlahInputNilai > 0) blockerLines.push(`- Input Nilai: ${jumlahInputNilai} data`)
+  if (jumlahAbsensi > 0) blockerLines.push(`- Absensi Santri: ${jumlahAbsensi} data`)
+
+  if (blockerLines.length > 0) {
+    alert(`Mapel tidak bisa dihapus karena masih dipakai di:\n${blockerLines.join('\n')}\n\nHapus relasinya terlebih dahulu.`)
+    return
+  }
+
   const { error } = await sb
     .from('mapel')
     .delete()
@@ -1217,11 +1459,11 @@ async function hapusMapel(id) {
 
   if (error) {
     console.error(error)
-    alert('Gagal menghapus mapel')
+    alert(`Gagal menghapus mapel: ${error.message || 'Unknown error'}`)
     return
   }
 
-  if (typeof clearCachedData === 'function') clearCachedData(MAPEL_CACHE_KEY)
+  await clearMapelCacheByTahun()
   if (typeof clearCachedData === 'function') clearCachedData(DISTRIBUSI_MAPEL_CACHE_KEY)
   loadMapel(true)
 }
@@ -1230,32 +1472,53 @@ async function loadMapel(forceRefresh = false) {
   const container = document.getElementById('list-mapel')
   if (!container) return
 
-  if (!forceRefresh && typeof getCachedData === 'function') {
-    const cached = getCachedData(MAPEL_CACHE_KEY, MAPEL_CACHE_TTL_MS)
-    if (Array.isArray(cached)) {
-      renderMapelTable(container, cached)
-      return
-    }
-  }
-
   container.innerHTML = 'Loading...'
-  const mapelList = await getMapelList()
-  renderMapelTable(container, mapelList)
-}
-
-function renderMapelTable(container, mapelList) {
-  window.mapelList = mapelList || []
-
-  if (!mapelList || mapelList.length === 0) {
-    container.innerHTML = 'Belum ada mapel'
+  const [tahunAktif, tahunList] = await Promise.all([
+    getTahunAktifKelas(),
+    getTahunAjaranList()
+  ])
+  if (!tahunList || tahunList.length === 0) {
+    renderMapelTable(container, [], null, [], null, false)
     return
   }
 
-  let html = `
+  const selectedTahunId = getEffectiveSelectedTahunId(mapelSelectedTahunId, tahunAktif, tahunList)
+  mapelSelectedTahunId = selectedTahunId
+
+  const mapelList = await getMapelList(selectedTahunId)
+  const selectedTahun = tahunList.find(item => String(item.id) === String(selectedTahunId)) || null
+  const supportTahunAjaran = await checkMapelSupportsTahunAjaran()
+  renderMapelTable(container, mapelList, selectedTahun, tahunList, tahunAktif, supportTahunAjaran)
+}
+
+function renderMapelTable(container, mapelList, selectedTahun, tahunList = [], tahunAktif = null, supportTahunAjaran = false) {
+  window.mapelList = mapelList || []
+  const tahunOptions = buildTahunOptionsHtml(tahunList, selectedTahun?.id)
+  const tahunMap = new Map((tahunList || []).map(item => [String(item.id), item.nama || '-']))
+  const warning = supportTahunAjaran
+    ? ''
+    : '<div style="margin-top:8px; color:#b45309; font-size:12px;">Kolom <b>mapel.tahun_ajaran_id</b> belum ada. Filter tahun untuk Data Mapel belum aktif.</div>'
+
+  let headerHtml = `
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+      <select id="mapel-tahun-filter" class="kelas-field" onchange="onMapelTahunFilterChange()" style="${getInsetFieldStyle('width:auto; min-width:220px;')}">
+        ${tahunOptions}
+      </select>
+    </div>
+    ${warning}
+  `
+
+  if (!mapelList || mapelList.length === 0) {
+    container.innerHTML = `${headerHtml}<p>Belum ada mapel.</p>`
+    return
+  }
+
+  let html = headerHtml + `
     <div style="overflow-x:auto;">
       <table style="width:100%; border-collapse:collapse; margin-top:8px; font-size:13px;">
         <thead>
           <tr style="background:#f3f3f3;">
+            <th style="padding:8px; border:1px solid #ddd; text-align:center; width:170px;">Tahun Ajaran</th>
             <th style="padding:8px; border:1px solid #ddd; text-align:center;">Nama Mapel</th>
             <th style="padding:8px; border:1px solid #ddd; text-align:center; width:120px;">Tingkatan</th>
             <th style="padding:8px; border:1px solid #ddd; text-align:center; width:180px;">Kategori</th>
@@ -1267,6 +1530,7 @@ function renderMapelTable(container, mapelList) {
 
   html += mapelList.map(item => `
     <tr>
+      <td style="padding:8px; border:1px solid #ddd;">${tahunMap.get(String(item.tahun_ajaran_id || '')) || '-'}</td>
       <td style="padding:8px; border:1px solid #ddd;">${item.nama ?? '-'}</td>
       <td style="padding:8px; border:1px solid #ddd;">${getMapelTingkatanLabel(item.tingkatan || item.jenjang)}</td>
       <td style="padding:8px; border:1px solid #ddd;">${item.kategori ?? '-'}</td>
@@ -1285,8 +1549,22 @@ async function loadDistribusiMapel(forceRefresh = false) {
   const container = document.getElementById('list-distribusi-mapel')
   if (!container) return
 
+  const [tahunAktif, tahunList] = await Promise.all([
+    getTahunAktifKelas(),
+    getTahunAjaranList()
+  ])
+  const tahunTerpilihId = String(getEffectiveSelectedTahunId(kelasSelectedTahunId || mapelSelectedTahunId, tahunAktif, tahunList) || '')
+  if (!kelasSelectedTahunId && tahunTerpilihId) kelasSelectedTahunId = tahunTerpilihId
+  if (!mapelSelectedTahunId && tahunTerpilihId) mapelSelectedTahunId = tahunTerpilihId
+
+  const semesterAktif = await getSemesterAktif()
+  if (!distribusiSelectFilters.semester && semesterAktif?.id) {
+    distribusiSelectFilters.semester = String(semesterAktif.id)
+  }
+
+  const cacheKey = `${DISTRIBUSI_MAPEL_CACHE_KEY}:${tahunTerpilihId || 'all'}`
   if (!forceRefresh && typeof getCachedData === 'function') {
-    const cached = getCachedData(DISTRIBUSI_MAPEL_CACHE_KEY, DISTRIBUSI_MAPEL_CACHE_TTL_MS)
+    const cached = getCachedData(cacheKey, DISTRIBUSI_MAPEL_CACHE_TTL_MS)
     if (cached) {
       const likelyBrokenMapelCache =
         Array.isArray(cached.distribusiList) &&
@@ -1294,7 +1572,7 @@ async function loadDistribusiMapel(forceRefresh = false) {
         Array.isArray(cached.mapelList) &&
         cached.mapelList.length === 0
       if (likelyBrokenMapelCache) {
-        clearCachedData?.(DISTRIBUSI_MAPEL_CACHE_KEY)
+        clearCachedData?.(cacheKey)
       } else {
         currentDistribusiPayload = cached
         renderDistribusiMapelTable(container, cached)
@@ -1305,13 +1583,34 @@ async function loadDistribusiMapel(forceRefresh = false) {
 
   container.innerHTML = 'Loading...'
 
-  const [distribusiRes, kelasList, mapelList, karyawanList, semesterList] = await Promise.all([
-    sb
+  const kelasRes = await sb
+    .from('kelas')
+    .select('id, nama_kelas, tingkat')
+    .eq('tahun_ajaran_id', tahunTerpilihId)
+
+  if (kelasRes.error) {
+    console.error(kelasRes.error)
+    container.innerHTML = 'Gagal load kelas untuk distribusi mapel'
+    return
+  }
+
+  const kelasListData = kelasRes.data || []
+  const kelasIds = kelasListData.map(item => item.id)
+
+  let distribusiRes
+  if (kelasIds.length === 0) {
+    distribusiRes = { data: [], error: null }
+  } else {
+    const query = sb
       .from('distribusi_mapel')
       .select('id, kelas_id, mapel_id, guru_id, semester_id')
-      .order('id', { ascending: false }),
-    sb.from('kelas').select('id, nama_kelas, tingkat'),
-    sb.from('mapel').select('id, nama, kategori'),
+      .in('kelas_id', kelasIds)
+      .order('id', { ascending: false })
+    distribusiRes = await query
+  }
+
+  const [mapelRows, karyawanList, semesterList] = await Promise.all([
+    getMapelList(tahunTerpilihId),
     sb.from('karyawan').select('id, nama'),
     getSemesterList()
   ])
@@ -1322,30 +1621,32 @@ async function loadDistribusiMapel(forceRefresh = false) {
     return
   }
 
-  if (mapelList.error) {
-    console.error(mapelList.error)
-  }
-
-  if (kelasList.error) {
-    console.error(kelasList.error)
-  }
-
   if (karyawanList.error) {
     console.error(karyawanList.error)
   }
 
   const cachedPayload = {
     distribusiList: distribusiRes.data || [],
-    kelasList: kelasList.data || [],
-    mapelList: mapelList.data || [],
+    kelasList: kelasListData,
+    mapelList: mapelRows || [],
     guruList: karyawanList.data || [],
-    semesterList: semesterList || []
+    semesterList: semesterList || [],
+    tahunList: tahunList || [],
+    tahunAktif,
+    tahunTerpilihId,
+    semesterAktif
   }
   if (typeof setCachedData === 'function') {
-    setCachedData(DISTRIBUSI_MAPEL_CACHE_KEY, cachedPayload)
+    setCachedData(cacheKey, cachedPayload)
   }
   currentDistribusiPayload = cachedPayload
   renderDistribusiMapelTable(container, cachedPayload)
+
+  // Fallback: jika default semester aktif membuat hasil kosong, tampilkan semua semester dulu.
+  if ((window.distribusiMapelList || []).length === 0 && distribusiSelectFilters.semester) {
+    distribusiSelectFilters.semester = ''
+    renderDistribusiMapelTable(container, cachedPayload)
+  }
 }
 
 function renderDistribusiMapelTable(container, payload) {
@@ -1378,6 +1679,7 @@ function renderDistribusiMapelTable(container, payload) {
     .sort((a, b) => String(getSemesterLabel(a)).localeCompare(String(getSemesterLabel(b))))
     .map(item => `<option value="${item.id}">${getSemesterLabel(item)}</option>`)
     .join('')
+  const tahunOptions = buildTahunOptionsHtml(payload?.tahunList || [], payload?.tahunTerpilihId || '')
 
   const guruOptions = (payload?.guruList || [])
     .slice()
@@ -1385,7 +1687,15 @@ function renderDistribusiMapelTable(container, payload) {
     .map(item => `<option value="${item.id}">${item.nama ?? '-'}</option>`)
     .join('')
 
+  const semesterAktifLabel = payload?.semesterAktif ? `Semester Aktif: ${getSemesterLabel(payload.semesterAktif)}` : 'Semester Aktif: -'
+  const badgeHtml = `
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+      <span style="display:inline-block;background:#0f766e;color:#fff;padding:4px 12px;border-radius:16px;font-size:12px;">${semesterAktifLabel}</span>
+    </div>
+  `
+
   const controlsHtml = `
+    ${badgeHtml}
     <div class="distribusi-filter-wrap" style="margin-bottom:0;">
       <select class="kelas-field" id="distribusi-sort-field" onchange="applyDistribusiSortControl()" style="${getInsetFieldStyle('width:auto; min-width:130px;')}">
         <option value="kelas">Sort: Kelas</option>
@@ -1397,6 +1707,9 @@ function renderDistribusiMapelTable(container, payload) {
       <select class="kelas-field" id="distribusi-sort-direction" onchange="applyDistribusiSortControl()" style="${getInsetFieldStyle('width:auto; min-width:100px;')}">
         <option value="asc">A-Z</option>
         <option value="desc">Z-A</option>
+      </select>
+      <select class="kelas-field" id="distribusi-filter-tahun" onchange="onDistribusiTahunFilterChange()" style="${getInsetFieldStyle('width:auto; min-width:220px;')}">
+        ${tahunOptions}
       </select>
       <select class="kelas-field" id="distribusi-filter-tingkatan" onchange="applyDistribusiSortControl()" style="${getInsetFieldStyle('width:auto; min-width:120px;')}">
         <option value="">Semua Tingkatan</option>
@@ -1427,12 +1740,14 @@ function renderDistribusiMapelTable(container, payload) {
     container.innerHTML = 'Belum ada distribusi mapel'
     const sortFieldEl = document.getElementById('distribusi-sort-field')
     const sortDirEl = document.getElementById('distribusi-sort-direction')
+    const tahunEl = document.getElementById('distribusi-filter-tahun')
     const tingkatanEl = document.getElementById('distribusi-filter-tingkatan')
     const kelasEl = document.getElementById('distribusi-filter-kelas')
     const semesterEl = document.getElementById('distribusi-filter-semester')
     const guruEl = document.getElementById('distribusi-filter-guru')
     if (sortFieldEl) sortFieldEl.value = distribusiSortField
     if (sortDirEl) sortDirEl.value = distribusiSortDirection
+    if (tahunEl) tahunEl.value = payload?.tahunTerpilihId || ''
     if (tingkatanEl) tingkatanEl.value = distribusiSelectFilters.tingkatan || ''
     if (kelasEl) kelasEl.value = distribusiSelectFilters.kelas || ''
     if (semesterEl) semesterEl.value = distribusiSelectFilters.semester || ''
@@ -1475,12 +1790,14 @@ function renderDistribusiMapelTable(container, payload) {
 
   const sortFieldEl = document.getElementById('distribusi-sort-field')
   const sortDirEl = document.getElementById('distribusi-sort-direction')
+  const tahunEl = document.getElementById('distribusi-filter-tahun')
   const tingkatanEl = document.getElementById('distribusi-filter-tingkatan')
   const kelasEl = document.getElementById('distribusi-filter-kelas')
   const semesterEl = document.getElementById('distribusi-filter-semester')
   const guruEl = document.getElementById('distribusi-filter-guru')
   if (sortFieldEl) sortFieldEl.value = distribusiSortField
   if (sortDirEl) sortDirEl.value = distribusiSortDirection
+  if (tahunEl) tahunEl.value = payload?.tahunTerpilihId || ''
   if (tingkatanEl) tingkatanEl.value = distribusiSelectFilters.tingkatan || ''
   if (kelasEl) kelasEl.value = distribusiSelectFilters.kelas || ''
   if (semesterEl) semesterEl.value = distribusiSelectFilters.semester || ''
@@ -1491,21 +1808,30 @@ async function loadKelas(forceRefresh = false) {
   const container = document.getElementById('list-kelas')
   if (!container) return
 
+  const [tahunAktif, tahunList] = await Promise.all([
+    getTahunAktifKelas(),
+    getTahunAjaranList()
+  ])
+  const selectedTahunId = getEffectiveSelectedTahunId(kelasSelectedTahunId, tahunAktif, tahunList)
+  kelasSelectedTahunId = selectedTahunId
+  renderKelasYearFilter(tahunList, selectedTahunId)
+  const cacheKey = `${KELAS_CACHE_KEY}:${selectedTahunId || 'all'}`
+
   if (!forceRefresh && typeof getCachedData === 'function') {
-    const cached = getCachedData(KELAS_CACHE_KEY, KELAS_CACHE_TTL_MS)
+    const cached = getCachedData(cacheKey, KELAS_CACHE_TTL_MS)
     if (cached) {
-      renderKelasTable(container, cached.tahunAktif, cached.kelasList, cached.santriAktifMap)
+      renderKelasTable(container, cached.selectedTahun, tahunAktif, tahunList, cached.kelasList, cached.santriAktifMap)
       return
     }
   }
 
   container.innerHTML = 'Loading...'
 
-  const tahunAktif = await getTahunAktifKelas()
-  if (!tahunAktif) {
-    renderKelasTable(container, null, [], {})
+  if (!tahunList || tahunList.length === 0) {
+    renderKelasTable(container, null, null, [], [], {})
     return
   }
+  const selectedTahun = tahunList.find(item => String(item.id) === String(selectedTahunId)) || null
 
   const { data: kelasList, error } = await sb
     .from('kelas')
@@ -1513,7 +1839,7 @@ async function loadKelas(forceRefresh = false) {
       *,
       wali:karyawan!kelas_wali_kelas_id_fkey ( id, nama )
     `)
-    .eq('tahun_ajaran_id', tahunAktif.id)
+    .eq('tahun_ajaran_id', selectedTahunId)
     .order('tingkat', { ascending: true })
     .order('nama_kelas')
 
@@ -1525,9 +1851,9 @@ async function loadKelas(forceRefresh = false) {
 
   if (!kelasList || kelasList.length === 0) {
     if (typeof setCachedData === 'function') {
-      setCachedData(KELAS_CACHE_KEY, { tahunAktif, kelasList: [], santriAktifMap: {} })
+      setCachedData(cacheKey, { selectedTahun, kelasList: [], santriAktifMap: {} })
     }
-    renderKelasTable(container, tahunAktif, [], {})
+    renderKelasTable(container, selectedTahun, tahunAktif, tahunList, [], {})
     return
   }
 
@@ -1548,31 +1874,29 @@ async function loadKelas(forceRefresh = false) {
   }
 
   if (typeof setCachedData === 'function') {
-    setCachedData(KELAS_CACHE_KEY, { tahunAktif, kelasList, santriAktifMap })
+    setCachedData(cacheKey, { selectedTahun, kelasList, santriAktifMap })
   }
-  renderKelasTable(container, tahunAktif, kelasList, santriAktifMap)
+  renderKelasTable(container, selectedTahun, tahunAktif, tahunList, kelasList, santriAktifMap)
 }
 
-function renderKelasTable(container, tahunAktif, kelasList, santriAktifMap) {
-  let badge = ''
-  if (tahunAktif && tahunAktif.nama) {
-    badge = `<span style="display:inline-block;background:#2563eb;color:#fff;padding:4px 14px;border-radius:16px;font-size:14px;margin-bottom:10px;">Tahun Ajaran Aktif: <b>${tahunAktif.nama}</b></span>`
-  }
+function renderKelasTable(container, selectedTahun, tahunAktif, tahunList, kelasList, santriAktifMap) {
+  renderKelasYearFilter(tahunList, selectedTahun?.id || '')
+  let headerHtml = ''
 
-  if (!tahunAktif) {
-    container.innerHTML = badge + '<p>Tidak ada Tahun Ajaran aktif.</p>'
+  if (!selectedTahun) {
+    container.innerHTML = headerHtml + '<p>Tahun ajaran belum tersedia.</p>'
     return
   }
 
   if (!kelasList || kelasList.length === 0) {
-    container.innerHTML = badge + '<p>Belum ada kelas.</p>'
+    container.innerHTML = headerHtml + '<p>Belum ada kelas.</p>'
     return
   }
 
   window.kelasList = kelasList
   ensureKelasActionStyle()
 
-  let html = badge + `
+  let html = headerHtml + `
     <div style="overflow-x:auto;">
       <table style="width:100%; border-collapse:collapse; margin-top:8px; font-size:13px;">
         <thead>

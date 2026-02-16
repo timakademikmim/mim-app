@@ -1,6 +1,9 @@
 let currentSantriDetailId = null
+let currentSantriDetailIds = []
+let currentSantriDetailKey = ''
 let currentExtraFieldKeys = []
 let currentSantriDetailData = null
+let currentSantriDetailHistory = []
 let currentSantriKelasList = []
 let currentSantriDetailTab = 'biodata'
 let currentEditNilaiId = null
@@ -13,6 +16,15 @@ let currentNilaiKelasList = []
 function getSantriIdFromParams(params = {}) {
   if (params && params.santriId) return params.santriId
   return null
+}
+
+function getSantriIdsFromParams(params = {}) {
+  if (!params) return []
+  if (Array.isArray(params.santriIds)) return params.santriIds.map(item => String(item)).filter(Boolean)
+  if (typeof params.santriIds === 'string') {
+    return params.santriIds.split(',').map(item => item.trim()).filter(Boolean)
+  }
+  return []
 }
 
 function backToSantriList() {
@@ -29,7 +41,7 @@ function setSantriDetailHeaderName(name) {
 }
 
 function setSantriDetailTab(tab) {
-  const validTab = tab === 'nilai' ? 'nilai' : 'biodata'
+  const validTab = tab === 'nilai' || tab === 'rapor' ? tab : 'biodata'
   currentSantriDetailTab = validTab
 
   const tabButtons = document.querySelectorAll('.santri-detail-tab-btn')
@@ -46,12 +58,17 @@ function setSantriDetailTab(tab) {
     localStorage.setItem('admin_last_page', 'santri-detail')
     localStorage.setItem('admin_last_page_params', JSON.stringify({
       santriId: currentSantriDetailId,
+      santriIds: currentSantriDetailIds,
+      santriKey: currentSantriDetailKey,
       tab: validTab
     }))
   }
 
   if (validTab === 'nilai' && currentSantriDetailId) {
     loadSantriNilaiList()
+  }
+  if (validTab === 'rapor' && currentSantriDetailId) {
+    renderSantriRaporSection()
   }
 }
 
@@ -350,13 +367,9 @@ async function getTahunAktifDetail() {
 }
 
 async function getKelasAktifForDetail() {
-  const tahunAktif = await getTahunAktifDetail()
-  if (!tahunAktif) return []
-
   const { data, error } = await sb
     .from('kelas')
-    .select('id, nama_kelas, tingkat')
-    .eq('tahun_ajaran_id', tahunAktif.id)
+    .select('id, nama_kelas, tingkat, tahun_ajaran_id')
     .order('nama_kelas')
 
   if (error) {
@@ -393,11 +406,42 @@ function getKnownFields() {
     'nisn',
     'jenis_kelamin',
     'kelas_id',
+    'ayah',
+    'nama_ayah',
+    'ibu',
+    'nama_ibu',
+    'no_hp_ayah',
+    'hp_ayah',
+    'no_hp_ibu',
+    'hp_ibu',
     'kelas',
     'aktif',
     'created_at',
     'updated_at'
   ]
+}
+
+function pickSantriFieldValue(santri, keys) {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(santri || {}, key)) {
+      return santri?.[key] ?? ''
+    }
+  }
+  return ''
+}
+
+function assignSantriFieldByKeys(payload, santri, keys, value, fallbackKey = '') {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(santri || {}, key)) {
+      payload[key] = value
+      return true
+    }
+  }
+  if (fallbackKey) {
+    payload[fallbackKey] = value
+    return true
+  }
+  return false
 }
 
 function renderExtraFields(santri) {
@@ -498,6 +542,30 @@ function renderDetailForm(santri, kelasList) {
         <input type="checkbox" id="detail-aktif" ${santri.aktif ? 'checked' : ''}>
         Aktif
       </label>
+    </div>
+
+    <div style="margin-top:14px; margin-bottom:8px; font-size:14px; font-weight:700; color:#334155;">
+      Data Orang Tua
+    </div>
+
+    <div style="margin-bottom:10px;">
+      <label for="detail-ayah" style="display:block; margin-bottom:4px;">Ayah</label>
+      <input type="text" id="detail-ayah" value="${escapeHtml(pickSantriFieldValue(santri, ['ayah', 'nama_ayah']))}" style="${getInsetFieldStyle()}">
+    </div>
+
+    <div style="margin-bottom:10px;">
+      <label for="detail-ibu" style="display:block; margin-bottom:4px;">Ibu</label>
+      <input type="text" id="detail-ibu" value="${escapeHtml(pickSantriFieldValue(santri, ['ibu', 'nama_ibu']))}" style="${getInsetFieldStyle()}">
+    </div>
+
+    <div style="margin-bottom:10px;">
+      <label for="detail-no-hp-ayah" style="display:block; margin-bottom:4px;">Nomor HP Ayah</label>
+      <input type="text" id="detail-no-hp-ayah" value="${escapeHtml(pickSantriFieldValue(santri, ['no_hp_ayah', 'hp_ayah']))}" style="${getInsetFieldStyle()}">
+    </div>
+
+    <div style="margin-bottom:10px;">
+      <label for="detail-no-hp-ibu" style="display:block; margin-bottom:4px;">Nomor HP Ibu</label>
+      <input type="text" id="detail-no-hp-ibu" value="${escapeHtml(pickSantriFieldValue(santri, ['no_hp_ibu', 'hp_ibu']))}" style="${getInsetFieldStyle()}">
     </div>
 
     ${renderExtraFields(santri)}
@@ -644,9 +712,11 @@ async function getSemesterOptions() {
 }
 
 async function getAllSemesterOptionsForNilai() {
+  const tahunAjaranId = getSelectedKelasTahunAjaranIdForNilai()
   const { data, error } = await sb
     .from('semester')
     .select('id, nama, aktif, tahun_ajaran_id')
+    .eq('tahun_ajaran_id', tahunAjaranId || '')
     .order('id', { ascending: false })
 
   if (error) {
@@ -657,7 +727,7 @@ async function getAllSemesterOptionsForNilai() {
 }
 
 async function getRiwayatKelasForNilai() {
-  if (!currentSantriDetailId) return []
+  if (!currentSantriDetailIds.length && !currentSantriDetailId) return []
 
   const { data, error } = await sb
     .from('riwayat_kelas_santri')
@@ -668,16 +738,23 @@ async function getRiwayatKelasForNilai() {
       kelas:kelas_id (
         id,
         nama_kelas,
-        tingkat
+        tingkat,
+        tahun_ajaran_id
       )
     `)
-    .eq('santri_id', currentSantriDetailId)
+    .in('santri_id', currentSantriDetailIds.length ? currentSantriDetailIds : [currentSantriDetailId])
     .order('aktif', { ascending: false })
     .order('tanggal_mulai', { ascending: false })
 
   if (error) {
     console.error(error)
-    return []
+    const fallback = (currentSantriDetailHistory || []).map(item => ({
+      id: String(item.kelas_id || item.kelas?.id || ''),
+      nama_kelas: item.kelas?.nama_kelas || `Kelas #${item.kelas_id || '-'}`,
+      tingkat: item.kelas?.tingkat ?? null,
+      aktif: String(item.id) === String(currentSantriDetailData?.id)
+    }))
+    return fallback.filter(item => item.id)
   }
 
   const map = new Map()
@@ -688,6 +765,7 @@ async function getRiwayatKelasForNilai() {
       id: key,
       nama_kelas: row.kelas?.nama_kelas || `Kelas #${key}`,
       tingkat: row.kelas?.tingkat ?? null,
+      tahun_ajaran_id: row.kelas?.tahun_ajaran_id ?? null,
       aktif: row.aktif ?? false
     })
   })
@@ -721,6 +799,18 @@ function getDefaultNilaiKelasFilterId() {
   return 'all'
 }
 
+function getSelectedKelasTahunAjaranIdForNilai() {
+  const kelasId = currentNilaiFilterKelasId && currentNilaiFilterKelasId !== 'all'
+    ? String(currentNilaiFilterKelasId)
+    : String(currentSantriDetailData?.kelas_id || '')
+  if (!kelasId) return ''
+
+  const kelas = (currentNilaiKelasList || []).find(item => String(item.id) === kelasId)
+    || (currentSantriKelasList || []).find(item => String(item.id) === kelasId)
+
+  return String(kelas?.tahun_ajaran_id || '')
+}
+
 async function ensureNilaiKelasFilterState() {
   const kelasList = await getRiwayatKelasForNilai()
   currentNilaiKelasList = kelasList || []
@@ -731,6 +821,7 @@ async function ensureNilaiKelasFilterState() {
     currentNilaiKelasList = [{
       id: currentKelasId,
       nama_kelas: currentKelas?.nama_kelas || `Kelas #${currentKelasId}`,
+      tahun_ajaran_id: currentKelas?.tahun_ajaran_id ?? null,
       aktif: true
     }]
   }
@@ -759,18 +850,17 @@ async function ensureNilaiKelasFilterState() {
   renderNilaiKelasFilter()
 }
 
-function onNilaiKelasFilterChange() {
+async function onNilaiKelasFilterChange() {
   const select = document.getElementById('santri-nilai-kelas-filter')
   if (!select) return
   currentNilaiFilterKelasId = select.value || 'all'
-  currentNilaiFilterSemesterId = getDefaultNilaiSemesterFilterId()
-  renderNilaiSemesterFilter()
-  loadSantriNilaiList()
+  currentNilaiFilterSemesterId = ''
+  await ensureNilaiSemesterFilterState()
+  await loadSantriNilaiList()
 }
 
 async function getActiveSemesterDetailForNilai() {
-  const tahunAktif = await getTahunAktifDetail()
-  const tahunAjaranId = tahunAktif?.id || ''
+  const tahunAjaranId = getSelectedKelasTahunAjaranIdForNilai()
   if (!tahunAjaranId) return null
 
   const { data, error } = await sb
@@ -820,6 +910,15 @@ function getDefaultNilaiSemesterFilterId() {
 }
 
 async function ensureNilaiSemesterFilterState() {
+  const tahunAjaranId = getSelectedKelasTahunAjaranIdForNilai()
+  if (!tahunAjaranId) {
+    currentNilaiSemesterList = []
+    currentNilaiActiveSemesterId = ''
+    currentNilaiFilterSemesterId = 'all'
+    renderNilaiSemesterFilter()
+    return
+  }
+
   const [activeSemester, semesterList] = await Promise.all([
     getActiveSemesterDetailForNilai(),
     getAllSemesterOptionsForNilai()
@@ -1104,7 +1203,7 @@ async function loadSantriNilaiList() {
       mapel:mapel_id ( nama, kategori ),
       semester:semester_id ( * )
     `)
-    .eq('santri_id', currentSantriDetailId)
+    .in('santri_id', currentSantriDetailIds.length ? currentSantriDetailIds : [currentSantriDetailId])
     .order('id', { ascending: false })
 
   if (error) {
@@ -1214,6 +1313,74 @@ async function loadSantriNilaiList() {
   container.innerHTML = html
 }
 
+function renderRiwayatKelasSection() {
+  const container = document.getElementById('santri-detail-biodata-container')
+  if (!container) return
+  const list = currentSantriDetailHistory || []
+  if (list.length === 0) return
+
+  const rows = list.map(item => `
+    <tr>
+      <td style="padding:8px; border:1px solid #ddd;">${escapeHtml(item?.kelas?.nama_kelas || '-')}</td>
+      <td style="padding:8px; border:1px solid #ddd; text-align:center;">${escapeHtml(item?.status || '-')}</td>
+      <td style="padding:8px; border:1px solid #ddd; text-align:center;">${item?.aktif ? 'Ya' : 'Tidak'}</td>
+    </tr>
+  `).join('')
+
+  container.insertAdjacentHTML('beforeend', `
+    <div style="margin-top:18px;">
+      <h3 style="margin-bottom:8px;">Riwayat Kelas</h3>
+      <div style="overflow-x:auto;">
+        <table style="width:100%; border-collapse:collapse; font-size:13px;">
+          <thead>
+            <tr style="background:#f8fafc;">
+              <th style="padding:8px; border:1px solid #ddd; text-align:center;">Kelas</th>
+              <th style="padding:8px; border:1px solid #ddd; text-align:center;">Status</th>
+              <th style="padding:8px; border:1px solid #ddd; text-align:center;">Saat Ini</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+  `)
+}
+
+function renderSantriRaporSection() {
+  const container = document.getElementById('santri-detail-rapor-container')
+  if (!container) return
+
+  const rows = (currentSantriDetailHistory || []).map((item, idx) => `
+    <tr>
+      <td style="padding:8px; border:1px solid #ddd; text-align:center;">${idx + 1}</td>
+      <td style="padding:8px; border:1px solid #ddd;">${escapeHtml(item?.kelas?.nama_kelas || '-')}</td>
+      <td style="padding:8px; border:1px solid #ddd; text-align:center;">${escapeHtml(item?.status || '-')}</td>
+      <td style="padding:8px; border:1px solid #ddd;">Belum ada data rapor</td>
+    </tr>
+  `).join('')
+
+  container.innerHTML = `
+    <div style="margin-bottom:10px; color:#475569; font-size:13px;">
+      Rapor dibagi berdasarkan riwayat kelas santri.
+    </div>
+    <div style="overflow-x:auto;">
+      <table style="width:100%; border-collapse:collapse; font-size:13px;">
+        <thead>
+          <tr style="background:#f3f3f3;">
+            <th style="padding:8px; border:1px solid #ddd; text-align:center; width:56px;">No</th>
+            <th style="padding:8px; border:1px solid #ddd; text-align:center;">Kelas</th>
+            <th style="padding:8px; border:1px solid #ddd; text-align:center; width:130px;">Status</th>
+            <th style="padding:8px; border:1px solid #ddd; text-align:center;">Keterangan</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows || '<tr><td colspan="4" style="padding:10px; border:1px solid #ddd; text-align:center;">Belum ada riwayat kelas.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `
+}
+
 async function saveSantriDetail() {
   if (!currentSantriDetailId) return
 
@@ -1222,6 +1389,10 @@ async function saveSantriDetail() {
   const jenis_kelamin = document.getElementById('detail-jk')?.value || ''
   const kelas_id = document.getElementById('detail-kelas-id')?.value || ''
   const aktif = document.getElementById('detail-aktif')?.checked ?? true
+  const ayah = document.getElementById('detail-ayah')?.value.trim() || ''
+  const ibu = document.getElementById('detail-ibu')?.value.trim() || ''
+  const noHpAyah = document.getElementById('detail-no-hp-ayah')?.value.trim() || ''
+  const noHpIbu = document.getElementById('detail-no-hp-ibu')?.value.trim() || ''
 
   if (!nama || !jenis_kelamin || !kelas_id) {
     alert('Nama, jenis kelamin, dan kelas wajib diisi')
@@ -1239,6 +1410,46 @@ async function saveSantriDetail() {
     jenis_kelamin,
     kelas_id,
     aktif
+  }
+
+  const assignedAyah = assignSantriFieldByKeys(
+    payload,
+    currentSantriDetailData,
+    ['ayah', 'nama_ayah'],
+    ayah || null,
+    ''
+  )
+  const assignedIbu = assignSantriFieldByKeys(
+    payload,
+    currentSantriDetailData,
+    ['ibu', 'nama_ibu'],
+    ibu || null,
+    ''
+  )
+  const assignedNoHpAyah = assignSantriFieldByKeys(
+    payload,
+    currentSantriDetailData,
+    ['no_hp_ayah', 'hp_ayah'],
+    noHpAyah || null,
+    ''
+  )
+  const assignedNoHpIbu = assignSantriFieldByKeys(
+    payload,
+    currentSantriDetailData,
+    ['no_hp_ibu', 'hp_ibu'],
+    noHpIbu || null,
+    ''
+  )
+
+  const hasOrtuFieldInSchema = assignedAyah || assignedIbu || assignedNoHpAyah || assignedNoHpIbu
+  const hasOrtuInput = Boolean(ayah || ibu || noHpAyah || noHpIbu)
+  if (!hasOrtuFieldInSchema && hasOrtuInput) {
+    alert(
+      'Kolom data orang tua belum ada di tabel santri. Tambahkan salah satu set kolom berikut:\n' +
+      '- ayah, ibu, no_hp_ayah, no_hp_ibu\n' +
+      'atau\n' +
+      '- nama_ayah, nama_ibu, hp_ayah, hp_ibu'
+    )
   }
 
   currentExtraFieldKeys.forEach(key => {
@@ -1261,6 +1472,24 @@ async function saveSantriDetail() {
 
   if (error) {
     console.error(error)
+    const msg = String(error.message || '').toLowerCase()
+    if (
+      msg.includes('column') &&
+      (
+        msg.includes('ayah') ||
+        msg.includes('ibu') ||
+        msg.includes('hp_ayah') ||
+        msg.includes('hp_ibu') ||
+        msg.includes('no_hp_ayah') ||
+        msg.includes('no_hp_ibu')
+      )
+    ) {
+      alert(
+        'Simpan gagal karena kolom data orang tua belum tersedia di tabel santri.\n' +
+        'Tambahkan kolom: ayah, ibu, no_hp_ayah, no_hp_ibu (atau nama_ayah, nama_ibu, hp_ayah, hp_ibu).'
+      )
+      return
+    }
     if (error.code === '23505') {
       alert('NISN sudah terdaftar')
       return
@@ -1271,7 +1500,12 @@ async function saveSantriDetail() {
 
   if (typeof clearCachedData === 'function') clearCachedData('santri:list')
   alert('Biodata santri berhasil diperbarui')
-  await initSantriDetailPage({ santriId: currentSantriDetailId, tab: 'biodata' })
+  await initSantriDetailPage({
+    santriId: currentSantriDetailId,
+    santriIds: currentSantriDetailIds,
+    santriKey: currentSantriDetailKey,
+    tab: 'biodata'
+  })
 }
 
 async function initSantriDetailPage(params = {}) {
@@ -1279,8 +1513,11 @@ async function initSantriDetailPage(params = {}) {
   ensureSantriDetailActionStyle()
 
   const santriId = getSantriIdFromParams(params)
+  const santriIdsFromParams = getSantriIdsFromParams(params)
   currentSantriDetailId = santriId
-  currentSantriDetailTab = params?.tab === 'nilai' ? 'nilai' : 'biodata'
+  currentSantriDetailIds = santriIdsFromParams.length ? santriIdsFromParams : (santriId ? [String(santriId)] : [])
+  currentSantriDetailKey = String(params?.santriKey || '')
+  currentSantriDetailTab = (params?.tab === 'nilai' || params?.tab === 'rapor') ? params.tab : 'biodata'
   currentNilaiActiveSemesterId = ''
   currentNilaiFilterSemesterId = ''
   currentNilaiSemesterList = []
@@ -1289,44 +1526,72 @@ async function initSantriDetailPage(params = {}) {
 
   const biodataContainer = document.getElementById('santri-detail-biodata-container')
   const nilaiContainer = document.getElementById('santri-detail-nilai-container')
-  if (!biodataContainer || !nilaiContainer) return
+  const raporContainer = document.getElementById('santri-detail-rapor-container')
+  if (!biodataContainer || !nilaiContainer || !raporContainer) return
 
   if (!santriId) {
     setSantriDetailHeaderName('')
     biodataContainer.innerHTML = 'ID santri tidak ditemukan.'
     nilaiContainer.innerHTML = 'ID santri tidak ditemukan.'
+    raporContainer.innerHTML = 'ID santri tidak ditemukan.'
     return
   }
 
   setSantriDetailHeaderName('')
   biodataContainer.innerHTML = 'Loading...'
   nilaiContainer.innerHTML = 'Loading...'
+  raporContainer.innerHTML = 'Loading...'
   setSantriDetailTab(currentSantriDetailTab)
 
-  const [{ data: santri, error: santriError }, kelasList] = await Promise.all([
+  const [{ data: santriRows, error: santriError }, kelasList] = await Promise.all([
     sb
       .from('santri')
-      .select('*')
-      .eq('id', santriId)
-      .single(),
+      .select(`
+        *,
+        kelas:kelas_id (
+          id,
+          nama_kelas,
+          tingkat,
+          tahun_ajaran_id
+        )
+      `)
+      .in('id', currentSantriDetailIds.length ? currentSantriDetailIds : [String(santriId)]),
     getKelasAktifForDetail()
   ])
 
-  if (santriError || !santri) {
-    console.error(santriError)
+  if (santriError || !(santriRows || []).length) {
+    console.error(santriError || 'Santri rows empty')
     setSantriDetailHeaderName('')
     biodataContainer.innerHTML = 'Gagal load data santri.'
     nilaiContainer.innerHTML = 'Gagal load data santri.'
+    raporContainer.innerHTML = 'Gagal load data santri.'
     return
   }
 
-  currentSantriDetailData = santri
-  setSantriDetailHeaderName(santri.nama)
+  const historyRows = [...(santriRows || [])].sort((a, b) => {
+    if (Boolean(b?.aktif) !== Boolean(a?.aktif)) return Number(Boolean(b?.aktif)) - Number(Boolean(a?.aktif))
+    const aCreated = new Date(a?.created_at || 0).getTime()
+    const bCreated = new Date(b?.created_at || 0).getTime()
+    return bCreated - aCreated
+  })
+  const activeRow = historyRows[0]
+  currentSantriDetailData = activeRow
+  currentSantriDetailHistory = historyRows
+  currentSantriDetailId = String(activeRow.id)
+  currentSantriDetailIds = historyRows.map(item => String(item.id))
+  if (!currentSantriDetailKey) {
+    const nisn = String(activeRow?.nisn || '').trim().toLowerCase()
+    currentSantriDetailKey = nisn ? `nisn:${nisn}` : `id:${activeRow.id}`
+  }
+
+  setSantriDetailHeaderName(activeRow.nama)
   currentSantriKelasList = kelasList
   renderDetailForm(currentSantriDetailData, currentSantriKelasList)
+  renderRiwayatKelasSection()
   createAddNilaiModal()
   createEditNilaiModal()
   renderNilaiSection()
+  renderSantriRaporSection()
   setSantriDetailTab(currentSantriDetailTab)
   await ensureNilaiKelasFilterState()
   await ensureNilaiSemesterFilterState()

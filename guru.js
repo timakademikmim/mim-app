@@ -7,6 +7,14 @@ const GURU_MAPEL_DETAIL_STATE_KEY = 'guru_mapel_detail_state'
 const DEFAULT_GURU_PAGE = 'dashboard'
 const ATTENDANCE_TABLE = 'absensi_santri'
 const INPUT_NILAI_TABLE = 'nilai_input_akademik'
+const MONTHLY_REPORT_TABLE = 'laporan_bulanan_wali'
+const MONTHLY_REPORT_STORAGE_BUCKET = 'laporan-bulanan'
+const DAILY_TASK_TEMPLATE_TABLE = 'tugas_harian_template'
+const DAILY_TASK_SUBMIT_TABLE = 'tugas_harian_submit'
+const TOPBAR_KALENDER_TABLE = 'kalender_akademik'
+const TOPBAR_KALENDER_CACHE_KEY = 'kalender_akademik:list'
+const TOPBAR_KALENDER_CACHE_TTL_MS = 2 * 60 * 1000
+const TOPBAR_KALENDER_DEFAULT_COLOR = '#2563eb'
 const ATTENDANCE_STATUSES = ['Hadir', 'Terlambat', 'Sakit', 'Izin', 'Alpa']
 const INPUT_NILAI_JENIS_LIST = ['Tugas', 'Ulangan Harian', 'UTS', 'UAS', 'Keterampilan']
 
@@ -16,18 +24,20 @@ const PAGE_TITLES = {
   'input-nilai': 'Input Nilai',
   'input-absensi': 'Input Absen',
   laporan: 'Laporan',
+  'laporan-absensi': 'Absensi',
   'laporan-pekanan': 'Laporan Pekanan',
   'laporan-bulanan': 'Laporan Bulanan',
   jadwal: 'Jadwal',
   mapel: 'Mapel',
   absensi: 'Absensi',
-  tugas: 'Tugas Harian',
+  tugas: 'Mutabaah',
   nilai: 'Input Nilai',
   rapor: 'Rapor',
   profil: 'Profil'
 }
 
 let guruContextCache = null
+let activeTahunAjaranCache = null
 let currentMapelDetailDistribusiId = ''
 let currentAbsensiSantriList = []
 let currentMapelDetailState = null
@@ -38,6 +48,63 @@ let currentMapelEditMode = {
 }
 let currentInputNilaiSantriList = []
 let currentNilaiDetailModalState = null
+let waliKelasAccessCache = null
+let jamPelajaranSupportsTahunAjaran = null
+let laporanBulananState = {
+  periode: '',
+  guru: null,
+  kelasList: [],
+  kelasMap: new Map(),
+  santriList: [],
+  selectedSantriId: '',
+  currentDetail: null,
+  absensiRows: []
+}
+let waTargetModalResolver = null
+let guruDailyTaskState = {
+  periode: '',
+  tanggal: '',
+  templates: [],
+  submissions: [],
+  guruId: ''
+}
+let topbarKalenderState = {
+  list: [],
+  month: '',
+  selectedDateKey: '',
+  visible: false
+}
+
+async function checkJamPelajaranSupportsTahunAjaran() {
+  if (jamPelajaranSupportsTahunAjaran !== null) return jamPelajaranSupportsTahunAjaran
+  const { error } = await sb
+    .from('jam_pelajaran')
+    .select('id, tahun_ajaran_id')
+    .limit(1)
+  jamPelajaranSupportsTahunAjaran = !error
+  if (error) console.warn('Kolom jam_pelajaran.tahun_ajaran_id belum tersedia di guru page.', error)
+  return jamPelajaranSupportsTahunAjaran
+}
+
+async function getActiveTahunAjaran(forceReload = false) {
+  if (!forceReload && activeTahunAjaranCache) return activeTahunAjaranCache
+
+  const { data, error } = await sb
+    .from('tahun_ajaran')
+    .select('id, nama')
+    .eq('aktif', true)
+    .order('id', { ascending: false })
+    .limit(1)
+
+  if (error) {
+    console.error(error)
+    activeTahunAjaranCache = null
+    return null
+  }
+
+  activeTahunAjaranCache = data?.[0] || null
+  return activeTahunAjaranCache
+}
 
 function saveMapelDetailState(distribusiId, tab) {
   const payload = {
@@ -68,6 +135,65 @@ function getMapelDetailState() {
 
 function clearMapelDetailState() {
   localStorage.removeItem(GURU_MAPEL_DETAIL_STATE_KEY)
+}
+
+async function hasWaliKelasAssignment(guruId) {
+  if (!guruId) return false
+
+  try {
+    const { data: tahunAktif, error: tahunError } = await sb
+      .from('tahun_ajaran')
+      .select('id')
+      .eq('aktif', true)
+      .order('id', { ascending: false })
+      .limit(1)
+
+    if (tahunError) {
+      console.error(tahunError)
+    }
+
+    const tahunAjaranId = tahunAktif?.[0]?.id || null
+    let query = sb
+      .from('kelas')
+      .select('id')
+      .eq('wali_kelas_id', guruId)
+      .limit(1)
+
+    if (tahunAjaranId) query = query.eq('tahun_ajaran_id', tahunAjaranId)
+
+    const { data, error } = await query
+    if (error) {
+      console.error(error)
+      return false
+    }
+
+    return (data || []).length > 0
+  } catch (error) {
+    console.error(error)
+    return false
+  }
+}
+
+async function getIsWaliKelas(forceReload = false) {
+  if (!forceReload && typeof waliKelasAccessCache === 'boolean') return waliKelasAccessCache
+
+  const roles = parseRoleList()
+  const isByRole = roles.some(isWaliKelasRole)
+  if (isByRole) {
+    waliKelasAccessCache = true
+    return true
+  }
+
+  try {
+    const guru = await getCurrentGuruRow()
+    const isByAssignment = await hasWaliKelasAssignment(guru?.id)
+    waliKelasAccessCache = !!isByAssignment
+    return waliKelasAccessCache
+  } catch (error) {
+    console.error(error)
+    waliKelasAccessCache = false
+    return false
+  }
 }
 
 function escapeHtml(value) {
@@ -148,6 +274,127 @@ function getHariOrder(raw) {
   return map[value] || 99
 }
 
+function getMonthInputToday() {
+  return new Date().toISOString().slice(0, 7)
+}
+
+function getPeriodeRange(periode) {
+  const text = String(periode || '').trim()
+  if (!/^\d{4}-\d{2}$/.test(text)) return null
+  const [yearText, monthText] = text.split('-')
+  const year = Number(yearText)
+  const month = Number(monthText)
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null
+
+  const start = `${yearText}-${monthText}-01`
+  const endDate = new Date(year, month, 0)
+  const end = `${yearText}-${monthText}-${String(endDate.getDate()).padStart(2, '0')}`
+  return { start, end, year, month }
+}
+
+function getPeriodeLabel(periode) {
+  const range = getPeriodeRange(periode)
+  if (!range) return '-'
+  const monthNames = [
+    'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+    'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+  ]
+  return `${monthNames[range.month - 1]} ${range.year}`
+}
+
+function getAkhlakPredikat(nilai) {
+  const num = Number(nilai)
+  if (!Number.isFinite(num)) return '-'
+  if (num >= 90) return 'A (Sangat Baik)'
+  if (num >= 80) return 'B (Baik)'
+  if (num >= 70) return 'C (Cukup)'
+  if (num >= 60) return 'D (Kurang)'
+  return 'E (Perlu Pembinaan)'
+}
+
+function getAkhlakGradeInfo(nilai) {
+  const num = Number(nilai)
+  if (!Number.isFinite(num)) return { grade: '-', desc: '-' }
+  if (num >= 90) return { grade: 'A', desc: 'Istimewa' }
+  if (num >= 80) return { grade: 'B', desc: 'Baik Sekali' }
+  if (num >= 70) return { grade: 'C', desc: 'Baik' }
+  if (num >= 60) return { grade: 'D', desc: 'Cukup' }
+  return { grade: 'E', desc: 'Perlu Pembinaan' }
+}
+
+function normalizeWhatsappNumber(raw) {
+  const digits = String(raw || '').replace(/\D/g, '')
+  if (!digits) return ''
+  if (digits.startsWith('62')) return digits
+  if (digits.startsWith('0')) return `62${digits.slice(1)}`
+  return digits
+}
+
+function sanitizeFileNamePart(raw) {
+  return String(raw || '')
+    .replace(/[\\/:*?"<>|]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function buildMonthlyReportStorageMissingMessage() {
+  return `Bucket storage '${MONTHLY_REPORT_STORAGE_BUCKET}' belum ada atau belum bisa diakses.\n\nBuat bucket public di Supabase Storage dengan nama: ${MONTHLY_REPORT_STORAGE_BUCKET}`
+}
+
+function buildDailyTaskMissingTableMessage() {
+  return `Tabel tugas harian belum ada di Supabase.\n\nSilakan buat tabel berikut:\n\n1) ${DAILY_TASK_TEMPLATE_TABLE}\n- id (uuid primary key, default gen_random_uuid())\n- tahun_ajaran_id (uuid, nullable)\n- tanggal (date)\n- judul (text)\n- deskripsi (text, nullable)\n- aktif (boolean, default true)\n- created_at (timestamptz, default now())\n\n2) ${DAILY_TASK_SUBMIT_TABLE}\n- id (uuid primary key, default gen_random_uuid())\n- template_id (uuid)\n- guru_id (uuid)\n- tanggal (date)\n- status (text: selesai/belum)\n- catatan (text, nullable)\n- submitted_at (timestamptz, default now())\n- updated_at (timestamptz, default now())\n\nUnique disarankan:\n- ${DAILY_TASK_TEMPLATE_TABLE}: (tahun_ajaran_id, tanggal, judul)\n- ${DAILY_TASK_SUBMIT_TABLE}: (template_id, guru_id, tanggal)`
+}
+
+function isMissingDailyTaskTableError(error) {
+  const code = String(error?.code || '').toUpperCase()
+  const msg = String(error?.message || '').toLowerCase()
+  if (code === '42P01') return true
+  if (msg.includes(DAILY_TASK_TEMPLATE_TABLE.toLowerCase())) return true
+  if (msg.includes(DAILY_TASK_SUBMIT_TABLE.toLowerCase())) return true
+  return false
+}
+
+function getKehadiranPredikat(nilaiPersen) {
+  const num = Number(nilaiPersen)
+  if (!Number.isFinite(num)) return '-'
+  if (num >= 95) return 'A (Sangat Baik)'
+  if (num >= 85) return 'B (Baik)'
+  if (num >= 75) return 'C (Cukup)'
+  if (num >= 60) return 'D (Kurang)'
+  return 'E (Perlu Pembinaan)'
+}
+
+function getDailyAttendanceStatus(rows = []) {
+  const statuses = rows
+    .map(item => String(item?.status || '').trim().toLowerCase())
+    .filter(Boolean)
+
+  if (statuses.includes('hadir') || statuses.includes('terlambat')) return 'Hadir'
+  if (statuses.includes('sakit')) return 'Sakit'
+  if (statuses.includes('izin')) return 'Izin'
+  if (statuses.includes('alpa')) return 'Alpa'
+  return '-'
+}
+
+function aggregateAttendanceByDay(rows = []) {
+  const map = new Map()
+
+  ;(rows || []).forEach(item => {
+    const tanggal = String(item?.tanggal || '').slice(0, 10)
+    if (!tanggal) return
+    if (!map.has(tanggal)) map.set(tanggal, [])
+    map.get(tanggal).push(item)
+  })
+
+  return Array.from(map.entries())
+    .map(([tanggal, items]) => ({
+      tanggal,
+      status: getDailyAttendanceStatus(items),
+      totalMapel: items.length
+    }))
+    .sort((a, b) => String(a.tanggal).localeCompare(String(b.tanggal)))
+}
+
 function pickLabelByKeys(item, keys) {
   for (const key of keys) {
     const value = item?.[key]
@@ -172,7 +419,261 @@ function getMapelLabel(mapel) {
 function setTopbarTitle(page) {
   const titleEl = document.getElementById('guru-topbar-title')
   if (!titleEl) return
-  titleEl.textContent = PAGE_TITLES[page] || 'Panel Guru'
+  const title = PAGE_TITLES[page] || 'Panel Guru'
+  const todayLabel = new Date().toLocaleDateString('id-ID', {
+    weekday: 'long',
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric'
+  })
+  titleEl.innerHTML = `<span class="topbar-title-main">${escapeHtml(title)}</span><span class="topbar-title-sep" aria-hidden="true"></span><button type="button" class="topbar-title-date-btn" onclick="openTopbarCalendarPopup()" title="Lihat kalender kegiatan">${escapeHtml(todayLabel)}</button>`
+}
+
+function getTopbarKalenderMonthNow() {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+}
+
+function normalizeTopbarKalenderColor(value) {
+  const raw = String(value || '').trim()
+  return /^#[0-9a-fA-F]{6}$/.test(raw) ? raw : TOPBAR_KALENDER_DEFAULT_COLOR
+}
+
+function getTopbarKalenderDateKey(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function getTopbarKalenderRangeKeys(mulaiValue, selesaiValue) {
+  const startKey = getTopbarKalenderDateKey(mulaiValue)
+  const endKey = getTopbarKalenderDateKey(selesaiValue || mulaiValue)
+  if (!startKey) return []
+  const start = new Date(`${startKey}T00:00:00`)
+  const end = new Date(`${endKey}T00:00:00`)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end.getTime() < start.getTime()) return [startKey]
+  const keys = []
+  const cursor = new Date(start)
+  while (cursor.getTime() <= end.getTime()) {
+    keys.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`)
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return keys
+}
+
+function getTopbarKalenderEventsByDate() {
+  const map = new Map()
+  ;(topbarKalenderState.list || []).forEach(item => {
+    const keys = getTopbarKalenderRangeKeys(item.mulai, item.selesai)
+    keys.forEach(key => {
+      if (!map.has(key)) map.set(key, [])
+      map.get(key).push(item)
+    })
+  })
+  return map
+}
+
+function getTopbarKalenderMonthMeta(monthKey) {
+  const [y, m] = String(monthKey || '').split('-').map(Number)
+  const year = Number.isFinite(y) ? y : new Date().getFullYear()
+  const month = Number.isFinite(m) ? m : (new Date().getMonth() + 1)
+  const first = new Date(year, month - 1, 1)
+  const last = new Date(year, month, 0)
+  return { year, month, firstWeekday: first.getDay(), daysInMonth: last.getDate() }
+}
+
+function getTopbarKalenderDayBg(events) {
+  const colors = [...new Set((events || []).map(item => normalizeTopbarKalenderColor(item?.warna)).filter(Boolean))]
+  if (!colors.length) return 'transparent'
+  if (colors.length === 1) return `${colors[0]}22`
+  const step = 100 / colors.length
+  const parts = colors.map((color, index) => {
+    const start = (index * step).toFixed(2)
+    const end = ((index + 1) * step).toFixed(2)
+    return `${color}33 ${start}% ${end}%`
+  })
+  return `linear-gradient(90deg, ${parts.join(', ')})`
+}
+
+function ensureTopbarKalenderPopup() {
+  let popup = document.getElementById('topbar-calendar-popup')
+  if (popup) return popup
+
+  popup = document.createElement('div')
+  popup.id = 'topbar-calendar-popup'
+  popup.className = 'topbar-calendar-overlay'
+  popup.style.display = 'none'
+  popup.innerHTML = `
+    <div class="topbar-calendar-card" onclick="event.stopPropagation()">
+      <div class="topbar-calendar-head">
+        <strong>Kalender Kegiatan</strong>
+        <div class="topbar-calendar-actions">
+          <button type="button" class="topbar-calendar-btn topbar-calendar-btn-secondary" onclick="shiftTopbarCalendarMonth(-1)">Bulan Sebelumnya</button>
+          <input id="topbar-calendar-month" class="topbar-calendar-month" type="month">
+          <button type="button" class="topbar-calendar-btn topbar-calendar-btn-secondary" onclick="shiftTopbarCalendarMonth(1)">Bulan Berikutnya</button>
+          <button type="button" class="topbar-calendar-btn topbar-calendar-btn-secondary topbar-calendar-btn-close" onclick="closeTopbarCalendarPopup()">×</button>
+        </div>
+      </div>
+      <div id="topbar-calendar-title" class="topbar-calendar-title">Loading...</div>
+      <div id="topbar-calendar-grid" class="topbar-calendar-grid">Loading...</div>
+      <div id="topbar-calendar-detail" class="topbar-calendar-detail">Pilih tanggal untuk melihat detail kegiatan.</div>
+    </div>
+  `
+  popup.addEventListener('click', event => {
+    if (event.target !== popup) return
+    closeTopbarCalendarPopup()
+  })
+  document.body.appendChild(popup)
+
+  const monthEl = popup.querySelector('#topbar-calendar-month')
+  if (monthEl) {
+    monthEl.addEventListener('change', () => {
+      topbarKalenderState.month = monthEl.value || getTopbarKalenderMonthNow()
+      topbarKalenderState.selectedDateKey = ''
+      renderTopbarCalendar()
+    })
+  }
+  return popup
+}
+
+async function fetchTopbarKalenderRows() {
+  const { data, error } = await sb
+    .from(TOPBAR_KALENDER_TABLE)
+    .select('id, judul, mulai, selesai, detail, warna')
+    .order('mulai', { ascending: true })
+
+  if (error) throw error
+  return (data || []).map(item => ({ ...item, warna: normalizeTopbarKalenderColor(item.warna) }))
+}
+
+async function loadTopbarCalendarData(forceRefresh = false) {
+  if (!forceRefresh && typeof getCachedData === 'function') {
+    const cached = getCachedData(TOPBAR_KALENDER_CACHE_KEY, TOPBAR_KALENDER_CACHE_TTL_MS)
+    if (cached) {
+      topbarKalenderState.list = cached
+      return
+    }
+  }
+
+  const list = await fetchTopbarKalenderRows()
+  topbarKalenderState.list = list
+  if (typeof setCachedData === 'function') setCachedData(TOPBAR_KALENDER_CACHE_KEY, list)
+}
+
+function renderTopbarCalendarDetail() {
+  const detailEl = document.getElementById('topbar-calendar-detail')
+  if (!detailEl) return
+
+  if (!topbarKalenderState.selectedDateKey) {
+    detailEl.innerHTML = 'Pilih tanggal untuk melihat detail kegiatan.'
+    return
+  }
+
+  const byDate = getTopbarKalenderEventsByDate()
+  const events = byDate.get(topbarKalenderState.selectedDateKey) || []
+  if (!events.length) {
+    detailEl.innerHTML = `<div style="color:#64748b;">Tidak ada kegiatan pada tanggal ${escapeHtml(topbarKalenderState.selectedDateKey)}.</div>`
+    return
+  }
+
+  detailEl.innerHTML = events.map(item => {
+    const warna = normalizeTopbarKalenderColor(item.warna)
+    const mulai = getTopbarKalenderDateKey(item.mulai)
+    const selesai = getTopbarKalenderDateKey(item.selesai)
+    const rentang = selesai && selesai !== mulai ? `${mulai} - ${selesai}` : mulai
+    return `
+      <div class="topbar-calendar-event" style="border-left-color:${escapeHtml(warna)};">
+        <div class="topbar-calendar-event-title"><span class="topbar-calendar-event-dot" style="background:${escapeHtml(warna)};"></span>${escapeHtml(item.judul || '-')}</div>
+        <div class="topbar-calendar-event-meta">${escapeHtml(rentang || '-')}</div>
+        <div class="topbar-calendar-event-detail">${escapeHtml(item.detail || '-')}</div>
+      </div>
+    `
+  }).join('')
+}
+
+function renderTopbarCalendar() {
+  const popup = ensureTopbarKalenderPopup()
+  if (!popup || popup.style.display === 'none') return
+
+  const titleEl = document.getElementById('topbar-calendar-title')
+  const gridEl = document.getElementById('topbar-calendar-grid')
+  const monthEl = document.getElementById('topbar-calendar-month')
+  if (!titleEl || !gridEl || !monthEl) return
+
+  const monthKey = topbarKalenderState.month || getTopbarKalenderMonthNow()
+  topbarKalenderState.month = monthKey
+  monthEl.value = monthKey
+
+  const meta = getTopbarKalenderMonthMeta(monthKey)
+  const todayKey = getTopbarKalenderDateKey(new Date())
+  const monthName = new Date(meta.year, meta.month - 1, 1).toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })
+  titleEl.textContent = `Kalender ${monthName}`
+
+  const byDate = getTopbarKalenderEventsByDate()
+  const headers = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab']
+  let html = headers.map(label => `<div class="topbar-calendar-day-head">${label}</div>`).join('')
+
+  for (let i = 0; i < meta.firstWeekday; i += 1) html += '<div class="topbar-calendar-day empty"></div>'
+
+  for (let day = 1; day <= meta.daysInMonth; day += 1) {
+    const dateKey = `${meta.year}-${String(meta.month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    const events = byDate.get(dateKey) || []
+    const firstColor = normalizeTopbarKalenderColor(events[0]?.warna)
+    const isActive = topbarKalenderState.selectedDateKey === dateKey
+    const isToday = dateKey === todayKey
+    const bg = getTopbarKalenderDayBg(events)
+    const dots = events.slice(0, 5).map(item => `<span class="topbar-calendar-day-dot" style="background:${escapeHtml(normalizeTopbarKalenderColor(item.warna))};"></span>`).join('')
+    const ring = isToday ? '0 0 0 2px #2563eb inset' : ''
+    html += `
+      <button type="button" class="topbar-calendar-day ${isActive ? 'active' : ''}" onclick="selectTopbarCalendarDate('${dateKey}')" style="background:${bg}; box-shadow:${ring};">
+        <span class="topbar-calendar-day-num" style="background:${events.length ? `${firstColor}55` : '#f1f5f9'};">${day}</span>
+        <div class="topbar-calendar-day-dots">${dots}</div>
+      </button>
+    `
+  }
+
+  const trailing = 42 - (meta.firstWeekday + meta.daysInMonth)
+  for (let i = 0; i < trailing; i += 1) html += '<div class="topbar-calendar-day empty"></div>'
+
+  gridEl.innerHTML = html
+  renderTopbarCalendarDetail()
+}
+
+async function openTopbarCalendarPopup() {
+  const popup = ensureTopbarKalenderPopup()
+  if (!popup) return
+  popup.style.display = 'flex'
+  topbarKalenderState.visible = true
+  if (!topbarKalenderState.month) topbarKalenderState.month = getTopbarKalenderMonthNow()
+  try {
+    await loadTopbarCalendarData(false)
+  } catch (error) {
+    console.error(error)
+    topbarKalenderState.list = []
+    const detailEl = document.getElementById('topbar-calendar-detail')
+    if (detailEl) detailEl.innerHTML = `Gagal load kalender: ${escapeHtml(error?.message || 'Unknown error')}`
+  }
+  renderTopbarCalendar()
+}
+
+function closeTopbarCalendarPopup() {
+  const popup = document.getElementById('topbar-calendar-popup')
+  if (!popup) return
+  popup.style.display = 'none'
+  topbarKalenderState.visible = false
+}
+
+function shiftTopbarCalendarMonth(step) {
+  const meta = getTopbarKalenderMonthMeta(topbarKalenderState.month || getTopbarKalenderMonthNow())
+  const date = new Date(meta.year, meta.month - 1 + Number(step || 0), 1)
+  topbarKalenderState.month = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+  topbarKalenderState.selectedDateKey = ''
+  renderTopbarCalendar()
+}
+
+function selectTopbarCalendarDate(dateKey) {
+  topbarKalenderState.selectedDateKey = String(dateKey || '')
+  renderTopbarCalendar()
 }
 
 function setNavActive(page) {
@@ -185,7 +686,7 @@ function setNavActive(page) {
   if (!page) return
 
   const isInputPage = page === 'input-nilai' || page === 'input-absensi' || page === 'nilai' || page === 'absensi'
-  const isLaporanPage = page === 'laporan-pekanan' || page === 'laporan-bulanan' || page === 'laporan'
+  const isLaporanPage = page === 'laporan-absensi' || page === 'laporan-pekanan' || page === 'laporan-bulanan' || page === 'laporan'
 
   if (isInputPage) {
     document.querySelector('.guru-nav-btn[data-page="input"]')?.classList.add('active')
@@ -198,7 +699,11 @@ function setNavActive(page) {
 
   if (isLaporanPage) {
     document.querySelector('.guru-nav-btn[data-page="laporan"]')?.classList.add('active')
-    const subPage = page === 'laporan-bulanan' ? 'laporan-bulanan' : 'laporan-pekanan'
+    const subPage = page === 'laporan-bulanan'
+      ? 'laporan-bulanan'
+      : page === 'laporan-absensi'
+        ? 'laporan-absensi'
+        : 'laporan-pekanan'
     document.querySelector(`.guru-submenu-btn[data-page="${subPage}"]`)?.classList.add('active')
     openGuruLaporanMenu()
     closeGuruInputMenu()
@@ -243,6 +748,8 @@ function closeGuruLaporanMenu() {
 }
 
 function toggleGuruLaporanMenu() {
+  const laporanBtn = document.querySelector('.guru-nav-btn[data-page="laporan"]')
+  if (laporanBtn?.disabled) return
   const submenu = document.getElementById('guru-laporan-submenu')
   if (!submenu) return
   const isOpen = submenu.classList.contains('open')
@@ -274,6 +781,270 @@ function renderPlaceholder(title, desc) {
   `
 }
 
+function getDailyTaskStatusLabel(raw) {
+  return String(raw || '').toLowerCase() === 'selesai' ? 'Selesai' : 'Belum'
+}
+
+function getDailyTaskChecked(templateId, tanggal) {
+  const sid = `${templateId}__${tanggal}`
+  const row = (guruDailyTaskState.submissions || []).find(item => `${item.template_id}__${item.tanggal}` === sid)
+  return String(row?.status || '').toLowerCase() === 'selesai'
+}
+
+function getDailyTaskCatatan(templateId, tanggal) {
+  const sid = `${templateId}__${tanggal}`
+  const row = (guruDailyTaskState.submissions || []).find(item => `${item.template_id}__${item.tanggal}` === sid)
+  return String(row?.catatan || '')
+}
+
+async function loadGuruDailyTaskData(periode) {
+  const range = getPeriodeRange(periode)
+  if (!range) throw new Error('Periode tidak valid')
+
+  const ctx = await getGuruContext(true)
+  const guruId = String(ctx?.guru?.id || '')
+  if (!guruId) return { guruId: '', templates: [], submissions: [] }
+
+  const tahunAjaranId = String(ctx?.activeTahunAjaran?.id || '')
+  let templateQuery = sb
+    .from(DAILY_TASK_TEMPLATE_TABLE)
+    .select('id, tahun_ajaran_id, tanggal, judul, deskripsi, aktif')
+    .gte('tanggal', range.start)
+    .lte('tanggal', range.end)
+    .order('tanggal', { ascending: true })
+    .order('created_at', { ascending: true })
+  if (tahunAjaranId) templateQuery = templateQuery.eq('tahun_ajaran_id', tahunAjaranId)
+
+  const [templateRes, submitRes] = await Promise.all([
+    templateQuery,
+    sb
+      .from(DAILY_TASK_SUBMIT_TABLE)
+      .select('id, template_id, guru_id, tanggal, status, catatan, submitted_at, updated_at')
+      .eq('guru_id', guruId)
+      .gte('tanggal', range.start)
+      .lte('tanggal', range.end)
+  ])
+
+  if (templateRes.error || submitRes.error) {
+    throw (templateRes.error || submitRes.error)
+  }
+
+  return {
+    guruId,
+    templates: templateRes.data || [],
+    submissions: submitRes.data || []
+  }
+}
+
+function renderGuruDailyTaskRows() {
+  const box = document.getElementById('guru-tugas-list')
+  if (!box) return
+  const tanggal = String(guruDailyTaskState.tanggal || '')
+  const templates = (guruDailyTaskState.templates || []).filter(item => item.aktif !== false && String(item.tanggal || '') === tanggal)
+
+  if (!templates.length) {
+    box.innerHTML = '<div class="placeholder-card">Belum ada tugas harian untuk tanggal ini.</div>'
+    return
+  }
+
+  let html = '<div style="display:grid; gap:8px;">'
+  html += templates.map(item => `
+    <div style="border:1px solid #e2e8f0; border-radius:10px; padding:10px; background:#fff;">
+      <label style="display:flex; gap:10px; align-items:flex-start;">
+        <input type="checkbox" data-guru-task-template-id="${escapeHtml(String(item.id))}" ${getDailyTaskChecked(String(item.id), tanggal) ? 'checked' : ''} style="margin-top:3px;">
+        <div style="flex:1;">
+          <div style="font-weight:700; color:#0f172a;">${escapeHtml(item.judul || '-')}</div>
+          <div style="font-size:12px; color:#64748b; margin-top:2px;">${escapeHtml(item.deskripsi || '-')}</div>
+          <input type="text" class="guru-field" data-guru-task-catatan-id="${escapeHtml(String(item.id))}" value="${escapeHtml(getDailyTaskCatatan(String(item.id), tanggal))}" placeholder="Catatan (opsional)" style="margin-top:8px;">
+        </div>
+      </label>
+    </div>
+  `).join('')
+  html += '</div>'
+  box.innerHTML = html
+}
+
+function renderGuruDailyTaskSummary() {
+  const box = document.getElementById('guru-tugas-summary')
+  if (!box) return
+
+  const byDate = new Map()
+  const templates = (guruDailyTaskState.templates || []).filter(item => item.aktif !== false)
+  const submissions = guruDailyTaskState.submissions || []
+  const templateById = new Map(templates.map(item => [String(item.id), item]))
+
+  templates.forEach(item => {
+    const key = String(item.tanggal || '')
+    if (!key) return
+    if (!byDate.has(key)) byDate.set(key, { total: 0, done: 0, lastSubmit: '' })
+    byDate.get(key).total += 1
+  })
+
+  submissions.forEach(item => {
+    const template = templateById.get(String(item.template_id || ''))
+    if (!template) return
+    const key = String(item.tanggal || template.tanggal || '')
+    if (!byDate.has(key)) byDate.set(key, { total: 0, done: 0, lastSubmit: '' })
+    const entry = byDate.get(key)
+    if (String(item.status || '').toLowerCase() === 'selesai') entry.done += 1
+    const stamp = String(item.submitted_at || item.updated_at || '')
+    if (stamp && (!entry.lastSubmit || stamp > entry.lastSubmit)) entry.lastSubmit = stamp
+  })
+
+  const rows = Array.from(byDate.entries()).sort((a, b) => a[0].localeCompare(b[0]))
+  if (!rows.length) {
+    box.innerHTML = '<div style="color:#64748b;">Belum ada ringkasan tugas bulan ini.</div>'
+    return
+  }
+
+  let html = `
+    <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px;">
+      <table style="width:100%; border-collapse:collapse; font-size:13px;">
+        <thead>
+          <tr style="background:#f8fafc;">
+            <th style="padding:8px; border:1px solid #e2e8f0; width:120px;">Tanggal</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; width:120px;">Selesai/Total</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; width:90px;">%</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Submit Terakhir</th>
+          </tr>
+        </thead>
+        <tbody>
+  `
+
+  html += rows.map(([tanggal, item]) => {
+    const pct = item.total > 0 ? Math.round((item.done / item.total) * 100) : 0
+    return `
+      <tr>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(tanggal)}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${item.done}/${item.total}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${pct}%</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.lastSubmit ? item.lastSubmit.replace('T', ' ').slice(0, 16) : '-')}</td>
+      </tr>
+    `
+  }).join('')
+
+  html += '</tbody></table></div>'
+  box.innerHTML = html
+}
+
+async function renderTugasHarianPage(forceReload = false) {
+  const content = document.getElementById('guru-content')
+  if (!content) return
+  content.innerHTML = 'Loading tugas harian...'
+
+  const periode = guruDailyTaskState.periode || getMonthInputToday()
+  const tanggalDefault = guruDailyTaskState.tanggal || new Date().toISOString().slice(0, 10)
+
+  content.innerHTML = `
+    <div style="display:grid; gap:12px;">
+      <div style="border:1px solid #e2e8f0; border-radius:12px; padding:12px; background:#fff;">
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; align-items:end;">
+          <div>
+            <div style="font-size:12px; color:#64748b; margin-bottom:4px;">Periode</div>
+            <input id="guru-tugas-periode" class="guru-field" type="month" value="${escapeHtml(periode)}">
+          </div>
+          <div>
+            <div style="font-size:12px; color:#64748b; margin-bottom:4px;">Tanggal</div>
+            <input id="guru-tugas-tanggal" class="guru-field" type="date" value="${escapeHtml(tanggalDefault)}">
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button type="button" class="modal-btn modal-btn-muted" onclick="reloadGuruDailyTask()">Muat</button>
+            <button type="button" class="modal-btn modal-btn-primary" onclick="submitGuruDailyTask()">Submit</button>
+          </div>
+        </div>
+      </div>
+      <div id="guru-tugas-list"></div>
+      <div style="border:1px solid #e2e8f0; border-radius:12px; padding:12px; background:#fff;">
+        <div style="font-weight:700; margin-bottom:8px; color:#0f172a;">Ringkasan Bulanan</div>
+        <div id="guru-tugas-summary">Loading...</div>
+      </div>
+    </div>
+  `
+
+  try {
+    const periodeValue = String(document.getElementById('guru-tugas-periode')?.value || periode)
+    const tanggalValue = String(document.getElementById('guru-tugas-tanggal')?.value || tanggalDefault)
+    const data = await loadGuruDailyTaskData(periodeValue)
+    guruDailyTaskState = {
+      ...guruDailyTaskState,
+      periode: periodeValue,
+      tanggal: tanggalValue,
+      guruId: data.guruId,
+      templates: data.templates,
+      submissions: data.submissions
+    }
+    renderGuruDailyTaskRows()
+    renderGuruDailyTaskSummary()
+  } catch (error) {
+    console.error(error)
+    if (isMissingDailyTaskTableError(error)) {
+      alert(buildDailyTaskMissingTableMessage())
+    }
+    content.innerHTML = `<div class="placeholder-card">Gagal load tugas harian: ${escapeHtml(error.message || 'Unknown error')}</div>`
+  }
+}
+
+async function reloadGuruDailyTask() {
+  const periode = String(document.getElementById('guru-tugas-periode')?.value || getMonthInputToday())
+  const tanggal = String(document.getElementById('guru-tugas-tanggal')?.value || new Date().toISOString().slice(0, 10))
+  guruDailyTaskState.periode = periode
+  guruDailyTaskState.tanggal = tanggal
+  await renderTugasHarianPage(true)
+}
+
+async function submitGuruDailyTask() {
+  const guruId = String(guruDailyTaskState.guruId || '')
+  const tanggal = String(document.getElementById('guru-tugas-tanggal')?.value || '').trim()
+  const periode = String(document.getElementById('guru-tugas-periode')?.value || '').trim()
+  if (!guruId || !tanggal || !periode) {
+    alert('Periode dan tanggal wajib diisi.')
+    return
+  }
+  if (!tanggal.startsWith(`${periode}-`)) {
+    alert('Tanggal harus sesuai dengan periode bulan yang dipilih.')
+    return
+  }
+
+  const templates = (guruDailyTaskState.templates || []).filter(item => item.aktif !== false && String(item.tanggal || '') === tanggal)
+  if (!templates.length) {
+    alert('Tidak ada tugas pada tanggal ini.')
+    return
+  }
+
+  const nowIso = new Date().toISOString()
+  const payload = templates.map(item => {
+    const tid = String(item.id || '')
+    const checked = Boolean(document.querySelector(`[data-guru-task-template-id="${tid}"]`)?.checked)
+    const catatan = String(document.querySelector(`[data-guru-task-catatan-id="${tid}"]`)?.value || '').trim()
+    return {
+      template_id: tid,
+      guru_id: guruId,
+      tanggal,
+      status: checked ? 'selesai' : 'belum',
+      catatan: catatan || null,
+      submitted_at: nowIso,
+      updated_at: nowIso
+    }
+  })
+
+  const { error } = await sb
+    .from(DAILY_TASK_SUBMIT_TABLE)
+    .upsert(payload, { onConflict: 'template_id,guru_id,tanggal' })
+
+  if (error) {
+    console.error(error)
+    if (isMissingDailyTaskTableError(error)) {
+      alert(buildDailyTaskMissingTableMessage())
+      return
+    }
+    alert(`Gagal submit tugas harian: ${error.message || 'Unknown error'}`)
+    return
+  }
+
+  alert('Tugas harian berhasil disubmit.')
+  await renderTugasHarianPage(true)
+}
+
 function renderDashboard() {
   const content = document.getElementById('guru-content')
   if (!content) return
@@ -282,7 +1053,7 @@ function renderDashboard() {
     <div class="placeholder-card">
       <div style="font-size:15px; font-weight:700; margin-bottom:8px;">Ringkasan Guru</div>
       <div style="font-size:13px; line-height:1.6;">
-        Gunakan menu di sidebar: Dashboard, Tugas Harian, Jadwal, Input, Laporan, dan Rapor (khusus wali kelas).
+        Gunakan menu di sidebar: Dashboard, Mutabaah, Jadwal, Input, Laporan, dan Rapor (khusus wali kelas).
       </div>
     </div>
   `
@@ -373,6 +1144,114 @@ function setupCustomPopupSystem() {
   window.__popupReady = true
 }
 
+function ensureWaTargetModal() {
+  if (document.getElementById('wa-target-overlay')) return
+
+  const overlay = document.createElement('div')
+  overlay.id = 'wa-target-overlay'
+  overlay.className = 'app-popup-overlay'
+  overlay.setAttribute('aria-hidden', 'true')
+  overlay.innerHTML = `
+    <div class="app-popup-card" role="dialog" aria-modal="true" aria-labelledby="wa-target-title">
+      <div id="wa-target-title" class="app-popup-message" style="font-weight:700; margin-bottom:8px;">Kirim kemana?</div>
+      <div style="margin-bottom:8px; font-size:13px; color:#475569;">Nomor tujuan bisa diubah sebelum lanjut kirim.</div>
+      <div id="wa-target-choice-wrap" style="display:none; margin-bottom:8px;">
+        <label class="guru-label" for="wa-target-choice">Pilih nomor orang tua</label>
+        <select id="wa-target-choice" class="guru-field"></select>
+      </div>
+      <input id="wa-target-input" class="guru-field" type="text" placeholder="Masukkan nomor WhatsApp">
+      <div class="app-popup-actions" style="margin-top:12px;">
+        <button type="button" id="wa-target-cancel-btn">Batal</button>
+        <button type="button" id="wa-target-send-btn" class="app-popup-primary">Lanjut</button>
+      </div>
+    </div>
+  `
+
+  overlay.addEventListener('click', event => {
+    if (event.target !== overlay) return
+    closeWaTargetModal(null)
+  })
+
+  document.body.appendChild(overlay)
+}
+
+function closeWaTargetModal(value = null) {
+  const overlay = document.getElementById('wa-target-overlay')
+  if (!overlay) return
+  overlay.classList.remove('open')
+  overlay.setAttribute('aria-hidden', 'true')
+  if (waTargetModalResolver) {
+    waTargetModalResolver(value)
+    waTargetModalResolver = null
+  }
+}
+
+function askWaTargetNumber(defaultNumber = '', choices = []) {
+  ensureWaTargetModal()
+  const overlay = document.getElementById('wa-target-overlay')
+  const input = document.getElementById('wa-target-input')
+  const choiceWrap = document.getElementById('wa-target-choice-wrap')
+  const choiceSelect = document.getElementById('wa-target-choice')
+  const cancelBtn = document.getElementById('wa-target-cancel-btn')
+  const sendBtn = document.getElementById('wa-target-send-btn')
+  if (!overlay || !input || !cancelBtn || !sendBtn || !choiceWrap || !choiceSelect) return Promise.resolve(null)
+
+  return new Promise(resolve => {
+    waTargetModalResolver = resolve
+
+    const validChoices = (choices || []).filter(item => String(item?.number || '').trim() !== '')
+    if (validChoices.length > 0) {
+      choiceSelect.innerHTML = ''
+      validChoices.forEach((item, index) => {
+        const opt = document.createElement('option')
+        opt.value = String(item.number || '')
+        opt.textContent = `${item.label || `Nomor ${index + 1}`} (${item.number})`
+        choiceSelect.appendChild(opt)
+      })
+      const manualOpt = document.createElement('option')
+      manualOpt.value = '__manual__'
+      manualOpt.textContent = 'Nomor Lain (manual)'
+      choiceSelect.appendChild(manualOpt)
+
+      choiceWrap.style.display = 'block'
+      choiceSelect.onchange = () => {
+        const selected = String(choiceSelect.value || '')
+        if (selected === '__manual__') {
+          input.value = ''
+          input.focus()
+          return
+        }
+        input.value = selected
+      }
+      input.value = String(validChoices[0].number || '')
+    } else {
+      choiceWrap.style.display = 'none'
+      choiceSelect.innerHTML = ''
+      choiceSelect.onchange = null
+      input.value = String(defaultNumber || '')
+    }
+
+    input.focus()
+    input.select()
+
+    cancelBtn.onclick = () => closeWaTargetModal(null)
+    sendBtn.onclick = () => closeWaTargetModal(input.value)
+    input.onkeydown = event => {
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        closeWaTargetModal(input.value)
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeWaTargetModal(null)
+      }
+    }
+
+    overlay.classList.add('open')
+    overlay.setAttribute('aria-hidden', 'false')
+  })
+}
+
 async function popupConfirm(message) {
   if (typeof window.showPopupConfirm === 'function') {
     return await window.showPopupConfirm(message)
@@ -425,14 +1304,8 @@ async function setGuruWelcomeName() {
 }
 
 async function getActiveSemester() {
-  const { data: tahunAktif } = await sb
-    .from('tahun_ajaran')
-    .select('id')
-    .eq('aktif', true)
-    .order('id', { ascending: false })
-    .limit(1)
-
-  const tahunAjaranId = tahunAktif?.[0]?.id || null
+  const tahunAktif = await getActiveTahunAjaran()
+  const tahunAjaranId = tahunAktif?.id || null
 
   let query = sb
     .from('semester')
@@ -476,8 +1349,10 @@ async function getGuruContext(forceReload = false) {
   if (!guru?.id) {
     guruContextCache = {
       guru: null,
+      activeTahunAjaran: null,
       activeSemester: null,
       distribusiList: [],
+      yearDistribusiList: [],
       activeDistribusiList: [],
       kelasMap: new Map(),
       mapelMap: new Map(),
@@ -488,7 +1363,9 @@ async function getGuruContext(forceReload = false) {
     return guruContextCache
   }
 
+  const activeTahunAjaran = await getActiveTahunAjaran()
   const activeSemester = await getActiveSemester()
+  const activeTahunAjaranId = String(activeTahunAjaran?.id || '')
 
   const distribusiRes = await sb
     .from('distribusi_mapel')
@@ -498,22 +1375,46 @@ async function getGuruContext(forceReload = false) {
   if (distribusiRes.error) throw distribusiRes.error
 
   const distribusiList = distribusiRes.data || []
-  const kelasIds = [...new Set(distribusiList.map(item => item.kelas_id).filter(Boolean))]
-  const mapelIds = [...new Set(distribusiList.map(item => item.mapel_id).filter(Boolean))]
   const semesterIds = [...new Set(distribusiList.map(item => item.semester_id).filter(Boolean))]
-  const distribusiIds = [...new Set(distribusiList.map(item => item.id).filter(Boolean))]
 
-  const [kelasRes, mapelRes, semesterRes, jadwalRes, jamRes] = await Promise.all([
-    kelasIds.length ? sb.from('kelas').select('id, nama_kelas, tingkat').in('id', kelasIds) : Promise.resolve({ data: [] }),
+  const semesterRes = semesterIds.length
+    ? await sb.from('semester').select('id, nama, aktif, tahun_ajaran_id').in('id', semesterIds)
+    : { data: [], error: null }
+  if (semesterRes.error) console.error(semesterRes.error)
+
+  const semesterMap = new Map((semesterRes.data || []).map(item => [String(item.id), item]))
+
+  const yearDistribusiList = activeTahunAjaranId
+    ? distribusiList.filter(item => String(semesterMap.get(String(item.semester_id || ''))?.tahun_ajaran_id || '') === activeTahunAjaranId)
+    : distribusiList
+
+  const activeDistribusiList = activeSemester?.id
+    ? yearDistribusiList.filter(item => String(item.semester_id || '') === String(activeSemester.id))
+    : yearDistribusiList
+
+  const kelasIds = [...new Set(yearDistribusiList.map(item => item.kelas_id).filter(Boolean))]
+  const mapelIds = [...new Set(yearDistribusiList.map(item => item.mapel_id).filter(Boolean))]
+  const distribusiIds = [...new Set(yearDistribusiList.map(item => item.id).filter(Boolean))]
+
+  const supportJamTahunAjaran = await checkJamPelajaranSupportsTahunAjaran()
+  let jamQuery = sb
+    .from('jam_pelajaran')
+    .select('id, nama, jam_mulai, jam_selesai, aktif, urutan')
+    .order('urutan', { ascending: true })
+    .order('jam_mulai', { ascending: true })
+  if (supportJamTahunAjaran && activeTahunAjaranId) {
+    jamQuery = jamQuery.eq('tahun_ajaran_id', activeTahunAjaranId)
+  }
+
+  const [kelasRes, mapelRes, jadwalRes, jamRes] = await Promise.all([
+    kelasIds.length ? sb.from('kelas').select('id, nama_kelas, tingkat, tahun_ajaran_id').in('id', kelasIds) : Promise.resolve({ data: [] }),
     getMapelRowsByIds(mapelIds),
-    semesterIds.length ? sb.from('semester').select('id, nama, aktif').in('id', semesterIds) : Promise.resolve({ data: [] }),
     distribusiIds.length ? sb.from('jadwal_pelajaran').select('id, distribusi_id, hari, jam_mulai, jam_selesai').in('distribusi_id', distribusiIds) : Promise.resolve({ data: [] }),
-    sb.from('jam_pelajaran').select('id, nama, jam_mulai, jam_selesai, aktif, urutan').order('urutan', { ascending: true }).order('jam_mulai', { ascending: true })
+    jamQuery
   ])
 
   if (kelasRes.error) console.error(kelasRes.error)
   if (mapelRes.error) console.error(mapelRes.error)
-  if (semesterRes.error) console.error(semesterRes.error)
   if (jadwalRes.error) console.error(jadwalRes.error)
 
   let jamList = []
@@ -529,16 +1430,13 @@ async function getGuruContext(forceReload = false) {
 
   const kelasMap = new Map((kelasRes.data || []).map(item => [String(item.id), item]))
   const mapelMap = new Map((mapelRes.data || []).map(item => [String(item.id), item]))
-  const semesterMap = new Map((semesterRes.data || []).map(item => [String(item.id), item]))
-
-  const activeDistribusiList = activeSemester?.id
-    ? distribusiList.filter(item => String(item.semester_id || '') === String(activeSemester.id))
-    : distribusiList
 
   guruContextCache = {
     guru,
+    activeTahunAjaran,
     activeSemester,
     distribusiList,
+    yearDistribusiList,
     activeDistribusiList,
     kelasMap,
     mapelMap,
@@ -552,10 +1450,26 @@ async function getGuruContext(forceReload = false) {
 
 async function getSantriByKelas(kelasId) {
   if (!kelasId) return []
+  const tahunAktif = await getActiveTahunAjaran()
+  if (tahunAktif?.id) {
+    const { data: kelasRow, error: kelasError } = await sb
+      .from('kelas')
+      .select('id')
+      .eq('id', kelasId)
+      .eq('tahun_ajaran_id', tahunAktif.id)
+      .maybeSingle()
+    if (kelasError) {
+      console.error(kelasError)
+      return []
+    }
+    if (!kelasRow) return []
+  }
+
   const { data, error } = await sb
     .from('santri')
     .select('id, nama, kelas_id')
     .eq('kelas_id', kelasId)
+    .eq('aktif', true)
     .order('nama')
 
   if (error) {
@@ -566,7 +1480,16 @@ async function getSantriByKelas(kelasId) {
 }
 
 function buildAbsensiMissingTableMessage() {
-  return `Tabel '${ATTENDANCE_TABLE}' belum ada di Supabase.\n\nSilakan buat tabel dulu dengan kolom minimal:\n- id (primary key)\n- tanggal (date)\n- kelas_id\n- mapel_id\n- guru_id\n- jam_pelajaran_id (nullable)\n- semester_id (nullable)\n- distribusi_id (nullable)\n- santri_id\n- status (text)`
+  return `Tabel '${ATTENDANCE_TABLE}' belum ada di Supabase.\n\nSilakan buat tabel dulu dengan kolom minimal:\n- id (primary key)\n- tanggal (date)\n- kelas_id\n- mapel_id\n- guru_id\n- jam_pelajaran_id (nullable)\n- semester_id (nullable)\n- distribusi_id (nullable)\n- santri_id\n- status (text)\n- guru_pengganti_id (uuid, nullable)\n- keterangan_pengganti (text, nullable)`
+}
+
+function buildAbsensiPenggantiColumnsMessage() {
+  return `Kolom guru pengganti belum tersedia di tabel '${ATTENDANCE_TABLE}'.\n\nJalankan SQL berikut di Supabase:\n\nalter table public.${ATTENDANCE_TABLE}\n  add column if not exists guru_pengganti_id uuid null,\n  add column if not exists keterangan_pengganti text null;`
+}
+
+function isMissingAbsensiPenggantiColumnError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  return msg.includes('guru_pengganti_id') || msg.includes('keterangan_pengganti')
 }
 
 function isMissingAbsensiTableError(error) {
@@ -589,6 +1512,19 @@ function isMissingInputNilaiTableError(error) {
 
 function buildInputNilaiMissingTableMessage() {
   return `Tabel '${INPUT_NILAI_TABLE}' belum ada di Supabase.\n\nSilakan buat tabel dengan kolom minimal:\n- id (primary key)\n- tanggal (date)\n- kelas_id\n- mapel_id\n- guru_id\n- semester_id (nullable)\n- distribusi_id (nullable)\n- santri_id\n- jenis (text: Tugas/Ulangan Harian/UTS/UAS/Keterampilan)\n- nilai (numeric)`
+}
+
+function isMissingMonthlyReportTableError(error) {
+  const code = String(error?.code || '').toUpperCase()
+  const msg = String(error?.message || '').toLowerCase()
+  if (code === '42P01') return true
+  if (msg.includes(`table 'public.${MONTHLY_REPORT_TABLE}'`.toLowerCase())) return true
+  if (msg.includes('relation') && msg.includes(MONTHLY_REPORT_TABLE.toLowerCase())) return true
+  return false
+}
+
+function buildMonthlyReportMissingTableMessage() {
+  return `Tabel '${MONTHLY_REPORT_TABLE}' belum ada di Supabase.\n\nSilakan buat tabel dengan kolom minimal:\n- id (primary key)\n- periode (text, format: YYYY-MM)\n- guru_id\n- kelas_id\n- santri_id\n- nilai_akhlak (numeric, nullable)\n- predikat (text, nullable)\n- catatan_wali (text, nullable)\n\nDisarankan unique key: (periode, guru_id, kelas_id, santri_id).`
 }
 
 function toJenisNilaiKey(jenis) {
@@ -823,6 +1759,21 @@ async function renderAbsensiPage() {
   const kelasOptions = kelasIds
     .map(id => ({ id, nama: ctx.kelasMap.get(id)?.nama_kelas || '-' }))
     .sort((a, b) => a.nama.localeCompare(b.nama))
+  let penggantiList = []
+  try {
+    const { data, error } = await sb
+      .from('karyawan')
+      .select('id, nama, aktif')
+      .order('nama')
+    if (error) {
+      console.error(error)
+    } else {
+      penggantiList = data || []
+    }
+  } catch (error) {
+    console.error(error)
+    penggantiList = []
+  }
 
   const today = new Date().toISOString().slice(0, 10)
 
@@ -854,6 +1805,24 @@ async function renderAbsensiPage() {
         </div>
       </div>
 
+      <div style="margin-top:10px; display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:10px; align-items:end;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <input id="absensi-pakai-pengganti" type="checkbox" onchange="onAbsensiPenggantiToggle()">
+          <label for="absensi-pakai-pengganti" class="guru-label" style="margin:0;">Gunakan Guru Pengganti</label>
+        </div>
+        <div>
+          <label class="guru-label">Pengganti (Karyawan)</label>
+          <select id="absensi-guru-pengganti" class="guru-field" disabled>
+            <option value="">-- Pilih Pengganti --</option>
+            ${penggantiList.map(item => `<option value="${escapeHtml(String(item.id || ''))}">${escapeHtml(String(item.nama || '-'))}${asBool(item?.aktif) ? '' : ' (Nonaktif)'}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="guru-label">Keterangan Pengganti (Opsional)</label>
+          <input id="absensi-keterangan-pengganti" class="guru-field" type="text" placeholder="Contoh: Guru utama izin" disabled>
+        </div>
+      </div>
+
       <div id="absensi-santri-list" style="margin-top:12px;"></div>
 
       <div style="margin-top:14px;">
@@ -879,14 +1848,35 @@ async function onAbsensiMapelChange() {
   await handleAbsensiKelasMapelChange()
 }
 
+function onAbsensiPenggantiToggle() {
+  const checked = document.getElementById('absensi-pakai-pengganti')?.checked === true
+  const selectEl = document.getElementById('absensi-guru-pengganti')
+  const noteEl = document.getElementById('absensi-keterangan-pengganti')
+  if (selectEl) {
+    selectEl.disabled = !checked
+    if (!checked) selectEl.value = ''
+  }
+  if (noteEl) {
+    noteEl.disabled = !checked
+    if (!checked) noteEl.value = ''
+  }
+}
+
 async function saveGuruAbsensi() {
   const tanggal = String(document.getElementById('absensi-tanggal')?.value || '').trim()
   const kelasId = String(document.getElementById('absensi-kelas')?.value || '').trim()
   const mapelId = String(document.getElementById('absensi-mapel')?.value || '').trim()
   const jamId = String(document.getElementById('absensi-jam')?.value || '').trim()
+  const pakaiPengganti = document.getElementById('absensi-pakai-pengganti')?.checked === true
+  const penggantiId = String(document.getElementById('absensi-guru-pengganti')?.value || '').trim()
+  const keteranganPengganti = String(document.getElementById('absensi-keterangan-pengganti')?.value || '').trim()
 
   if (!tanggal || !kelasId || !mapelId) {
     alert('Tanggal, kelas, dan mapel wajib diisi.')
+    return
+  }
+  if (pakaiPengganti && !penggantiId) {
+    alert('Pilih karyawan pengganti terlebih dahulu.')
     return
   }
 
@@ -917,20 +1907,30 @@ async function saveGuruAbsensi() {
     kelas_id: kelasId,
     mapel_id: mapelId,
     guru_id: String(guruId),
-    jam_pelajaran_id: jamId ? Number(jamId) : null,
+    jam_pelajaran_id: jamId || null,
     semester_id: distribusi?.semester_id ? String(distribusi.semester_id) : (ctx.activeSemester?.id ? String(ctx.activeSemester.id) : null),
     distribusi_id: distribusi?.id ? String(distribusi.id) : null,
     santri_id: String(santri.id),
-    status: statusMap.get(String(santri.id)) || 'Hadir'
+    status: statusMap.get(String(santri.id)) || 'Hadir',
+    guru_pengganti_id: pakaiPengganti ? penggantiId : null,
+    keterangan_pengganti: pakaiPengganti ? (keteranganPengganti || null) : null
   }))
 
-  const { error } = await sb.from(ATTENDANCE_TABLE).insert(payloads)
+  const { error } = await sb
+    .from(ATTENDANCE_TABLE)
+    .upsert(payloads, {
+      onConflict: 'tanggal,kelas_id,mapel_id,santri_id'
+    })
 
   if (error) {
     console.error(error)
     const msg = String(error.message || '')
     if (isMissingAbsensiTableError(error)) {
       alert(buildAbsensiMissingTableMessage())
+      return
+    }
+    if (isMissingAbsensiPenggantiColumnError(error)) {
+      alert(buildAbsensiPenggantiColumnsMessage())
       return
     }
     alert(`Gagal menyimpan absensi: ${msg || 'Unknown error'}`)
@@ -1096,7 +2096,7 @@ async function recalculateNilaiAkademikFromInput(distribusi, santriIdList) {
     const nilai_ulangan_harian = agg.nilai_ulangan_harian?.count ? round2(agg.nilai_ulangan_harian.total / agg.nilai_ulangan_harian.count) : null
     const nilai_pts = agg.nilai_pts?.count ? round2(agg.nilai_pts.total / agg.nilai_pts.count) : null
     const nilai_pas = agg.nilai_pas?.count ? round2(agg.nilai_pas.total / agg.nilai_pas.count) : null
-    const nilai_keterampilan = agg.nilai_keterampilan?.count ? round2(agg.nilai_keterampilan.total / agg.nilai_keterampilan.count) : (existing.nilai_keterampilan ?? null)
+    const nilai_keterampilan = agg.nilai_keterampilan?.count ? round2(agg.nilai_keterampilan.total / agg.nilai_keterampilan.count) : null
     const nilai_kehadiran = calculateNilaiKehadiranFromRows(absensiBySantri.get(sidText) || [])
     const nilai_akhir = round2(
       Number(nilai_tugas || 0) +
@@ -1439,6 +2439,962 @@ async function saveGuruProfil(guruId) {
   await renderGuruProfil()
 }
 
+async function renderLaporanBulananPage(forceReload = false) {
+  const content = document.getElementById('guru-content')
+  if (!content) return
+
+  content.innerHTML = 'Loading laporan bulanan...'
+
+  let ctx
+  try {
+    ctx = await getGuruContext(forceReload)
+  } catch (error) {
+    console.error(error)
+    content.innerHTML = `<div class="placeholder-card">Gagal load laporan bulanan: ${escapeHtml(error.message || 'Unknown error')}</div>`
+    return
+  }
+
+  const guru = ctx.guru
+  if (!guru?.id) {
+    content.innerHTML = '<div class="placeholder-card">Data guru tidak ditemukan.</div>'
+    return
+  }
+
+  const tahunAktif = await getActiveTahunAjaran()
+  const tahunAjaranId = tahunAktif?.id || null
+
+  let kelasQuery = sb
+    .from('kelas')
+    .select('id, nama_kelas, wali_kelas_id, tahun_ajaran_id')
+    .eq('wali_kelas_id', guru.id)
+    .order('nama_kelas')
+
+  if (tahunAjaranId) kelasQuery = kelasQuery.eq('tahun_ajaran_id', tahunAjaranId)
+  const kelasRes = await kelasQuery
+
+  if (kelasRes.error) {
+    console.error(kelasRes.error)
+    content.innerHTML = `<div class="placeholder-card">Gagal load data kelas wali: ${escapeHtml(kelasRes.error.message || 'Unknown error')}</div>`
+    return
+  }
+
+  const kelasList = kelasRes.data || []
+  if (!kelasList.length) {
+    content.innerHTML = '<div class="placeholder-card">Anda belum terdaftar sebagai wali kelas.</div>'
+    return
+  }
+
+  const kelasMap = new Map(kelasList.map(item => [String(item.id), item]))
+  const kelasIds = [...kelasMap.keys()]
+
+  const { data: santriData, error: santriError } = await sb
+    .from('santri')
+    .select('*')
+    .in('kelas_id', kelasIds)
+    .eq('aktif', true)
+    .order('nama')
+
+  if (santriError) {
+    console.error(santriError)
+    content.innerHTML = `<div class="placeholder-card">Gagal load data santri: ${escapeHtml(santriError.message || 'Unknown error')}</div>`
+    return
+  }
+
+  const santriList = (santriData || []).sort((a, b) => {
+    const kelasA = kelasMap.get(String(a.kelas_id || ''))?.nama_kelas || ''
+    const kelasB = kelasMap.get(String(b.kelas_id || ''))?.nama_kelas || ''
+    const kelasCmp = kelasA.localeCompare(kelasB)
+    if (kelasCmp !== 0) return kelasCmp
+    return String(a.nama || '').localeCompare(String(b.nama || ''))
+  })
+
+  const periode = laporanBulananState.periode || getMonthInputToday()
+  laporanBulananState = {
+    periode,
+    guru,
+    kelasList,
+    kelasMap,
+    santriList,
+    selectedSantriId: ''
+  }
+
+  if (!santriList.length) {
+    content.innerHTML = `
+      <div style="display:flex; gap:10px; align-items:end; margin-bottom:12px;">
+        <div>
+          <label class="guru-label">Periode</label>
+          <input id="laporan-bulanan-periode" class="guru-field" type="month" value="${escapeHtml(periode)}" onchange="onLaporanBulananPeriodChange(this.value)">
+        </div>
+      </div>
+      <div class="placeholder-card">Belum ada santri aktif pada kelas yang Anda naungi.</div>
+    `
+    return
+  }
+
+  laporanBulananState.guru = guru
+  laporanBulananState.kelasList = kelasList
+  laporanBulananState.kelasMap = kelasMap
+  laporanBulananState.santriList = santriList
+  laporanBulananState.periode = periode
+
+  const santriIds = santriList.map(item => String(item.id))
+  const monthlyReportMap = new Map()
+  const reportRes = await sb
+    .from(MONTHLY_REPORT_TABLE)
+    .select('santri_id, nilai_akhlak, predikat, catatan_wali')
+    .eq('periode', periode)
+    .eq('guru_id', String(guru.id))
+    .in('santri_id', santriIds)
+
+  if (reportRes.error) {
+    if (!isMissingMonthlyReportTableError(reportRes.error)) {
+      console.error(reportRes.error)
+    }
+  } else {
+    ;(reportRes.data || []).forEach(row => {
+      monthlyReportMap.set(String(row.santri_id), row)
+    })
+  }
+
+  const rowsHtml = santriList.map((item, index) => {
+    const kelasNama = kelasMap.get(String(item.kelas_id || ''))?.nama_kelas || '-'
+    const reportRow = monthlyReportMap.get(String(item.id))
+    const missing = []
+    if (!reportRow || reportRow.nilai_akhlak === null || reportRow.nilai_akhlak === undefined) missing.push('Nilai akhlak')
+    if (!reportRow || String(reportRow.predikat || '').trim() === '') missing.push('Predikat')
+    if (!reportRow || String(reportRow.catatan_wali || '').trim() === '') missing.push('Catatan wali kelas')
+    const isLengkap = missing.length === 0
+    const keterangan = isLengkap ? 'Lengkap' : `Belum lengkap: ${missing.join(', ')}`
+    const keteranganStyle = isLengkap ? 'color:#166534; font-weight:600;' : 'color:#991b1b;'
+    return `
+      <tr>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${index + 1}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.nama || '-')}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(kelasNama)}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0; ${keteranganStyle}">${escapeHtml(keterangan)}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">
+          <div style="display:flex; gap:6px; justify-content:center; flex-wrap:nowrap; white-space:nowrap;">
+            <button type="button" class="modal-btn modal-btn-primary" style="padding:6px 10px; font-size:12px;" onclick="openLaporanBulananDetail('${escapeHtml(String(item.id))}')">Detail</button>
+            <button type="button" class="modal-btn" style="padding:6px 10px; font-size:12px;" onclick="quickPrintLaporanBulanan('${escapeHtml(String(item.id))}')">Cetak</button>
+            <button type="button" class="modal-btn" style="padding:6px 10px; font-size:12px;" onclick="quickSendLaporanBulananWA('${escapeHtml(String(item.id))}')">Kirim</button>
+          </div>
+        </td>
+      </tr>
+    `
+  }).join('')
+
+  content.innerHTML = `
+    <div style="display:flex; align-items:end; justify-content:space-between; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
+      <div>
+        <label class="guru-label">Periode</label>
+        <input id="laporan-bulanan-periode" class="guru-field" type="month" value="${escapeHtml(periode)}" onchange="onLaporanBulananPeriodChange(this.value)">
+      </div>
+      <div style="font-size:13px; color:#475569;">Klik detail untuk melihat laporan bulanan per santri.</div>
+    </div>
+
+    <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px;">
+      <table style="width:100%; min-width:980px; border-collapse:collapse; font-size:13px;">
+        <thead>
+          <tr style="background:#f8fafc;">
+            <th style="padding:8px; border:1px solid #e2e8f0; width:44px;">No</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Nama</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Kelas</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Keterangan</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; width:260px;">Aksi</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
+    </div>
+  `
+}
+
+async function renderLaporanAbsensiPage(forceReload = false) {
+  const content = document.getElementById('guru-content')
+  if (!content) return
+
+  content.innerHTML = 'Loading rekap absensi...'
+
+  let ctx
+  try {
+    ctx = await getGuruContext(forceReload)
+  } catch (error) {
+    console.error(error)
+    content.innerHTML = `<div class="placeholder-card">Gagal load rekap absensi: ${escapeHtml(error.message || 'Unknown error')}</div>`
+    return
+  }
+
+  const guru = ctx.guru
+  if (!guru?.id) {
+    content.innerHTML = '<div class="placeholder-card">Data guru tidak ditemukan.</div>'
+    return
+  }
+
+  const { data: tahunAktif } = await sb
+    .from('tahun_ajaran')
+    .select('id')
+    .eq('aktif', true)
+    .order('id', { ascending: false })
+    .limit(1)
+  const tahunAjaranId = tahunAktif?.[0]?.id || null
+
+  let kelasQuery = sb
+    .from('kelas')
+    .select('id, nama_kelas, wali_kelas_id, tahun_ajaran_id')
+    .eq('wali_kelas_id', guru.id)
+    .order('nama_kelas')
+
+  if (tahunAjaranId) kelasQuery = kelasQuery.eq('tahun_ajaran_id', tahunAjaranId)
+  let kelasRes = await kelasQuery
+
+  if ((!kelasRes.data || kelasRes.data.length === 0) && tahunAjaranId) {
+    kelasRes = await sb
+      .from('kelas')
+      .select('id, nama_kelas, wali_kelas_id, tahun_ajaran_id')
+      .eq('wali_kelas_id', guru.id)
+      .order('nama_kelas')
+  }
+
+  if (kelasRes.error) {
+    console.error(kelasRes.error)
+    content.innerHTML = `<div class="placeholder-card">Gagal load data kelas wali: ${escapeHtml(kelasRes.error.message || 'Unknown error')}</div>`
+    return
+  }
+
+  const kelasList = kelasRes.data || []
+  if (!kelasList.length) {
+    content.innerHTML = '<div class="placeholder-card">Anda belum terdaftar sebagai wali kelas.</div>'
+    return
+  }
+
+  const kelasMap = new Map(kelasList.map(item => [String(item.id), item]))
+  const kelasIds = [...kelasMap.keys()]
+
+  const { data: santriData, error: santriError } = await sb
+    .from('santri')
+    .select('id, nama, kelas_id, aktif')
+    .in('kelas_id', kelasIds)
+    .eq('aktif', true)
+    .order('nama')
+
+  if (santriError) {
+    console.error(santriError)
+    content.innerHTML = `<div class="placeholder-card">Gagal load data santri: ${escapeHtml(santriError.message || 'Unknown error')}</div>`
+    return
+  }
+
+  const santriList = (santriData || []).sort((a, b) => {
+    const kelasA = kelasMap.get(String(a.kelas_id || ''))?.nama_kelas || ''
+    const kelasB = kelasMap.get(String(b.kelas_id || ''))?.nama_kelas || ''
+    const kelasCmp = kelasA.localeCompare(kelasB)
+    if (kelasCmp !== 0) return kelasCmp
+    return String(a.nama || '').localeCompare(String(b.nama || ''))
+  })
+
+  const periode = laporanBulananState.periode || getMonthInputToday()
+  const periodeRange = getPeriodeRange(periode)
+  if (!periodeRange) {
+    content.innerHTML = '<div class="placeholder-card">Periode tidak valid.</div>'
+    return
+  }
+
+  if (!santriList.length) {
+    content.innerHTML = `
+      <div style="display:flex; gap:10px; align-items:end; margin-bottom:12px;">
+        <div>
+          <label class="guru-label">Periode</label>
+          <input id="laporan-bulanan-periode" class="guru-field" type="month" value="${escapeHtml(periode)}" onchange="onLaporanBulananPeriodChange(this.value)">
+        </div>
+      </div>
+      <div class="placeholder-card">Belum ada santri aktif pada kelas yang Anda naungi.</div>
+    `
+    return
+  }
+
+  laporanBulananState.guru = guru
+  laporanBulananState.kelasList = kelasList
+  laporanBulananState.kelasMap = kelasMap
+  laporanBulananState.santriList = santriList
+  laporanBulananState.periode = periode
+
+  const santriIds = santriList.map(item => String(item.id))
+  const { data: absensiRows, error: absensiError } = await sb
+    .from(ATTENDANCE_TABLE)
+    .select('santri_id, tanggal, status, kelas_id')
+    .in('santri_id', santriIds)
+    .in('kelas_id', kelasIds)
+    .gte('tanggal', periodeRange.start)
+    .lte('tanggal', periodeRange.end)
+
+  if (absensiError && !isMissingAbsensiTableError(absensiError)) {
+    console.error(absensiError)
+    content.innerHTML = `<div class="placeholder-card">Gagal load absensi: ${escapeHtml(absensiError.message || 'Unknown error')}</div>`
+    return
+  }
+
+  const bySantri = new Map()
+  ;(absensiRows || []).forEach(row => {
+    const sid = String(row.santri_id || '')
+    if (!sid) return
+    if (!bySantri.has(sid)) bySantri.set(sid, [])
+    bySantri.get(sid).push(row)
+  })
+
+  laporanBulananState.absensiRows = absensiRows || []
+
+  const rowsHtml = santriList.map((santri, index) => {
+    const sid = String(santri.id || '')
+    const kelasNama = kelasMap.get(String(santri.kelas_id || ''))?.nama_kelas || '-'
+    const daily = aggregateAttendanceByDay(bySantri.get(sid) || [])
+    const totalHari = daily.length
+    const hadir = daily.filter(item => item.status === 'Hadir').length
+    const sakit = daily.filter(item => item.status === 'Sakit').length
+    const izin = daily.filter(item => item.status === 'Izin').length
+    const alpa = daily.filter(item => item.status === 'Alpa').length
+    const persen = totalHari > 0 ? round2((hadir / totalHari) * 100) : 0
+
+    return `
+      <tr>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${index + 1}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">
+          <button type="button" style="border:none; background:transparent; padding:0; margin:0; font-size:13px; color:#0f172a; cursor:pointer; text-align:left;" onclick="openLaporanAbsensiSantriDetail('${escapeHtml(sid)}')">${escapeHtml(santri.nama || '-')}</button>
+        </td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(kelasNama)}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${hadir}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${sakit}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${izin}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${alpa}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${persen}%</td>
+      </tr>
+    `
+  }).join('')
+
+  content.innerHTML = `
+    <div style="display:flex; align-items:end; justify-content:space-between; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
+      <div>
+        <label class="guru-label">Periode</label>
+        <input id="laporan-bulanan-periode" class="guru-field" type="month" value="${escapeHtml(periode)}" onchange="onLaporanBulananPeriodChange(this.value)">
+      </div>
+      <div style="font-size:13px; color:#475569;">Rekap dihitung per hari dari semua mapel.</div>
+    </div>
+
+    <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px;">
+      <table style="width:100%; min-width:920px; border-collapse:collapse; font-size:13px;">
+        <thead>
+          <tr style="background:#f8fafc;">
+            <th style="padding:8px; border:1px solid #e2e8f0; width:44px;">No</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Nama</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Kelas</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Hadir</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Sakit</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Izin</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Alpa</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">% Kehadiran</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
+    </div>
+  `
+}
+
+async function openLaporanAbsensiSantriDetail(santriId) {
+  const sid = String(santriId || '').trim()
+  if (!sid) return
+  const content = document.getElementById('guru-content')
+  if (!content) return
+
+  const santri = (laporanBulananState.santriList || []).find(item => String(item.id) === sid)
+  if (!santri) {
+    alert('Data santri tidak ditemukan.')
+    return
+  }
+
+  const kelas = laporanBulananState.kelasMap.get(String(santri.kelas_id || ''))
+  const periode = laporanBulananState.periode || getMonthInputToday()
+  const periodeRange = getPeriodeRange(periode)
+  if (!periodeRange) {
+    alert('Periode tidak valid.')
+    return
+  }
+
+  content.innerHTML = 'Loading detail absensi...'
+
+  const { data: rows, error } = await sb
+    .from(ATTENDANCE_TABLE)
+    .select('id, tanggal, status, mapel_id, kelas_id')
+    .eq('santri_id', sid)
+    .eq('kelas_id', String(santri.kelas_id))
+    .gte('tanggal', periodeRange.start)
+    .lte('tanggal', periodeRange.end)
+    .order('tanggal', { ascending: true })
+
+  if (error) {
+    console.error(error)
+    if (isMissingAbsensiTableError(error)) {
+      content.innerHTML = `<div class="placeholder-card">${escapeHtml(buildAbsensiMissingTableMessage())}</div>`
+      return
+    }
+    content.innerHTML = `<div class="placeholder-card">Gagal load detail absensi: ${escapeHtml(error.message || 'Unknown error')}</div>`
+    return
+  }
+
+  const mapelIds = [...new Set((rows || []).map(item => item.mapel_id).filter(Boolean).map(String))]
+  let mapelMap = new Map()
+  if (mapelIds.length) {
+    const mapelRes = await getMapelRowsByIds(mapelIds)
+    if (!mapelRes.error) {
+      mapelMap = new Map((mapelRes.data || []).map(item => [String(item.id), item]))
+    }
+  }
+
+  const rowHtml = (rows || []).map((item, index) => {
+    const mapel = mapelMap.get(String(item.mapel_id || ''))
+    const mapelLabel = getMapelLabel(mapel)
+    return `
+      <tr>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${index + 1}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(String(item.tanggal || '').slice(0, 10))}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(mapelLabel)}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.status || '-')}</td>
+      </tr>
+    `
+  }).join('')
+
+  content.innerHTML = `
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+      <button type="button" class="mapel-back-btn" onclick="renderLaporanAbsensiPage()">&lt;</button>
+      <div style="font-weight:700; color:#0f172a;">Detail Absensi: ${escapeHtml(santri.nama || '-')} (${escapeHtml(kelas?.nama_kelas || '-')}) - ${escapeHtml(getPeriodeLabel(periode))}</div>
+    </div>
+
+    <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px;">
+      <table style="width:100%; min-width:620px; border-collapse:collapse; font-size:13px;">
+        <thead>
+          <tr style="background:#f8fafc;">
+            <th style="padding:8px; border:1px solid #e2e8f0; width:44px;">No</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Tanggal</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Mapel</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Status Kehadiran</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowHtml || '<tr><td colspan="4" style="padding:10px; border:1px solid #e2e8f0; text-align:center;">Belum ada data absensi pada periode ini.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `
+}
+
+function onLaporanBulananPeriodChange(value) {
+  const periode = String(value || '').trim()
+  laporanBulananState.periode = /^\d{4}-\d{2}$/.test(periode) ? periode : getMonthInputToday()
+  const currentPage = localStorage.getItem(GURU_LAST_PAGE_KEY) || ''
+  if (currentPage === 'laporan-absensi') {
+    renderLaporanAbsensiPage()
+    return
+  }
+  renderLaporanBulananPage()
+}
+
+async function openLaporanBulananDetail(santriId) {
+  const sid = String(santriId || '').trim()
+  const content = document.getElementById('guru-content')
+  if (!sid || !content) return
+
+  const detailData = await getLaporanBulananDetailData(sid, { showError: true })
+  if (!detailData) return
+
+  const {
+    santri,
+    guru,
+    kelas,
+    periode,
+    monthlyReportMissingTable,
+    nilaiAkhlak,
+    predikat,
+    catatanWali,
+    hpGuru,
+    sakitCount,
+    izinCount,
+    nilaiKehadiranPersen,
+    currentDetail
+  } = detailData
+
+  laporanBulananState.selectedSantriId = sid
+  laporanBulananState.currentDetail = currentDetail
+
+  content.innerHTML = `
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+      <button type="button" class="mapel-back-btn" onclick="backToLaporanBulananList()">&lt;</button>
+      <div style="font-weight:700; color:#0f172a;">Detail Laporan Bulanan Santri</div>
+    </div>
+
+    ${monthlyReportMissingTable ? `<div class="placeholder-card" style="margin-bottom:12px;">${escapeHtml(buildMonthlyReportMissingTableMessage())}</div>` : ''}
+
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:10px; margin-bottom:12px;">
+      <div class="placeholder-card"><strong>Periode</strong><br>${escapeHtml(getPeriodeLabel(periode))}</div>
+      <div class="placeholder-card"><strong>Nama</strong><br>${escapeHtml(santri.nama || '-')}</div>
+      <div class="placeholder-card"><strong>Kelas</strong><br>${escapeHtml(kelas?.nama_kelas || '-')}</div>
+      <div class="placeholder-card"><strong>Wali Kelas</strong><br>${escapeHtml(guru?.nama || '-')}</div>
+      <div class="placeholder-card"><strong>Nomor HP</strong><br>${escapeHtml(hpGuru)}</div>
+    </div>
+
+    <div class="placeholder-card" style="margin-bottom:12px;">
+      <div style="font-weight:700; margin-bottom:8px;">Kehadiran di Kelas</div>
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:8px;">
+        <div><strong>Nilai Kehadiran:</strong> ${escapeHtml(String(nilaiKehadiranPersen))}%</div>
+        <div><strong>Keterangan Kehadiran:</strong> Sakit ${sakitCount} kali, Izin ${izinCount} kali</div>
+      </div>
+    </div>
+
+    <div class="placeholder-card" style="margin-bottom:12px;">
+      <div style="font-weight:700; margin-bottom:8px;">Akhlak di Kelas</div>
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:10px; align-items:end;">
+        <div>
+          <label class="guru-label">Nilai Akhlak (0-100)</label>
+          <input id="laporan-bulanan-nilai-akhlak" class="guru-field" type="number" min="0" max="100" step="1" value="${escapeHtml(nilaiAkhlak)}" oninput="onLaporanBulananNilaiAkhlakChange(this.value)">
+        </div>
+        <div>
+          <label class="guru-label">Predikat</label>
+          <input id="laporan-bulanan-predikat" class="guru-field" type="text" value="${escapeHtml(predikat)}" readonly style="background:#f8fafc; color:#475569;">
+        </div>
+      </div>
+    </div>
+
+    <div class="placeholder-card">
+      <div style="font-weight:700; margin-bottom:8px;">Catatan Wali Kelas</div>
+      <textarea id="laporan-bulanan-catatan-wali" class="guru-field" rows="5" placeholder="Tulis catatan perkembangan santri...">${escapeHtml(catatanWali)}</textarea>
+      <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
+        <button type="button" class="modal-btn" onclick="printLaporanBulanan()">Cetak PDF</button>
+        <button type="button" class="modal-btn" onclick="quickSendLaporanBulananWA('${escapeHtml(String(santri.id))}')">Kirim WA</button>
+        <button type="button" class="modal-btn modal-btn-primary" onclick="saveLaporanBulananDetail()">Simpan Laporan Bulanan</button>
+      </div>
+    </div>
+  `
+}
+
+async function getLaporanBulananDetailData(santriId, opts = {}) {
+  const showError = opts.showError !== false
+  const sid = String(santriId || '').trim()
+  const santri = (laporanBulananState.santriList || []).find(item => String(item.id) === sid)
+  if (!santri) {
+    if (showError) alert('Data santri tidak ditemukan.')
+    return null
+  }
+
+  const guru = laporanBulananState.guru
+  const kelas = laporanBulananState.kelasMap.get(String(santri.kelas_id || ''))
+  const periode = laporanBulananState.periode || getMonthInputToday()
+  const periodeRange = getPeriodeRange(periode)
+  if (!periodeRange) {
+    if (showError) alert('Periode tidak valid.')
+    return null
+  }
+
+  const { data: absensiRows, error: absensiError } = await sb
+    .from(ATTENDANCE_TABLE)
+    .select('status, tanggal')
+    .eq('santri_id', sid)
+    .eq('kelas_id', String(santri.kelas_id))
+    .gte('tanggal', periodeRange.start)
+    .lte('tanggal', periodeRange.end)
+
+  if (absensiError && !isMissingAbsensiTableError(absensiError)) {
+    console.error(absensiError)
+  }
+
+  const attendanceRows = absensiError ? [] : (absensiRows || [])
+  const dailyAttendanceList = aggregateAttendanceByDay(attendanceRows)
+  const totalHari = dailyAttendanceList.length
+  const hadirCount = dailyAttendanceList.filter(item => item.status === 'Hadir').length
+  const sakitCount = dailyAttendanceList.filter(item => item.status === 'Sakit').length
+  const izinCount = dailyAttendanceList.filter(item => item.status === 'Izin').length
+  const nilaiKehadiranPersen = totalHari > 0 ? round2((hadirCount / totalHari) * 100) : 0
+  const predikatKehadiran = getKehadiranPredikat(nilaiKehadiranPersen)
+
+  let monthlyReport = null
+  let monthlyReportMissingTable = false
+  const reportRes = await sb
+    .from(MONTHLY_REPORT_TABLE)
+    .select('id, nilai_akhlak, predikat, catatan_wali')
+    .eq('periode', periode)
+    .eq('guru_id', String(guru.id))
+    .eq('kelas_id', String(santri.kelas_id))
+    .eq('santri_id', sid)
+    .maybeSingle()
+
+  if (reportRes.error) {
+    if (isMissingMonthlyReportTableError(reportRes.error)) {
+      monthlyReportMissingTable = true
+    } else {
+      console.error(reportRes.error)
+      if (showError) alert(`Gagal load data laporan bulanan: ${reportRes.error.message || 'Unknown error'}`)
+      return null
+    }
+  } else {
+    monthlyReport = reportRes.data || null
+  }
+
+  const nilaiAkhlak = monthlyReport?.nilai_akhlak === null || monthlyReport?.nilai_akhlak === undefined
+    ? ''
+    : String(monthlyReport.nilai_akhlak)
+  const predikat = monthlyReport?.predikat || getAkhlakPredikat(nilaiAkhlak)
+  const catatanWali = monthlyReport?.catatan_wali || ''
+  const hpGuru = pickLabelByKeys(guru, ['no_hp', 'hp', 'no_telp', 'nomor_hp', 'telepon']) || '-'
+
+  const noHpAyahRaw = pickLabelByKeys(santri, ['no_hp_ayah', 'hp_ayah']) || ''
+  const noHpIbuRaw = pickLabelByKeys(santri, ['no_hp_ibu', 'hp_ibu']) || ''
+
+  const noHpOrtuRaw = pickLabelByKeys(
+    santri,
+    [
+      'no_hp_ayah',
+      'hp_ayah',
+      'no_hp_ibu',
+      'hp_ibu',
+      'no_hp_orang_tua',
+      'hp_orang_tua',
+      'no_hp_wali',
+      'hp_wali',
+      // fallback lama jika data ortu belum ada
+      'no_hp',
+      'hp',
+      'no_telp',
+      'nomor_hp',
+      'telepon'
+    ]
+  ) || ''
+
+  const currentDetail = {
+    periodeLabel: getPeriodeLabel(periode),
+    nama: santri.nama || '-',
+    kelas: kelas?.nama_kelas || '-',
+    waliKelas: guru?.nama || '-',
+    nomorHp: hpGuru,
+    nilaiKehadiranPersen,
+    predikatKehadiran,
+    sakitCount,
+    izinCount,
+    nilaiAkhlakRaw: nilaiAkhlak === '' ? null : Number(nilaiAkhlak),
+    nilaiAkhlak: nilaiAkhlak === '' ? '-' : nilaiAkhlak,
+    predikatAkhlak: predikat || '-',
+    catatanWali: catatanWali || '-'
+  }
+
+  return {
+    santri,
+    guru,
+    kelas,
+    periode,
+    periodeRange,
+    monthlyReportMissingTable,
+    nilaiAkhlak,
+    predikat,
+    catatanWali,
+    hpGuru,
+    noHpAyahRaw,
+    noHpIbuRaw,
+    noHpOrtuRaw,
+    dailyAttendanceList,
+    sakitCount,
+    izinCount,
+    nilaiKehadiranPersen,
+    currentDetail
+  }
+}
+
+async function quickPrintLaporanBulanan(santriId) {
+  const sid = String(santriId || '').trim()
+  const detailData = await getLaporanBulananDetailData(sid, { showError: true })
+  if (!detailData) return
+  laporanBulananState.currentDetail = detailData.currentDetail
+  printLaporanBulanan()
+}
+
+async function quickSendLaporanBulananWA(santriId) {
+  const sid = String(santriId || '').trim()
+  const detailData = await getLaporanBulananDetailData(sid, { showError: true })
+  if (!detailData) return
+
+  const defaultPhone = String(detailData.noHpOrtuRaw || '').trim()
+  const parentChoices = []
+  if (String(detailData.noHpAyahRaw || '').trim()) {
+    parentChoices.push({ label: 'Ayah', number: String(detailData.noHpAyahRaw || '').trim() })
+  }
+  if (String(detailData.noHpIbuRaw || '').trim()) {
+    parentChoices.push({ label: 'Ibu', number: String(detailData.noHpIbuRaw || '').trim() })
+  }
+  const chosenPhoneRaw = await askWaTargetNumber(defaultPhone, parentChoices)
+  if (chosenPhoneRaw === null) return
+
+  const phone = normalizeWhatsappNumber(chosenPhoneRaw)
+  if (!phone) {
+    alert('Nomor WhatsApp tujuan belum valid. Isi nomor yang benar lalu coba lagi.')
+    return
+  }
+
+  const detail = detailData.currentDetail
+  laporanBulananState.currentDetail = detail
+  const doc = createLaporanBulananPdfDoc(detail)
+  const pdfBlob = doc.output('blob')
+
+  const periodeSlug = sanitizeFileNamePart(detail.periodeLabel || '').replace(/\s+/g, '-')
+  const namaSlug = sanitizeFileNamePart(detail.nama || '').replace(/\s+/g, '-')
+  const fileName = `Laporan Evaluasi Bulan ${sanitizeFileNamePart(detail.periodeLabel)} - ${sanitizeFileNamePart(detail.nama)}.pdf`
+  const storagePath = `${String(detailData.guru.id)}/${periodeSlug || 'periode'}/${namaSlug || sid}-${Date.now()}.pdf`
+
+  const uploadRes = await sb
+    .storage
+    .from(MONTHLY_REPORT_STORAGE_BUCKET)
+    .upload(storagePath, pdfBlob, {
+      cacheControl: '3600',
+      contentType: 'application/pdf',
+      upsert: true
+    })
+
+  if (uploadRes.error) {
+    const msg = String(uploadRes.error.message || '').toLowerCase()
+    if (msg.includes('bucket') || msg.includes('not found')) {
+      alert(buildMonthlyReportStorageMissingMessage())
+      return
+    }
+    alert(`Gagal upload PDF laporan: ${uploadRes.error.message || 'Unknown error'}`)
+    return
+  }
+
+  const { data: publicUrlData } = sb
+    .storage
+    .from(MONTHLY_REPORT_STORAGE_BUCKET)
+    .getPublicUrl(storagePath)
+
+  const publicUrl = publicUrlData?.publicUrl || ''
+  if (!publicUrl) {
+    alert('Gagal mendapatkan link laporan PDF.')
+    return
+  }
+
+  const message = [
+    `Assalamu'alaikum warahmatullahi wabarakatuh`,
+    ``,
+    `Bapak/Ibu hafizakumullahu ta'ala`,
+    ``,
+    `Alhamdulillah kembali menyampaikan Laporan Evaluasi Perkembangan Santri bulan ${detail.periodeLabel} ananda ${detail.nama}.`,
+    ``,
+    `Mohon dibaca dengan seksama dan jika ada hal yang kurang jelas maka Ibu/Bapak bisa menanyakan secara langsung dengan menghubungi nomor penanggung jawab yang tertera.`,
+    ``,
+    `Laporan ini bisa menjadi catatan muhasabah untuk Ibu/Bapak atas perkembangan ananda selama sebulan di pondok.`,
+    ``,
+    `Semoga Allah SWT mengistiqamahkan ananda dalam kebaikan dan menjadikannya pribadi yang lebih baik ke depannya. Dan kita berdoa semoga seluruh usaha kita dalam mendidik bisa menjadi manfaat dan amal jariyah di dunia dan akhirat kelak.`,
+    ``,
+    `Syukron wajazakumullahu khairan`,
+    ``,
+    `Link laporan:`,
+    `${publicUrl}`
+  ].join('\n')
+
+  const waUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
+  window.open(waUrl, '_blank')
+}
+
+function backToLaporanBulananList() {
+  laporanBulananState.selectedSantriId = ''
+  renderLaporanBulananPage()
+}
+
+function onLaporanBulananNilaiAkhlakChange(value) {
+  const predikatEl = document.getElementById('laporan-bulanan-predikat')
+  if (!predikatEl) return
+  predikatEl.value = getAkhlakPredikat(value)
+}
+
+async function saveLaporanBulananDetail() {
+  const sid = String(laporanBulananState.selectedSantriId || '').trim()
+  const santri = (laporanBulananState.santriList || []).find(item => String(item.id) === sid)
+  const guru = laporanBulananState.guru
+  const periode = laporanBulananState.periode || getMonthInputToday()
+  if (!sid || !santri || !guru?.id) {
+    alert('Data laporan belum siap.')
+    return
+  }
+
+  const nilaiAkhlakInput = document.getElementById('laporan-bulanan-nilai-akhlak')
+  const predikatInput = document.getElementById('laporan-bulanan-predikat')
+  const catatanInput = document.getElementById('laporan-bulanan-catatan-wali')
+
+  const nilaiAkhlakRaw = String(nilaiAkhlakInput?.value || '').trim()
+  const nilaiAkhlak = nilaiAkhlakRaw === '' ? null : Number(nilaiAkhlakRaw)
+  if (nilaiAkhlak !== null) {
+    if (!Number.isFinite(nilaiAkhlak)) {
+      alert('Nilai akhlak harus berupa angka valid.')
+      return
+    }
+    if (nilaiAkhlak < 0 || nilaiAkhlak > 100) {
+      alert('Nilai akhlak harus dalam rentang 0 sampai 100.')
+      return
+    }
+  }
+
+  const predikat = String(predikatInput?.value || '').trim()
+  const catatanWali = String(catatanInput?.value || '').trim()
+
+  const payload = {
+    periode,
+    guru_id: String(guru.id),
+    kelas_id: String(santri.kelas_id),
+    santri_id: sid,
+    nilai_akhlak: nilaiAkhlak === null ? null : round2(nilaiAkhlak),
+    predikat: predikat || null,
+    catatan_wali: catatanWali || null
+  }
+
+  const { error } = await sb
+    .from(MONTHLY_REPORT_TABLE)
+    .upsert(payload, { onConflict: 'periode,guru_id,kelas_id,santri_id' })
+
+  if (error) {
+    console.error(error)
+    if (isMissingMonthlyReportTableError(error)) {
+      alert(buildMonthlyReportMissingTableMessage())
+      return
+    }
+    alert(`Gagal simpan laporan bulanan: ${error.message || 'Unknown error'}`)
+    return
+  }
+
+  alert('Laporan bulanan berhasil disimpan.')
+  await openLaporanBulananDetail(sid)
+}
+
+function printLaporanBulanan() {
+  const detail = laporanBulananState.currentDetail
+  if (!detail) {
+    alert('Detail laporan belum siap dicetak.')
+    return
+  }
+
+  const doc = createLaporanBulananPdfDoc(detail)
+  if (!doc) return
+
+  const cleanPeriode = sanitizeFileNamePart(detail.periodeLabel || '') || 'Periode'
+  const cleanNama = sanitizeFileNamePart(detail.nama || '') || 'Santri'
+  const fileName = `Laporan Evaluasi Bulan ${cleanPeriode} - ${cleanNama}.pdf`
+  doc.save(fileName)
+}
+
+function createLaporanBulananPdfDoc(detail) {
+  if (!detail) return null
+
+  const akhlakInfo = getAkhlakGradeInfo(detail.nilaiAkhlakRaw)
+  let akhlakKeterangan = detail.predikatAkhlak && detail.predikatAkhlak !== '-'
+    ? detail.predikatAkhlak
+    : akhlakInfo.desc
+  akhlakKeterangan = String(akhlakKeterangan || '')
+    .replace(/^[A-E]\s*/i, '')
+    .replace(/[()]/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim() || '-'
+
+  const jsPdfApi = window.jspdf
+  if (!jsPdfApi || typeof jsPdfApi.jsPDF !== 'function') {
+    alert('Library PDF belum termuat. Refresh halaman lalu coba lagi.')
+    return
+  }
+
+  const { jsPDF } = jsPdfApi
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+
+  const margin = 25
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const usableWidth = pageWidth - (margin * 2)
+  let y = margin
+
+  doc.setFont('times', 'bold')
+  doc.setFontSize(12)
+  doc.text('LAPORAN EVALUASI SANTRI', pageWidth / 2, y, { align: 'center' })
+  y += 6
+  doc.text(`Periode ${detail.periodeLabel}`, pageWidth / 2, y, { align: 'center' })
+
+  y += 12
+  doc.text(`Nama: ${detail.nama}`, margin, y)
+  y += 7
+  doc.text(`Kelas: ${detail.kelas}`, margin, y)
+
+  y += 12
+  doc.text('A. Laporan Akademik', margin, y)
+
+  y += 6
+  doc.setFont('times', 'normal')
+  doc.text(`Wali Kelas: ${detail.waliKelas}`, margin + 8, y)
+  y += 7
+  doc.text(`Nomor HP: ${detail.nomorHp}`, margin + 8, y)
+
+  y += 5
+  const tableBody = [
+    [
+      'Kehadiran di kelas',
+      `${detail.nilaiKehadiranPersen}%`,
+      `Sakit ${detail.sakitCount || 0} kali\nIzin ${detail.izinCount || 0} kali`
+    ],
+    [
+      'Akhlak di kelas',
+      `${akhlakInfo.grade}`,
+      akhlakKeterangan
+    ],
+    [
+      {
+        content: `Catatan wali kelas:\n${detail.catatanWali || '-'}`,
+        colSpan: 3,
+        styles: { halign: 'left' }
+      }
+    ]
+  ]
+
+  if (typeof doc.autoTable === 'function') {
+    doc.autoTable({
+      startY: y,
+      margin: { left: margin + 8, right: margin },
+      head: [['Aspek Penilaian', 'Nilai', 'Keterangan']],
+      body: tableBody,
+      theme: 'grid',
+      styles: {
+        font: 'times',
+        fontSize: 12,
+        cellPadding: 2.5,
+        textColor: [17, 24, 39],
+        valign: 'middle',
+        lineWidth: 0.2,
+        lineColor: [17, 24, 39]
+      },
+      headStyles: {
+        fillColor: [237, 211, 127],
+        textColor: [17, 24, 39],
+        halign: 'center',
+        fontStyle: 'bold',
+        lineWidth: 0.2,
+        lineColor: [17, 24, 39]
+      },
+      bodyStyles: {
+        lineWidth: 0.2,
+        lineColor: [17, 24, 39]
+      },
+      columnStyles: {
+        0: { cellWidth: usableWidth * 0.40 },
+        1: { cellWidth: usableWidth * 0.18, halign: 'center' },
+        2: { cellWidth: usableWidth * 0.34 }
+      }
+    })
+  } else {
+    alert('Plugin tabel PDF belum termuat. Refresh halaman lalu coba lagi.')
+    return null
+  }
+
+  return doc
+}
+
 async function loadJadwalGuru() {
   const content = document.getElementById('guru-content')
   if (!content) return
@@ -1459,7 +3415,7 @@ async function loadJadwalGuru() {
     return
   }
 
-  const distribusiList = ctx.distribusiList || []
+  const distribusiList = ctx.yearDistribusiList || []
   const rows = (ctx.jadwalList || [])
     .slice()
     .sort((a, b) => {
@@ -1532,7 +3488,7 @@ async function renderMapelPage() {
     return
   }
 
-  const list = ctx.distribusiList || []
+  const list = ctx.yearDistribusiList || []
   if (!list.length) {
     content.innerHTML = '<div class="placeholder-card">Belum ada data mapel untuk guru ini.</div>'
     return
@@ -1609,7 +3565,7 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
     return
   }
 
-  const distribusi = (ctx.distribusiList || []).find(item => String(item.id) === currentMapelDetailDistribusiId)
+  const distribusi = (ctx.yearDistribusiList || []).find(item => String(item.id) === currentMapelDetailDistribusiId)
   if (!distribusi) {
     content.innerHTML = '<div class="placeholder-card">Data distribusi mapel tidak ditemukan.</div>'
     return
@@ -2424,18 +4380,39 @@ async function deleteMapelNilaiRow(santriId) {
   await openMapelDetail(currentMapelDetailDistribusiId, 'nilai')
 }
 
-function setupRaporAccess() {
-  const roles = parseRoleList()
-  const isWaliKelas = roles.some(isWaliKelasRole)
+async function setupRaporAccess(forceReload = false) {
+  const isWaliKelas = await getIsWaliKelas(forceReload)
   const raporBtn = document.getElementById('guru-nav-rapor')
-  if (!raporBtn) return isWaliKelas
+  const laporanBtn = document.querySelector('.guru-nav-btn[data-page="laporan"]')
+  const laporanSubBtns = document.querySelectorAll('#guru-laporan-submenu .guru-submenu-btn')
 
-  raporBtn.disabled = !isWaliKelas
-  if (!isWaliKelas) {
-    raporBtn.title = 'Menu ini khusus wali kelas'
-  } else {
-    raporBtn.removeAttribute('title')
+  if (raporBtn) {
+    raporBtn.disabled = !isWaliKelas
+    if (!isWaliKelas) {
+      raporBtn.title = 'Menu ini khusus wali kelas'
+    } else {
+      raporBtn.removeAttribute('title')
+    }
   }
+
+  if (laporanBtn) {
+    laporanBtn.disabled = !isWaliKelas
+    if (!isWaliKelas) {
+      laporanBtn.title = 'Menu ini khusus wali kelas'
+      closeGuruLaporanMenu()
+    } else {
+      laporanBtn.removeAttribute('title')
+    }
+  }
+
+  laporanSubBtns.forEach(btn => {
+    btn.disabled = !isWaliKelas
+    if (!isWaliKelas) {
+      btn.title = 'Menu ini khusus wali kelas'
+    } else {
+      btn.removeAttribute('title')
+    }
+  })
 
   return isWaliKelas
 }
@@ -2445,11 +4422,16 @@ async function loadGuruPage(page) {
   const validPages = Object.keys(PAGE_TITLES)
   const targetPage = validPages.includes(requestedPage) ? requestedPage : DEFAULT_GURU_PAGE
 
-  const isWaliKelas = setupRaporAccess()
-  if (targetPage === 'rapor' && !isWaliKelas) {
-    renderPlaceholder('Rapor', 'Menu rapor hanya dapat diakses oleh guru dengan role wali kelas.')
-    setTopbarTitle('rapor')
-    setNavActive('rapor')
+  const isWaliKelas = await setupRaporAccess()
+  const isLaporanPage = targetPage === 'laporan' || targetPage === 'laporan-absensi' || targetPage === 'laporan-pekanan' || targetPage === 'laporan-bulanan'
+  if ((targetPage === 'rapor' || isLaporanPage) && !isWaliKelas) {
+    const blockedTitle = targetPage === 'rapor' ? 'Rapor' : 'Laporan'
+    const blockedMessage = targetPage === 'rapor'
+      ? 'Menu rapor hanya dapat diakses oleh guru dengan role wali kelas.'
+      : 'Menu laporan hanya dapat diakses oleh guru dengan role wali kelas.'
+    renderPlaceholder(blockedTitle, blockedMessage)
+    setTopbarTitle(targetPage === 'rapor' ? 'rapor' : 'laporan')
+    setNavActive('')
     closeTopbarUserMenu()
     return
   }
@@ -2479,14 +4461,17 @@ async function loadGuruPage(page) {
       await renderMapelPage()
       return
     case 'tugas':
-      renderPlaceholder('Tugas Harian', 'Modul tugas harian siap sebagai fondasi untuk pengembangan berikutnya.')
+      await renderTugasHarianPage()
       return
     case 'laporan':
     case 'laporan-pekanan':
       renderPlaceholder('Laporan Pekanan', 'Modul laporan pekanan disiapkan untuk rekap aktivitas mingguan.')
       return
+    case 'laporan-absensi':
+      await renderLaporanAbsensiPage()
+      return
     case 'laporan-bulanan':
-      renderPlaceholder('Laporan Bulanan', 'Modul laporan bulanan disiapkan untuk rekap aktivitas mengajar.')
+      await renderLaporanBulananPage()
       return
     case 'rapor':
       renderPlaceholder('Rapor', 'Modul rapor wali kelas disiapkan sebagai dasar pengembangan tahap berikutnya.')
@@ -2509,11 +4494,21 @@ window.toggleTopbarUserMenu = toggleTopbarUserMenu
 window.saveGuruProfil = saveGuruProfil
 window.onAbsensiKelasChange = onAbsensiKelasChange
 window.onAbsensiMapelChange = onAbsensiMapelChange
+window.onAbsensiPenggantiToggle = onAbsensiPenggantiToggle
 window.saveGuruAbsensi = saveGuruAbsensi
 window.onInputNilaiKelasChange = onInputNilaiKelasChange
 window.onInputNilaiMapelChange = onInputNilaiMapelChange
 window.onInputNilaiJenisChange = onInputNilaiJenisChange
 window.saveInputNilaiBatch = saveInputNilaiBatch
+window.onLaporanBulananPeriodChange = onLaporanBulananPeriodChange
+window.openLaporanBulananDetail = openLaporanBulananDetail
+window.openLaporanAbsensiSantriDetail = openLaporanAbsensiSantriDetail
+window.quickPrintLaporanBulanan = quickPrintLaporanBulanan
+window.quickSendLaporanBulananWA = quickSendLaporanBulananWA
+window.backToLaporanBulananList = backToLaporanBulananList
+window.onLaporanBulananNilaiAkhlakChange = onLaporanBulananNilaiAkhlakChange
+window.saveLaporanBulananDetail = saveLaporanBulananDetail
+window.printLaporanBulanan = printLaporanBulanan
 window.openMapelDetail = openMapelDetail
 window.goBackToMapelList = goBackToMapelList
 window.openMapelNilaiDetail = openMapelNilaiDetail
@@ -2528,10 +4523,12 @@ window.cancelMapelAbsensiEdit = cancelMapelAbsensiEdit
 window.saveMapelAbsensiEdit = saveMapelAbsensiEdit
 window.deleteMapelAbsensiDate = deleteMapelAbsensiDate
 window.onMapelNilaiInput = onMapelNilaiInput
+window.reloadGuruDailyTask = reloadGuruDailyTask
+window.submitGuruDailyTask = submitGuruDailyTask
 
 document.addEventListener('DOMContentLoaded', () => {
   setupCustomPopupSystem()
-  setupRaporAccess()
+  setupRaporAccess(true)
   setGuruWelcomeName()
   const lastPage = localStorage.getItem(GURU_LAST_PAGE_KEY) || DEFAULT_GURU_PAGE
   loadGuruPage(lastPage)

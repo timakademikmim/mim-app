@@ -28,7 +28,10 @@
 </style>
 
 <div id="kelas-pane-data-kelas" class="kelas-subtab-pane active">
-  <div style="margin-bottom:20px; display:flex; justify-content:flex-end;">
+  <div style="margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+    <select id="kelas-tahun-filter" class="kelas-field" onchange="onKelasTahunFilterChange()" style="width:auto; min-width:220px; padding:10px 12px; box-sizing:border-box; border:1px solid #cbd5e1; border-radius:999px; background:#f8fafc; box-shadow:none; outline:none;">
+      <option value="">Memuat tahun...</option>
+    </select>
     <button type="button" onclick="openAddKelasModal()" title="Tambah Kelas" aria-label="Tambah Kelas" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
       +
     </button>

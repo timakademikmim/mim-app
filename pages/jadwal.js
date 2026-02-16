@@ -2,6 +2,10 @@
 let currentEditJamPelajaranId = null
 let currentJadwalSubtab = 'jadwal'
 let currentActiveSemesterId = ''
+let currentActiveTahunAjaranId = ''
+let currentJadwalCacheKey = ''
+let currentJamCacheKey = ''
+const jadwalCacheKeys = new Set()
 let jadwalList = []
 let jadwalDistribusiList = []
 let jamPelajaranList = []
@@ -10,6 +14,41 @@ const JADWAL_CACHE_KEY = 'jadwal_pelajaran:list:v3'
 const JADWAL_CACHE_TTL_MS = 2 * 60 * 1000
 const JAM_PELAJARAN_CACHE_KEY = 'jam_pelajaran:list:v1'
 const JAM_PELAJARAN_CACHE_TTL_MS = 2 * 60 * 1000
+let jamPelajaranSupportsTahunAjaran = null
+
+function rememberJadwalCacheKey(key) {
+  if (!key) return
+  jadwalCacheKeys.add(String(key))
+}
+
+function clearAllJadwalCaches() {
+  clearCachedData?.(JADWAL_CACHE_KEY)
+  if (currentJadwalCacheKey) clearCachedData?.(currentJadwalCacheKey)
+  jadwalCacheKeys.forEach(key => clearCachedData?.(key))
+}
+
+function rememberJamCacheKey(key) {
+  if (!key) return
+  jadwalCacheKeys.add(String(key))
+}
+
+function clearAllJamPelajaranCaches() {
+  clearCachedData?.(JAM_PELAJARAN_CACHE_KEY)
+  if (currentJamCacheKey) clearCachedData?.(currentJamCacheKey)
+  jadwalCacheKeys.forEach(key => {
+    if (String(key).startsWith(`${JAM_PELAJARAN_CACHE_KEY}:`)) {
+      clearCachedData?.(key)
+    }
+  })
+}
+
+function getJadwalCacheVersion() {
+  try {
+    return String(localStorage.getItem('jadwal_cache_version') || 'v0')
+  } catch (e) {
+    return 'v0'
+  }
+}
 
 function normalizeHari(raw) {
   return String(raw || '').trim().toLowerCase()
@@ -133,6 +172,7 @@ async function getActiveSemesterForJadwal() {
     .limit(1)
 
   const tahunAjaranId = tahunAktif?.[0]?.id || null
+  currentActiveTahunAjaranId = tahunAjaranId ? String(tahunAjaranId) : ''
 
   let query = sb
     .from('semester')
@@ -151,9 +191,23 @@ async function getActiveSemesterForJadwal() {
   return rows.find(item => asBool(item?.aktif)) || rows[0] || null
 }
 
-async function getDistribusiOptions() {
-  const activeSemester = await getActiveSemesterForJadwal()
-  currentActiveSemesterId = activeSemester?.id ? String(activeSemester.id) : ''
+async function checkJamPelajaranSupportsTahunAjaran() {
+  if (jamPelajaranSupportsTahunAjaran !== null) return jamPelajaranSupportsTahunAjaran
+  const { error } = await sb
+    .from('jam_pelajaran')
+    .select('id, tahun_ajaran_id')
+    .limit(1)
+  jamPelajaranSupportsTahunAjaran = !error
+  if (error) {
+    console.warn('Kolom jam_pelajaran.tahun_ajaran_id belum tersedia.', error)
+  }
+  return jamPelajaranSupportsTahunAjaran
+}
+
+async function getDistribusiOptions(activeSemester = null) {
+  const semester = activeSemester || await getActiveSemesterForJadwal()
+  currentActiveTahunAjaranId = semester?.tahun_ajaran_id ? String(semester.tahun_ajaran_id) : currentActiveTahunAjaranId
+  currentActiveSemesterId = semester?.id ? String(semester.id) : ''
   if (!currentActiveSemesterId) return []
 
   const [distribusiRes, kelasRes, mapelRes, guruRes, semesterRes] = await Promise.all([
@@ -202,12 +256,19 @@ async function getJadwalRows() {
   return data || []
 }
 
-async function getJamPelajaranRows() {
-  let { data, error } = await sb
+async function getJamPelajaranRows(tahunAjaranId = '') {
+  const supportTahunAjaran = await checkJamPelajaranSupportsTahunAjaran()
+  let query = sb
     .from('jam_pelajaran')
     .select('id, nama, jam_mulai, jam_selesai, urutan, aktif')
     .order('urutan', { ascending: true })
     .order('jam_mulai', { ascending: true })
+
+  if (supportTahunAjaran && tahunAjaranId) {
+    query = query.eq('tahun_ajaran_id', tahunAjaranId)
+  }
+
+  let { data, error } = await query
 
   if (!error) return data || []
 
@@ -646,7 +707,9 @@ async function ensureDistribusiLoadedForForm() {
 async function ensureJamPelajaranLoadedForForm() {
   if ((jamPelajaranList || []).length > 0) return true
   try {
-    jamPelajaranList = await getJamPelajaranRows()
+    const activeSemester = await getActiveSemesterForJadwal()
+    currentActiveTahunAjaranId = activeSemester?.tahun_ajaran_id ? String(activeSemester.tahun_ajaran_id) : currentActiveTahunAjaranId
+    jamPelajaranList = await getJamPelajaranRows(currentActiveTahunAjaranId)
   } catch (error) {
     console.error(error)
     jamPelajaranList = []
@@ -693,7 +756,7 @@ async function tambahJadwalPelajaran() {
   }
 
   closeJadwalModal('add-jadwal-modal')
-  clearCachedData?.(JADWAL_CACHE_KEY)
+  clearAllJadwalCaches()
   await loadJadwalPelajaran(true)
 }
 
@@ -729,7 +792,7 @@ async function simpanEditJadwalPelajaran() {
 
   closeJadwalModal('edit-jadwal-modal')
   currentEditJadwalId = null
-  clearCachedData?.(JADWAL_CACHE_KEY)
+  clearAllJadwalCaches()
   await loadJadwalPelajaran(true)
 }
 
@@ -746,7 +809,7 @@ async function hapusJadwal(id) {
     return
   }
 
-  clearCachedData?.(JADWAL_CACHE_KEY)
+  clearAllJadwalCaches()
   await loadJadwalPelajaran(true)
 }
 
@@ -762,7 +825,16 @@ async function tambahJamPelajaran() {
     return
   }
 
-  const { error } = await sb.from('jam_pelajaran').insert([payload])
+  const supportTahunAjaran = await checkJamPelajaranSupportsTahunAjaran()
+  if (supportTahunAjaran && !currentActiveTahunAjaranId) {
+    alert('Tahun ajaran aktif belum ada. Aktifkan tahun ajaran terlebih dahulu.')
+    return
+  }
+
+  const finalPayload = { ...payload }
+  if (supportTahunAjaran) finalPayload.tahun_ajaran_id = currentActiveTahunAjaranId
+
+  const { error } = await sb.from('jam_pelajaran').insert([finalPayload])
   if (error) {
     console.error(error)
     alert(`Gagal menambah jam pelajaran: ${error.message || 'Unknown error'}`)
@@ -770,7 +842,7 @@ async function tambahJamPelajaran() {
   }
 
   closeJamPelajaranModal('add-jam-pelajaran-modal')
-  clearCachedData?.(JAM_PELAJARAN_CACHE_KEY)
+  clearAllJamPelajaranCaches()
   await loadJamPelajaran(true)
 }
 
@@ -798,7 +870,16 @@ async function simpanEditJamPelajaran() {
     return
   }
 
-  const { error } = await sb.from('jam_pelajaran').update(payload).eq('id', currentEditJamPelajaranId)
+  const supportTahunAjaran = await checkJamPelajaranSupportsTahunAjaran()
+  if (supportTahunAjaran && !currentActiveTahunAjaranId) {
+    alert('Tahun ajaran aktif belum ada. Aktifkan tahun ajaran terlebih dahulu.')
+    return
+  }
+
+  const finalPayload = { ...payload }
+  if (supportTahunAjaran) finalPayload.tahun_ajaran_id = currentActiveTahunAjaranId
+
+  const { error } = await sb.from('jam_pelajaran').update(finalPayload).eq('id', currentEditJamPelajaranId)
   if (error) {
     console.error(error)
     alert(`Gagal mengubah jam pelajaran: ${error.message || 'Unknown error'}`)
@@ -807,7 +888,7 @@ async function simpanEditJamPelajaran() {
 
   closeJamPelajaranModal('edit-jam-pelajaran-modal')
   currentEditJamPelajaranId = null
-  clearCachedData?.(JAM_PELAJARAN_CACHE_KEY)
+  clearAllJamPelajaranCaches()
   await loadJamPelajaran(true)
 }
 
@@ -824,7 +905,7 @@ async function hapusJamPelajaran(id) {
     return
   }
 
-  clearCachedData?.(JAM_PELAJARAN_CACHE_KEY)
+  clearAllJamPelajaranCaches()
   await loadJamPelajaran(true)
 }
 
@@ -832,8 +913,16 @@ async function loadJamPelajaran(forceRefresh = false) {
   const container = document.getElementById('list-jam-pelajaran')
   if (!container) return
 
+  const activeSemester = await getActiveSemesterForJadwal()
+  const tahunAjaranId = String(activeSemester?.tahun_ajaran_id || currentActiveTahunAjaranId || 'none')
+  currentActiveTahunAjaranId = tahunAjaranId === 'none' ? '' : tahunAjaranId
+  const cacheVersion = getJadwalCacheVersion()
+  const dynamicCacheKey = `${JAM_PELAJARAN_CACHE_KEY}:${tahunAjaranId}:${cacheVersion}`
+  currentJamCacheKey = dynamicCacheKey
+  rememberJamCacheKey(dynamicCacheKey)
+
   if (!forceRefresh && typeof getCachedData === 'function') {
-    const cached = getCachedData(JAM_PELAJARAN_CACHE_KEY, JAM_PELAJARAN_CACHE_TTL_MS)
+    const cached = getCachedData(dynamicCacheKey, JAM_PELAJARAN_CACHE_TTL_MS)
     if (Array.isArray(cached)) {
       jamPelajaranList = cached
       renderJamPelajaranTable()
@@ -843,8 +932,8 @@ async function loadJamPelajaran(forceRefresh = false) {
 
   container.innerHTML = 'Loading...'
   try {
-    jamPelajaranList = await getJamPelajaranRows()
-    setCachedData?.(JAM_PELAJARAN_CACHE_KEY, jamPelajaranList)
+    jamPelajaranList = await getJamPelajaranRows(currentActiveTahunAjaranId)
+    setCachedData?.(dynamicCacheKey, jamPelajaranList)
     renderJamPelajaranTable()
   } catch (error) {
     console.error(error)
@@ -856,8 +945,17 @@ async function loadJadwalPelajaran(forceRefresh = false) {
   const container = document.getElementById('list-jadwal')
   if (!container) return
 
+  const activeSemester = await getActiveSemesterForJadwal()
+  currentActiveSemesterId = activeSemester?.id ? String(activeSemester.id) : ''
+  const contextTahunId = String(activeSemester?.tahun_ajaran_id || 'none')
+  const contextSemesterId = String(activeSemester?.id || 'none')
+  const cacheVersion = getJadwalCacheVersion()
+  const dynamicCacheKey = `${JADWAL_CACHE_KEY}:${contextTahunId}:${contextSemesterId}:${cacheVersion}`
+  currentJadwalCacheKey = dynamicCacheKey
+  rememberJadwalCacheKey(dynamicCacheKey)
+
   if (!forceRefresh && typeof getCachedData === 'function') {
-    const cached = getCachedData(JADWAL_CACHE_KEY, JADWAL_CACHE_TTL_MS)
+    const cached = getCachedData(dynamicCacheKey, JADWAL_CACHE_TTL_MS)
     if (cached && Array.isArray(cached.jadwalList) && Array.isArray(cached.jadwalDistribusiList)) {
       jadwalList = cached.jadwalList
       jadwalDistribusiList = cached.jadwalDistribusiList
@@ -870,7 +968,7 @@ async function loadJadwalPelajaran(forceRefresh = false) {
   container.innerHTML = 'Loading...'
   try {
     const [distribusiList, rows] = await Promise.all([
-      getDistribusiOptions(),
+      getDistribusiOptions(activeSemester),
       getJadwalRows(),
       loadJamPelajaran()
     ])
@@ -878,7 +976,7 @@ async function loadJadwalPelajaran(forceRefresh = false) {
     jadwalDistribusiList = distribusiList || []
     jadwalList = rows || []
 
-    setCachedData?.(JADWAL_CACHE_KEY, { jadwalList, jadwalDistribusiList })
+    setCachedData?.(dynamicCacheKey, { jadwalList, jadwalDistribusiList })
     renderJadwalKelasFilterOptions()
     renderJadwalTable()
   } catch (error) {

@@ -32,6 +32,12 @@ function getLandingPageByRoles(roles) {
   return chosen ? roleToPage[chosen] : null
 }
 
+function isActiveValue(value) {
+  if (value === true || value === 1) return true
+  const text = String(value ?? '').trim().toLowerCase()
+  return text === 'true' || text === 't' || text === '1' || text === 'yes'
+}
+
 async function login() {
   const id = document.getElementById('id_karyawan').value.trim()
   const pass = document.getElementById('password').value.trim()
@@ -39,13 +45,18 @@ async function login() {
 
   const { data } = await sb
     .from('karyawan')
-    .select('id_karyawan, role')
+    .select('id_karyawan, nama, role, aktif')
     .eq('id_karyawan', id)
     .eq('password', pass)
     .maybeSingle()
 
   if (!data) {
     errorEl.textContent = 'ID atau password salah'
+    return
+  }
+
+  if (!isActiveValue(data.aktif)) {
+    errorEl.textContent = 'Akun nonaktif. Silakan hubungi admin.'
     return
   }
 
@@ -63,6 +74,7 @@ async function login() {
 
   // simpan session
   localStorage.setItem('login_id', data.id_karyawan)
+  localStorage.setItem('login_name', String(data.nama || '').trim())
   localStorage.setItem('login_role', roles[0])
   localStorage.setItem('login_roles', JSON.stringify(roles))
   localStorage.setItem('admin_force_dashboard_once', '1')
