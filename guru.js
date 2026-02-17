@@ -9,6 +9,7 @@ const ATTENDANCE_TABLE = 'absensi_santri'
 const INPUT_NILAI_TABLE = 'nilai_input_akademik'
 const MONTHLY_REPORT_TABLE = 'laporan_bulanan_wali'
 const MONTHLY_REPORT_STORAGE_BUCKET = 'laporan-bulanan'
+const MONTHLY_REPORT_WA_TEMPLATE_KEY = 'laporan_bulanan_wa_template'
 const DAILY_TASK_TEMPLATE_TABLE = 'tugas_harian_template'
 const DAILY_TASK_SUBMIT_TABLE = 'tugas_harian_submit'
 const TOPBAR_KALENDER_TABLE = 'kalender_akademik'
@@ -58,7 +59,9 @@ let laporanBulananState = {
   santriList: [],
   selectedSantriId: '',
   currentDetail: null,
-  absensiRows: []
+  absensiRows: [],
+  waTemplate: '',
+  waTemplateEditing: false
 }
 let waTargetModalResolver = null
 let guruDailyTaskState = {
@@ -302,24 +305,57 @@ function getPeriodeLabel(periode) {
   return `${monthNames[range.month - 1]} ${range.year}`
 }
 
+function normalizeAkhlakGrade(value) {
+  const raw = String(value ?? '').trim().toUpperCase()
+  if (['A', 'B', 'C', 'D', 'E'].includes(raw)) return raw
+
+  const num = Number(value)
+  if (!Number.isFinite(num)) return ''
+  if (num <= 5 && num >= 1) {
+    const rounded = Math.round(num)
+    if (rounded === 5) return 'A'
+    if (rounded === 4) return 'B'
+    if (rounded === 3) return 'C'
+    if (rounded === 2) return 'D'
+    if (rounded === 1) return 'E'
+  }
+  if (num >= 90) return 'A'
+  if (num >= 80) return 'B'
+  if (num >= 70) return 'C'
+  if (num >= 60) return 'D'
+  return 'E'
+}
+
+function getAkhlakKeteranganByGrade(grade) {
+  const g = normalizeAkhlakGrade(grade)
+  if (g === 'A') return 'Istimewa'
+  if (g === 'B') return 'Baik Sekali'
+  if (g === 'C') return 'Baik'
+  if (g === 'D') return 'Kurang'
+  if (g === 'E') return 'Sangat Kurang'
+  return '-'
+}
+
+function getAkhlakNumericValueByGrade(grade) {
+  const g = normalizeAkhlakGrade(grade)
+  if (g === 'A') return 5
+  if (g === 'B') return 4
+  if (g === 'C') return 3
+  if (g === 'D') return 2
+  if (g === 'E') return 1
+  return null
+}
+
 function getAkhlakPredikat(nilai) {
-  const num = Number(nilai)
-  if (!Number.isFinite(num)) return '-'
-  if (num >= 90) return 'A (Sangat Baik)'
-  if (num >= 80) return 'B (Baik)'
-  if (num >= 70) return 'C (Cukup)'
-  if (num >= 60) return 'D (Kurang)'
-  return 'E (Perlu Pembinaan)'
+  const grade = normalizeAkhlakGrade(nilai)
+  if (!grade) return ''
+  return getAkhlakKeteranganByGrade(grade)
 }
 
 function getAkhlakGradeInfo(nilai) {
-  const num = Number(nilai)
-  if (!Number.isFinite(num)) return { grade: '-', desc: '-' }
-  if (num >= 90) return { grade: 'A', desc: 'Istimewa' }
-  if (num >= 80) return { grade: 'B', desc: 'Baik Sekali' }
-  if (num >= 70) return { grade: 'C', desc: 'Baik' }
-  if (num >= 60) return { grade: 'D', desc: 'Cukup' }
-  return { grade: 'E', desc: 'Perlu Pembinaan' }
+  const grade = normalizeAkhlakGrade(nilai)
+  if (!grade) return { grade: '-', desc: '-' }
+  return { grade, desc: getAkhlakKeteranganByGrade(grade) }
 }
 
 function normalizeWhatsappNumber(raw) {
@@ -335,6 +371,38 @@ function sanitizeFileNamePart(raw) {
     .replace(/[\\/:*?"<>|]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+function getMonthlyWaTemplateStorageKey(guruId) {
+  const suffix = String(guruId || '').trim() || 'default'
+  return `${MONTHLY_REPORT_WA_TEMPLATE_KEY}:${suffix}`
+}
+
+function getDefaultMonthlyWaTemplate() {
+  return [
+    "Assalamu'alaikum warahmatullahi wabarakatuh",
+    '',
+    "Bapak/Ibu hafizakumullahu ta'ala",
+    '',
+    'Alhamdulillah kembali menyampaikan Laporan Evaluasi Perkembangan Santri bulan ini ananda <nama santri>.',
+    '',
+    'Mohon dibaca dengan seksama dan jika ada hal yang kurang jelas maka Ibu/Bapak bisa menanyakan secara langsung dengan menghubungi nomor penanggung jawab yang tertera.',
+    '',
+    'Laporan ini bisa menjadi catatan muhasabah untuk Ibu/Bapak atas perkembangan ananda selama sebulan di pondok.',
+    '',
+    'Semoga Allah SWT mengistiqamahkan ananda dalam kebaikan dan menjadikannya pribadi yang lebih baik ke depannya.',
+    '',
+    'Syukron wajazakumullahu khairan',
+    '',
+    'Link laporan:',
+    '<link>'
+  ].join('\n')
+}
+
+function loadMonthlyWaTemplate(guruId) {
+  const key = getMonthlyWaTemplateStorageKey(guruId)
+  const saved = String(localStorage.getItem(key) || '').trim()
+  return saved || getDefaultMonthlyWaTemplate()
 }
 
 function buildMonthlyReportStorageMissingMessage() {
@@ -1764,6 +1832,7 @@ async function renderAbsensiPage() {
     const { data, error } = await sb
       .from('karyawan')
       .select('id, nama, aktif')
+      .eq('aktif', true)
       .order('nama')
     if (error) {
       console.error(error)
@@ -1814,7 +1883,7 @@ async function renderAbsensiPage() {
           <label class="guru-label">Pengganti (Karyawan)</label>
           <select id="absensi-guru-pengganti" class="guru-field" disabled>
             <option value="">-- Pilih Pengganti --</option>
-            ${penggantiList.map(item => `<option value="${escapeHtml(String(item.id || ''))}">${escapeHtml(String(item.nama || '-'))}${asBool(item?.aktif) ? '' : ' (Nonaktif)'}</option>`).join('')}
+            ${penggantiList.map(item => `<option value="${escapeHtml(String(item.id || ''))}">${escapeHtml(String(item.nama || '-'))}</option>`).join('')}
           </select>
         </div>
         <div>
@@ -2508,8 +2577,10 @@ async function renderLaporanBulananPage(forceReload = false) {
     return String(a.nama || '').localeCompare(String(b.nama || ''))
   })
 
-  const periode = laporanBulananState.periode || getMonthInputToday()
+  const previousState = { ...laporanBulananState }
+  const periode = previousState.periode || getMonthInputToday()
   laporanBulananState = {
+    ...previousState,
     periode,
     guru,
     kelasList,
@@ -2531,11 +2602,10 @@ async function renderLaporanBulananPage(forceReload = false) {
     return
   }
 
-  laporanBulananState.guru = guru
-  laporanBulananState.kelasList = kelasList
-  laporanBulananState.kelasMap = kelasMap
-  laporanBulananState.santriList = santriList
-  laporanBulananState.periode = periode
+  if (!laporanBulananState.waTemplate) {
+    laporanBulananState.waTemplate = loadMonthlyWaTemplate(guru.id)
+  }
+  const isTemplateEditing = laporanBulananState.waTemplateEditing === true
 
   const santriIds = santriList.map(item => String(item.id))
   const monthlyReportMap = new Map()
@@ -2559,9 +2629,13 @@ async function renderLaporanBulananPage(forceReload = false) {
   const rowsHtml = santriList.map((item, index) => {
     const kelasNama = kelasMap.get(String(item.kelas_id || ''))?.nama_kelas || '-'
     const reportRow = monthlyReportMap.get(String(item.id))
+    const gradeAkhlak = reportRow?.nilai_akhlak === null || reportRow?.nilai_akhlak === undefined
+      ? ''
+      : normalizeAkhlakGrade(reportRow.nilai_akhlak)
+    const keteranganAkhlak = gradeAkhlak ? getAkhlakKeteranganByGrade(gradeAkhlak) : ''
     const missing = []
-    if (!reportRow || reportRow.nilai_akhlak === null || reportRow.nilai_akhlak === undefined) missing.push('Nilai akhlak')
-    if (!reportRow || String(reportRow.predikat || '').trim() === '') missing.push('Predikat')
+    if (!gradeAkhlak) missing.push('Nilai akhlak')
+    if (!keteranganAkhlak) missing.push('Keterangan')
     if (!reportRow || String(reportRow.catatan_wali || '').trim() === '') missing.push('Catatan wali kelas')
     const isLengkap = missing.length === 0
     const keterangan = isLengkap ? 'Lengkap' : `Belum lengkap: ${missing.join(', ')}`
@@ -2584,6 +2658,19 @@ async function renderLaporanBulananPage(forceReload = false) {
   }).join('')
 
   content.innerHTML = `
+    <div class="placeholder-card" style="margin-bottom:12px;">
+      <div style="font-weight:700; margin-bottom:8px;">Template Pesan WhatsApp Laporan Bulanan</div>
+      <div style="font-size:12px; color:#475569; margin-bottom:8px;">
+        Gunakan placeholder: <code>&lt;nama santri&gt;</code> dan <code>&lt;link&gt;</code>. Saat kirim, placeholder akan diganti otomatis.
+      </div>
+      <textarea id="laporan-bulanan-wa-template" class="guru-field" rows="8" placeholder="Tulis template pesan..." ${isTemplateEditing ? '' : 'readonly'} style="${isTemplateEditing ? '' : 'background:#f8fafc; color:#475569;'}">${escapeHtml(laporanBulananState.waTemplate || '')}</textarea>
+      <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
+        <button id="btn-wa-template-edit" type="button" class="modal-btn" onclick="startMonthlyWaTemplateEdit()" ${isTemplateEditing ? 'style="display:none;"' : ''}>Edit Template</button>
+        <button id="btn-wa-template-save" type="button" class="modal-btn modal-btn-primary" onclick="saveMonthlyWaTemplate()" ${isTemplateEditing ? '' : 'style="display:none;"'}>Simpan Template</button>
+        <button id="btn-wa-template-cancel" type="button" class="modal-btn" onclick="cancelMonthlyWaTemplateEdit()" ${isTemplateEditing ? '' : 'style="display:none;"'}>Batal</button>
+      </div>
+    </div>
+
     <div style="display:flex; align-items:end; justify-content:space-between; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
       <div>
         <label class="guru-label">Periode</label>
@@ -2900,6 +2987,60 @@ function onLaporanBulananPeriodChange(value) {
   renderLaporanBulananPage()
 }
 
+function getCurrentMonthlyWaTemplate() {
+  const el = document.getElementById('laporan-bulanan-wa-template')
+  if (el) {
+    const value = String(el.value || '').trim()
+    if (value) return value
+  }
+  return String(laporanBulananState.waTemplate || '').trim() || getDefaultMonthlyWaTemplate()
+}
+
+function setMonthlyWaTemplateEditMode(editing) {
+  const isEditing = editing === true
+  laporanBulananState.waTemplateEditing = isEditing
+
+  const textarea = document.getElementById('laporan-bulanan-wa-template')
+  if (textarea) {
+    textarea.readOnly = !isEditing
+    textarea.style.background = isEditing ? '#ffffff' : '#f8fafc'
+    textarea.style.color = isEditing ? '#0f172a' : '#475569'
+    if (isEditing) textarea.focus()
+  }
+
+  const editBtn = document.getElementById('btn-wa-template-edit')
+  const saveBtn = document.getElementById('btn-wa-template-save')
+  const cancelBtn = document.getElementById('btn-wa-template-cancel')
+  if (editBtn) editBtn.style.display = isEditing ? 'none' : ''
+  if (saveBtn) saveBtn.style.display = isEditing ? '' : 'none'
+  if (cancelBtn) cancelBtn.style.display = isEditing ? '' : 'none'
+}
+
+function startMonthlyWaTemplateEdit() {
+  setMonthlyWaTemplateEditMode(true)
+}
+
+function cancelMonthlyWaTemplateEdit() {
+  const guruId = String(laporanBulananState?.guru?.id || '').trim()
+  laporanBulananState.waTemplate = loadMonthlyWaTemplate(guruId)
+  const el = document.getElementById('laporan-bulanan-wa-template')
+  if (el) el.value = laporanBulananState.waTemplate || ''
+  setMonthlyWaTemplateEditMode(false)
+}
+
+function saveMonthlyWaTemplate() {
+  const guruId = String(laporanBulananState?.guru?.id || '').trim()
+  if (!guruId) {
+    alert('Data guru belum siap.')
+    return
+  }
+  const template = getCurrentMonthlyWaTemplate()
+  laporanBulananState.waTemplate = template
+  localStorage.setItem(getMonthlyWaTemplateStorageKey(guruId), template)
+  setMonthlyWaTemplateEditMode(false)
+  alert('Template pesan berhasil disimpan.')
+}
+
 async function openLaporanBulananDetail(santriId) {
   const sid = String(santriId || '').trim()
   const content = document.getElementById('guru-content')
@@ -2955,11 +3096,18 @@ async function openLaporanBulananDetail(santriId) {
       <div style="font-weight:700; margin-bottom:8px;">Akhlak di Kelas</div>
       <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:10px; align-items:end;">
         <div>
-          <label class="guru-label">Nilai Akhlak (0-100)</label>
-          <input id="laporan-bulanan-nilai-akhlak" class="guru-field" type="number" min="0" max="100" step="1" value="${escapeHtml(nilaiAkhlak)}" oninput="onLaporanBulananNilaiAkhlakChange(this.value)">
+          <label class="guru-label">Nilai Akhlak (A-E)</label>
+          <select id="laporan-bulanan-nilai-akhlak" class="guru-field" onchange="onLaporanBulananNilaiAkhlakChange(this.value)">
+            <option value="" ${nilaiAkhlak === '' ? 'selected' : ''}>Pilih Nilai</option>
+            <option value="A" ${nilaiAkhlak === 'A' ? 'selected' : ''}>A</option>
+            <option value="B" ${nilaiAkhlak === 'B' ? 'selected' : ''}>B</option>
+            <option value="C" ${nilaiAkhlak === 'C' ? 'selected' : ''}>C</option>
+            <option value="D" ${nilaiAkhlak === 'D' ? 'selected' : ''}>D</option>
+            <option value="E" ${nilaiAkhlak === 'E' ? 'selected' : ''}>E</option>
+          </select>
         </div>
         <div>
-          <label class="guru-label">Predikat</label>
+          <label class="guru-label">Keterangan</label>
           <input id="laporan-bulanan-predikat" class="guru-field" type="text" value="${escapeHtml(predikat)}" readonly style="background:#f8fafc; color:#475569;">
         </div>
       </div>
@@ -3041,8 +3189,8 @@ async function getLaporanBulananDetailData(santriId, opts = {}) {
 
   const nilaiAkhlak = monthlyReport?.nilai_akhlak === null || monthlyReport?.nilai_akhlak === undefined
     ? ''
-    : String(monthlyReport.nilai_akhlak)
-  const predikat = monthlyReport?.predikat || getAkhlakPredikat(nilaiAkhlak)
+    : normalizeAkhlakGrade(monthlyReport.nilai_akhlak)
+  const predikat = nilaiAkhlak ? getAkhlakKeteranganByGrade(nilaiAkhlak) : ''
   const catatanWali = monthlyReport?.catatan_wali || ''
   const hpGuru = pickLabelByKeys(guru, ['no_hp', 'hp', 'no_telp', 'nomor_hp', 'telepon']) || '-'
 
@@ -3079,7 +3227,7 @@ async function getLaporanBulananDetailData(santriId, opts = {}) {
     predikatKehadiran,
     sakitCount,
     izinCount,
-    nilaiAkhlakRaw: nilaiAkhlak === '' ? null : Number(nilaiAkhlak),
+    nilaiAkhlakRaw: nilaiAkhlak === '' ? null : nilaiAkhlak,
     nilaiAkhlak: nilaiAkhlak === '' ? '-' : nilaiAkhlak,
     predikatAkhlak: predikat || '-',
     catatanWali: catatanWali || '-'
@@ -3177,24 +3325,10 @@ async function quickSendLaporanBulananWA(santriId) {
     return
   }
 
-  const message = [
-    `Assalamu'alaikum warahmatullahi wabarakatuh`,
-    ``,
-    `Bapak/Ibu hafizakumullahu ta'ala`,
-    ``,
-    `Alhamdulillah kembali menyampaikan Laporan Evaluasi Perkembangan Santri bulan ${detail.periodeLabel} ananda ${detail.nama}.`,
-    ``,
-    `Mohon dibaca dengan seksama dan jika ada hal yang kurang jelas maka Ibu/Bapak bisa menanyakan secara langsung dengan menghubungi nomor penanggung jawab yang tertera.`,
-    ``,
-    `Laporan ini bisa menjadi catatan muhasabah untuk Ibu/Bapak atas perkembangan ananda selama sebulan di pondok.`,
-    ``,
-    `Semoga Allah SWT mengistiqamahkan ananda dalam kebaikan dan menjadikannya pribadi yang lebih baik ke depannya. Dan kita berdoa semoga seluruh usaha kita dalam mendidik bisa menjadi manfaat dan amal jariyah di dunia dan akhirat kelak.`,
-    ``,
-    `Syukron wajazakumullahu khairan`,
-    ``,
-    `Link laporan:`,
-    `${publicUrl}`
-  ].join('\n')
+  const rawTemplate = getCurrentMonthlyWaTemplate()
+  const message = rawTemplate
+    .replace(/<nama santri>/gi, String(detail.nama || '-'))
+    .replace(/<link>/gi, publicUrl)
 
   const waUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
   window.open(waUrl, '_blank')
@@ -3208,7 +3342,8 @@ function backToLaporanBulananList() {
 function onLaporanBulananNilaiAkhlakChange(value) {
   const predikatEl = document.getElementById('laporan-bulanan-predikat')
   if (!predikatEl) return
-  predikatEl.value = getAkhlakPredikat(value)
+  const grade = normalizeAkhlakGrade(value)
+  predikatEl.value = grade ? getAkhlakKeteranganByGrade(grade) : ''
 }
 
 async function saveLaporanBulananDetail() {
@@ -3225,28 +3360,23 @@ async function saveLaporanBulananDetail() {
   const predikatInput = document.getElementById('laporan-bulanan-predikat')
   const catatanInput = document.getElementById('laporan-bulanan-catatan-wali')
 
-  const nilaiAkhlakRaw = String(nilaiAkhlakInput?.value || '').trim()
-  const nilaiAkhlak = nilaiAkhlakRaw === '' ? null : Number(nilaiAkhlakRaw)
-  if (nilaiAkhlak !== null) {
-    if (!Number.isFinite(nilaiAkhlak)) {
-      alert('Nilai akhlak harus berupa angka valid.')
-      return
-    }
-    if (nilaiAkhlak < 0 || nilaiAkhlak > 100) {
-      alert('Nilai akhlak harus dalam rentang 0 sampai 100.')
-      return
-    }
+  const nilaiAkhlakRaw = String(nilaiAkhlakInput?.value || '').trim().toUpperCase()
+  const nilaiAkhlakGrade = nilaiAkhlakRaw === '' ? '' : normalizeAkhlakGrade(nilaiAkhlakRaw)
+  if (nilaiAkhlakRaw && !nilaiAkhlakGrade) {
+    alert('Nilai akhlak harus A, B, C, D, atau E.')
+    return
   }
 
   const predikat = String(predikatInput?.value || '').trim()
   const catatanWali = String(catatanInput?.value || '').trim()
+  const nilaiAkhlakNumeric = nilaiAkhlakGrade ? getAkhlakNumericValueByGrade(nilaiAkhlakGrade) : null
 
   const payload = {
     periode,
     guru_id: String(guru.id),
     kelas_id: String(santri.kelas_id),
     santri_id: sid,
-    nilai_akhlak: nilaiAkhlak === null ? null : round2(nilaiAkhlak),
+    nilai_akhlak: nilaiAkhlakNumeric === null ? null : round2(nilaiAkhlakNumeric),
     predikat: predikat || null,
     catatan_wali: catatanWali || null
   }
@@ -4501,6 +4631,9 @@ window.onInputNilaiMapelChange = onInputNilaiMapelChange
 window.onInputNilaiJenisChange = onInputNilaiJenisChange
 window.saveInputNilaiBatch = saveInputNilaiBatch
 window.onLaporanBulananPeriodChange = onLaporanBulananPeriodChange
+window.saveMonthlyWaTemplate = saveMonthlyWaTemplate
+window.startMonthlyWaTemplateEdit = startMonthlyWaTemplateEdit
+window.cancelMonthlyWaTemplateEdit = cancelMonthlyWaTemplateEdit
 window.openLaporanBulananDetail = openLaporanBulananDetail
 window.openLaporanAbsensiSantriDetail = openLaporanAbsensiSantriDetail
 window.quickPrintLaporanBulanan = quickPrintLaporanBulanan
