@@ -17,6 +17,19 @@ const TOPBAR_KALENDER_TABLE = 'kalender_akademik'
 const SCHOOL_PROFILE_TABLE = 'struktur_sekolah'
 const TOPBAR_KALENDER_CACHE_KEY = 'kalender_akademik:list'
 const TOPBAR_KALENDER_CACHE_TTL_MS = 2 * 60 * 1000
+const GURU_PAGE_CACHE_TTL_MS = 90 * 1000
+const GURU_PAGE_CACHEABLE = new Set([
+  'dashboard',
+  'input-nilai',
+  'input-absensi',
+  'jadwal',
+  'mapel',
+  'tugas',
+  'laporan-pekanan',
+  'laporan-absensi',
+  'laporan-bulanan',
+  'rapor'
+])
 const TOPBAR_KALENDER_DEFAULT_COLOR = '#2563eb'
 const RAPOR_PDF_BACKGROUND_URL = 'Background Rapor.png'
 const ATTENDANCE_STATUSES = ['Hadir', 'Terlambat', 'Sakit', 'Izin', 'Alpa']
@@ -42,6 +55,8 @@ const PAGE_TITLES = {
 
 let guruContextCache = null
 let activeTahunAjaranCache = null
+let activeSemesterCache = null
+let currentGuruRowCache = null
 let currentMapelDetailDistribusiId = ''
 let currentAbsensiSantriList = []
 let currentMapelDetailState = null
@@ -92,6 +107,36 @@ let topbarKalenderState = {
 }
 let schoolProfileCache = null
 let guruDashboardAgendaRows = []
+let guruPageHtmlCache = {}
+
+function getGuruPageCache(page) {
+  if (!GURU_PAGE_CACHEABLE.has(String(page || ''))) return ''
+  const key = String(page || '')
+  const entry = guruPageHtmlCache[key]
+  if (!entry) return ''
+  if (Date.now() - Number(entry.ts || 0) > GURU_PAGE_CACHE_TTL_MS) return ''
+  return String(entry.html || '')
+}
+
+function setGuruPageCache(page) {
+  const key = String(page || '')
+  if (!GURU_PAGE_CACHEABLE.has(key)) return
+  const content = document.getElementById('guru-content')
+  if (!content) return
+  guruPageHtmlCache[key] = {
+    ts: Date.now(),
+    html: String(content.innerHTML || '')
+  }
+}
+
+function clearGuruPageCache(page = '') {
+  const key = String(page || '').trim()
+  if (!key) {
+    guruPageHtmlCache = {}
+    return
+  }
+  delete guruPageHtmlCache[key]
+}
 
 async function checkJamPelajaranSupportsTahunAjaran() {
   if (jamPelajaranSupportsTahunAjaran !== null) return jamPelajaranSupportsTahunAjaran
@@ -984,7 +1029,7 @@ async function loadGuruDailyTaskData(periode) {
   const range = getPeriodeRange(periode)
   if (!range) throw new Error('Periode tidak valid')
 
-  const ctx = await getGuruContext(true)
+  const ctx = await getGuruContext(false)
   const guruId = String(ctx?.guru?.id || '')
   if (!guruId) return { guruId: '', templates: [], submissions: [] }
 
@@ -1225,6 +1270,7 @@ async function submitGuruDailyTask() {
   }
 
   alert('Tugas harian berhasil disubmit.')
+  clearGuruPageCache('tugas')
   await renderTugasHarianPage(true)
 }
 
@@ -1574,6 +1620,10 @@ function closeTopbarUserMenu() {
 async function getCurrentGuruRow() {
   const loginId = localStorage.getItem('login_id')
   if (!loginId) return null
+  const now = Date.now()
+  if (currentGuruRowCache && currentGuruRowCache.loginId === loginId && (now - currentGuruRowCache.ts) < 60 * 1000) {
+    return currentGuruRowCache.data
+  }
 
   const { data, error } = await sb
     .from('karyawan')
@@ -1582,6 +1632,11 @@ async function getCurrentGuruRow() {
     .maybeSingle()
 
   if (error) throw error
+  currentGuruRowCache = {
+    loginId,
+    ts: now,
+    data: data || null
+  }
   return data || null
 }
 
@@ -1606,6 +1661,10 @@ async function setGuruWelcomeName() {
 async function getActiveSemester() {
   const tahunAktif = await getActiveTahunAjaran()
   const tahunAjaranId = tahunAktif?.id || null
+  const cacheKey = String(tahunAjaranId || '')
+  if (activeSemesterCache && activeSemesterCache.key === cacheKey) {
+    return activeSemesterCache.value
+  }
 
   let query = sb
     .from('semester')
@@ -1617,11 +1676,14 @@ async function getActiveSemester() {
   const { data, error } = await query
   if (error) {
     console.error(error)
+    activeSemesterCache = { key: cacheKey, value: null }
     return null
   }
 
   const rows = data || []
-  return rows.find(item => asBool(item.aktif)) || rows[0] || null
+  const picked = rows.find(item => asBool(item.aktif)) || rows[0] || null
+  activeSemesterCache = { key: cacheKey, value: picked }
+  return picked
 }
 
 async function getMapelRowsByIds(mapelIds = []) {
@@ -2350,6 +2412,8 @@ async function saveGuruAbsensi() {
   }
 
   alert('Absensi berhasil disimpan.')
+  clearGuruPageCache('input-absensi')
+  clearGuruPageCache('laporan-absensi')
   } finally {
     setButtonLoading(saveBtn, false)
   }
@@ -2690,6 +2754,9 @@ async function saveInputNilaiBatch() {
   }
 
   alert('Input nilai berhasil disimpan dan rata-rata diperbarui.')
+  clearGuruPageCache('input-nilai')
+  clearGuruPageCache('mapel')
+  clearGuruPageCache('rapor')
   document.querySelectorAll('[data-input-nilai-santri-id]').forEach(inputEl => {
     inputEl.value = ''
   })
@@ -2844,6 +2911,8 @@ async function saveGuruProfil(guruId) {
 
   alert('Profil berhasil disimpan.')
   guruContextCache = null
+  currentGuruRowCache = null
+  clearGuruPageCache()
   await setGuruWelcomeName()
   await renderGuruProfil()
 }
@@ -3736,6 +3805,7 @@ async function saveLaporanBulananDetail() {
   }
 
   alert('Laporan bulanan berhasil disimpan.')
+  clearGuruPageCache('laporan-bulanan')
   await openLaporanBulananDetail(sid)
 }
 
@@ -4419,6 +4489,8 @@ async function claimSelectedGuruMapel() {
   const skippedCount = ids.length - updatedCount
 
   guruContextCache = null
+  clearGuruPageCache('mapel')
+  clearGuruPageCache('jadwal')
   await renderMapelPage()
   if (updatedCount > 0 && skippedCount > 0) {
     alert(`Berhasil menambahkan ${updatedCount} mapel. ${skippedCount} mapel gagal karena sudah diambil guru lain.`)
@@ -4879,6 +4951,8 @@ async function saveMapelAbsensiEdit() {
   }
 
   alert('Absensi berhasil diperbarui.')
+  clearGuruPageCache('mapel')
+  clearGuruPageCache('laporan-absensi')
   await openMapelDetail(currentMapelDetailDistribusiId, 'absensi')
 }
 
@@ -5393,6 +5467,8 @@ async function saveMapelRaporDesc(distribusiId) {
     }
 
     alert('Deskripsi rapor berhasil disimpan.')
+    clearGuruPageCache('mapel')
+    clearGuruPageCache('rapor')
   } finally {
     setButtonLoading(saveBtn, false)
   }
@@ -6058,40 +6134,59 @@ async function loadGuruPage(page) {
   if (targetPage !== 'profil') localStorage.setItem(GURU_LAST_PAGE_KEY, targetPage)
   closeTopbarUserMenu()
 
+  const cachedHtml = getGuruPageCache(targetPage)
+  if (cachedHtml) {
+    const content = document.getElementById('guru-content')
+    if (content) {
+      content.innerHTML = cachedHtml
+      return
+    }
+  }
+
   switch (targetPage) {
     case 'dashboard':
       await renderDashboard()
+      setGuruPageCache(targetPage)
       return
     case 'input':
     case 'input-nilai':
     case 'nilai':
       await renderInputNilaiPage()
+      setGuruPageCache('input-nilai')
       return
     case 'input-absensi':
     case 'absensi':
       await renderAbsensiPage()
+      setGuruPageCache('input-absensi')
       return
     case 'jadwal':
       await loadJadwalGuru()
+      setGuruPageCache(targetPage)
       return
     case 'mapel':
       await renderMapelPage()
+      setGuruPageCache(targetPage)
       return
     case 'tugas':
       await renderTugasHarianPage()
+      setGuruPageCache(targetPage)
       return
     case 'laporan':
     case 'laporan-pekanan':
       renderPlaceholder('Laporan Pekanan', 'Modul laporan pekanan disiapkan untuk rekap aktivitas mingguan.')
+      setGuruPageCache('laporan-pekanan')
       return
     case 'laporan-absensi':
       await renderLaporanAbsensiPage()
+      setGuruPageCache(targetPage)
       return
     case 'laporan-bulanan':
       await renderLaporanBulananPage()
+      setGuruPageCache(targetPage)
       return
     case 'rapor':
       await renderRaporPage()
+      setGuruPageCache(targetPage)
       return
     case 'profil':
       await renderGuruProfil()
