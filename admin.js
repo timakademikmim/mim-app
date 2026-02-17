@@ -261,6 +261,7 @@ function setActiveSidebarTab(page) {
 function setTopbarTitle(page) {
   const titleMap = {
     dashboard: 'Dashboard',
+    'struktur-sekolah': 'Struktur Sekolah',
     'tahun-ajaran': 'Tahun Ajaran',
     'tugas-harian': 'Set Tugas',
     'mutabaah-karyawan': 'Mutabaah Karyawan',
@@ -299,6 +300,7 @@ let topbarKalenderState = {
   selectedDateKey: '',
   visible: false
 }
+let adminDashboardAgendaRows = []
 
 function shouldShowYearInTopbar(page) {
   return page !== 'tahun-ajaran'
@@ -503,6 +505,137 @@ async function loadTopbarCalendarData(forceRefresh = false) {
   const list = await fetchTopbarKalenderRows()
   topbarKalenderState.list = list
   if (typeof setCachedData === 'function') setCachedData(TOPBAR_KALENDER_CACHE_KEY, list)
+}
+
+function formatDashboardCalendarDate(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  return date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+function getDashboardCalendarRangeLabel(item) {
+  const startKey = getTopbarKalenderDateKey(item?.mulai)
+  const endKey = getTopbarKalenderDateKey(item?.selesai || item?.mulai)
+  if (!startKey) return '-'
+  if (!endKey || endKey === startKey) return formatDashboardCalendarDate(startKey)
+  return `${formatDashboardCalendarDate(startKey)} - ${formatDashboardCalendarDate(endKey)}`
+}
+
+async function renderAdminDashboardCalendar() {
+  const area = document.getElementById('content-area')
+  if (!area) return
+
+  area.innerHTML = '<div class="placeholder-card">Loading agenda kalender akademik...</div>'
+
+  try {
+    await loadTopbarCalendarData(false)
+    const rows = (topbarKalenderState.list || []).slice()
+      .sort((a, b) => String(a?.mulai || '').localeCompare(String(b?.mulai || '')))
+    adminDashboardAgendaRows = rows
+
+    if (!rows.length) {
+      area.innerHTML = `
+        <div class="placeholder-card">
+          <div style="font-size:16px; font-weight:700; margin-bottom:8px;">Dashboard Agenda</div>
+          <div style="font-size:13px; color:#64748b;">Belum ada kegiatan di Kalender Akademik.</div>
+        </div>
+      `
+      return
+    }
+
+    const todayKey = getTopbarKalenderDateKey(new Date())
+    const thisMonthKey = getTopbarKalenderMonthNow()
+    const totalKegiatan = rows.length
+    const bulanIniCount = rows.filter(item => String(getTopbarKalenderDateKey(item?.mulai) || '').startsWith(thisMonthKey)).length
+    const hariIniCount = rows.filter(item => getTopbarKalenderRangeKeys(item?.mulai, item?.selesai).includes(todayKey)).length
+
+    const itemsHtml = rows.map(item => {
+      const warna = normalizeTopbarKalenderColor(item?.warna)
+      const rentang = getDashboardCalendarRangeLabel(item)
+      const itemId = String(item?.id || '')
+      return `
+        <button type="button" onclick="openAdminDashboardAgendaPopup('${escapeHtml(itemId)}')" style="text-align:left; width:100%; min-height:210px; position:relative; border:1px solid #e2e8f0; border-radius:16px; background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); box-shadow:0 12px 24px rgba(15,23,42,0.08); padding:22px 20px 18px 22px; overflow:hidden; cursor:pointer;">
+          <span style="pointer-events:none; position:absolute; inset:0; background:linear-gradient(92deg, ${escapeHtml(warna)}0b 0%, ${escapeHtml(warna)}08 20%, rgba(255,255,255,0) 54%), linear-gradient(165deg, rgba(255,255,255,0.42) 0%, rgba(255,255,255,0) 38%); box-shadow:inset 1px 0 8px ${escapeHtml(warna)}1a;"></span>
+          <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; min-height:160px; text-align:center;">
+            <div style="font-family:'Poppins',sans-serif; font-size:54px; font-weight:700; color:#0f172a; line-height:1.2;">${escapeHtml(item?.judul || '-')}</div>
+            <span style="font-family:'Poppins',sans-serif; font-size:24px; font-weight:700; color:#334155; background:#ffffff; border:none; border-radius:999px; padding:6px 12px; white-space:nowrap;">${escapeHtml(rentang)}</span>
+          </div>
+        </button>
+      `
+    }).join('')
+
+    area.innerHTML = `
+      <div class="placeholder-card">
+        <div style="font-size:16px; font-weight:700; margin-bottom:8px; color:#0f172a;">Dashboard Agenda</div>
+        <div style="font-size:13px; color:#475569; margin-bottom:12px;">Menampilkan seluruh kegiatan dari Kalender Akademik.</div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; margin-bottom:12px;">
+          <div style="border:1px solid #e2e8f0; border-radius:12px; background:#ffffff; padding:10px 12px;">
+            <div style="font-size:11px; color:#64748b;">Total Kegiatan</div>
+            <div style="font-size:22px; font-weight:700; color:#0f172a; line-height:1.2;">${totalKegiatan}</div>
+          </div>
+          <div style="border:1px solid #e2e8f0; border-radius:12px; background:#ffffff; padding:10px 12px;">
+            <div style="font-size:11px; color:#64748b;">Bulan Ini</div>
+            <div style="font-size:22px; font-weight:700; color:#0f172a; line-height:1.2;">${bulanIniCount}</div>
+          </div>
+          <div style="border:1px solid #e2e8f0; border-radius:12px; background:#ffffff; padding:10px 12px;">
+            <div style="font-size:11px; color:#64748b;">Sedang Berjalan Hari Ini</div>
+            <div style="font-size:22px; font-weight:700; color:#0f172a; line-height:1.2;">${hariIniCount}</div>
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(620px,1fr)); gap:14px;">
+          ${itemsHtml}
+        </div>
+      </div>
+    `
+  } catch (error) {
+    console.error(error)
+    area.innerHTML = `<div class="placeholder-card">Gagal load agenda dashboard: ${escapeHtml(error?.message || 'Unknown error')}</div>`
+  }
+}
+
+function ensureAdminDashboardAgendaPopup() {
+  let popup = document.getElementById('admin-dashboard-agenda-popup')
+  if (popup) return popup
+  popup = document.createElement('div')
+  popup.id = 'admin-dashboard-agenda-popup'
+  popup.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.35); display:none; align-items:center; justify-content:center; z-index:10001; padding:16px; box-sizing:border-box;'
+  popup.innerHTML = `
+    <div style="width:min(680px, calc(100vw - 32px)); max-height:calc(100vh - 32px); overflow:auto; border:1px solid #dbeafe; border-radius:0; background:#fff; box-shadow:0 18px 34px rgba(15,23,42,0.18); padding:14px 16px; position:relative;">
+      <button type="button" onclick="closeAdminDashboardAgendaPopup()" style="position:absolute; right:12px; top:10px; border:1px solid #cbd5e1; background:#fff; border-radius:999px; width:28px; height:28px; cursor:pointer;">×</button>
+      <div id="admin-dashboard-agenda-popup-body"></div>
+    </div>
+  `
+  popup.addEventListener('click', event => {
+    if (event.target !== popup) return
+    closeAdminDashboardAgendaPopup()
+  })
+  document.body.appendChild(popup)
+  return popup
+}
+
+function openAdminDashboardAgendaPopup(id) {
+  const sid = String(id || '')
+  const selected = adminDashboardAgendaRows.find(item => String(item?.id || '') === sid)
+  if (!selected) return
+  const popup = ensureAdminDashboardAgendaPopup()
+  const body = document.getElementById('admin-dashboard-agenda-popup-body')
+  if (!popup || !body) return
+  const warna = normalizeTopbarKalenderColor(selected?.warna)
+  body.innerHTML = `
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:8px; padding-right:30px;">
+      <div style="font-size:20px; font-weight:700; color:#0f172a; line-height:1.35;">${escapeHtml(selected?.judul || '-')}</div>
+      <span style="width:12px; height:12px; border-radius:999px; background:${escapeHtml(warna)}; margin-top:8px;"></span>
+    </div>
+    <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:8px;">${escapeHtml(getDashboardCalendarRangeLabel(selected))}</div>
+    <div style="font-size:14px; color:#475569; line-height:1.7; white-space:pre-wrap;">${escapeHtml(selected?.detail || '-')}</div>
+  `
+  popup.style.display = 'flex'
+}
+
+function closeAdminDashboardAgendaPopup() {
+  const popup = document.getElementById('admin-dashboard-agenda-popup')
+  if (!popup) return
+  popup.style.display = 'none'
 }
 
 function renderTopbarCalendarDetail() {
@@ -713,9 +846,10 @@ function loadPage(page, params = {}) {
 
   switch (page) {
     case 'dashboard':
-      area.innerHTML = `
-        <p>Selamat datang di panel admin.</p>
-      `
+      renderAdminDashboardCalendar()
+      break
+    case 'struktur-sekolah':
+      loadExternalPage('struktur-sekolah')
       break
     case 'tahun-ajaran':
       loadExternalPage('tahun-ajaran')
@@ -813,6 +947,10 @@ async function loadExternalPage(page, params = {}) {
     }
     if (page === 'kalender-akademik' && typeof initKalenderAkademikPage === 'function') {
       initKalenderAkademikPage()
+      return
+    }
+    if (page === 'struktur-sekolah' && typeof initStrukturSekolahPage === 'function') {
+      initStrukturSekolahPage()
       return
     }
     if (page === 'karyawan' && typeof initKaryawanPage === 'function') {

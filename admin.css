@@ -12,6 +12,7 @@ body {
   width: 220px;
   background: #ffffff;
   color: #0f172a;
+  font-family: "Poppins", Arial, sans-serif;
   padding: 20px;
   display: flex;
   flex-direction: column;
@@ -162,11 +163,20 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  font-family: "Poppins", Arial, sans-serif;
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
   padding: 12px 16px;
   margin-bottom: 16px;
+}
+
+.sidebar button,
+.topbar button,
+.topbar-title,
+.topbar-user-name,
+.topbar-user-menu button {
+  font-family: "Poppins", Arial, sans-serif;
 }
 
 .topbar-title {

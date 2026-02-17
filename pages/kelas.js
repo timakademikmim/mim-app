@@ -22,6 +22,8 @@ let kelasActiveSubtab = 'data-kelas'
 let kelasSelectedTahunId = ''
 let mapelSelectedTahunId = ''
 let mapelSupportsTahunAjaran = null
+let mapelSupportsTingkatanMulti = null
+let mapelSupportsKkm = null
 
 function parseRoleList(rawRole) {
   if (Array.isArray(rawRole)) {
@@ -69,11 +71,87 @@ function normalizeMapelTingkatan(rawValue) {
   return ''
 }
 
+function parseMapelTingkatanList(rawMulti = '', rawValue = '', rawLegacy = '') {
+  const multi = String(rawMulti || '').trim()
+  const direct = String(rawValue || '').trim()
+  const legacy = String(rawLegacy || '').trim()
+  const sources = [multi, direct, legacy].filter(Boolean)
+  if (!sources.length) return []
+
+  const normalized = []
+  sources.forEach(source => {
+    let values = []
+    if (source.startsWith('[') && source.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(source)
+        if (Array.isArray(parsed)) values = parsed
+      } catch (e) {
+        values = []
+      }
+    }
+
+    if (values.length === 0) values = source.split(/[,\|;]+/)
+
+    values
+      .map(item => normalizeMapelTingkatan(item))
+      .filter(Boolean)
+      .forEach(item => normalized.push(item))
+  })
+
+  return [...new Set(normalized)]
+}
+
 function getMapelTingkatanLabel(rawValue) {
-  const value = normalizeMapelTingkatan(rawValue)
-  if (value === 'smp') return 'SMP'
-  if (value === 'sma') return 'SMA'
-  return '-'
+  const list = parseMapelTingkatanList('', rawValue)
+  if (!list.length) return '-'
+  return list.map(item => item === 'smp' ? 'SMP' : 'SMA').join(', ')
+}
+
+function mapelHasTingkatan(mapel, tingkatan) {
+  const normalized = normalizeMapelTingkatan(tingkatan)
+  if (!normalized) return true
+  const list = parseMapelTingkatanList(mapel?.tingkatan_multi, mapel?.tingkatan, mapel?.jenjang)
+  return list.includes(normalized)
+}
+
+function getDistribusiTingkatanValue(item, kelasMap = new Map(), mapelObjMap = new Map()) {
+  const kelasObj = kelasMap.get(String(item?.kelas_id || ''))
+  const fromKelas = getJenjangFromTingkat(kelasObj?.tingkat)
+  if (fromKelas) return fromKelas
+
+  const fromDistribusi = normalizeMapelTingkatan(item?.tingkatan)
+  if (fromDistribusi) return fromDistribusi
+
+  const mapelObj = mapelObjMap.get(String(item?.mapel_id || ''))
+  const mapelList = parseMapelTingkatanList(mapelObj?.tingkatan_multi, mapelObj?.tingkatan, mapelObj?.jenjang)
+  return mapelList[0] || ''
+}
+
+function renderMapelTingkatanCheckboxes(containerEl, selectedValues = []) {
+  if (!containerEl) return
+  const selectedList = Array.isArray(selectedValues)
+    ? selectedValues.map(normalizeMapelTingkatan).filter(Boolean)
+    : parseMapelTingkatanList(selectedValues)
+  const checkedSet = new Set(selectedList)
+
+  containerEl.innerHTML = `
+    <label style="display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:13px; color:#334155;">
+      <input type="checkbox" value="smp" ${checkedSet.has('smp') ? 'checked' : ''}>
+      SMP
+    </label>
+    <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:#334155;">
+      <input type="checkbox" value="sma" ${checkedSet.has('sma') ? 'checked' : ''}>
+      SMA
+    </label>
+  `
+}
+
+function getCheckedMapelTingkatan(containerEl) {
+  if (!containerEl) return []
+  const checked = Array.from(containerEl.querySelectorAll('input[type="checkbox"]:checked'))
+    .map(el => normalizeMapelTingkatan(el.value))
+    .filter(Boolean)
+  return [...new Set(checked)]
 }
 
 function renderMapelTingkatanOptions(selectEl, selectedValue = '', options = {}) {
@@ -277,9 +355,9 @@ function setDistribusiTingkatanView(view) {
 }
 
 function getDistribusiSortValue(item, maps = {}) {
-  const { kelasMap, mapelMap, guruMap, semesterMap } = maps
+  const { kelasMap, mapelMap, mapelObjMap, guruMap, semesterMap } = maps
   if (distribusiSortField === 'tingkatan') {
-    return getMapelTingkatanLabel(getJenjangFromTingkat(kelasMap.get(String(item.kelas_id))?.tingkat))
+    return getMapelTingkatanLabel(getDistribusiTingkatanValue(item, kelasMap, mapelObjMap))
   }
   if (distribusiSortField === 'mapel') return String(mapelMap.get(String(item.mapel_id)) || '')
   if (distribusiSortField === 'guru') return String(guruMap.get(String(item.guru_id)) || '')
@@ -288,12 +366,12 @@ function getDistribusiSortValue(item, maps = {}) {
 }
 
 function applyDistribusiFilterAndSort(distribusiList, maps = {}) {
-  const { kelasMap, mapelMap, guruMap, semesterMap } = maps
+  const { kelasMap, mapelMap, mapelObjMap, guruMap, semesterMap } = maps
   const keyword = String(distribusiSearchKeyword || '').trim().toLowerCase()
 
   const filtered = (distribusiList || []).filter(item => {
     const kelasObj = kelasMap.get(String(item.kelas_id))
-    const tingkatan = getJenjangFromTingkat(kelasObj?.tingkat)
+    const tingkatan = getDistribusiTingkatanValue(item, kelasMap, mapelObjMap)
     const kelasId = String(item.kelas_id || '')
     const semesterId = String(item.semester_id || '')
     const guruId = String(item.guru_id || '')
@@ -440,6 +518,26 @@ async function checkMapelSupportsTahunAjaran() {
   return mapelSupportsTahunAjaran
 }
 
+async function checkMapelSupportsTingkatanMulti() {
+  if (mapelSupportsTingkatanMulti !== null) return mapelSupportsTingkatanMulti
+  const { error } = await sb
+    .from('mapel')
+    .select('id, tingkatan_multi')
+    .limit(1)
+  mapelSupportsTingkatanMulti = !error
+  return mapelSupportsTingkatanMulti
+}
+
+async function checkMapelSupportsKkm() {
+  if (mapelSupportsKkm !== null) return mapelSupportsKkm
+  const { error } = await sb
+    .from('mapel')
+    .select('id, kkm')
+    .limit(1)
+  mapelSupportsKkm = !error
+  return mapelSupportsKkm
+}
+
 async function loadGuruOptions(selectEl, selectedId = '') {
   if (!selectEl) return
 
@@ -562,6 +660,58 @@ async function getSemesterAktif() {
   }
 
   return (data || [])[0] || null
+}
+
+async function autoCreateDistribusiByTingkatan(mapelId, tingkatanList = [], tahunAjaranId = '') {
+  const mapelIdText = String(mapelId || '').trim()
+  const tahunIdText = String(tahunAjaranId || '').trim()
+  const targetTingkatan = [...new Set((tingkatanList || []).map(normalizeMapelTingkatan).filter(Boolean))]
+  if (!mapelIdText || !tahunIdText || !targetTingkatan.length) return
+
+  const [semesterAktif, kelasList] = await Promise.all([
+    getSemesterAktif(),
+    getKelasListForDistribusi(tahunIdText)
+  ])
+
+  if (!semesterAktif?.id) return
+
+  const kelasTarget = (kelasList || []).filter(item => {
+    const jenjang = getJenjangFromTingkat(item?.tingkat)
+    return targetTingkatan.includes(jenjang)
+  })
+  if (!kelasTarget.length) return
+  const kelasTargetIds = kelasTarget.map(item => String(item.id))
+
+  const existingRes = await sb
+    .from('distribusi_mapel')
+    .select('id, mapel_id, semester_id, kelas_id')
+    .eq('mapel_id', mapelIdText)
+    .eq('semester_id', String(semesterAktif.id))
+    .in('kelas_id', kelasTargetIds)
+
+  if (existingRes.error) {
+    console.error(existingRes.error)
+    return
+  }
+
+  const existingKelasSet = new Set((existingRes.data || []).map(item => String(item.kelas_id || '')).filter(Boolean))
+  const inserts = []
+  kelasTarget.forEach(kelas => {
+    const kelasId = String(kelas.id || '')
+    if (!kelasId || existingKelasSet.has(kelasId)) return
+    inserts.push({
+      kelas_id: kelasId,
+      mapel_id: mapelIdText,
+      guru_id: null,
+      semester_id: String(semesterAktif.id)
+    })
+  })
+
+  if (!inserts.length) return
+  const insertRes = await sb.from('distribusi_mapel').insert(inserts)
+  if (insertRes.error) {
+    console.error(insertRes.error)
+  }
 }
 
 function renderSimpleOptions(selectEl, rows, placeholder, labelGetter, selectedId = '') {
@@ -721,7 +871,12 @@ async function loadDistribusiFormOptions(options = {}) {
   }
   if (!effectiveTingkatan) {
     const selectedMapel = (mapelList || []).find(item => String(item.id) === String(selectedMapelId))
-    effectiveTingkatan = normalizeMapelTingkatan(selectedMapel?.tingkatan || selectedMapel?.jenjang)
+    const fromMapel = parseMapelTingkatanList(
+      selectedMapel?.tingkatan_multi,
+      selectedMapel?.tingkatan,
+      selectedMapel?.jenjang
+    )
+    effectiveTingkatan = fromMapel[0] || ''
   }
   if (tingkatanSelect) {
     renderMapelTingkatanOptions(tingkatanSelect, effectiveTingkatan, { placeholder: '-- Pilih Tingkatan --' })
@@ -731,8 +886,11 @@ async function loadDistribusiFormOptions(options = {}) {
     ? (kelasList || []).filter(item => getJenjangFromTingkat(item.tingkat) === effectiveTingkatan)
     : (kelasList || [])
   const filteredMapelList = effectiveTingkatan
-    ? (mapelList || []).filter(item => normalizeMapelTingkatan(item.tingkatan || item.jenjang) === effectiveTingkatan)
+    ? (mapelList || []).filter(item => mapelHasTingkatan(item, effectiveTingkatan))
     : (mapelList || [])
+
+  const activeSemester = (semesterList || []).find(item => item?.aktif)
+  const effectiveSemesterId = String(selectedSemesterId || activeSemester?.id || '')
 
   renderSimpleOptions(
     kelasSelect,
@@ -763,7 +921,7 @@ async function loadDistribusiFormOptions(options = {}) {
     semesterList,
     '-- Pilih Semester --',
     item => getSemesterLabel(item),
-    selectedSemesterId
+    effectiveSemesterId
   )
 }
 
@@ -1112,8 +1270,8 @@ async function tambahDistribusiMapel() {
     alert('Tingkatan wajib dipilih')
     return
   }
-  if (!kelasId || !mapelId || !guruId || !semesterId) {
-    alert('Kelas, mapel, guru, dan semester wajib diisi')
+  if (!kelasId || !mapelId || !semesterId) {
+    alert('Kelas, mapel, dan semester wajib diisi')
     return
   }
 
@@ -1122,7 +1280,7 @@ async function tambahDistribusiMapel() {
     .insert([{
       kelas_id: kelasId,
       mapel_id: mapelId,
-      guru_id: guruId,
+      guru_id: guruId || null,
       semester_id: semesterId
     }])
 
@@ -1152,6 +1310,7 @@ async function showEditDistribusiMapelForm(id) {
     mapelSelect: document.getElementById('modal-edit-distribusi-mapel'),
     guruSelect: document.getElementById('modal-edit-distribusi-guru'),
     semesterSelect: document.getElementById('modal-edit-distribusi-semester'),
+    selectedTingkatan: row.tingkatan || '',
     selectedKelasId: row.kelas_id,
     selectedMapelId: row.mapel_id,
     selectedGuruId: row.guru_id,
@@ -1174,8 +1333,8 @@ async function modalEditDistribusiMapel() {
     alert('Tingkatan wajib dipilih')
     return
   }
-  if (!kelasId || !mapelId || !guruId || !semesterId) {
-    alert('Kelas, mapel, guru, dan semester wajib diisi')
+  if (!kelasId || !mapelId || !semesterId) {
+    alert('Kelas, mapel, dan semester wajib diisi')
     return
   }
 
@@ -1184,7 +1343,7 @@ async function modalEditDistribusiMapel() {
     .update({
       kelas_id: kelasId,
       mapel_id: mapelId,
-      guru_id: guruId,
+      guru_id: guruId || null,
       semester_id: semesterId
     })
     .eq('id', currentEditDistribusiMapelId)
@@ -1240,7 +1399,7 @@ function createAddMapelModal() {
       <h3>Tambah Mapel</h3>
       <select class="kelas-field" id="modal-add-mapel-tahun" style="${getInsetFieldStyle('margin-bottom:8px;')}"></select>
       <input class="kelas-field" type="text" id="modal-add-mapel-nama" placeholder="Nama Mapel" style="${getInsetFieldStyle('margin-bottom:8px;')}">
-      <select class="kelas-field" id="modal-add-mapel-tingkatan" style="${getInsetFieldStyle('margin-bottom:8px;')}"></select>
+      <div id="modal-add-mapel-tingkatan" style="border:1px solid #cbd5e1; border-radius:12px; background:#f8fafc; padding:10px 12px; margin-bottom:8px;"></div>
       <input class="kelas-field" type="text" id="modal-add-mapel-kategori" placeholder="Kategori (opsional)" style="${getInsetFieldStyle('margin-bottom:12px;')}">
       <button class="modal-btn modal-btn-primary" onclick="tambahMapel()">Simpan</button>
       <button class="modal-btn modal-btn-secondary" onclick="closeAddMapelModal()" style="margin-left:8px;">Batal</button>
@@ -1248,7 +1407,7 @@ function createAddMapelModal() {
     </div>
   `
   document.body.appendChild(modal)
-  renderMapelTingkatanOptions(document.getElementById('modal-add-mapel-tingkatan'))
+  renderMapelTingkatanCheckboxes(document.getElementById('modal-add-mapel-tingkatan'))
   return modal
 }
 
@@ -1293,7 +1452,7 @@ function createEditMapelModal() {
       <h3>Edit Mapel</h3>
       <select class="kelas-field" id="modal-edit-mapel-tahun" style="${getInsetFieldStyle('margin-bottom:8px;')}"></select>
       <input class="kelas-field" type="text" id="modal-edit-mapel-nama" placeholder="Nama Mapel" style="${getInsetFieldStyle('margin-bottom:8px;')}">
-      <select class="kelas-field" id="modal-edit-mapel-tingkatan" style="${getInsetFieldStyle('margin-bottom:8px;')}"></select>
+      <div id="modal-edit-mapel-tingkatan" style="border:1px solid #cbd5e1; border-radius:12px; background:#f8fafc; padding:10px 12px; margin-bottom:8px;"></div>
       <input class="kelas-field" type="text" id="modal-edit-mapel-kategori" placeholder="Kategori (opsional)" style="${getInsetFieldStyle('margin-bottom:12px;')}">
       <button class="modal-btn modal-btn-primary" onclick="modalEditMapel()">Simpan</button>
       <button class="modal-btn modal-btn-secondary" onclick="closeEditMapelModal()" style="margin-left:8px;">Batal</button>
@@ -1301,7 +1460,7 @@ function createEditMapelModal() {
     </div>
   `
   document.body.appendChild(modal)
-  renderMapelTingkatanOptions(document.getElementById('modal-edit-mapel-tingkatan'))
+  renderMapelTingkatanCheckboxes(document.getElementById('modal-edit-mapel-tingkatan'))
   return modal
 }
 
@@ -1315,35 +1474,77 @@ function closeEditMapelModal() {
 async function tambahMapel() {
   const tahunAjaranId = String(document.getElementById('modal-add-mapel-tahun')?.value || '')
   const nama = (document.getElementById('modal-add-mapel-nama')?.value || '').trim()
-  const tingkatan = normalizeMapelTingkatan(document.getElementById('modal-add-mapel-tingkatan')?.value || '')
+  const tingkatanList = getCheckedMapelTingkatan(document.getElementById('modal-add-mapel-tingkatan'))
+  const tingkatan = tingkatanList.join(',')
   const kategori = (document.getElementById('modal-add-mapel-kategori')?.value || '').trim()
 
-  if (!tahunAjaranId || !nama || !tingkatan) {
+  if (!tahunAjaranId || !nama || tingkatanList.length === 0) {
     alert('Tahun ajaran, nama mapel, dan tingkatan wajib diisi')
     return
   }
 
   const supportTahunAjaran = await checkMapelSupportsTahunAjaran()
+  const supportTingkatanMulti = await checkMapelSupportsTingkatanMulti()
   const payload = { nama, tingkatan, kategori: kategori || null }
   if (supportTahunAjaran) payload.tahun_ajaran_id = tahunAjaranId
+  if (supportTingkatanMulti) payload.tingkatan_multi = tingkatan
 
-  let { error } = await sb
+  let insertData = null
+  let { data: inserted, error } = await sb
     .from('mapel')
     .insert([payload])
+    .select('id')
+    .single()
+  insertData = inserted || null
 
-  if (error && String(error.message || '').toLowerCase().includes('tingkatan')) {
-    const retryPayload = { nama, jenjang: tingkatan, kategori: kategori || null }
+  if (error && String(error.message || '').toLowerCase().includes('tingkatan_multi')) {
+    const retryNoMulti = { ...payload }
+    delete retryNoMulti.tingkatan_multi
+    const retry = await sb
+      .from('mapel')
+      .insert([retryNoMulti])
+      .select('id')
+      .single()
+    insertData = retry.data || null
+    error = retry.error
+  }
+
+  const errorCode = String(error?.code || '')
+  const errorMsg = String(error?.message || '').toLowerCase()
+  const isTingkatanConstraintError =
+    !!error && (
+      errorMsg.includes('tingkatan') ||
+      errorMsg.includes('check constraint') ||
+      errorCode === '23514'
+    )
+
+  if (isTingkatanConstraintError) {
+    // Fallback untuk skema lama: tingkatan hanya boleh single value.
+    // Tidak memakai kolom `jenjang` karena bisa jadi kolomnya tidak ada.
+    const retryPayload = {
+      nama,
+      tingkatan: tingkatanList[0],
+      kategori: kategori || null
+    }
     if (supportTahunAjaran) retryPayload.tahun_ajaran_id = tahunAjaranId
+    if (supportTingkatanMulti) retryPayload.tingkatan_multi = tingkatan
     const retry = await sb
       .from('mapel')
       .insert([retryPayload])
+      .select('id')
+      .single()
+    insertData = retry.data || null
     error = retry.error
   }
 
   if (error) {
     console.error(error)
-    alert('Gagal menambah mapel')
+    alert(`Gagal menambah mapel: ${error.message || 'Unknown error'}`)
     return
+  }
+
+  if (insertData?.id) {
+    await autoCreateDistribusiByTingkatan(insertData.id, tingkatanList, tahunAjaranId)
   }
 
   await clearMapelCacheByTahun()
@@ -1375,9 +1576,9 @@ async function showEditMapelForm(id) {
     '-- Pilih Tahun Ajaran --'
   )
   document.getElementById('modal-edit-mapel-nama').value = mapel.nama ?? ''
-  renderMapelTingkatanOptions(
+  renderMapelTingkatanCheckboxes(
     document.getElementById('modal-edit-mapel-tingkatan'),
-    mapel.tingkatan || mapel.jenjang || ''
+    parseMapelTingkatanList(mapel.tingkatan_multi, mapel.tingkatan, mapel.jenjang)
   )
   document.getElementById('modal-edit-mapel-kategori').value = mapel.kategori ?? ''
   document.getElementById('edit-mapel-modal').style.display = 'block'
@@ -1388,26 +1589,55 @@ async function modalEditMapel() {
 
   const tahunAjaranId = String(document.getElementById('modal-edit-mapel-tahun')?.value || '')
   const nama = (document.getElementById('modal-edit-mapel-nama')?.value || '').trim()
-  const tingkatan = normalizeMapelTingkatan(document.getElementById('modal-edit-mapel-tingkatan')?.value || '')
+  const tingkatanList = getCheckedMapelTingkatan(document.getElementById('modal-edit-mapel-tingkatan'))
+  const tingkatan = tingkatanList.join(',')
   const kategori = (document.getElementById('modal-edit-mapel-kategori')?.value || '').trim()
 
-  if (!tahunAjaranId || !nama || !tingkatan) {
+  if (!tahunAjaranId || !nama || tingkatanList.length === 0) {
     alert('Tahun ajaran, nama mapel, dan tingkatan wajib diisi')
     return
   }
 
   const supportTahunAjaran = await checkMapelSupportsTahunAjaran()
+  const supportTingkatanMulti = await checkMapelSupportsTingkatanMulti()
   const payload = { nama, tingkatan, kategori: kategori || null }
   if (supportTahunAjaran) payload.tahun_ajaran_id = tahunAjaranId
+  if (supportTingkatanMulti) payload.tingkatan_multi = tingkatan
 
   let { error } = await sb
     .from('mapel')
     .update(payload)
     .eq('id', currentEditMapelId)
 
-  if (error && String(error.message || '').toLowerCase().includes('tingkatan')) {
-    const retryPayload = { nama, jenjang: tingkatan, kategori: kategori || null }
+  if (error && String(error.message || '').toLowerCase().includes('tingkatan_multi')) {
+    const retryNoMulti = { ...payload }
+    delete retryNoMulti.tingkatan_multi
+    const retry = await sb
+      .from('mapel')
+      .update(retryNoMulti)
+      .eq('id', currentEditMapelId)
+    error = retry.error
+  }
+
+  const errorCode = String(error?.code || '')
+  const errorMsg = String(error?.message || '').toLowerCase()
+  const isTingkatanConstraintError =
+    !!error && (
+      errorMsg.includes('tingkatan') ||
+      errorMsg.includes('check constraint') ||
+      errorCode === '23514'
+    )
+
+  if (isTingkatanConstraintError) {
+    // Fallback untuk skema lama: tingkatan hanya boleh single value.
+    // Tidak memakai kolom `jenjang` karena bisa jadi kolomnya tidak ada.
+    const retryPayload = {
+      nama,
+      tingkatan: tingkatanList[0],
+      kategori: kategori || null
+    }
     if (supportTahunAjaran) retryPayload.tahun_ajaran_id = tahunAjaranId
+    if (supportTingkatanMulti) retryPayload.tingkatan_multi = tingkatan
     const retry = await sb
       .from('mapel')
       .update(retryPayload)
@@ -1417,9 +1647,11 @@ async function modalEditMapel() {
 
   if (error) {
     console.error(error)
-    alert('Gagal mengubah mapel')
+    alert(`Gagal mengubah mapel: ${error.message || 'Unknown error'}`)
     return
   }
+
+  await autoCreateDistribusiByTingkatan(currentEditMapelId, tingkatanList, tahunAjaranId)
 
   await clearMapelCacheByTahun()
   if (typeof clearCachedData === 'function') clearCachedData(DISTRIBUSI_MAPEL_CACHE_KEY)
@@ -1478,7 +1710,7 @@ async function loadMapel(forceRefresh = false) {
     getTahunAjaranList()
   ])
   if (!tahunList || tahunList.length === 0) {
-    renderMapelTable(container, [], null, [], null, false)
+    renderMapelTable(container, [], null, [], null, false, false)
     return
   }
 
@@ -1487,17 +1719,23 @@ async function loadMapel(forceRefresh = false) {
 
   const mapelList = await getMapelList(selectedTahunId)
   const selectedTahun = tahunList.find(item => String(item.id) === String(selectedTahunId)) || null
-  const supportTahunAjaran = await checkMapelSupportsTahunAjaran()
-  renderMapelTable(container, mapelList, selectedTahun, tahunList, tahunAktif, supportTahunAjaran)
+  const [supportTahunAjaran, supportKkm] = await Promise.all([
+    checkMapelSupportsTahunAjaran(),
+    checkMapelSupportsKkm()
+  ])
+  renderMapelTable(container, mapelList, selectedTahun, tahunList, tahunAktif, supportTahunAjaran, supportKkm)
 }
 
-function renderMapelTable(container, mapelList, selectedTahun, tahunList = [], tahunAktif = null, supportTahunAjaran = false) {
+function renderMapelTable(container, mapelList, selectedTahun, tahunList = [], tahunAktif = null, supportTahunAjaran = false, supportKkm = false) {
   window.mapelList = mapelList || []
   const tahunOptions = buildTahunOptionsHtml(tahunList, selectedTahun?.id)
   const tahunMap = new Map((tahunList || []).map(item => [String(item.id), item.nama || '-']))
   const warning = supportTahunAjaran
     ? ''
     : '<div style="margin-top:8px; color:#b45309; font-size:12px;">Kolom <b>mapel.tahun_ajaran_id</b> belum ada. Filter tahun untuk Data Mapel belum aktif.</div>'
+  const warningKkm = supportKkm
+    ? ''
+    : '<div style="margin-top:8px; color:#b45309; font-size:12px;">Kolom <b>mapel.kkm</b> belum ada. Jalankan SQL: <code>alter table public.mapel add column if not exists kkm numeric null;</code></div>'
 
   let headerHtml = `
     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
@@ -1506,6 +1744,7 @@ function renderMapelTable(container, mapelList, selectedTahun, tahunList = [], t
       </select>
     </div>
     ${warning}
+    ${warningKkm}
   `
 
   if (!mapelList || mapelList.length === 0) {
@@ -1532,7 +1771,7 @@ function renderMapelTable(container, mapelList, selectedTahun, tahunList = [], t
     <tr>
       <td style="padding:8px; border:1px solid #ddd;">${tahunMap.get(String(item.tahun_ajaran_id || '')) || '-'}</td>
       <td style="padding:8px; border:1px solid #ddd;">${item.nama ?? '-'}</td>
-      <td style="padding:8px; border:1px solid #ddd;">${getMapelTingkatanLabel(item.tingkatan || item.jenjang)}</td>
+      <td style="padding:8px; border:1px solid #ddd;">${getMapelTingkatanLabel(item.tingkatan_multi || item.tingkatan || item.jenjang)}</td>
       <td style="padding:8px; border:1px solid #ddd;">${item.kategori ?? '-'}</td>
       <td style="padding:8px; border:1px solid #ddd; text-align:center; white-space:nowrap;">
         <button class="btn-edit" onclick="showEditMapelForm('${item.id}')">Edit</button>
@@ -1542,7 +1781,86 @@ function renderMapelTable(container, mapelList, selectedTahun, tahunList = [], t
   `).join('')
 
   html += '</tbody></table></div>'
+
+  if (supportKkm) {
+    html += `
+      <div style="margin-top:14px; font-weight:700; color:#0f172a;">Mapel - Nilai (KKM)</div>
+      <div style="overflow-x:auto; margin-top:8px;">
+        <table style="width:100%; border-collapse:collapse; font-size:13px;">
+          <thead>
+            <tr style="background:#f8fafc;">
+              <th style="padding:8px; border:1px solid #ddd; width:48px; text-align:center;">No</th>
+              <th style="padding:8px; border:1px solid #ddd; text-align:left;">Nama Mapel</th>
+              <th style="padding:8px; border:1px solid #ddd; width:140px; text-align:center;">Tingkatan</th>
+              <th style="padding:8px; border:1px solid #ddd; width:120px; text-align:center;">KKM</th>
+              <th style="padding:8px; border:1px solid #ddd; width:120px; text-align:center;">Aksi</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${(mapelList || []).map((item, index) => `
+              <tr>
+                <td style="padding:8px; border:1px solid #ddd; text-align:center;">${index + 1}</td>
+                <td style="padding:8px; border:1px solid #ddd;">${item.nama ?? '-'}</td>
+                <td style="padding:8px; border:1px solid #ddd; text-align:center;">${getMapelTingkatanLabel(item.tingkatan_multi || item.tingkatan || item.jenjang)}</td>
+                <td style="padding:8px; border:1px solid #ddd; text-align:center;">
+                  <input id="mapel-kkm-${item.id}" class="kelas-field" type="number" min="0" max="100" step="1" value="${item.kkm ?? ''}" style="${getInsetFieldStyle('width:90px; text-align:center;')}">
+                </td>
+                <td style="padding:8px; border:1px solid #ddd; text-align:center;">
+                  <button id="btn-save-kkm-${item.id}" class="modal-btn modal-btn-primary" style="padding:6px 10px; font-size:12px;" onclick="saveMapelKkm('${item.id}', this)">Simpan</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `
+  }
+
   container.innerHTML = html
+}
+
+async function saveMapelKkm(mapelId, buttonEl = null) {
+  const id = String(mapelId || '').trim()
+  if (!id) return
+
+  const inputEl = document.getElementById(`mapel-kkm-${id}`)
+  if (!inputEl) return
+
+  const raw = String(inputEl.value || '').trim()
+  if (raw !== '') {
+    const num = Number(raw)
+    if (!Number.isFinite(num) || num < 0 || num > 100) {
+      alert('KKM harus angka 0 sampai 100.')
+      return
+    }
+  }
+
+  const kkmValue = raw === '' ? null : Number(raw)
+  if (buttonEl) {
+    buttonEl.disabled = true
+    buttonEl.textContent = 'Menyimpan...'
+  }
+
+  const { error } = await sb
+    .from('mapel')
+    .update({ kkm: kkmValue })
+    .eq('id', id)
+
+  if (buttonEl) {
+    buttonEl.disabled = false
+    buttonEl.textContent = 'Simpan'
+  }
+
+  if (error) {
+    console.error(error)
+    alert(`Gagal simpan KKM: ${error.message || 'Unknown error'}`)
+    return
+  }
+
+  await clearMapelCacheByTahun()
+  const row = (window.mapelList || []).find(item => String(item.id) === id)
+  if (row) row.kkm = kkmValue
+  alert('KKM berhasil disimpan.')
 }
 
 async function loadDistribusiMapel(forceRefresh = false) {
@@ -1595,22 +1913,23 @@ async function loadDistribusiMapel(forceRefresh = false) {
   }
 
   const kelasListData = kelasRes.data || []
-  const kelasIds = kelasListData.map(item => item.id)
 
   let distribusiRes
-  if (kelasIds.length === 0) {
+  const mapelRows = await getMapelList(tahunTerpilihId)
+  const mapelIds = (mapelRows || []).map(item => item.id).filter(Boolean)
+
+  if (mapelIds.length === 0) {
     distribusiRes = { data: [], error: null }
   } else {
     const query = sb
       .from('distribusi_mapel')
-      .select('id, kelas_id, mapel_id, guru_id, semester_id')
-      .in('kelas_id', kelasIds)
+      .select('id, kelas_id, mapel_id, guru_id, semester_id, tingkatan')
+      .in('mapel_id', mapelIds)
       .order('id', { ascending: false })
     distribusiRes = await query
   }
 
-  const [mapelRows, karyawanList, semesterList] = await Promise.all([
-    getMapelList(tahunTerpilihId),
+  const [karyawanList, semesterList] = await Promise.all([
     sb.from('karyawan').select('id, nama'),
     getSemesterList()
   ])
@@ -1653,6 +1972,7 @@ function renderDistribusiMapelTable(container, payload) {
   ensureDistribusiFilterStyle()
   const distribusiList = payload?.distribusiList || []
   const kelasMap = new Map((payload?.kelasList || []).map(item => [String(item.id), item]))
+  const mapelObjMap = new Map((payload?.mapelList || []).map(item => [String(item.id), item]))
   const mapelMap = new Map((payload?.mapelList || []).map(item => {
     const kategori = item.kategori ? ` (${item.kategori})` : ''
     return [String(item.id), `${item.nama ?? '-'}${kategori}`]
@@ -1663,6 +1983,7 @@ function renderDistribusiMapelTable(container, payload) {
   const filteredDistribusiList = applyDistribusiFilterAndSort(distribusiList, {
     kelasMap,
     mapelMap,
+    mapelObjMap,
     guruMap,
     semesterMap
   })
@@ -1773,7 +2094,7 @@ function renderDistribusiMapelTable(container, payload) {
 
   html += filteredDistribusiList.map(item => `
     <tr>
-      <td style="padding:8px; border:1px solid #ddd;">${getMapelTingkatanLabel(getJenjangFromTingkat(kelasMap.get(String(item.kelas_id))?.tingkat))}</td>
+      <td style="padding:8px; border:1px solid #ddd;">${getMapelTingkatanLabel(getDistribusiTingkatanValue(item, kelasMap, mapelObjMap))}</td>
       <td style="padding:8px; border:1px solid #ddd;">${kelasMap.get(String(item.kelas_id))?.nama_kelas || '-'}</td>
       <td style="padding:8px; border:1px solid #ddd;">${mapelMap.get(String(item.mapel_id)) || '-'}</td>
       <td style="padding:8px; border:1px solid #ddd;">${guruMap.get(String(item.guru_id)) || '-'}</td>
