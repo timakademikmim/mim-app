@@ -25,9 +25,31 @@
       <option value="">Semua Tahun Lulus</option>
     </select>
   </div>
-  <button type="button" onclick="loadAlumni(true)" style="border:none; border-radius:999px; padding:8px 14px; font-size:12px; font-weight:700; cursor:pointer; background:#2563eb; color:#fff;">
-    Refresh
-  </button>
+  <div id="alumni-tools" style="position:relative; display:flex; align-items:center; gap:8px;">
+    <button type="button" onclick="toggleAlumniSortBox()" title="Sortir" aria-label="Sortir" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
+      &#8645;
+    </button>
+    <button type="button" onclick="loadAlumni(true)" style="border:none; border-radius:999px; padding:8px 14px; font-size:12px; font-weight:700; cursor:pointer; background:#2563eb; color:#fff;">
+      Refresh
+    </button>
+    <div id="alumni-sort-box" style="display:none; position:absolute; top:40px; right:0; background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:12px; width:220px; box-shadow:0 8px 24px rgba(15,23,42,0.12); z-index:20;">
+      <div style="font-weight:600; margin-bottom:8px;">Sortir Alumni</div>
+      <div style="display:flex; gap:8px; margin-bottom:8px;">
+        <select id="alumni-sort-field" class="alumni-field" onchange="applyAlumniSortControl()">
+          <option value="nama">Nama</option>
+          <option value="angkatan">Angkatan</option>
+          <option value="lulus">Tahun Lulus</option>
+        </select>
+        <select id="alumni-sort-direction" class="alumni-field" onchange="applyAlumniSortControl()">
+          <option value="asc">A-Z</option>
+          <option value="desc">Z-A</option>
+        </select>
+      </div>
+      <button type="button" onclick="resetAlumniSortOrder()" style="border:none; border-radius:999px; padding:8px 14px; font-size:12px; font-weight:700; cursor:pointer; background:#e2e8f0; color:#0f172a;">
+        Reset
+      </button>
+    </div>
+  </div>
 </div>
 
 <div id="list-alumni">Loading...</div>

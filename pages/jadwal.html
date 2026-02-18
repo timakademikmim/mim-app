@@ -59,18 +59,60 @@
       <button type="button" class="modal-btn modal-btn-secondary" onclick="resetJadwalFilter()">Reset</button>
     </div>
 
-    <button type="button" class="jadwal-top-btn" onclick="openAddJadwalModal()" title="Tambah Jadwal" aria-label="Tambah Jadwal" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
-      +
-    </button>
+    <div id="jadwal-tools" style="position:relative; display:flex; align-items:center; gap:8px;">
+      <button type="button" class="jadwal-top-btn" onclick="toggleJadwalSortBox()" title="Sortir" aria-label="Sortir" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
+        &#8645;
+      </button>
+      <button type="button" class="jadwal-top-btn" onclick="openAddJadwalModal()" title="Tambah Jadwal" aria-label="Tambah Jadwal" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
+        +
+      </button>
+      <div id="jadwal-sort-box" style="display:none; position:absolute; top:40px; right:0; background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:12px; width:250px; box-shadow:0 8px 24px rgba(15,23,42,0.12); z-index:20;">
+        <div style="font-weight:600; margin-bottom:8px;">Sortir Jadwal</div>
+        <div style="display:flex; gap:8px; margin-bottom:8px;">
+          <select class="jadwal-field" id="jadwal-sort-field" onchange="applyJadwalSortControl()">
+            <option value="hari">Hari</option>
+            <option value="jam">Jam</option>
+            <option value="kelas">Kelas</option>
+            <option value="mapel">Mapel</option>
+            <option value="guru">Guru</option>
+          </select>
+          <select class="jadwal-field" id="jadwal-sort-direction" onchange="applyJadwalSortControl()">
+            <option value="asc">A-Z</option>
+            <option value="desc">Z-A</option>
+          </select>
+        </div>
+        <button type="button" class="modal-btn modal-btn-secondary" onclick="resetJadwalSortControl()">Reset</button>
+      </div>
+    </div>
   </div>
   <div id="list-jadwal">Loading...</div>
 </div>
 
 <div id="jadwal-pane-jam-pelajaran" class="jadwal-subtab-pane">
   <div style="margin-bottom:16px; display:flex; justify-content:flex-end;">
-    <button type="button" class="jadwal-top-btn" onclick="openAddJamPelajaranModal()" title="Tambah Jam Pelajaran" aria-label="Tambah Jam Pelajaran" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
-      +
-    </button>
+    <div id="jam-tools" style="position:relative; display:flex; align-items:center; gap:8px;">
+      <button type="button" class="jadwal-top-btn" onclick="toggleJamSortBox()" title="Sortir" aria-label="Sortir" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
+        &#8645;
+      </button>
+      <button type="button" class="jadwal-top-btn" onclick="openAddJamPelajaranModal()" title="Tambah Jam Pelajaran" aria-label="Tambah Jam Pelajaran" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
+        +
+      </button>
+      <div id="jam-sort-box" style="display:none; position:absolute; top:40px; right:0; background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:12px; width:220px; box-shadow:0 8px 24px rgba(15,23,42,0.12); z-index:20;">
+        <div style="font-weight:600; margin-bottom:8px;">Sortir Jam</div>
+        <div style="display:flex; gap:8px; margin-bottom:8px;">
+          <select class="jadwal-field" id="jam-sort-field" onchange="applyJamSortControl()">
+            <option value="nama">Nama Jam</option>
+            <option value="waktu">Waktu</option>
+          </select>
+          <select class="jadwal-field" id="jam-sort-direction" onchange="applyJamSortControl()">
+            <option value="asc">A-Z</option>
+            <option value="desc">Z-A</option>
+          </select>
+        </div>
+        <button type="button" class="modal-btn modal-btn-secondary" onclick="resetJamSortControl()">Reset</button>
+      </div>
+    </div>
   </div>
   <div id="list-jam-pelajaran">Loading...</div>
 </div>
+

@@ -1,5 +1,10 @@
 const ALUMNI_CACHE_KEY = 'alumni:list'
 const ALUMNI_CACHE_TTL_MS = 2 * 60 * 1000
+let alumniSortField = 'nama'
+let alumniSortDirection = 'asc'
+let alumniCurrentPage = 1
+const ALUMNI_ROWS_PER_PAGE = 10
+let alumniOutsideClickBound = false
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -94,7 +99,7 @@ function renderAlumniTable() {
   const fLulus = String(document.getElementById('alumni-filter-lulus')?.value || '')
 
   const all = Array.isArray(window.alumniList) ? window.alumniList : []
-  const rows = all.filter(item => {
+  const filtered = all.filter(item => {
     const nama = String(item?.nama || '').toLowerCase()
     const nisn = String(item?.nisn || '').toLowerCase()
     const matchKeyword = !keyword || nama.includes(keyword) || nisn.includes(keyword)
@@ -102,6 +107,24 @@ function renderAlumniTable() {
     const matchLulus = !fLulus || String(item?.tahun_lulus_display || '') === fLulus
     return matchKeyword && matchAngkatan && matchLulus
   })
+
+  const rows = [...filtered].sort((a, b) => {
+    const getValue = (item) => {
+      if (alumniSortField === 'angkatan') return String(item?.tahun_angkatan || '')
+      if (alumniSortField === 'lulus') return String(item?.tahun_lulus_display || '')
+      return String(item?.nama || '')
+    }
+    const cmp = getValue(a).localeCompare(getValue(b), undefined, { sensitivity: 'base' })
+    return alumniSortDirection === 'desc' ? -cmp : cmp
+  })
+
+  const totalRows = rows.length
+  const totalPages = Math.max(1, Math.ceil(totalRows / ALUMNI_ROWS_PER_PAGE))
+  if (alumniCurrentPage > totalPages) alumniCurrentPage = totalPages
+  if (alumniCurrentPage < 1) alumniCurrentPage = 1
+  const startIndex = totalRows === 0 ? 0 : (alumniCurrentPage - 1) * ALUMNI_ROWS_PER_PAGE
+  const endIndex = Math.min(startIndex + ALUMNI_ROWS_PER_PAGE, totalRows)
+  const pagedRows = rows.slice(startIndex, endIndex)
 
   if (!rows.length) {
     container.innerHTML = 'Belum ada data alumni.'
@@ -124,9 +147,9 @@ function renderAlumniTable() {
         <tbody>
   `
 
-  html += rows.map((item, index) => `
+  html += pagedRows.map((item, index) => `
     <tr>
-      <td style="padding:8px; border:1px solid #ddd; text-align:center;">${index + 1}</td>
+      <td style="padding:8px; border:1px solid #ddd; text-align:center;">${startIndex + index + 1}</td>
       <td style="padding:8px; border:1px solid #ddd;">${escapeHtml(item.nama || '-')}</td>
       <td style="padding:8px; border:1px solid #ddd; text-align:center;">${escapeHtml(item.nisn || '-')}</td>
       <td style="padding:8px; border:1px solid #ddd; text-align:center;">${escapeHtml(item.tahun_angkatan || '-')}</td>
@@ -135,8 +158,75 @@ function renderAlumniTable() {
     </tr>
   `).join('')
 
-  html += '</tbody></table></div>'
+  const pageButtons = []
+  const pageWindow = 5
+  const half = Math.floor(pageWindow / 2)
+  let pageStart = Math.max(1, alumniCurrentPage - half)
+  let pageEnd = Math.min(totalPages, pageStart + pageWindow - 1)
+  if (pageEnd - pageStart + 1 < pageWindow) pageStart = Math.max(1, pageEnd - pageWindow + 1)
+  for (let pageNum = pageStart; pageNum <= pageEnd; pageNum += 1) {
+    const activeStyle = pageNum === alumniCurrentPage
+      ? 'background:#d4d456ff; border-color:#d4d456ff; color:#0f172a;'
+      : 'background:#fff; border-color:#cbd5e1; color:#334155;'
+    pageButtons.push(`<button type="button" onclick="goAlumniPage(${pageNum})" style="border:1px solid; ${activeStyle} border-radius:999px; min-width:34px; height:34px; padding:0 10px; font-size:12px; font-weight:700; cursor:pointer;">${pageNum}</button>`)
+  }
+
+  html += `
+    </tbody></table></div>
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-top:10px;">
+      <div style="font-size:12px; color:#64748b;">
+        Menampilkan ${totalRows === 0 ? 0 : startIndex + 1}-${endIndex} dari ${totalRows} data
+      </div>
+      <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+        <button type="button" onclick="prevAlumniPage()" ${alumniCurrentPage <= 1 ? 'disabled' : ''} style="border:1px solid #cbd5e1; background:#fff; color:#334155; border-radius:999px; height:34px; padding:0 12px; font-size:12px; font-weight:700; cursor:${alumniCurrentPage <= 1 ? 'not-allowed' : 'pointer'}; opacity:${alumniCurrentPage <= 1 ? '0.5' : '1'};">Prev</button>
+        ${pageButtons.join('')}
+        <button type="button" onclick="nextAlumniPage()" ${alumniCurrentPage >= totalPages ? 'disabled' : ''} style="border:1px solid #cbd5e1; background:#fff; color:#334155; border-radius:999px; height:34px; padding:0 12px; font-size:12px; font-weight:700; cursor:${alumniCurrentPage >= totalPages ? 'not-allowed' : 'pointer'}; opacity:${alumniCurrentPage >= totalPages ? '0.5' : '1'};">Next</button>
+      </div>
+    </div>
+  `
   container.innerHTML = html
+}
+
+function goAlumniPage(page) {
+  const target = Number(page)
+  if (!Number.isFinite(target)) return
+  alumniCurrentPage = Math.max(1, Math.floor(target))
+  renderAlumniTable()
+}
+
+function nextAlumniPage() {
+  goAlumniPage(alumniCurrentPage + 1)
+}
+
+function prevAlumniPage() {
+  goAlumniPage(alumniCurrentPage - 1)
+}
+
+function toggleAlumniSortBox() {
+  const sortBox = document.getElementById('alumni-sort-box')
+  if (!sortBox) return
+  const willShow = sortBox.style.display === 'none' || !sortBox.style.display
+  sortBox.style.display = willShow ? 'block' : 'none'
+}
+
+function applyAlumniSortControl() {
+  const fieldSelect = document.getElementById('alumni-sort-field')
+  const directionSelect = document.getElementById('alumni-sort-direction')
+  if (fieldSelect) alumniSortField = fieldSelect.value || 'nama'
+  if (directionSelect) alumniSortDirection = directionSelect.value || 'asc'
+  alumniCurrentPage = 1
+  renderAlumniTable()
+}
+
+function resetAlumniSortOrder() {
+  alumniSortField = 'nama'
+  alumniSortDirection = 'asc'
+  const fieldSelect = document.getElementById('alumni-sort-field')
+  const directionSelect = document.getElementById('alumni-sort-direction')
+  if (fieldSelect) fieldSelect.value = 'nama'
+  if (directionSelect) directionSelect.value = 'asc'
+  alumniCurrentPage = 1
+  renderAlumniTable()
 }
 
 async function loadAlumni(forceRefresh = false) {
@@ -202,16 +292,36 @@ function initAlumniPage() {
   const lulus = document.getElementById('alumni-filter-lulus')
 
   if (search && !search.dataset.bound) {
-    search.addEventListener('input', () => renderAlumniTable())
+    search.addEventListener('input', () => {
+      alumniCurrentPage = 1
+      renderAlumniTable()
+    })
     search.dataset.bound = 'true'
   }
   if (angkatan && !angkatan.dataset.bound) {
-    angkatan.addEventListener('change', () => renderAlumniTable())
+    angkatan.addEventListener('change', () => {
+      alumniCurrentPage = 1
+      renderAlumniTable()
+    })
     angkatan.dataset.bound = 'true'
   }
   if (lulus && !lulus.dataset.bound) {
-    lulus.addEventListener('change', () => renderAlumniTable())
+    lulus.addEventListener('change', () => {
+      alumniCurrentPage = 1
+      renderAlumniTable()
+    })
     lulus.dataset.bound = 'true'
+  }
+  if (!alumniOutsideClickBound) {
+    document.addEventListener('click', event => {
+      const tools = document.getElementById('alumni-tools')
+      const sortBox = document.getElementById('alumni-sort-box')
+      if (!tools || !sortBox) return
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (!tools.contains(target)) sortBox.style.display = 'none'
+    })
+    alumniOutsideClickBound = true
   }
 
   loadAlumni()

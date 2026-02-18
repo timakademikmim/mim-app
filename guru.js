@@ -927,12 +927,12 @@ function setNavActive(page) {
 }
 
 function openGuruInputMenu() {
-  document.getElementById('guru-input-submenu')?.classList.add('open')
+  animateGuruSidebarSubmenu(document.getElementById('guru-input-submenu'), true)
   document.querySelector('.guru-nav-btn[data-page="input"]')?.classList.add('expanded')
 }
 
 function closeGuruInputMenu() {
-  document.getElementById('guru-input-submenu')?.classList.remove('open')
+  animateGuruSidebarSubmenu(document.getElementById('guru-input-submenu'), false)
   document.querySelector('.guru-nav-btn[data-page="input"]')?.classList.remove('expanded')
 }
 
@@ -949,13 +949,42 @@ function toggleGuruInputMenu() {
 }
 
 function openGuruLaporanMenu() {
-  document.getElementById('guru-laporan-submenu')?.classList.add('open')
+  animateGuruSidebarSubmenu(document.getElementById('guru-laporan-submenu'), true)
   document.querySelector('.guru-nav-btn[data-page="laporan"]')?.classList.add('expanded')
 }
 
 function closeGuruLaporanMenu() {
-  document.getElementById('guru-laporan-submenu')?.classList.remove('open')
+  animateGuruSidebarSubmenu(document.getElementById('guru-laporan-submenu'), false)
   document.querySelector('.guru-nav-btn[data-page="laporan"]')?.classList.remove('expanded')
+}
+
+function animateGuruSidebarSubmenu(submenu, expand) {
+  if (!submenu) return
+
+  if (!submenu.dataset.animBound) {
+    submenu.addEventListener('transitionend', event => {
+      if (event.propertyName !== 'max-height') return
+      if (submenu.classList.contains('open')) {
+        submenu.style.maxHeight = 'none'
+      }
+    })
+    submenu.dataset.animBound = '1'
+  }
+
+  if (expand) {
+    submenu.classList.add('open')
+    submenu.style.maxHeight = '0px'
+    requestAnimationFrame(() => {
+      submenu.style.maxHeight = `${submenu.scrollHeight}px`
+    })
+    return
+  }
+
+  const currentHeight = submenu.scrollHeight
+  submenu.style.maxHeight = `${currentHeight}px`
+  submenu.getBoundingClientRect()
+  submenu.classList.remove('open')
+  submenu.style.maxHeight = '0px'
 }
 
 function toggleGuruLaporanMenu() {

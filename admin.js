@@ -757,7 +757,7 @@ function selectTopbarCalendarDate(dateKey) {
 function setAkademikSidebarMenuExpanded(expanded) {
   const submenu = document.getElementById('sidebar-akademik-submenu')
   if (!submenu) return
-  submenu.classList.toggle('open', expanded)
+  animateSidebarSubmenu(submenu, expanded)
 
   const parentBtn = document.querySelector('.sidebar-parent-btn[data-page="akademik"]')
   if (parentBtn) {
@@ -768,7 +768,7 @@ function setAkademikSidebarMenuExpanded(expanded) {
 function setKaryawanSidebarMenuExpanded(expanded) {
   const submenu = document.getElementById('sidebar-karyawan-submenu')
   if (!submenu) return
-  submenu.classList.toggle('open', expanded)
+  animateSidebarSubmenu(submenu, expanded)
 
   const parentBtn = document.querySelector('.sidebar-parent-btn[data-page="karyawan"]')
   if (parentBtn) {
@@ -776,11 +776,41 @@ function setKaryawanSidebarMenuExpanded(expanded) {
   }
 }
 
+function animateSidebarSubmenu(submenu, expand) {
+  if (!submenu) return
+
+  if (!submenu.dataset.animBound) {
+    submenu.addEventListener('transitionend', event => {
+      if (event.propertyName !== 'max-height') return
+      if (submenu.classList.contains('open')) {
+        submenu.style.maxHeight = 'none'
+      }
+    })
+    submenu.dataset.animBound = '1'
+  }
+
+  if (expand) {
+    submenu.classList.add('open')
+    submenu.style.maxHeight = '0px'
+    requestAnimationFrame(() => {
+      submenu.style.maxHeight = `${submenu.scrollHeight}px`
+    })
+    return
+  }
+
+  const currentHeight = submenu.scrollHeight
+  submenu.style.maxHeight = `${currentHeight}px`
+  submenu.getBoundingClientRect()
+  submenu.classList.remove('open')
+  submenu.style.maxHeight = '0px'
+}
+
 function toggleAkademikSidebarMenu() {
   const submenu = document.getElementById('sidebar-akademik-submenu')
   if (!submenu) return
   const willExpand = !submenu.classList.contains('open')
   setAkademikSidebarMenuExpanded(willExpand)
+  if (willExpand) setKaryawanSidebarMenuExpanded(false)
 }
 
 function toggleKaryawanSidebarMenu() {
@@ -788,6 +818,7 @@ function toggleKaryawanSidebarMenu() {
   if (!submenu) return
   const willExpand = !submenu.classList.contains('open')
   setKaryawanSidebarMenuExpanded(willExpand)
+  if (willExpand) setAkademikSidebarMenuExpanded(false)
 }
 
 function getAkademikPageFromSubtab(subtab) {

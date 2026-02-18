@@ -17,7 +17,15 @@ body {
   display: flex;
   flex-direction: column;
   border-right: 1px solid #e2e8f0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 28px;
 }
+
+.sidebar > * {
+  flex-shrink: 0;
+}
+
 
 .sidebar-logo {
   width: 100%;
@@ -69,22 +77,24 @@ body {
 }
 
 .sidebar-submenu {
-  margin: -4px 0 8px 12px;
+  margin: 0 0 0 12px;
   border-left: 2px solid #e2e8f0;
   padding-left: 8px;
   max-height: 0;
   opacity: 0;
   overflow: hidden;
-  transform: translateY(-4px);
   pointer-events: none;
-  transition: max-height 0.6s ease-in-out, opacity 0.6s ease-in-out, transform 0.6s ease-in-out;
+  position: relative;
+  z-index: 1;
+  transition: max-height 0.55s ease-in-out, opacity 0.35s ease-in-out, margin 0.35s ease-in-out;
 }
 
 .sidebar-submenu.open {
-  max-height: 320px;
+  margin: 4px 0 8px 12px;
   opacity: 1;
-  transform: translateY(0);
   pointer-events: auto;
+  overflow: visible;
+  z-index: 10;
 }
 
 .sidebar-submenu-btn {
@@ -130,22 +140,24 @@ body {
 }
 
 .sidebar-submenu-nested {
-  margin: -2px 0 8px 10px;
+  margin: 0 0 0 10px;
   border-left: 2px solid #e2e8f0;
   padding-left: 8px;
   max-height: 0;
   opacity: 0;
   overflow: hidden;
-  transform: translateY(-4px);
   pointer-events: none;
-  transition: max-height 0.6s ease-in-out, opacity 0.6s ease-in-out, transform 0.6s ease-in-out;
+  position: relative;
+  z-index: 1;
+  transition: max-height 0.55s ease-in-out, opacity 0.35s ease-in-out, margin 0.35s ease-in-out;
 }
 
 .sidebar-submenu-nested.open {
-  max-height: 120px;
+  margin: 4px 0 8px 10px;
   opacity: 1;
-  transform: translateY(0);
   pointer-events: auto;
+  overflow: visible;
+  z-index: 11;
 }
 
 .sidebar-submenu-btn-nested {
@@ -157,6 +169,8 @@ body {
   flex: 1;
   padding: 30px;
   background: #f1f5f9;
+  position: relative;
+  padding-bottom: 46px;
 }
 
 .topbar {
@@ -480,6 +494,29 @@ body {
   background: white;
   padding: 20px;
   border-radius: 6px;
+  height: calc(100vh - 154px);
+  box-sizing: border-box;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.table-scroll-area {
+  max-height: calc(100vh - 340px);
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.page-bg-signature {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  font-size: 12px;
+  font-weight: 500;
+  color: #94a3b8;
+  letter-spacing: 0.2px;
+  pointer-events: none;
+  user-select: none;
 }
 
 .app-popup-overlay {

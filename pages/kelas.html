@@ -32,9 +32,29 @@
     <select id="kelas-tahun-filter" class="kelas-field" onchange="onKelasTahunFilterChange()" style="width:auto; min-width:220px; padding:10px 12px; box-sizing:border-box; border:1px solid #cbd5e1; border-radius:999px; background:#f8fafc; box-shadow:none; outline:none;">
       <option value="">Memuat tahun...</option>
     </select>
-    <button type="button" onclick="openAddKelasModal()" title="Tambah Kelas" aria-label="Tambah Kelas" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
-      +
-    </button>
+    <div id="kelas-tools" style="position:relative; display:flex; align-items:center; gap:8px;">
+      <button type="button" onclick="toggleKelasSortBox()" title="Sortir" aria-label="Sortir" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
+        &#8645;
+      </button>
+      <button type="button" onclick="openAddKelasModal()" title="Tambah Kelas" aria-label="Tambah Kelas" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
+        +
+      </button>
+      <div id="kelas-sort-box" style="display:none; position:absolute; top:40px; right:0; background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:12px; width:230px; box-shadow:0 8px 24px rgba(15,23,42,0.12); z-index:20;">
+        <div style="font-weight:600; margin-bottom:8px;">Sortir Data Kelas</div>
+        <div style="display:flex; gap:8px; margin-bottom:8px;">
+          <select id="kelas-sort-field" class="kelas-field" onchange="applyKelasSortControl()">
+            <option value="nama_kelas">Nama Kelas</option>
+            <option value="tingkat">Tingkat</option>
+            <option value="wali">Wali Kelas</option>
+          </select>
+          <select id="kelas-sort-direction" class="kelas-field" onchange="applyKelasSortControl()">
+            <option value="asc">A-Z</option>
+            <option value="desc">Z-A</option>
+          </select>
+        </div>
+        <button type="button" onclick="resetKelasSortControl()" class="distribusi-reset-btn">Reset</button>
+      </div>
+    </div>
   </div>
 
   <div id="list-kelas">Loading...</div>
@@ -50,9 +70,29 @@
         Distribusi Mapel
       </button>
     </div>
-    <button type="button" onclick="openAddMapelModal()" title="Tambah Mapel" aria-label="Tambah Mapel" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
-      +
-    </button>
+    <div id="mapel-tools" style="position:relative; display:flex; align-items:center; gap:8px;">
+      <button type="button" onclick="toggleMapelSortBox()" title="Sortir" aria-label="Sortir" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
+        &#8645;
+      </button>
+      <button type="button" onclick="openAddMapelModal()" title="Tambah Mapel" aria-label="Tambah Mapel" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
+        +
+      </button>
+      <div id="mapel-sort-box" style="display:none; position:absolute; top:40px; right:0; background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:12px; width:230px; box-shadow:0 8px 24px rgba(15,23,42,0.12); z-index:20;">
+        <div style="font-weight:600; margin-bottom:8px;">Sortir Data Mapel</div>
+        <div style="display:flex; gap:8px; margin-bottom:8px;">
+          <select id="mapel-sort-field" class="kelas-field" onchange="applyMapelSortControl()">
+            <option value="nama">Nama</option>
+            <option value="tingkatan">Tingkatan</option>
+            <option value="kategori">Kategori</option>
+          </select>
+          <select id="mapel-sort-direction" class="kelas-field" onchange="applyMapelSortControl()">
+            <option value="asc">A-Z</option>
+            <option value="desc">Z-A</option>
+          </select>
+        </div>
+        <button type="button" onclick="resetMapelSortControl()" class="distribusi-reset-btn">Reset</button>
+      </div>
+    </div>
   </div>
   <div id="list-mapel">Loading...</div>
 </div>
@@ -83,3 +123,4 @@
   </div>
   <div id="list-distribusi-mapel">Loading...</div>
 </div>
+

@@ -1,4 +1,4 @@
-﻿let currentEditJadwalId = null
+let currentEditJadwalId = null
 let currentEditJamPelajaranId = null
 let currentJadwalSubtab = 'jadwal'
 let currentActiveSemesterId = ''
@@ -9,6 +9,14 @@ const jadwalCacheKeys = new Set()
 let jadwalList = []
 let jadwalDistribusiList = []
 let jamPelajaranList = []
+let jadwalSortField = 'hari'
+let jadwalSortDirection = 'asc'
+let jadwalCurrentPage = 1
+const JADWAL_ROWS_PER_PAGE = 6
+let jamSortField = 'nama'
+let jamSortDirection = 'asc'
+let jamCurrentPage = 1
+const JAM_ROWS_PER_PAGE = 6
 
 const JADWAL_CACHE_KEY = 'jadwal_pelajaran:list:v3'
 const JADWAL_CACHE_TTL_MS = 2 * 60 * 1000
@@ -335,14 +343,27 @@ function renderJadwalTable() {
 
   const distribusiMap = new Map((jadwalDistribusiList || []).map(item => [String(item.id), item]))
   const jamMap = new Map((jamPelajaranList || []).map(item => [getJamKey(item.jam_mulai, item.jam_selesai), item]))
-  const rows = getJadwalFilteredRows()
+  const rowsRaw = getJadwalFilteredRows()
+  const rows = [...rowsRaw].sort((a, b) => {
+    const da = distribusiMap.get(String(a.distribusi_id))
+    const db = distribusiMap.get(String(b.distribusi_id))
+    const getValue = (row, distribusi) => {
+      if (jadwalSortField === 'jam') return `${toTimeLabel(row.jam_mulai)}-${toTimeLabel(row.jam_selesai)}`
+      if (jadwalSortField === 'kelas') return String(distribusi?.kelas?.nama_kelas || '')
+      if (jadwalSortField === 'mapel') return String(distribusi?.mapel?.nama || '')
+      if (jadwalSortField === 'guru') return String(distribusi?.guru?.nama || '')
+      return String(normalizeHari(row.hari) || '')
+    }
+    const cmp = getValue(a, da).localeCompare(getValue(b, db), undefined, { sensitivity: 'base' })
+    return jadwalSortDirection === 'desc' ? -cmp : cmp
+  })
   if (!rows.length) {
     container.innerHTML = 'Belum ada jadwal pelajaran.'
     return
   }
 
   let html = `
-    <div style="overflow-x:auto;">
+    <div class="table-scroll-area" style="overflow-x:auto;">
       <table style="width:100%; border-collapse:collapse; margin-top:8px; font-size:13px;">
         <thead>
           <tr style="background:#f3f3f3;">
@@ -389,22 +410,34 @@ function renderJadwalTable() {
     `
   }).join('')
 
-  html += '</tbody></table></div>'
+  html += `</tbody></table></div>`
   container.innerHTML = html
+  const field = document.getElementById('jadwal-sort-field')
+  const direction = document.getElementById('jadwal-sort-direction')
+  if (field) field.value = jadwalSortField
+  if (direction) direction.value = jadwalSortDirection
 }
 
 function renderJamPelajaranTable() {
   const container = document.getElementById('list-jam-pelajaran')
   if (!container) return
 
-  const rows = Array.isArray(jamPelajaranList) ? jamPelajaranList : []
+  const rowsRaw = Array.isArray(jamPelajaranList) ? jamPelajaranList : []
+  const rows = [...rowsRaw].sort((a, b) => {
+    const getValue = (item) => {
+      if (jamSortField === 'waktu') return `${toTimeLabel(item.jam_mulai)}-${toTimeLabel(item.jam_selesai)}`
+      return String(item?.nama || '')
+    }
+    const cmp = getValue(a).localeCompare(getValue(b), undefined, { sensitivity: 'base' })
+    return jamSortDirection === 'desc' ? -cmp : cmp
+  })
   if (rows.length === 0) {
     container.innerHTML = 'Belum ada jam pelajaran.'
     return
   }
 
   let html = `
-    <div style="overflow-x:auto;">
+    <div class="table-scroll-area" style="overflow-x:auto;">
       <table style="width:100%; border-collapse:collapse; margin-top:8px; font-size:13px;">
         <thead>
           <tr style="background:#f3f3f3;">
@@ -427,8 +460,12 @@ function renderJamPelajaranTable() {
     </tr>
   `).join('')
 
-  html += '</tbody></table></div>'
+  html += `</tbody></table></div>`
   container.innerHTML = html
+  const field = document.getElementById('jam-sort-field')
+  const direction = document.getElementById('jam-sort-direction')
+  if (field) field.value = jamSortField
+  if (direction) direction.value = jamSortDirection
 }
 
 function setJadwalSubtab(tab) {
@@ -459,8 +496,83 @@ function resetJadwalFilter() {
   if (searchEl) searchEl.value = ''
   if (hariEl) hariEl.value = ''
   if (kelasEl) kelasEl.value = ''
+  jadwalCurrentPage = 1
   renderJadwalTable()
 }
+
+function toggleJadwalSortBox() {
+  const box = document.getElementById('jadwal-sort-box')
+  if (!box) return
+  const willShow = box.style.display === 'none' || !box.style.display
+  box.style.display = willShow ? 'block' : 'none'
+}
+
+function applyJadwalSortControl() {
+  const field = document.getElementById('jadwal-sort-field')
+  const direction = document.getElementById('jadwal-sort-direction')
+  if (field) jadwalSortField = field.value || 'hari'
+  if (direction) jadwalSortDirection = direction.value || 'asc'
+  jadwalCurrentPage = 1
+  renderJadwalTable()
+}
+
+function resetJadwalSortControl() {
+  jadwalSortField = 'hari'
+  jadwalSortDirection = 'asc'
+  const field = document.getElementById('jadwal-sort-field')
+  const direction = document.getElementById('jadwal-sort-direction')
+  if (field) field.value = 'hari'
+  if (direction) direction.value = 'asc'
+  jadwalCurrentPage = 1
+  renderJadwalTable()
+}
+
+function goJadwalPage(page) {
+  const target = Number(page)
+  if (!Number.isFinite(target)) return
+  jadwalCurrentPage = Math.max(1, Math.floor(target))
+  renderJadwalTable()
+}
+
+function prevJadwalPage() { goJadwalPage(jadwalCurrentPage - 1) }
+function nextJadwalPage() { goJadwalPage(jadwalCurrentPage + 1) }
+
+function toggleJamSortBox() {
+  const box = document.getElementById('jam-sort-box')
+  if (!box) return
+  const willShow = box.style.display === 'none' || !box.style.display
+  box.style.display = willShow ? 'block' : 'none'
+}
+
+function applyJamSortControl() {
+  const field = document.getElementById('jam-sort-field')
+  const direction = document.getElementById('jam-sort-direction')
+  if (field) jamSortField = field.value || 'nama'
+  if (direction) jamSortDirection = direction.value || 'asc'
+  jamCurrentPage = 1
+  renderJamPelajaranTable()
+}
+
+function resetJamSortControl() {
+  jamSortField = 'nama'
+  jamSortDirection = 'asc'
+  const field = document.getElementById('jam-sort-field')
+  const direction = document.getElementById('jam-sort-direction')
+  if (field) field.value = 'nama'
+  if (direction) direction.value = 'asc'
+  jamCurrentPage = 1
+  renderJamPelajaranTable()
+}
+
+function goJamPage(page) {
+  const target = Number(page)
+  if (!Number.isFinite(target)) return
+  jamCurrentPage = Math.max(1, Math.floor(target))
+  renderJamPelajaranTable()
+}
+
+function prevJamPage() { goJamPage(jamCurrentPage - 1) }
+function nextJamPage() { goJamPage(jamCurrentPage + 1) }
 
 function createJadwalModal(modalId, title, saveHandler) {
   let modal = document.getElementById(modalId)
@@ -991,21 +1103,53 @@ function setupJadwalFilterHandlers() {
   const kelas = document.getElementById('jadwal-filter-kelas')
 
   if (search && !search.dataset.bound) {
-    search.addEventListener('input', renderJadwalTable)
+    search.addEventListener('input', () => {
+      jadwalCurrentPage = 1
+      renderJadwalTable()
+    })
     search.dataset.bound = 'true'
   }
   if (hari && !hari.dataset.bound) {
-    hari.addEventListener('change', renderJadwalTable)
+    hari.addEventListener('change', () => {
+      jadwalCurrentPage = 1
+      renderJadwalTable()
+    })
     hari.dataset.bound = 'true'
   }
   if (kelas && !kelas.dataset.bound) {
-    kelas.addEventListener('change', renderJadwalTable)
+    kelas.addEventListener('change', () => {
+      jadwalCurrentPage = 1
+      renderJadwalTable()
+    })
     kelas.dataset.bound = 'true'
   }
+}
+
+function setupJadwalSortHandlers() {
+  if (document.body?.dataset?.jadwalSortBound === 'true') return
+  document.addEventListener('click', event => {
+    const target = event.target
+    if (!(target instanceof Node)) return
+
+    const jadwalTools = document.getElementById('jadwal-tools')
+    const jadwalSort = document.getElementById('jadwal-sort-box')
+    if (jadwalTools && jadwalSort && !jadwalTools.contains(target)) {
+      jadwalSort.style.display = 'none'
+    }
+
+    const jamTools = document.getElementById('jam-tools')
+    const jamSort = document.getElementById('jam-sort-box')
+    if (jamTools && jamSort && !jamTools.contains(target)) {
+      jamSort.style.display = 'none'
+    }
+  })
+  if (document.body) document.body.dataset.jadwalSortBound = 'true'
 }
 
 function initJadwalPage() {
   ensureJadwalFieldStyle()
   setupJadwalFilterHandlers()
+  setupJadwalSortHandlers()
   setJadwalSubtab(currentJadwalSubtab || 'jadwal')
 }
+

@@ -7,6 +7,8 @@ let santriSearchOutsideClickBound = false
 let santriSortField = 'nama'
 let santriSortDirection = 'asc'
 let santriSelectedTahunId = ''
+let santriCurrentPage = 1
+const SANTRI_ROWS_PER_PAGE = 8
 const santriSelectFilters = {
   kelas: '',
   kamar: '',
@@ -106,6 +108,7 @@ function renderSantriTahunFilter(tahunList, selectedId) {
 function onSantriTahunFilterChange() {
   const select = document.getElementById('santri-tahun-filter')
   santriSelectedTahunId = String(select?.value || '')
+  santriCurrentPage = 1
   loadSantri(true)
 }
 
@@ -1062,7 +1065,6 @@ function renderSantriSearchTable() {
   })
 
   const filteredData = applySantriSort(filteredBySelect)
-
   if (filteredData.length === 0) {
     container.innerHTML = (keyword || hasActiveSantriSelectFilters())
       ? 'Tidak ada data santri yang sesuai filter/pencarian.'
@@ -1073,7 +1075,7 @@ function renderSantriSearchTable() {
   ensureSantriActionStyle()
 
   let html = `
-    <div style="overflow-x:auto;">
+    <div class="table-scroll-area" style="overflow-x:auto;">
     <table style="width:100%; border-collapse:collapse; margin-top:8px; font-size:13px;">
       <thead>
         <tr style="background:#f3f3f3;">
@@ -1102,8 +1104,23 @@ function renderSantriSearchTable() {
     </tr>
   `).join('')
 
-  html += '</tbody></table></div>'
+  html += `</tbody></table></div>`
   container.innerHTML = html
+}
+
+function goSantriPage(page) {
+  const target = Number(page)
+  if (!Number.isFinite(target)) return
+  santriCurrentPage = Math.max(1, Math.floor(target))
+  renderSantriSearchTable()
+}
+
+function nextSantriPage() {
+  goSantriPage(santriCurrentPage + 1)
+}
+
+function prevSantriPage() {
+  goSantriPage(santriCurrentPage - 1)
 }
 
 function toggleSantriSearchBox() {
@@ -1143,6 +1160,7 @@ function applySantriSortControl() {
   if (kelasFilter) santriSelectFilters.kelas = kelasFilter.value || ''
   if (kamarFilter) santriSelectFilters.kamar = kamarFilter.value || ''
   if (statusFilter) santriSelectFilters.status = statusFilter.value || ''
+  santriCurrentPage = 1
   renderSantriSearchTable()
 }
 
@@ -1152,6 +1170,7 @@ function resetSantriSortOrder() {
   santriSelectFilters.kelas = ''
   santriSelectFilters.kamar = ''
   santriSelectFilters.status = ''
+  santriCurrentPage = 1
 
   const fieldSelect = document.getElementById('santri-sort-field')
   const directionSelect = document.getElementById('santri-sort-direction')
@@ -1182,7 +1201,10 @@ function setupSantriSearchHandlers() {
   if (!tools || !box || !input) return
 
   if (!input.dataset.bound) {
-    input.addEventListener('input', () => renderSantriSearchTable())
+    input.addEventListener('input', () => {
+      santriCurrentPage = 1
+      renderSantriSearchTable()
+    })
     input.dataset.bound = 'true'
   }
 
@@ -1317,3 +1339,4 @@ function initSantriPage() {
   resetSantriSearchAndSortState()
   loadSantri()
 }
+

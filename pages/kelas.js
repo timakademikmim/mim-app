@@ -2,9 +2,19 @@ let currentEditId = null
 let currentEditDistribusiMapelId = null
 let currentEditMapelId = null
 let currentDistribusiTingkatanView = 'all'
+let kelasSortField = 'nama_kelas'
+let kelasSortDirection = 'asc'
+let kelasCurrentPage = 1
+const KELAS_ROWS_PER_PAGE = 8
+let mapelSortField = 'nama'
+let mapelSortDirection = 'asc'
+let mapelCurrentPage = 1
+const MAPEL_ROWS_PER_PAGE = 7
 let distribusiSortField = 'kelas'
 let distribusiSortDirection = 'asc'
 let distribusiSearchKeyword = ''
+let distribusiCurrentPage = 1
+const DISTRIBUSI_ROWS_PER_PAGE = 8
 const distribusiSelectFilters = {
   tingkatan: '',
   kelas: '',
@@ -24,6 +34,9 @@ let mapelSelectedTahunId = ''
 let mapelSupportsTahunAjaran = null
 let mapelSupportsTingkatanMulti = null
 let mapelSupportsKkm = null
+let mapelDetailJamSupportsTahunAjaran = null
+let currentMapelDetailContext = null
+const MAPEL_DETAIL_HARI_OPTIONS = ['senin', 'selasa', 'rabu', 'kamis', 'jumat', 'sabtu', 'minggu']
 
 function parseRoleList(rawRole) {
   if (Array.isArray(rawRole)) {
@@ -220,6 +233,34 @@ function pickLabelByKeys(item, keys) {
 function getSemesterLabel(semester) {
   const label = pickLabelByKeys(semester, ['nama_semester', 'nama', 'label', 'kode', 'semester'])
   return label || `Semester #${semester?.id ?? '-'}`
+}
+
+function normalizeHari(raw) {
+  return String(raw || '').trim().toLowerCase()
+}
+
+function getHariLabel(raw) {
+  const value = normalizeHari(raw)
+  const map = {
+    senin: 'Senin',
+    selasa: 'Selasa',
+    rabu: 'Rabu',
+    kamis: 'Kamis',
+    jumat: 'Jumat',
+    sabtu: 'Sabtu',
+    minggu: 'Minggu'
+  }
+  return map[value] || (raw || '-')
+}
+
+function toTimeLabel(value) {
+  const text = String(value || '').trim()
+  if (!text) return '-'
+  return text.length >= 5 ? text.slice(0, 5) : text
+}
+
+function getJamKey(jamMulai, jamSelesai) {
+  return `${toTimeLabel(jamMulai)}|${toTimeLabel(jamSelesai)}`
 }
 
 function getInsetFieldStyle(extra = '') {
@@ -422,6 +463,7 @@ function applyDistribusiSortControl() {
   if (semesterEl) distribusiSelectFilters.semester = semesterEl.value || ''
   if (guruEl) distribusiSelectFilters.guru = guruEl.value || ''
   if (searchEl) distribusiSearchKeyword = searchEl.value || ''
+  distribusiCurrentPage = 1
 
   const container = document.getElementById('list-distribusi-mapel')
   if (!container || !currentDistribusiPayload) return
@@ -436,10 +478,28 @@ function resetDistribusiSortOrder() {
   distribusiSelectFilters.kelas = ''
   distribusiSelectFilters.semester = String(currentDistribusiPayload?.semesterAktif?.id || '')
   distribusiSelectFilters.guru = ''
+  distribusiCurrentPage = 1
 
   const container = document.getElementById('list-distribusi-mapel')
   if (!container || !currentDistribusiPayload) return
   renderDistribusiMapelTable(container, currentDistribusiPayload)
+}
+
+function goDistribusiPage(page) {
+  const target = Number(page)
+  if (!Number.isFinite(target)) return
+  distribusiCurrentPage = Math.max(1, Math.floor(target))
+  const container = document.getElementById('list-distribusi-mapel')
+  if (!container || !currentDistribusiPayload) return
+  renderDistribusiMapelTable(container, currentDistribusiPayload)
+}
+
+function nextDistribusiPage() {
+  goDistribusiPage(distribusiCurrentPage + 1)
+}
+
+function prevDistribusiPage() {
+  goDistribusiPage(distribusiCurrentPage - 1)
 }
 
 function toggleDistribusiSortBox() {
@@ -464,6 +524,101 @@ function setupDistribusiSortHandlers() {
   })
 
   tools.dataset.bound = 'true'
+}
+
+function toggleKelasSortBox() {
+  const sortBox = document.getElementById('kelas-sort-box')
+  if (!sortBox) return
+  const willShow = sortBox.style.display === 'none' || !sortBox.style.display
+  sortBox.style.display = willShow ? 'block' : 'none'
+}
+
+function applyKelasSortControl() {
+  const fieldSelect = document.getElementById('kelas-sort-field')
+  const directionSelect = document.getElementById('kelas-sort-direction')
+  if (fieldSelect) kelasSortField = fieldSelect.value || 'nama_kelas'
+  if (directionSelect) kelasSortDirection = directionSelect.value || 'asc'
+  kelasCurrentPage = 1
+  loadKelas()
+}
+
+function resetKelasSortControl() {
+  kelasSortField = 'nama_kelas'
+  kelasSortDirection = 'asc'
+  const fieldSelect = document.getElementById('kelas-sort-field')
+  const directionSelect = document.getElementById('kelas-sort-direction')
+  if (fieldSelect) fieldSelect.value = 'nama_kelas'
+  if (directionSelect) directionSelect.value = 'asc'
+  kelasCurrentPage = 1
+  applyKelasSortControl()
+}
+
+function goKelasPage(page) {
+  const target = Number(page)
+  if (!Number.isFinite(target)) return
+  kelasCurrentPage = Math.max(1, Math.floor(target))
+  loadKelas()
+}
+
+function prevKelasPage() { goKelasPage(kelasCurrentPage - 1) }
+function nextKelasPage() { goKelasPage(kelasCurrentPage + 1) }
+
+function toggleMapelSortBox() {
+  const sortBox = document.getElementById('mapel-sort-box')
+  if (!sortBox) return
+  const willShow = sortBox.style.display === 'none' || !sortBox.style.display
+  sortBox.style.display = willShow ? 'block' : 'none'
+}
+
+function applyMapelSortControl() {
+  const fieldSelect = document.getElementById('mapel-sort-field')
+  const directionSelect = document.getElementById('mapel-sort-direction')
+  if (fieldSelect) mapelSortField = fieldSelect.value || 'nama'
+  if (directionSelect) mapelSortDirection = directionSelect.value || 'asc'
+  mapelCurrentPage = 1
+  loadMapel()
+}
+
+function resetMapelSortControl() {
+  mapelSortField = 'nama'
+  mapelSortDirection = 'asc'
+  const fieldSelect = document.getElementById('mapel-sort-field')
+  const directionSelect = document.getElementById('mapel-sort-direction')
+  if (fieldSelect) fieldSelect.value = 'nama'
+  if (directionSelect) directionSelect.value = 'asc'
+  mapelCurrentPage = 1
+  loadMapel()
+}
+
+function goMapelPage(page) {
+  const target = Number(page)
+  if (!Number.isFinite(target)) return
+  mapelCurrentPage = Math.max(1, Math.floor(target))
+  loadMapel()
+}
+
+function prevMapelPage() { goMapelPage(mapelCurrentPage - 1) }
+function nextMapelPage() { goMapelPage(mapelCurrentPage + 1) }
+
+function setupKelasMapelSortHandlers() {
+  if (document.body?.dataset?.kelasMapelSortBound === 'true') return
+  document.addEventListener('click', event => {
+    const target = event.target
+    if (!(target instanceof Node)) return
+
+    const kelasTools = document.getElementById('kelas-tools')
+    const kelasSort = document.getElementById('kelas-sort-box')
+    if (kelasTools && kelasSort && !kelasTools.contains(target)) {
+      kelasSort.style.display = 'none'
+    }
+
+    const mapelTools = document.getElementById('mapel-tools')
+    const mapelSort = document.getElementById('mapel-sort-box')
+    if (mapelTools && mapelSort && !mapelTools.contains(target)) {
+      mapelSort.style.display = 'none'
+    }
+  })
+  if (document.body) document.body.dataset.kelasMapelSortBound = 'true'
 }
 
 async function getTahunAktifKelas() {
@@ -777,12 +932,14 @@ function renderTahunAjaranOptions(selectEl, tahunList, selectedId = '', placehol
 function onKelasTahunFilterChange() {
   const el = document.getElementById('kelas-tahun-filter')
   kelasSelectedTahunId = el?.value || ''
+  kelasCurrentPage = 1
   loadKelas(true)
 }
 
 function onMapelTahunFilterChange() {
   const el = document.getElementById('mapel-tahun-filter')
   mapelSelectedTahunId = el?.value || ''
+  mapelCurrentPage = 1
   loadMapel(true)
 }
 
@@ -792,6 +949,7 @@ function onDistribusiTahunFilterChange() {
   kelasSelectedTahunId = selected
   mapelSelectedTahunId = selected
   distribusiSelectFilters.kelas = ''
+  distribusiCurrentPage = 1
   loadDistribusiMapel(true)
 }
 
@@ -1380,6 +1538,494 @@ async function hapusDistribusiMapel(id) {
   loadDistribusiMapel(true)
 }
 
+function escapeMapelDetailText(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+}
+
+function normalizeBoolean(value) {
+  if (value === true || value === 1) return true
+  const text = String(value ?? '').trim().toLowerCase()
+  return text === 'true' || text === 't' || text === '1' || text === 'yes'
+}
+
+async function checkMapelDetailJamSupportsTahunAjaran() {
+  if (mapelDetailJamSupportsTahunAjaran !== null) return mapelDetailJamSupportsTahunAjaran
+  const { error } = await sb
+    .from('jam_pelajaran')
+    .select('id, tahun_ajaran_id')
+    .limit(1)
+  mapelDetailJamSupportsTahunAjaran = !error
+  return mapelDetailJamSupportsTahunAjaran
+}
+
+async function getMapelDetailJamPelajaranList(tahunAjaranId = '') {
+  const supportTahunAjaran = await checkMapelDetailJamSupportsTahunAjaran()
+
+  let query = sb
+    .from('jam_pelajaran')
+    .select('id, nama, jam_mulai, jam_selesai, urutan, aktif')
+    .order('urutan', { ascending: true })
+    .order('jam_mulai', { ascending: true })
+
+  if (supportTahunAjaran && tahunAjaranId) {
+    query = query.eq('tahun_ajaran_id', tahunAjaranId)
+  }
+
+  let { data, error } = await query
+  if (!error) return data || []
+
+  const msg = String(error.message || '').toLowerCase()
+  if (!msg.includes('urutan') && !msg.includes('aktif')) {
+    console.error(error)
+    return []
+  }
+
+  query = sb
+    .from('jam_pelajaran')
+    .select('id, nama, jam_mulai, jam_selesai')
+    .order('jam_mulai', { ascending: true })
+
+  if (supportTahunAjaran && tahunAjaranId) {
+    query = query.eq('tahun_ajaran_id', tahunAjaranId)
+  }
+
+  const fallback = await query
+  if (fallback.error) {
+    console.error(fallback.error)
+    return []
+  }
+  return fallback.data || []
+}
+
+function createMapelDetailModal() {
+  let modal = document.getElementById('mapel-detail-modal')
+  if (modal) modal.remove()
+
+  modal = document.createElement('div')
+  modal.id = 'mapel-detail-modal'
+  modal.style.position = 'fixed'
+  modal.style.top = '0'
+  modal.style.left = '0'
+  modal.style.width = '100vw'
+  modal.style.height = '100vh'
+  modal.style.background = 'rgba(0,0,0,0.3)'
+  modal.style.display = 'none'
+  modal.style.zIndex = '10020'
+  modal.innerHTML = `
+    <div id="mapel-detail-card" style="background:#fff; margin:24px auto; padding:18px 18px 16px; border-radius:12px; width:min(1100px, calc(100vw - 32px)); max-height:calc(100vh - 48px); overflow:auto; box-shadow:0 18px 42px rgba(15,23,42,0.2); position:relative;">
+      <div id="mapel-detail-content">Loading...</div>
+      <span onclick="closeMapelDetailModal()" style="position:absolute; top:10px; right:14px; cursor:pointer; font-size:22px; color:#64748b;">&times;</span>
+    </div>
+  `
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal) closeMapelDetailModal()
+  })
+  document.body.appendChild(modal)
+  return modal
+}
+
+function closeMapelDetailModal() {
+  const modal = document.getElementById('mapel-detail-modal')
+  if (modal) modal.style.display = 'none'
+  currentMapelDetailContext = null
+}
+
+function getMapelDetailHariOptionsHtml(selected = []) {
+  const selectedSet = new Set((selected || []).map(normalizeHari))
+  return MAPEL_DETAIL_HARI_OPTIONS
+    .map(hari => `<option value="${hari}" ${selectedSet.has(hari) ? 'selected' : ''}>${getHariLabel(hari)}</option>`)
+    .join('')
+}
+
+function getMapelDetailJamOptionsHtml(jamList = [], selectedJamIds = []) {
+  const selectedSet = new Set((selectedJamIds || []).map(item => String(item)))
+  return (jamList || [])
+    .map(item => {
+      const key = String(item.id)
+      const labelNama = String(item.nama || '').trim()
+      const labelJam = `${toTimeLabel(item.jam_mulai)} - ${toTimeLabel(item.jam_selesai)}`
+      const label = labelNama ? `${labelNama} (${labelJam})` : labelJam
+      return `<option value="${escapeMapelDetailText(key)}" ${selectedSet.has(key) ? 'selected' : ''}>${escapeMapelDetailText(label)}</option>`
+    })
+    .join('')
+}
+
+async function renderMapelDetailModalContent() {
+  const ctx = currentMapelDetailContext
+  if (!ctx) return
+  const content = document.getElementById('mapel-detail-content')
+  if (!content) return
+
+  const mapel = ctx.mapel
+  const tahunLabel = ctx.tahunListMap.get(String(mapel?.tahun_ajaran_id || '')) || '-'
+  const semesterOptions = (ctx.semesterList || [])
+    .map(item => {
+      const selected = String(item.id) === String(ctx.selectedSemesterId || '') ? 'selected' : ''
+      return `<option value="${item.id}" ${selected}>${escapeMapelDetailText(getSemesterLabel(item))}</option>`
+    })
+    .join('')
+  const tingkatanList = parseMapelTingkatanList(mapel?.tingkatan_multi, mapel?.tingkatan, mapel?.jenjang)
+  const allKelasTarget = (ctx.kelasList || []).filter(item => tingkatanList.includes(getJenjangFromTingkat(item?.tingkat)))
+  ctx.targetKelasList = allKelasTarget
+
+  content.innerHTML = `
+    <h3 style="margin:0 0 10px 0; font-size:18px; color:#0f172a;">Detail Mapel</h3>
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:8px; margin-bottom:10px;">
+      <div style="border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px; background:#f8fafc;"><div style="font-size:12px; color:#64748b;">Nama Mapel</div><div style="font-weight:700;">${escapeMapelDetailText(mapel?.nama || '-')}</div></div>
+      <div style="border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px; background:#f8fafc;"><div style="font-size:12px; color:#64748b;">Tahun Ajaran</div><div style="font-weight:700;">${escapeMapelDetailText(tahunLabel)}</div></div>
+      <div style="border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px; background:#f8fafc;"><div style="font-size:12px; color:#64748b;">Kategori</div><div style="font-weight:700;">${escapeMapelDetailText(mapel?.kategori || '-')}</div></div>
+      <div style="border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px; background:#f8fafc;"><div style="font-size:12px; color:#64748b;">Tingkatan</div><div style="font-weight:700;">${escapeMapelDetailText(getMapelTingkatanLabel(mapel?.tingkatan_multi || mapel?.tingkatan || mapel?.jenjang))}</div></div>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+      <label for="mapel-detail-kkm" style="font-size:13px; color:#334155; font-weight:600;">KKM</label>
+      <input id="mapel-detail-kkm" class="kelas-field" type="number" min="0" max="100" step="1" value="${mapel?.kkm ?? ''}" style="${getInsetFieldStyle('width:120px; text-align:center;')}">
+      ${ctx?.supportKkm ? '' : '<span style="font-size:12px; color:#b45309;">Kolom KKM belum tersedia di tabel mapel.</span>'}
+    </div>
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+      <label for="mapel-detail-semester" style="font-size:13px; color:#334155; font-weight:600;">Semester</label>
+      <select id="mapel-detail-semester" class="kelas-field" onchange="onMapelDetailSemesterChange(this.value)" style="${getInsetFieldStyle('width:auto; min-width:220px;')}">${semesterOptions}</select>
+      <span style="font-size:12px; color:#64748b;">Set guru dan jadwal per kelas di semester ini.</span>
+    </div>
+    <div id="mapel-detail-per-tingkatan">Loading data kelas...</div>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px;">
+      <button class="modal-btn modal-btn-secondary" onclick="closeMapelDetailModal()">Batal</button>
+      <button id="btn-save-mapel-detail" class="modal-btn modal-btn-primary" onclick="saveMapelDetail()">Simpan</button>
+    </div>
+  `
+
+  const semesterId = String(ctx.selectedSemesterId || '')
+  const kelasIds = allKelasTarget.map(item => String(item.id)).filter(Boolean)
+  const perTingkatan = document.getElementById('mapel-detail-per-tingkatan')
+  if (!semesterId || kelasIds.length === 0) {
+    perTingkatan.innerHTML = '<div style="color:#64748b; font-size:13px;">Data kelas/semester untuk mapel ini belum tersedia.</div>'
+    return
+  }
+
+  const [distribusiRes, jadwalRes] = await Promise.all([
+    sb
+      .from('distribusi_mapel')
+      .select('id, kelas_id, mapel_id, guru_id, semester_id')
+      .eq('mapel_id', String(mapel.id))
+      .eq('semester_id', semesterId)
+      .in('kelas_id', kelasIds),
+    sb
+      .from('jadwal_pelajaran')
+      .select('id, distribusi_id, hari, jam_mulai, jam_selesai')
+  ])
+
+  if (distribusiRes.error) {
+    console.error(distribusiRes.error)
+    perTingkatan.innerHTML = 'Gagal load distribusi mapel.'
+    return
+  }
+  if (jadwalRes.error) {
+    console.error(jadwalRes.error)
+    perTingkatan.innerHTML = 'Gagal load jadwal mapel.'
+    return
+  }
+
+  const distribusiList = distribusiRes.data || []
+  const distribusiByKelas = new Map(distribusiList.map(item => [String(item.kelas_id), item]))
+  const distribusiIdSet = new Set(distribusiList.map(item => String(item.id)))
+  const jadwalByDistribusi = new Map()
+  ;(jadwalRes.data || []).forEach(item => {
+    const distribusiId = String(item.distribusi_id || '')
+    if (!distribusiIdSet.has(distribusiId)) return
+    if (!jadwalByDistribusi.has(distribusiId)) jadwalByDistribusi.set(distribusiId, [])
+    jadwalByDistribusi.get(distribusiId).push(item)
+  })
+  ctx.distribusiByKelas = distribusiByKelas
+
+  const guruOptions = [`<option value="">-- Belum ditentukan --</option>`]
+  ;(ctx.guruList || []).forEach(item => {
+    guruOptions.push(`<option value="${escapeMapelDetailText(item.id)}">${escapeMapelDetailText(item.nama || '-')}</option>`)
+  })
+  const guruOptionsHtml = guruOptions.join('')
+  const sections = []
+
+  ;['smp', 'sma'].forEach(jenjang => {
+    if (!tingkatanList.includes(jenjang)) return
+    const kelasByJenjang = allKelasTarget.filter(item => getJenjangFromTingkat(item?.tingkat) === jenjang)
+    if (!kelasByJenjang.length) return
+
+    const rowsHtml = kelasByJenjang.map((kelas, index) => {
+      const kelasId = String(kelas.id)
+      const distribusi = distribusiByKelas.get(kelasId)
+      const distribusiId = String(distribusi?.id || '')
+      const jadwalRows = distribusiId ? (jadwalByDistribusi.get(distribusiId) || []) : []
+      const selectedHari = [...new Set(jadwalRows.map(item => normalizeHari(item.hari)).filter(Boolean))]
+
+      const selectedJamIds = []
+      jadwalRows.forEach(item => {
+        const key = getJamKey(item.jam_mulai, item.jam_selesai)
+        const jam = ctx.jamByKey.get(key)
+        if (jam?.id) selectedJamIds.push(String(jam.id))
+      })
+
+      return `
+        <tr data-mapel-detail-kelas-id="${escapeMapelDetailText(kelasId)}">
+          <td style="padding:8px; border:1px solid #ddd; text-align:center; width:42px;">${index + 1}</td>
+          <td style="padding:8px; border:1px solid #ddd;">${escapeMapelDetailText(kelas.nama_kelas || '-')}</td>
+          <td style="padding:8px; border:1px solid #ddd;">
+            <select id="mapel-detail-guru-${escapeMapelDetailText(kelasId)}" class="kelas-field" style="${getInsetFieldStyle('min-width:190px;')}">
+              ${guruOptionsHtml}
+            </select>
+          </td>
+          <td style="padding:8px; border:1px solid #ddd;">
+            <select id="mapel-detail-hari-${escapeMapelDetailText(kelasId)}" class="kelas-field" multiple size="4" style="${getInsetFieldStyle('min-width:170px; border-radius:10px;')}">
+              ${getMapelDetailHariOptionsHtml(selectedHari)}
+            </select>
+          </td>
+          <td style="padding:8px; border:1px solid #ddd;">
+            <select id="mapel-detail-jam-${escapeMapelDetailText(kelasId)}" class="kelas-field" multiple size="4" style="${getInsetFieldStyle('min-width:250px; border-radius:10px;')}">
+              ${getMapelDetailJamOptionsHtml(ctx.jamList, selectedJamIds)}
+            </select>
+          </td>
+        </tr>
+      `
+    }).join('')
+
+    sections.push(`
+      <div style="border:1px solid #e2e8f0; border-radius:12px; padding:12px; margin-bottom:10px; background:#fff;">
+        <div style="font-weight:700; color:#0f172a; margin-bottom:8px;">${jenjang === 'smp' ? 'Pembagian SMP' : 'Pembagian SMA'}</div>
+        <div style="overflow:auto;">
+          <table style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead>
+              <tr style="background:#f8fafc;">
+                <th style="padding:8px; border:1px solid #ddd; width:42px;">No</th>
+                <th style="padding:8px; border:1px solid #ddd;">Kelas</th>
+                <th style="padding:8px; border:1px solid #ddd;">Pengajar</th>
+                <th style="padding:8px; border:1px solid #ddd;">Hari</th>
+                <th style="padding:8px; border:1px solid #ddd;">Jam Pelajaran</th>
+              </tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+      </div>
+    `)
+  })
+
+  perTingkatan.innerHTML = sections.join('') || '<div style="color:#64748b; font-size:13px;">Belum ada kelas untuk tingkatan mapel ini.</div>'
+
+  ;(allKelasTarget || []).forEach(kelas => {
+    const kelasId = String(kelas.id)
+    const guruSelect = document.getElementById(`mapel-detail-guru-${kelasId}`)
+    const distribusi = distribusiByKelas.get(kelasId)
+    if (guruSelect) guruSelect.value = String(distribusi?.guru_id || '')
+  })
+}
+
+async function openMapelDetailModal(id) {
+  const mapel = (window.mapelList || []).find(item => String(item.id) === String(id))
+  if (!mapel) {
+    alert('Data mapel tidak ditemukan')
+    return
+  }
+
+  const tahunAjaranId = String(mapel?.tahun_ajaran_id || mapelSelectedTahunId || kelasSelectedTahunId || '')
+  const [tahunList, semesterListAll, kelasList, guruList, jamList, supportKkm] = await Promise.all([
+    getTahunAjaranList(),
+    getSemesterList(),
+    getKelasListForDistribusi(tahunAjaranId),
+    getGuruList(),
+    getMapelDetailJamPelajaranList(tahunAjaranId),
+    checkMapelSupportsKkm()
+  ])
+
+  const semesterList = (semesterListAll || []).filter(item => {
+    if (!tahunAjaranId) return true
+    return String(item?.tahun_ajaran_id || '') === tahunAjaranId
+  })
+  let selectedSemesterId = String(semesterList.find(item => normalizeBoolean(item?.aktif))?.id || '')
+  if (!selectedSemesterId) selectedSemesterId = String(semesterList[0]?.id || '')
+
+  currentMapelDetailContext = {
+    mapel,
+    tahunAjaranId,
+    tahunListMap: new Map((tahunList || []).map(item => [String(item.id), item.nama || '-'])),
+    semesterList,
+    selectedSemesterId,
+    kelasList: kelasList || [],
+    guruList: guruList || [],
+    jamList: jamList || [],
+    jamByKey: new Map((jamList || []).map(item => [getJamKey(item.jam_mulai, item.jam_selesai), item])),
+    supportKkm: Boolean(supportKkm)
+  }
+
+  createMapelDetailModal()
+  document.getElementById('mapel-detail-modal').style.display = 'block'
+  renderMapelDetailModalContent()
+}
+
+function onMapelDetailSemesterChange(value) {
+  if (!currentMapelDetailContext) return
+  currentMapelDetailContext.selectedSemesterId = String(value || '')
+  renderMapelDetailModalContent()
+}
+
+function getSelectMultipleValues(selectId) {
+  const selectEl = document.getElementById(selectId)
+  if (!selectEl) return []
+  return Array.from(selectEl.selectedOptions || [])
+    .map(item => String(item.value || '').trim())
+    .filter(Boolean)
+}
+
+async function saveMapelDetail() {
+  const ctx = currentMapelDetailContext
+  if (!ctx) return
+  const buttonEl = document.getElementById('btn-save-mapel-detail')
+  const kkmRaw = String(document.getElementById('mapel-detail-kkm')?.value || '').trim()
+  const semesterId = String(ctx.selectedSemesterId || '')
+  if (!semesterId) {
+    alert('Semester wajib dipilih.')
+    return
+  }
+
+  const kelasTarget = ctx.targetKelasList || []
+  if (!kelasTarget.length) {
+    alert('Belum ada kelas target untuk mapel ini.')
+    return
+  }
+
+  const kelasIds = kelasTarget.map(item => String(item.id)).filter(Boolean)
+  const jamById = new Map((ctx.jamList || []).map(item => [String(item.id), item]))
+  const draftByKelas = new Map()
+
+  kelasIds.forEach(kelasId => {
+    const guruId = String(document.getElementById(`mapel-detail-guru-${kelasId}`)?.value || '')
+    const hariList = getSelectMultipleValues(`mapel-detail-hari-${kelasId}`).map(normalizeHari).filter(Boolean)
+    const jamIds = getSelectMultipleValues(`mapel-detail-jam-${kelasId}`)
+    draftByKelas.set(kelasId, {
+      guru_id: guruId || null,
+      hariList: [...new Set(hariList)],
+      jamIds: [...new Set(jamIds)]
+    })
+  })
+
+  if (buttonEl) {
+    buttonEl.disabled = true
+    buttonEl.textContent = 'Menyimpan...'
+  }
+
+  try {
+    if (ctx.supportKkm) {
+      if (kkmRaw !== '') {
+        const kkmNum = Number(kkmRaw)
+        if (!Number.isFinite(kkmNum) || kkmNum < 0 || kkmNum > 100) {
+          throw new Error('KKM harus angka 0 sampai 100.')
+        }
+      }
+      const kkmValue = kkmRaw === '' ? null : Number(kkmRaw)
+      const updateMapelRes = await sb
+        .from('mapel')
+        .update({ kkm: kkmValue })
+        .eq('id', String(ctx.mapel.id))
+      if (updateMapelRes.error) throw updateMapelRes.error
+      ctx.mapel.kkm = kkmValue
+    }
+
+    const existingRes = await sb
+      .from('distribusi_mapel')
+      .select('id, kelas_id, guru_id')
+      .eq('mapel_id', String(ctx.mapel.id))
+      .eq('semester_id', semesterId)
+      .in('kelas_id', kelasIds)
+
+    if (existingRes.error) throw existingRes.error
+    const existingList = existingRes.data || []
+    const existingByKelas = new Map(existingList.map(item => [String(item.kelas_id), item]))
+
+    const inserts = []
+    kelasIds.forEach(kelasId => {
+      if (existingByKelas.has(kelasId)) return
+      const draft = draftByKelas.get(kelasId)
+      inserts.push({
+        kelas_id: kelasId,
+        mapel_id: String(ctx.mapel.id),
+        semester_id: semesterId,
+        guru_id: draft?.guru_id || null
+      })
+    })
+
+    if (inserts.length) {
+      const insertRes = await sb.from('distribusi_mapel').insert(inserts)
+      if (insertRes.error) throw insertRes.error
+    }
+
+    const distribusiRes = await sb
+      .from('distribusi_mapel')
+      .select('id, kelas_id, guru_id')
+      .eq('mapel_id', String(ctx.mapel.id))
+      .eq('semester_id', semesterId)
+      .in('kelas_id', kelasIds)
+
+    if (distribusiRes.error) throw distribusiRes.error
+    const distribusiList = distribusiRes.data || []
+
+    for (const item of distribusiList) {
+      const kelasId = String(item.kelas_id || '')
+      const draft = draftByKelas.get(kelasId) || { guru_id: null, hariList: [], jamIds: [] }
+      const guruTarget = draft.guru_id || null
+
+      if (String(item.guru_id || '') !== String(guruTarget || '')) {
+        const updateGuruRes = await sb
+          .from('distribusi_mapel')
+          .update({ guru_id: guruTarget })
+          .eq('id', item.id)
+        if (updateGuruRes.error) throw updateGuruRes.error
+      }
+
+      const deleteJadwalRes = await sb
+        .from('jadwal_pelajaran')
+        .delete()
+        .eq('distribusi_id', item.id)
+      if (deleteJadwalRes.error) throw deleteJadwalRes.error
+
+      const insertsJadwal = []
+      draft.hariList.forEach(hari => {
+        draft.jamIds.forEach(jamId => {
+          const jam = jamById.get(String(jamId))
+          if (!jam?.jam_mulai || !jam?.jam_selesai) return
+          insertsJadwal.push({
+            distribusi_id: String(item.id),
+            hari,
+            jam_mulai: toTimeLabel(jam.jam_mulai),
+            jam_selesai: toTimeLabel(jam.jam_selesai)
+          })
+        })
+      })
+
+      if (insertsJadwal.length) {
+        const insertJadwalRes = await sb.from('jadwal_pelajaran').insert(insertsJadwal)
+        if (insertJadwalRes.error) throw insertJadwalRes.error
+      }
+    }
+
+    if (typeof clearCachedData === 'function') {
+      clearCachedData(DISTRIBUSI_MAPEL_CACHE_KEY)
+    }
+    await clearMapelCacheByTahun()
+    alert('Detail mapel berhasil disimpan. Distribusi mapel dan jadwal sudah diperbarui.')
+    closeMapelDetailModal()
+    loadMapel(true)
+    loadDistribusiMapel(true)
+  } catch (error) {
+    console.error(error)
+    alert(`Gagal simpan detail mapel: ${error.message || 'Unknown error'}`)
+  } finally {
+    if (buttonEl) {
+      buttonEl.disabled = false
+      buttonEl.textContent = 'Simpan'
+    }
+  }
+}
+
 function createAddMapelModal() {
   let modal = document.getElementById('add-mapel-modal')
   if (modal) modal.remove()
@@ -1719,23 +2365,27 @@ async function loadMapel(forceRefresh = false) {
 
   const mapelList = await getMapelList(selectedTahunId)
   const selectedTahun = tahunList.find(item => String(item.id) === String(selectedTahunId)) || null
-  const [supportTahunAjaran, supportKkm] = await Promise.all([
-    checkMapelSupportsTahunAjaran(),
-    checkMapelSupportsKkm()
-  ])
-  renderMapelTable(container, mapelList, selectedTahun, tahunList, tahunAktif, supportTahunAjaran, supportKkm)
+  const supportTahunAjaran = await checkMapelSupportsTahunAjaran()
+  renderMapelTable(container, mapelList, selectedTahun, tahunList, tahunAktif, supportTahunAjaran)
 }
 
-function renderMapelTable(container, mapelList, selectedTahun, tahunList = [], tahunAktif = null, supportTahunAjaran = false, supportKkm = false) {
-  window.mapelList = mapelList || []
+function renderMapelTable(container, mapelList, selectedTahun, tahunList = [], tahunAktif = null, supportTahunAjaran = false) {
+  const baseList = mapelList || []
+  const sortedList = [...baseList].sort((a, b) => {
+    const getValue = (item) => {
+      if (mapelSortField === 'tingkatan') return getMapelTingkatanLabel(item.tingkatan_multi || item.tingkatan || item.jenjang)
+      if (mapelSortField === 'kategori') return String(item?.kategori || '')
+      return String(item?.nama || '')
+    }
+    const cmp = getValue(a).localeCompare(getValue(b), undefined, { sensitivity: 'base' })
+    return mapelSortDirection === 'desc' ? -cmp : cmp
+  })
+  window.mapelList = sortedList
   const tahunOptions = buildTahunOptionsHtml(tahunList, selectedTahun?.id)
   const tahunMap = new Map((tahunList || []).map(item => [String(item.id), item.nama || '-']))
   const warning = supportTahunAjaran
     ? ''
     : '<div style="margin-top:8px; color:#b45309; font-size:12px;">Kolom <b>mapel.tahun_ajaran_id</b> belum ada. Filter tahun untuk Data Mapel belum aktif.</div>'
-  const warningKkm = supportKkm
-    ? ''
-    : '<div style="margin-top:8px; color:#b45309; font-size:12px;">Kolom <b>mapel.kkm</b> belum ada. Jalankan SQL: <code>alter table public.mapel add column if not exists kkm numeric null;</code></div>'
 
   let headerHtml = `
     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
@@ -1744,16 +2394,15 @@ function renderMapelTable(container, mapelList, selectedTahun, tahunList = [], t
       </select>
     </div>
     ${warning}
-    ${warningKkm}
   `
 
-  if (!mapelList || mapelList.length === 0) {
+  if (!sortedList || sortedList.length === 0) {
     container.innerHTML = `${headerHtml}<p>Belum ada mapel.</p>`
     return
   }
 
   let html = headerHtml + `
-    <div style="overflow-x:auto;">
+    <div class="table-scroll-area" style="overflow-x:auto;">
       <table style="width:100%; border-collapse:collapse; margin-top:8px; font-size:13px;">
         <thead>
           <tr style="background:#f3f3f3;">
@@ -1767,100 +2416,26 @@ function renderMapelTable(container, mapelList, selectedTahun, tahunList = [], t
         <tbody>
   `
 
-  html += mapelList.map(item => `
-    <tr>
+  html += sortedList.map(item => `
+    <tr onclick="openMapelDetailModal('${item.id}')" style="cursor:pointer;">
       <td style="padding:8px; border:1px solid #ddd;">${tahunMap.get(String(item.tahun_ajaran_id || '')) || '-'}</td>
-      <td style="padding:8px; border:1px solid #ddd;">${item.nama ?? '-'}</td>
+      <td style="padding:8px; border:1px solid #ddd; font-weight:600; color:#1d4ed8;">${item.nama ?? '-'}</td>
       <td style="padding:8px; border:1px solid #ddd;">${getMapelTingkatanLabel(item.tingkatan_multi || item.tingkatan || item.jenjang)}</td>
       <td style="padding:8px; border:1px solid #ddd;">${item.kategori ?? '-'}</td>
       <td style="padding:8px; border:1px solid #ddd; text-align:center; white-space:nowrap;">
-        <button class="btn-edit" onclick="showEditMapelForm('${item.id}')">Edit</button>
-        <button class="btn-hapus" onclick="hapusMapel('${item.id}')">Hapus</button>
+        <button class="btn-edit" onclick="event.stopPropagation(); showEditMapelForm('${item.id}')">Edit</button>
+        <button class="btn-hapus" onclick="event.stopPropagation(); hapusMapel('${item.id}')">Hapus</button>
       </td>
     </tr>
   `).join('')
 
-  html += '</tbody></table></div>'
-
-  if (supportKkm) {
-    html += `
-      <div style="margin-top:14px; font-weight:700; color:#0f172a;">Mapel - Nilai (KKM)</div>
-      <div style="overflow-x:auto; margin-top:8px;">
-        <table style="width:100%; border-collapse:collapse; font-size:13px;">
-          <thead>
-            <tr style="background:#f8fafc;">
-              <th style="padding:8px; border:1px solid #ddd; width:48px; text-align:center;">No</th>
-              <th style="padding:8px; border:1px solid #ddd; text-align:left;">Nama Mapel</th>
-              <th style="padding:8px; border:1px solid #ddd; width:140px; text-align:center;">Tingkatan</th>
-              <th style="padding:8px; border:1px solid #ddd; width:120px; text-align:center;">KKM</th>
-              <th style="padding:8px; border:1px solid #ddd; width:120px; text-align:center;">Aksi</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${(mapelList || []).map((item, index) => `
-              <tr>
-                <td style="padding:8px; border:1px solid #ddd; text-align:center;">${index + 1}</td>
-                <td style="padding:8px; border:1px solid #ddd;">${item.nama ?? '-'}</td>
-                <td style="padding:8px; border:1px solid #ddd; text-align:center;">${getMapelTingkatanLabel(item.tingkatan_multi || item.tingkatan || item.jenjang)}</td>
-                <td style="padding:8px; border:1px solid #ddd; text-align:center;">
-                  <input id="mapel-kkm-${item.id}" class="kelas-field" type="number" min="0" max="100" step="1" value="${item.kkm ?? ''}" style="${getInsetFieldStyle('width:90px; text-align:center;')}">
-                </td>
-                <td style="padding:8px; border:1px solid #ddd; text-align:center;">
-                  <button id="btn-save-kkm-${item.id}" class="modal-btn modal-btn-primary" style="padding:6px 10px; font-size:12px;" onclick="saveMapelKkm('${item.id}', this)">Simpan</button>
-                </td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>
-    `
-  }
+  html += `</tbody></table></div>`
 
   container.innerHTML = html
-}
-
-async function saveMapelKkm(mapelId, buttonEl = null) {
-  const id = String(mapelId || '').trim()
-  if (!id) return
-
-  const inputEl = document.getElementById(`mapel-kkm-${id}`)
-  if (!inputEl) return
-
-  const raw = String(inputEl.value || '').trim()
-  if (raw !== '') {
-    const num = Number(raw)
-    if (!Number.isFinite(num) || num < 0 || num > 100) {
-      alert('KKM harus angka 0 sampai 100.')
-      return
-    }
-  }
-
-  const kkmValue = raw === '' ? null : Number(raw)
-  if (buttonEl) {
-    buttonEl.disabled = true
-    buttonEl.textContent = 'Menyimpan...'
-  }
-
-  const { error } = await sb
-    .from('mapel')
-    .update({ kkm: kkmValue })
-    .eq('id', id)
-
-  if (buttonEl) {
-    buttonEl.disabled = false
-    buttonEl.textContent = 'Simpan'
-  }
-
-  if (error) {
-    console.error(error)
-    alert(`Gagal simpan KKM: ${error.message || 'Unknown error'}`)
-    return
-  }
-
-  await clearMapelCacheByTahun()
-  const row = (window.mapelList || []).find(item => String(item.id) === id)
-  if (row) row.kkm = kkmValue
-  alert('KKM berhasil disimpan.')
+  const sortField = document.getElementById('mapel-sort-field')
+  const sortDir = document.getElementById('mapel-sort-direction')
+  if (sortField) sortField.value = mapelSortField
+  if (sortDir) sortDir.value = mapelSortDirection
 }
 
 async function loadDistribusiMapel(forceRefresh = false) {
@@ -1989,7 +2564,6 @@ function renderDistribusiMapelTable(container, payload) {
   })
 
   window.distribusiMapelList = filteredDistribusiList
-
   const kelasOptions = Array.from(kelasMap.values())
     .sort((a, b) => String(a?.nama_kelas || '').localeCompare(String(b?.nama_kelas || '')))
     .map(item => `<option value="${item.id}">${item.nama_kelas ?? '-'}</option>`)
@@ -2077,7 +2651,7 @@ function renderDistribusiMapelTable(container, payload) {
   }
 
   let html = `
-    <div style="overflow-x:auto;">
+    <div class="table-scroll-area" style="overflow-x:auto;">
       <table style="width:100%; border-collapse:collapse; margin-top:8px; font-size:13px;">
         <thead>
           <tr style="background:#f3f3f3;">
@@ -2106,7 +2680,11 @@ function renderDistribusiMapelTable(container, payload) {
     </tr>
   `).join('')
 
-  html += '</tbody></table></div>'
+  html += `
+      </tbody>
+      </table>
+    </div>
+  `
   container.innerHTML = html
 
   const sortFieldEl = document.getElementById('distribusi-sort-field')
@@ -2214,11 +2792,22 @@ function renderKelasTable(container, selectedTahun, tahunAktif, tahunList, kelas
     return
   }
 
-  window.kelasList = kelasList
+  const sortedKelas = [...(kelasList || [])].sort((a, b) => {
+    const getValue = (item) => {
+      if (kelasSortField === 'tingkat') return String(item?.tingkat || '')
+      if (kelasSortField === 'wali') return String(item?.wali?.nama || '')
+      return String(item?.nama_kelas || '')
+    }
+    const cmp = getValue(a).localeCompare(getValue(b), undefined, { sensitivity: 'base' })
+    return kelasSortDirection === 'desc' ? -cmp : cmp
+  })
+
+  window.kelasList = sortedKelas
+  window.santriAktifMap = santriAktifMap || {}
   ensureKelasActionStyle()
 
   let html = headerHtml + `
-    <div style="overflow-x:auto;">
+    <div class="table-scroll-area" style="overflow-x:auto;">
       <table style="width:100%; border-collapse:collapse; margin-top:8px; font-size:13px;">
         <thead>
           <tr style="background:#f3f3f3;">
@@ -2232,7 +2821,7 @@ function renderKelasTable(container, selectedTahun, tahunAktif, tahunList, kelas
         <tbody>
   `
 
-  html += kelasList.map(kelas => `
+  html += sortedKelas.map(kelas => `
     <tr>
       <td style="padding:8px; border:1px solid #ddd;">${kelas.nama_kelas ?? '-'}</td>
       <td style="padding:8px; border:1px solid #ddd;">${getTingkatLabel(kelas.tingkat)}</td>
@@ -2245,8 +2834,12 @@ function renderKelasTable(container, selectedTahun, tahunAktif, tahunList, kelas
     </tr>
   `).join('')
 
-  html += '</tbody></table></div>'
+  html += `</tbody></table></div>`
   container.innerHTML = html
+  const sortField = document.getElementById('kelas-sort-field')
+  const sortDir = document.getElementById('kelas-sort-direction')
+  if (sortField) sortField.value = kelasSortField
+  if (sortDir) sortDir.value = kelasSortDirection
 }
 
 function initKelasPage(params = {}) {
@@ -2254,12 +2847,14 @@ function initKelasPage(params = {}) {
   ensureKelasActionStyle()
   ensureDistribusiFilterStyle()
   setupDistribusiSortHandlers()
+  setupKelasMapelSortHandlers()
   createAddKelasModal()
   createEditModal()
   createAddDistribusiMapelModal()
   createEditDistribusiMapelModal()
   createAddMapelModal()
   createEditMapelModal()
+  createMapelDetailModal()
   const requestedSubtab = params?.subtab || kelasActiveSubtab
   setKelasSubtab(requestedSubtab)
 }
@@ -2299,3 +2894,4 @@ function setKelasSubtab(tab) {
     loadMapel()
   }
 }
+

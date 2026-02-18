@@ -542,7 +542,7 @@ function renderKaryawanSearchTable() {
   ensureKaryawanActionStyle()
 
   let html = `
-    <div style="overflow-x:auto;">
+    <div class="table-scroll-area" style="overflow-x:auto;">
       <table style="width:100%; border-collapse:collapse; margin-top:8px; font-size:13px;">
         <thead>
           <tr style="background:#f3f3f3;">

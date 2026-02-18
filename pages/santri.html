@@ -10,16 +10,16 @@
 
 <div style="margin-bottom:20px; display:flex; justify-content:flex-end; align-items:center; gap:8px; flex-wrap:wrap;">
   <div id="santri-search-tools" style="position:relative; display:flex; align-items:center; gap:8px;">
-    <button type="button" class="santri-top-btn" onclick="openAddSantriModal()" title="Tambah Santri" aria-label="Tambah Santri" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
-      +
-    </button>
-    <button type="button" class="santri-top-btn" onclick="toggleSantriSortBox()" title="Sortir" aria-label="Sortir" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
-      &#8645;
-    </button>
     <button type="button" class="santri-top-btn" onclick="toggleSantriSearchBox()" title="Cari" aria-label="Cari" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer;">
       <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true" style="color:#334155;">
         <path d="M10 2a8 8 0 1 0 4.906 14.32l4.387 4.387a1 1 0 0 0 1.414-1.414l-4.387-4.387A8 8 0 0 0 10 2Zm0 2a6 6 0 1 1 0 12a6 6 0 0 1 0-12Z"></path>
       </svg>
+    </button>
+    <button type="button" class="santri-top-btn" onclick="toggleSantriSortBox()" title="Sortir" aria-label="Sortir" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
+      &#8645;
+    </button>
+    <button type="button" class="santri-top-btn" onclick="openAddSantriModal()" title="Tambah Santri" aria-label="Tambah Santri" style="width:36px; height:36px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; color:#334155;">
+      +
     </button>
 
     <div id="santri-sort-box" style="display:none; position:absolute; top:40px; right:0; background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:12px; width:220px; box-shadow:0 8px 24px rgba(15,23,42,0.12); z-index:20;">
@@ -61,3 +61,4 @@
 <div id="list-santri">
   Loading...
 </div>
+
