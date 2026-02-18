@@ -221,6 +221,11 @@ function setActiveSidebarTab(page) {
     page === 'alumni' ||
     page === 'santri-detail'
 
+  const isKetahfizanGroup =
+    page === 'ketahfizan-halaqah' ||
+    page === 'ketahfizan-hafalan' ||
+    page === 'ketahfizan-jadwal'
+
   const isKaryawanGroup =
     page === 'karyawan' ||
     page === 'guru' ||
@@ -236,6 +241,10 @@ function setActiveSidebarTab(page) {
     }
     if (btnPage === 'karyawan') {
       button.classList.toggle('active', isKaryawanGroup)
+      return
+    }
+    if (btnPage === 'ketahfizan') {
+      button.classList.toggle('active', isKetahfizanGroup)
       return
     }
     if (btnPage === 'mutabaah-karyawan') {
@@ -255,6 +264,7 @@ function setActiveSidebarTab(page) {
   })
 
   setAkademikSidebarMenuExpanded(isAkademikGroup)
+  setKetahfizanSidebarMenuExpanded(isKetahfizanGroup)
   setKaryawanSidebarMenuExpanded(isKaryawanGroup)
 }
 
@@ -270,6 +280,9 @@ function setTopbarTitle(page) {
     'kelas-distribusi-mapel': 'Distribusi Mapel',
     'kelas-guru-mapel': 'Data Mapel',
     jadwal: 'Jadwal Pelajaran',
+    'ketahfizan-halaqah': 'Data Halaqah',
+    'ketahfizan-hafalan': 'Data Hafalan',
+    'ketahfizan-jadwal': 'Jadwal Halaqah',
     'kalender-akademik': 'Kalender Akademik',
     'kehadiran-guru': 'Kehadiran Karyawan',
     santri: 'Data Siswa',
@@ -776,6 +789,17 @@ function setKaryawanSidebarMenuExpanded(expanded) {
   }
 }
 
+function setKetahfizanSidebarMenuExpanded(expanded) {
+  const submenu = document.getElementById('sidebar-ketahfizan-submenu')
+  if (!submenu) return
+  animateSidebarSubmenu(submenu, expanded)
+
+  const parentBtn = document.querySelector('.sidebar-parent-btn[data-page="ketahfizan"]')
+  if (parentBtn) {
+    parentBtn.classList.toggle('expanded', expanded)
+  }
+}
+
 function animateSidebarSubmenu(submenu, expand) {
   if (!submenu) return
 
@@ -810,7 +834,10 @@ function toggleAkademikSidebarMenu() {
   if (!submenu) return
   const willExpand = !submenu.classList.contains('open')
   setAkademikSidebarMenuExpanded(willExpand)
-  if (willExpand) setKaryawanSidebarMenuExpanded(false)
+  if (willExpand) {
+    setKaryawanSidebarMenuExpanded(false)
+    setKetahfizanSidebarMenuExpanded(false)
+  }
 }
 
 function toggleKaryawanSidebarMenu() {
@@ -818,7 +845,21 @@ function toggleKaryawanSidebarMenu() {
   if (!submenu) return
   const willExpand = !submenu.classList.contains('open')
   setKaryawanSidebarMenuExpanded(willExpand)
-  if (willExpand) setAkademikSidebarMenuExpanded(false)
+  if (willExpand) {
+    setAkademikSidebarMenuExpanded(false)
+    setKetahfizanSidebarMenuExpanded(false)
+  }
+}
+
+function toggleKetahfizanSidebarMenu() {
+  const submenu = document.getElementById('sidebar-ketahfizan-submenu')
+  if (!submenu) return
+  const willExpand = !submenu.classList.contains('open')
+  setKetahfizanSidebarMenuExpanded(willExpand)
+  if (willExpand) {
+    setAkademikSidebarMenuExpanded(false)
+    setKaryawanSidebarMenuExpanded(false)
+  }
 }
 
 function getAkademikPageFromSubtab(subtab) {
@@ -847,6 +888,18 @@ function getKaryawanPageFromSubtab(subtab) {
 
 function loadKaryawanFromSidebar(subtab) {
   const page = getKaryawanPageFromSubtab(subtab)
+  loadPage(page, { subtab })
+}
+
+function getKetahfizanPageFromSubtab(subtab) {
+  if (subtab === 'halaqah') return 'ketahfizan-halaqah'
+  if (subtab === 'hafalan') return 'ketahfizan-hafalan'
+  if (subtab === 'jadwal-halaqah') return 'ketahfizan-jadwal'
+  return 'ketahfizan-halaqah'
+}
+
+function loadKetahfizanFromSidebar(subtab) {
+  const page = getKetahfizanPageFromSubtab(subtab)
   loadPage(page, { subtab })
 }
 
@@ -909,6 +962,15 @@ function loadPage(page, params = {}) {
       break
     case 'jadwal':
       loadExternalPage('jadwal')
+      break
+    case 'ketahfizan-halaqah':
+      loadExternalPage('ketahfizan', { subtab: 'halaqah' })
+      break
+    case 'ketahfizan-hafalan':
+      loadExternalPage('ketahfizan', { subtab: 'hafalan' })
+      break
+    case 'ketahfizan-jadwal':
+      loadExternalPage('ketahfizan', { subtab: 'jadwal-halaqah' })
       break
     case 'kalender-akademik':
       loadExternalPage('kalender-akademik')
@@ -986,6 +1048,10 @@ async function loadExternalPage(page, params = {}) {
     }
     if (page === 'karyawan' && typeof initKaryawanPage === 'function') {
       initKaryawanPage(params)
+      return
+    }
+    if (page === 'ketahfizan' && typeof initKetahfizanPage === 'function') {
+      initKetahfizanPage(params)
     }
   }
 

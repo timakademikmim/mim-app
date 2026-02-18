@@ -20,6 +20,7 @@ const TOPBAR_KALENDER_CACHE_TTL_MS = 2 * 60 * 1000
 const GURU_PAGE_CACHE_TTL_MS = 90 * 1000
 const GURU_PAGE_CACHEABLE = new Set([
   'dashboard',
+  'monitoring',
   'input-nilai',
   'input-absensi',
   'jadwal',
@@ -46,6 +47,7 @@ const PAGE_TITLES = {
   'laporan-bulanan': 'Laporan Bulanan',
   jadwal: 'Jadwal',
   mapel: 'Mapel',
+  monitoring: 'Monitoring',
   absensi: 'Absensi',
   tugas: 'Mutabaah',
   nilai: 'Input Nilai',
@@ -68,6 +70,7 @@ let currentMapelEditMode = {
 let currentInputNilaiSantriList = []
 let currentNilaiDetailModalState = null
 let waliKelasAccessCache = null
+let wakasekAkademikAccessCache = null
 let jamPelajaranSupportsTahunAjaran = null
 let laporanBulananState = {
   periode: '',
@@ -108,6 +111,19 @@ let topbarKalenderState = {
 let schoolProfileCache = null
 let guruDashboardAgendaRows = []
 let guruPageHtmlCache = {}
+let monitoringState = {
+  periode: '',
+  tab: 'guru',
+  santriMode: 'bulan',
+  santriDate: '',
+  santriWeek: '',
+  santriMonth: '',
+  selectedGuruId: '',
+  guruRows: [],
+  guruDetail: [],
+  santriRows: [],
+  santriWeeklyRows: []
+}
 
 function getGuruPageCache(page) {
   if (!GURU_PAGE_CACHEABLE.has(String(page || ''))) return ''
@@ -296,6 +312,77 @@ function isWaliKelasRole(role) {
   return clean === 'walikelas'
 }
 
+function isWakasekAkademikRole(role) {
+  const clean = normalizeRole(role).replaceAll(' ', '')
+  if (!clean) return false
+  if (clean === 'wakasekakademik') return true
+  if (clean === 'wakasekbidangakademik') return true
+  return clean.includes('wakasek') && clean.includes('akademik')
+}
+
+function normalizePersonName(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+function isMissingSchoolProfileColumnError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  return msg.includes('column') && msg.includes(SCHOOL_PROFILE_TABLE)
+}
+
+async function getIsWakasekAkademik(forceReload = false) {
+  const loginId = String(localStorage.getItem('login_id') || '').trim()
+  if (!forceReload && wakasekAkademikAccessCache && wakasekAkademikAccessCache.loginId === loginId) {
+    return !!wakasekAkademikAccessCache.allowed
+  }
+
+  // Backward-compatible fallback if some deployment still stores this role directly.
+  const isByRole = parseRoleList().some(isWakasekAkademikRole)
+
+  try {
+    const guru = await getCurrentGuruRow()
+    const guruName = normalizePersonName(guru?.nama)
+
+    if (!guruName) {
+      wakasekAkademikAccessCache = { loginId, allowed: isByRole }
+      return isByRole
+    }
+
+    const selectAttempts = [
+      'wakasek_bidang_akademik, wakasek_akademik',
+      'wakasek_bidang_akademik',
+      'wakasek_akademik'
+    ]
+
+    let row = null
+    for (const selectText of selectAttempts) {
+      const { data, error } = await sb
+        .from(SCHOOL_PROFILE_TABLE)
+        .select(selectText)
+        .limit(1)
+
+      if (error) {
+        if (isMissingSchoolProfileTableError(error) || isMissingSchoolProfileColumnError(error)) {
+          continue
+        }
+        throw error
+      }
+
+      row = data?.[0] || null
+      break
+    }
+
+    const wakasekName = normalizePersonName(row?.wakasek_bidang_akademik || row?.wakasek_akademik)
+    const allowed = !!(wakasekName && wakasekName === guruName)
+
+    wakasekAkademikAccessCache = { loginId, allowed: allowed || isByRole }
+    return !!wakasekAkademikAccessCache.allowed
+  } catch (error) {
+    console.error(error)
+    wakasekAkademikAccessCache = { loginId, allowed: isByRole }
+    return isByRole
+  }
+}
+
 function asBool(value) {
   if (value === true || value === 1) return true
   const text = String(value ?? '').trim().toLowerCase()
@@ -342,6 +429,39 @@ function getHariOrder(raw) {
 
 function getMonthInputToday() {
   return new Date().toISOString().slice(0, 7)
+}
+
+function getDateInputToday() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function getWeekInputToday() {
+  const now = new Date()
+  const date = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()))
+  const dayNum = date.getUTCDay() || 7
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum)
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1))
+  const weekNo = Math.ceil((((date - yearStart) / 86400000) + 1) / 7)
+  return `${date.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`
+}
+
+function getRangeFromWeekInput(weekText) {
+  const value = String(weekText || '').trim()
+  const match = value.match(/^(\d{4})-W(\d{2})$/)
+  if (!match) return null
+  const year = Number(match[1])
+  const week = Number(match[2])
+  if (!Number.isFinite(year) || !Number.isFinite(week) || week < 1 || week > 53) return null
+  const jan4 = new Date(Date.UTC(year, 0, 4))
+  const jan4Day = jan4.getUTCDay() || 7
+  const monday = new Date(jan4)
+  monday.setUTCDate(jan4.getUTCDate() - jan4Day + 1 + ((week - 1) * 7))
+  const sunday = new Date(monday)
+  sunday.setUTCDate(monday.getUTCDate() + 6)
+  return {
+    start: monday.toISOString().slice(0, 10),
+    end: sunday.toISOString().slice(0, 10)
+  }
 }
 
 function getPeriodeRange(periode) {
@@ -1941,7 +2061,27 @@ function isMissingMonthlyReportTableError(error) {
 }
 
 function buildMonthlyReportMissingTableMessage() {
-  return `Tabel '${MONTHLY_REPORT_TABLE}' belum ada di Supabase.\n\nSilakan buat tabel dengan kolom minimal:\n- id (primary key)\n- periode (text, format: YYYY-MM)\n- guru_id\n- kelas_id\n- santri_id\n- nilai_akhlak (numeric, nullable)\n- predikat (text, nullable)\n- catatan_wali (text, nullable)\n\nDisarankan unique key: (periode, guru_id, kelas_id, santri_id).`
+  return `Tabel '${MONTHLY_REPORT_TABLE}' belum ada di Supabase.\n\nSilakan buat tabel dengan kolom minimal:\n- id (primary key)\n- periode (text, format: YYYY-MM)\n- guru_id\n- kelas_id\n- santri_id\n- nilai_akhlak (numeric, nullable)\n- predikat (text, nullable)\n- catatan_wali (text, nullable)\n- muhaffiz (text, nullable)\n- no_hp_muhaffiz (text, nullable)\n- nilai_kehadiran_halaqah (numeric, nullable)\n- sakit_halaqah (integer, nullable)\n- izin_halaqah (integer, nullable)\n- nilai_akhlak_halaqah (text, nullable)\n- keterangan_akhlak_halaqah (text, nullable)\n- nilai_ujian_bulanan (numeric, nullable)\n- keterangan_ujian_bulanan (text, nullable)\n- nilai_target_hafalan (numeric, nullable)\n- keterangan_target_hafalan (text, nullable)\n- nilai_capaian_hafalan_bulanan (numeric, nullable)\n- nilai_jumlah_hafalan_halaman (numeric, nullable)\n- nilai_jumlah_hafalan_juz (numeric, nullable)\n- catatan_muhaffiz (text, nullable)\n\nDisarankan unique key: (periode, guru_id, kelas_id, santri_id).`
+}
+
+function isMissingMonthlyReportColumnError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  return msg.includes('column') && msg.includes(MONTHLY_REPORT_TABLE.toLowerCase())
+}
+
+function buildMonthlyReportMissingColumnsMessage() {
+  return `Kolom Ketahfizan di tabel '${MONTHLY_REPORT_TABLE}' belum ada.\n\nJalankan SQL berikut:\n\nalter table public.${MONTHLY_REPORT_TABLE}\n  add column if not exists muhaffiz text,\n  add column if not exists no_hp_muhaffiz text,\n  add column if not exists nilai_kehadiran_halaqah numeric,\n  add column if not exists sakit_halaqah integer,\n  add column if not exists izin_halaqah integer,\n  add column if not exists nilai_akhlak_halaqah text,\n  add column if not exists keterangan_akhlak_halaqah text,\n  add column if not exists nilai_ujian_bulanan numeric,\n  add column if not exists keterangan_ujian_bulanan text,\n  add column if not exists nilai_target_hafalan numeric,\n  add column if not exists keterangan_target_hafalan text,\n  add column if not exists nilai_capaian_hafalan_bulanan numeric,\n  add column if not exists nilai_jumlah_hafalan_halaman numeric,\n  add column if not exists nilai_jumlah_hafalan_juz numeric,\n  add column if not exists catatan_muhaffiz text;`
+}
+
+function getGradeByScoreAtoE(value) {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return ''
+  return normalizeAkhlakGrade(num)
+}
+
+function getUjianBulananKeterangan(value) {
+  const grade = getGradeByScoreAtoE(value)
+  return grade || ''
 }
 
 function toJenisNilaiKey(jenis) {
@@ -3493,9 +3633,25 @@ async function openLaporanBulananDetail(santriId) {
     kelas,
     periode,
     monthlyReportMissingTable,
+    monthlyReportMissingColumns,
     nilaiAkhlak,
     predikat,
     catatanWali,
+    muhaffiz,
+    noHpMuhaffiz,
+    nilaiKehadiranHalaqah,
+    sakitHalaqah,
+    izinHalaqah,
+    nilaiAkhlakHalaqah,
+    keteranganAkhlakHalaqah,
+    nilaiUjianBulanan,
+    keteranganUjianBulanan,
+    nilaiTargetHafalan,
+    keteranganTargetHafalan,
+    nilaiCapaianHafalanBulanan,
+    nilaiJumlahHafalanHalaman,
+    nilaiJumlahHafalanJuz,
+    catatanMuhaffiz,
     hpGuru,
     sakitCount,
     izinCount,
@@ -3513,6 +3669,7 @@ async function openLaporanBulananDetail(santriId) {
     </div>
 
     ${monthlyReportMissingTable ? `<div class="placeholder-card" style="margin-bottom:12px;">${escapeHtml(buildMonthlyReportMissingTableMessage())}</div>` : ''}
+    ${!monthlyReportMissingTable && monthlyReportMissingColumns ? `<div class="placeholder-card" style="margin-bottom:12px;">${escapeHtml(buildMonthlyReportMissingColumnsMessage())}</div>` : ''}
 
     <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:10px; margin-bottom:12px;">
       <div class="placeholder-card"><strong>Periode</strong><br>${escapeHtml(getPeriodeLabel(periode))}</div>
@@ -3522,38 +3679,155 @@ async function openLaporanBulananDetail(santriId) {
       <div class="placeholder-card"><strong>Nomor HP</strong><br>${escapeHtml(hpGuru)}</div>
     </div>
 
-    <div class="placeholder-card" style="margin-bottom:12px;">
-      <div style="font-weight:700; margin-bottom:8px;">Kehadiran di Kelas</div>
-      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:8px;">
-        <div><strong>Nilai Kehadiran:</strong> ${escapeHtml(String(nilaiKehadiranPersen))}%</div>
-        <div><strong>Keterangan Kehadiran:</strong> Sakit ${sakitCount} kali, Izin ${izinCount} kali</div>
+    <div class="placeholder-card" style="margin-bottom:12px; border-color:#cbd5e1;">
+      <div style="font-weight:800; margin-bottom:10px; color:#0f172a;">A. Laporan Akademik</div>
+      <div class="placeholder-card" style="margin-bottom:10px;">
+        <div style="font-weight:700; margin-bottom:8px;">Kehadiran di Kelas</div>
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:8px;">
+          <div><strong>Nilai Kehadiran:</strong> ${escapeHtml(String(nilaiKehadiranPersen))}%</div>
+          <div><strong>Keterangan Kehadiran:</strong> Sakit ${sakitCount} kali, Izin ${izinCount} kali</div>
+        </div>
+      </div>
+      <div class="placeholder-card" style="margin-bottom:10px;">
+        <div style="font-weight:700; margin-bottom:8px;">Akhlak di Kelas</div>
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:10px; align-items:end;">
+          <div>
+            <label class="guru-label">Nilai Akhlak (A-E)</label>
+            <select id="laporan-bulanan-nilai-akhlak" class="guru-field" onchange="onLaporanBulananNilaiAkhlakChange(this.value)">
+              <option value="" ${nilaiAkhlak === '' ? 'selected' : ''}>Pilih Nilai</option>
+              <option value="A" ${nilaiAkhlak === 'A' ? 'selected' : ''}>A</option>
+              <option value="B" ${nilaiAkhlak === 'B' ? 'selected' : ''}>B</option>
+              <option value="C" ${nilaiAkhlak === 'C' ? 'selected' : ''}>C</option>
+              <option value="D" ${nilaiAkhlak === 'D' ? 'selected' : ''}>D</option>
+              <option value="E" ${nilaiAkhlak === 'E' ? 'selected' : ''}>E</option>
+            </select>
+          </div>
+          <div>
+            <label class="guru-label">Keterangan</label>
+            <input id="laporan-bulanan-predikat" class="guru-field" type="text" value="${escapeHtml(predikat)}" readonly style="background:#f8fafc; color:#475569;">
+          </div>
+        </div>
+      </div>
+      <div class="placeholder-card">
+        <div style="font-weight:700; margin-bottom:8px;">Catatan Wali Kelas</div>
+        <textarea id="laporan-bulanan-catatan-wali" class="guru-field" rows="5" placeholder="Tulis catatan perkembangan santri...">${escapeHtml(catatanWali)}</textarea>
       </div>
     </div>
 
-    <div class="placeholder-card" style="margin-bottom:12px;">
-      <div style="font-weight:700; margin-bottom:8px;">Akhlak di Kelas</div>
-      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:10px; align-items:end;">
+    <div class="placeholder-card" style="margin-bottom:12px; border-color:#cbd5e1;">
+      <div style="font-weight:800; margin-bottom:10px; color:#0f172a;">B. Laporan Ketahfizan</div>
+      <div class="placeholder-card" style="margin-bottom:10px;">
+      <div style="font-weight:700; margin-bottom:8px;">Data Ketahfizan</div>
+      <div style="font-size:12px; color:#64748b; margin-bottom:8px;">Bagian ini diinput oleh Muhaffiz (view only).</div>
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:10px; margin-bottom:10px;">
         <div>
-          <label class="guru-label">Nilai Akhlak (A-E)</label>
-          <select id="laporan-bulanan-nilai-akhlak" class="guru-field" onchange="onLaporanBulananNilaiAkhlakChange(this.value)">
-            <option value="" ${nilaiAkhlak === '' ? 'selected' : ''}>Pilih Nilai</option>
-            <option value="A" ${nilaiAkhlak === 'A' ? 'selected' : ''}>A</option>
-            <option value="B" ${nilaiAkhlak === 'B' ? 'selected' : ''}>B</option>
-            <option value="C" ${nilaiAkhlak === 'C' ? 'selected' : ''}>C</option>
-            <option value="D" ${nilaiAkhlak === 'D' ? 'selected' : ''}>D</option>
-            <option value="E" ${nilaiAkhlak === 'E' ? 'selected' : ''}>E</option>
-          </select>
+          <label class="guru-label">Muhaffiz</label>
+          <input id="laporan-bulanan-muhaffiz" class="guru-field" type="text" value="${escapeHtml(muhaffiz || '')}" placeholder="Nama muhaffiz" readonly style="background:#f8fafc; color:#475569;">
         </div>
         <div>
-          <label class="guru-label">Keterangan</label>
-          <input id="laporan-bulanan-predikat" class="guru-field" type="text" value="${escapeHtml(predikat)}" readonly style="background:#f8fafc; color:#475569;">
+          <label class="guru-label">Nomor HP Muhaffiz</label>
+          <input id="laporan-bulanan-nohp-muhaffiz" class="guru-field" type="text" value="${escapeHtml(noHpMuhaffiz || '')}" placeholder="08xxxxxxxxxx" readonly style="background:#f8fafc; color:#475569;">
         </div>
       </div>
+
+      <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px;">
+        <table style="width:100%; min-width:860px; border-collapse:collapse; font-size:13px;">
+          <thead>
+            <tr style="background:#f8fafc;">
+              <th style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Aspek Penilaian</th>
+              <th style="padding:8px; border:1px solid #e2e8f0; width:240px;">Nilai</th>
+              <th style="padding:8px; border:1px solid #e2e8f0;">Keterangan</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="padding:8px; border:1px solid #e2e8f0;">Kehadiran di Halaqah</td>
+              <td style="padding:8px; border:1px solid #e2e8f0;">
+                <div style="display:flex; gap:6px; align-items:center;">
+                  <input id="laporan-bulanan-nilai-kehadiran-halaqah" class="guru-field" type="number" min="0" max="100" step="0.01" value="${escapeHtml(toInputValue(nilaiKehadiranHalaqah))}" placeholder="Nilai %" readonly style="background:#f8fafc; color:#475569;">
+                  <span style="font-size:12px; color:#64748b;">%</span>
+                </div>
+              </td>
+              <td style="padding:8px; border:1px solid #e2e8f0;">
+                <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                  <label style="font-size:12px; color:#475569;">Sakit</label>
+                  <input id="laporan-bulanan-sakit-halaqah" class="guru-field" type="number" min="0" step="1" value="${escapeHtml(toInputValue(sakitHalaqah))}" style="max-width:90px; background:#f8fafc; color:#475569;" readonly>
+                  <label style="font-size:12px; color:#475569;">Izin</label>
+                  <input id="laporan-bulanan-izin-halaqah" class="guru-field" type="number" min="0" step="1" value="${escapeHtml(toInputValue(izinHalaqah))}" style="max-width:90px; background:#f8fafc; color:#475569;" readonly>
+                  <span style="font-size:12px; color:#64748b;">kali</span>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:8px; border:1px solid #e2e8f0;">Akhlak di Halaqah</td>
+              <td style="padding:8px; border:1px solid #e2e8f0;">
+                <select id="laporan-bulanan-nilai-akhlak-halaqah" class="guru-field" disabled style="background:#f8fafc; color:#475569;">
+                  <option value="" ${!nilaiAkhlakHalaqah ? 'selected' : ''}>Pilih Nilai</option>
+                  <option value="A" ${nilaiAkhlakHalaqah === 'A' ? 'selected' : ''}>A</option>
+                  <option value="B" ${nilaiAkhlakHalaqah === 'B' ? 'selected' : ''}>B</option>
+                  <option value="C" ${nilaiAkhlakHalaqah === 'C' ? 'selected' : ''}>C</option>
+                  <option value="D" ${nilaiAkhlakHalaqah === 'D' ? 'selected' : ''}>D</option>
+                  <option value="E" ${nilaiAkhlakHalaqah === 'E' ? 'selected' : ''}>E</option>
+                </select>
+              </td>
+              <td style="padding:8px; border:1px solid #e2e8f0;">
+                <input id="laporan-bulanan-ket-akhlak-halaqah" class="guru-field" type="text" value="${escapeHtml(keteranganAkhlakHalaqah || '')}" readonly style="background:#f8fafc; color:#475569;">
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:8px; border:1px solid #e2e8f0;">Ujian Bulanan</td>
+              <td style="padding:8px; border:1px solid #e2e8f0;">
+                <input id="laporan-bulanan-nilai-ujian-bulanan" class="guru-field" type="number" min="0" max="100" step="0.01" value="${escapeHtml(toInputValue(nilaiUjianBulanan))}" readonly style="background:#f8fafc; color:#475569;">
+              </td>
+              <td style="padding:8px; border:1px solid #e2e8f0;">
+                <input id="laporan-bulanan-ket-ujian-bulanan" class="guru-field" type="text" value="${escapeHtml(keteranganUjianBulanan || '')}" readonly style="background:#f8fafc; color:#475569;">
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:8px; border:1px solid #e2e8f0;">Target Hafalan</td>
+              <td style="padding:8px; border:1px solid #e2e8f0;">
+                <div style="display:flex; gap:6px; align-items:center;">
+                  <input id="laporan-bulanan-nilai-target-hafalan" class="guru-field" type="number" min="0" max="100" step="0.01" value="${escapeHtml(toInputValue(nilaiTargetHafalan))}" readonly style="background:#f8fafc; color:#475569;">
+                  <span style="font-size:12px; color:#64748b;">%</span>
+                </div>
+              </td>
+              <td style="padding:8px; border:1px solid #e2e8f0;">
+                <input id="laporan-bulanan-ket-target-hafalan" class="guru-field" type="text" value="${escapeHtml(keteranganTargetHafalan || '')}" placeholder="Isi manual keterangan target hafalan" readonly style="background:#f8fafc; color:#475569;">
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:8px; border:1px solid #e2e8f0;">Capaian Hafalan Bulanan</td>
+              <td style="padding:8px; border:1px solid #e2e8f0;">
+                <div style="display:flex; gap:6px; align-items:center;">
+                  <input id="laporan-bulanan-nilai-capaian-hafalan" class="guru-field" type="number" min="0" step="0.01" value="${escapeHtml(toInputValue(nilaiCapaianHafalanBulanan))}" readonly style="background:#f8fafc; color:#475569;">
+                  <span style="font-size:12px; color:#64748b;">halaman</span>
+                </div>
+              </td>
+              <td style="padding:8px; border:1px solid #e2e8f0; color:#94a3b8;">-</td>
+            </tr>
+            <tr>
+              <td style="padding:8px; border:1px solid #e2e8f0;">Jumlah Hafalan</td>
+              <td style="padding:8px; border:1px solid #e2e8f0;">
+                <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                  <input id="laporan-bulanan-jumlah-hafalan-halaman" class="guru-field" type="number" min="0" step="0.01" value="${escapeHtml(toInputValue(nilaiJumlahHafalanHalaman))}" style="max-width:120px; background:#f8fafc; color:#475569;" readonly>
+                  <span style="font-size:12px; color:#64748b;">halaman</span>
+                  <input id="laporan-bulanan-jumlah-hafalan-juz" class="guru-field" type="number" min="0" step="0.01" value="${escapeHtml(toInputValue(nilaiJumlahHafalanJuz))}" style="max-width:120px; background:#f8fafc; color:#475569;" readonly>
+                  <span style="font-size:12px; color:#64748b;">juz</span>
+                </div>
+              </td>
+              <td style="padding:8px; border:1px solid #e2e8f0; color:#94a3b8;">-</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      </div>
+      <div class="placeholder-card" style="margin-bottom:0;">
+      <div style="font-weight:700; margin-bottom:8px;">Catatan Muhaffiz</div>
+      <textarea id="laporan-bulanan-catatan-muhaffiz" class="guru-field" rows="5" placeholder="Tulis catatan perkembangan tahfiz santri..." readonly style="background:#f8fafc; color:#475569;">${escapeHtml(catatanMuhaffiz || '')}</textarea>
+    </div>
     </div>
 
     <div class="placeholder-card">
-      <div style="font-weight:700; margin-bottom:8px;">Catatan Wali Kelas</div>
-      <textarea id="laporan-bulanan-catatan-wali" class="guru-field" rows="5" placeholder="Tulis catatan perkembangan santri...">${escapeHtml(catatanWali)}</textarea>
       <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
         <button type="button" class="modal-btn" onclick="printLaporanBulanan()">Cetak PDF</button>
         <button type="button" class="modal-btn" onclick="quickSendLaporanBulananWA('${escapeHtml(String(santri.id))}')">Kirim WA</button>
@@ -3604,14 +3878,30 @@ async function getLaporanBulananDetailData(santriId, opts = {}) {
 
   let monthlyReport = null
   let monthlyReportMissingTable = false
-  const reportRes = await sb
+  let monthlyReportMissingColumns = false
+  const reportSelectNew = 'id, nilai_akhlak, predikat, catatan_wali, muhaffiz, no_hp_muhaffiz, nilai_kehadiran_halaqah, sakit_halaqah, izin_halaqah, nilai_akhlak_halaqah, keterangan_akhlak_halaqah, nilai_ujian_bulanan, keterangan_ujian_bulanan, nilai_target_hafalan, keterangan_target_hafalan, nilai_capaian_hafalan_bulanan, nilai_jumlah_hafalan_halaman, nilai_jumlah_hafalan_juz, catatan_muhaffiz'
+  const reportSelectLegacy = 'id, nilai_akhlak, predikat, catatan_wali'
+
+  let reportRes = await sb
     .from(MONTHLY_REPORT_TABLE)
-    .select('id, nilai_akhlak, predikat, catatan_wali')
+    .select(reportSelectNew)
     .eq('periode', periode)
     .eq('guru_id', String(guru.id))
     .eq('kelas_id', String(santri.kelas_id))
     .eq('santri_id', sid)
     .maybeSingle()
+
+  if (reportRes.error && isMissingMonthlyReportColumnError(reportRes.error)) {
+    monthlyReportMissingColumns = true
+    reportRes = await sb
+      .from(MONTHLY_REPORT_TABLE)
+      .select(reportSelectLegacy)
+      .eq('periode', periode)
+      .eq('guru_id', String(guru.id))
+      .eq('kelas_id', String(santri.kelas_id))
+      .eq('santri_id', sid)
+      .maybeSingle()
+  }
 
   if (reportRes.error) {
     if (isMissingMonthlyReportTableError(reportRes.error)) {
@@ -3631,6 +3921,21 @@ async function getLaporanBulananDetailData(santriId, opts = {}) {
   const predikat = nilaiAkhlak ? getAkhlakKeteranganByGrade(nilaiAkhlak) : ''
   const catatanWali = monthlyReport?.catatan_wali || ''
   const hpGuru = pickLabelByKeys(guru, ['no_hp', 'hp', 'no_telp', 'nomor_hp', 'telepon']) || '-'
+  const muhaffiz = String(monthlyReport?.muhaffiz || '').trim()
+  const noHpMuhaffiz = String(monthlyReport?.no_hp_muhaffiz || '').trim()
+  const nilaiKehadiranHalaqah = toNullableNumber(monthlyReport?.nilai_kehadiran_halaqah)
+  const sakitHalaqah = toNullableNumber(monthlyReport?.sakit_halaqah)
+  const izinHalaqah = toNullableNumber(monthlyReport?.izin_halaqah)
+  const nilaiAkhlakHalaqah = normalizeAkhlakGrade(monthlyReport?.nilai_akhlak_halaqah)
+  const keteranganAkhlakHalaqah = String(monthlyReport?.keterangan_akhlak_halaqah || '').trim() || (nilaiAkhlakHalaqah ? getAkhlakKeteranganByGrade(nilaiAkhlakHalaqah) : '')
+  const nilaiUjianBulanan = toNullableNumber(monthlyReport?.nilai_ujian_bulanan)
+  const keteranganUjianBulanan = String(monthlyReport?.keterangan_ujian_bulanan || '').trim() || getUjianBulananKeterangan(nilaiUjianBulanan)
+  const nilaiTargetHafalan = toNullableNumber(monthlyReport?.nilai_target_hafalan)
+  const keteranganTargetHafalan = String(monthlyReport?.keterangan_target_hafalan || '').trim()
+  const nilaiCapaianHafalanBulanan = toNullableNumber(monthlyReport?.nilai_capaian_hafalan_bulanan)
+  const nilaiJumlahHafalanHalaman = toNullableNumber(monthlyReport?.nilai_jumlah_hafalan_halaman)
+  const nilaiJumlahHafalanJuz = toNullableNumber(monthlyReport?.nilai_jumlah_hafalan_juz)
+  const catatanMuhaffiz = String(monthlyReport?.catatan_muhaffiz || '').trim()
 
   const noHpAyahRaw = pickLabelByKeys(santri, ['no_hp_ayah', 'hp_ayah']) || ''
   const noHpIbuRaw = pickLabelByKeys(santri, ['no_hp_ibu', 'hp_ibu']) || ''
@@ -3668,7 +3973,23 @@ async function getLaporanBulananDetailData(santriId, opts = {}) {
     nilaiAkhlakRaw: nilaiAkhlak === '' ? null : nilaiAkhlak,
     nilaiAkhlak: nilaiAkhlak === '' ? '-' : nilaiAkhlak,
     predikatAkhlak: predikat || '-',
-    catatanWali: catatanWali || '-'
+    catatanWali: catatanWali || '-',
+    muhaffiz: muhaffiz || '-',
+    nomorHpMuhaffiz: noHpMuhaffiz || '-',
+    nilaiKehadiranHalaqah: nilaiKehadiranHalaqah === null ? '-' : String(round2(nilaiKehadiranHalaqah)),
+    sakitHalaqah: Number.isFinite(sakitHalaqah) ? sakitHalaqah : 0,
+    izinHalaqah: Number.isFinite(izinHalaqah) ? izinHalaqah : 0,
+    nilaiAkhlakHalaqah: nilaiAkhlakHalaqah || '-',
+    keteranganAkhlakHalaqah: keteranganAkhlakHalaqah || '-',
+    nilaiUjianBulanan: nilaiUjianBulanan === null ? '-' : String(round2(nilaiUjianBulanan)),
+    keteranganUjianBulanan: keteranganUjianBulanan || '-',
+    nilaiTargetHafalan: nilaiTargetHafalan === null ? '-' : `${round2(nilaiTargetHafalan)}%`,
+    keteranganTargetHafalan: keteranganTargetHafalan || '-',
+    nilaiCapaianHafalanBulanan: nilaiCapaianHafalanBulanan === null ? '-' : `${round2(nilaiCapaianHafalanBulanan)} halaman`,
+    nilaiJumlahHafalan: (nilaiJumlahHafalanHalaman === null && nilaiJumlahHafalanJuz === null)
+      ? '-'
+      : `${nilaiJumlahHafalanHalaman === null ? '-' : round2(nilaiJumlahHafalanHalaman)} halaman / ${nilaiJumlahHafalanJuz === null ? '-' : round2(nilaiJumlahHafalanJuz)} juz`,
+    catatanMuhaffiz: catatanMuhaffiz || '-'
   }
 
   return {
@@ -3678,9 +3999,25 @@ async function getLaporanBulananDetailData(santriId, opts = {}) {
     periode,
     periodeRange,
     monthlyReportMissingTable,
+    monthlyReportMissingColumns,
     nilaiAkhlak,
     predikat,
     catatanWali,
+    muhaffiz,
+    noHpMuhaffiz,
+    nilaiKehadiranHalaqah,
+    sakitHalaqah,
+    izinHalaqah,
+    nilaiAkhlakHalaqah,
+    keteranganAkhlakHalaqah,
+    nilaiUjianBulanan,
+    keteranganUjianBulanan,
+    nilaiTargetHafalan,
+    keteranganTargetHafalan,
+    nilaiCapaianHafalanBulanan,
+    nilaiJumlahHafalanHalaman,
+    nilaiJumlahHafalanJuz,
+    catatanMuhaffiz,
     hpGuru,
     noHpAyahRaw,
     noHpIbuRaw,
@@ -3784,6 +4121,19 @@ function onLaporanBulananNilaiAkhlakChange(value) {
   predikatEl.value = grade ? getAkhlakKeteranganByGrade(grade) : ''
 }
 
+function onLaporanBulananAkhlakHalaqahChange(value) {
+  const ketEl = document.getElementById('laporan-bulanan-ket-akhlak-halaqah')
+  if (!ketEl) return
+  const grade = normalizeAkhlakGrade(value)
+  ketEl.value = grade ? getAkhlakKeteranganByGrade(grade) : ''
+}
+
+function onLaporanBulananUjianBulananChange(value) {
+  const ketEl = document.getElementById('laporan-bulanan-ket-ujian-bulanan')
+  if (!ketEl) return
+  ketEl.value = getUjianBulananKeterangan(value)
+}
+
 async function saveLaporanBulananDetail() {
   const sid = String(laporanBulananState.selectedSantriId || '').trim()
   const santri = (laporanBulananState.santriList || []).find(item => String(item.id) === sid)
@@ -3796,6 +4146,21 @@ async function saveLaporanBulananDetail() {
 
   const nilaiAkhlakInput = document.getElementById('laporan-bulanan-nilai-akhlak')
   const predikatInput = document.getElementById('laporan-bulanan-predikat')
+  const muhaffizInput = document.getElementById('laporan-bulanan-muhaffiz')
+  const noHpMuhaffizInput = document.getElementById('laporan-bulanan-nohp-muhaffiz')
+  const nilaiKehadiranHalaqahInput = document.getElementById('laporan-bulanan-nilai-kehadiran-halaqah')
+  const sakitHalaqahInput = document.getElementById('laporan-bulanan-sakit-halaqah')
+  const izinHalaqahInput = document.getElementById('laporan-bulanan-izin-halaqah')
+  const nilaiAkhlakHalaqahInput = document.getElementById('laporan-bulanan-nilai-akhlak-halaqah')
+  const ketAkhlakHalaqahInput = document.getElementById('laporan-bulanan-ket-akhlak-halaqah')
+  const nilaiUjianBulananInput = document.getElementById('laporan-bulanan-nilai-ujian-bulanan')
+  const ketUjianBulananInput = document.getElementById('laporan-bulanan-ket-ujian-bulanan')
+  const nilaiTargetHafalanInput = document.getElementById('laporan-bulanan-nilai-target-hafalan')
+  const ketTargetHafalanInput = document.getElementById('laporan-bulanan-ket-target-hafalan')
+  const nilaiCapaianHafalanInput = document.getElementById('laporan-bulanan-nilai-capaian-hafalan')
+  const nilaiJumlahHafalanHalamanInput = document.getElementById('laporan-bulanan-jumlah-hafalan-halaman')
+  const nilaiJumlahHafalanJuzInput = document.getElementById('laporan-bulanan-jumlah-hafalan-juz')
+  const catatanMuhaffizInput = document.getElementById('laporan-bulanan-catatan-muhaffiz')
   const catatanInput = document.getElementById('laporan-bulanan-catatan-wali')
 
   const nilaiAkhlakRaw = String(nilaiAkhlakInput?.value || '').trim().toUpperCase()
@@ -3806,8 +4171,65 @@ async function saveLaporanBulananDetail() {
   }
 
   const predikat = String(predikatInput?.value || '').trim()
+  const muhaffiz = String(muhaffizInput?.value || '').trim()
+  const noHpMuhaffiz = String(noHpMuhaffizInput?.value || '').trim()
+  const nilaiKehadiranHalaqah = toNullableNumber(nilaiKehadiranHalaqahInput?.value)
+  const sakitHalaqah = toNullableNumber(sakitHalaqahInput?.value)
+  const izinHalaqah = toNullableNumber(izinHalaqahInput?.value)
+  const nilaiAkhlakHalaqahRaw = String(nilaiAkhlakHalaqahInput?.value || '').trim().toUpperCase()
+  const nilaiAkhlakHalaqah = nilaiAkhlakHalaqahRaw === '' ? '' : normalizeAkhlakGrade(nilaiAkhlakHalaqahRaw)
+  const ketAkhlakHalaqah = String(ketAkhlakHalaqahInput?.value || '').trim()
+  const nilaiUjianBulanan = toNullableNumber(nilaiUjianBulananInput?.value)
+  const ketUjianBulanan = String(ketUjianBulananInput?.value || '').trim()
+  const nilaiTargetHafalan = toNullableNumber(nilaiTargetHafalanInput?.value)
+  const ketTargetHafalan = String(ketTargetHafalanInput?.value || '').trim()
+  const nilaiCapaianHafalan = toNullableNumber(nilaiCapaianHafalanInput?.value)
+  const nilaiJumlahHafalanHalaman = toNullableNumber(nilaiJumlahHafalanHalamanInput?.value)
+  const nilaiJumlahHafalanJuz = toNullableNumber(nilaiJumlahHafalanJuzInput?.value)
+  const catatanMuhaffiz = String(catatanMuhaffizInput?.value || '').trim()
   const catatanWali = String(catatanInput?.value || '').trim()
   const nilaiAkhlakNumeric = nilaiAkhlakGrade ? getAkhlakNumericValueByGrade(nilaiAkhlakGrade) : null
+
+  const numberChecks = [
+    [nilaiKehadiranHalaqah, 'Nilai kehadiran halaqah harus angka.'],
+    [sakitHalaqah, 'Jumlah sakit halaqah harus angka.'],
+    [izinHalaqah, 'Jumlah izin halaqah harus angka.'],
+    [nilaiUjianBulanan, 'Nilai ujian bulanan harus angka.'],
+    [nilaiTargetHafalan, 'Target hafalan harus angka.'],
+    [nilaiCapaianHafalan, 'Capaian hafalan bulanan harus angka.'],
+    [nilaiJumlahHafalanHalaman, 'Jumlah hafalan (halaman) harus angka.'],
+    [nilaiJumlahHafalanJuz, 'Jumlah hafalan (juz) harus angka.']
+  ]
+  for (const [num, message] of numberChecks) {
+    if (Number.isNaN(num)) {
+      alert(message)
+      return
+    }
+  }
+  if (nilaiKehadiranHalaqah !== null && (nilaiKehadiranHalaqah < 0 || nilaiKehadiranHalaqah > 100)) {
+    alert('Nilai kehadiran halaqah harus 0-100.')
+    return
+  }
+  if (nilaiUjianBulanan !== null && (nilaiUjianBulanan < 0 || nilaiUjianBulanan > 100)) {
+    alert('Nilai ujian bulanan harus 0-100.')
+    return
+  }
+  if (nilaiTargetHafalan !== null && (nilaiTargetHafalan < 0 || nilaiTargetHafalan > 100)) {
+    alert('Target hafalan harus 0-100%.')
+    return
+  }
+  if (sakitHalaqah !== null && sakitHalaqah < 0) {
+    alert('Jumlah sakit halaqah tidak boleh minus.')
+    return
+  }
+  if (izinHalaqah !== null && izinHalaqah < 0) {
+    alert('Jumlah izin halaqah tidak boleh minus.')
+    return
+  }
+  if (nilaiAkhlakHalaqahRaw && !nilaiAkhlakHalaqah) {
+    alert('Nilai akhlak halaqah harus A, B, C, D, atau E.')
+    return
+  }
 
   const payload = {
     periode,
@@ -3816,7 +4238,22 @@ async function saveLaporanBulananDetail() {
     santri_id: sid,
     nilai_akhlak: nilaiAkhlakNumeric === null ? null : round2(nilaiAkhlakNumeric),
     predikat: predikat || null,
-    catatan_wali: catatanWali || null
+    catatan_wali: catatanWali || null,
+    muhaffiz: muhaffiz || null,
+    no_hp_muhaffiz: noHpMuhaffiz || null,
+    nilai_kehadiran_halaqah: nilaiKehadiranHalaqah === null ? null : round2(nilaiKehadiranHalaqah),
+    sakit_halaqah: sakitHalaqah === null ? null : Math.round(sakitHalaqah),
+    izin_halaqah: izinHalaqah === null ? null : Math.round(izinHalaqah),
+    nilai_akhlak_halaqah: nilaiAkhlakHalaqah || null,
+    keterangan_akhlak_halaqah: ketAkhlakHalaqah || null,
+    nilai_ujian_bulanan: nilaiUjianBulanan === null ? null : round2(nilaiUjianBulanan),
+    keterangan_ujian_bulanan: ketUjianBulanan || null,
+    nilai_target_hafalan: nilaiTargetHafalan === null ? null : round2(nilaiTargetHafalan),
+    keterangan_target_hafalan: ketTargetHafalan || null,
+    nilai_capaian_hafalan_bulanan: nilaiCapaianHafalan === null ? null : round2(nilaiCapaianHafalan),
+    nilai_jumlah_hafalan_halaman: nilaiJumlahHafalanHalaman === null ? null : round2(nilaiJumlahHafalanHalaman),
+    nilai_jumlah_hafalan_juz: nilaiJumlahHafalanJuz === null ? null : round2(nilaiJumlahHafalanJuz),
+    catatan_muhaffiz: catatanMuhaffiz || null
   }
 
   const { error } = await sb
@@ -3827,6 +4264,10 @@ async function saveLaporanBulananDetail() {
     console.error(error)
     if (isMissingMonthlyReportTableError(error)) {
       alert(buildMonthlyReportMissingTableMessage())
+      return
+    }
+    if (isMissingMonthlyReportColumnError(error)) {
+      alert(buildMonthlyReportMissingColumnsMessage())
       return
     }
     alert(`Gagal simpan laporan bulanan: ${error.message || 'Unknown error'}`)
@@ -3928,6 +4369,90 @@ function createLaporanBulananPdfDoc(detail) {
       margin: { left: margin + 8, right: margin },
       head: [['Aspek Penilaian', 'Nilai', 'Keterangan']],
       body: tableBody,
+      theme: 'grid',
+      styles: {
+        font: 'times',
+        fontSize: 12,
+        cellPadding: 2.5,
+        textColor: [17, 24, 39],
+        valign: 'middle',
+        lineWidth: 0.2,
+        lineColor: [17, 24, 39]
+      },
+      headStyles: {
+        fillColor: [237, 211, 127],
+        textColor: [17, 24, 39],
+        halign: 'center',
+        fontStyle: 'bold',
+        lineWidth: 0.2,
+        lineColor: [17, 24, 39]
+      },
+      bodyStyles: {
+        lineWidth: 0.2,
+        lineColor: [17, 24, 39]
+      },
+      columnStyles: {
+        0: { cellWidth: usableWidth * 0.40 },
+        1: { cellWidth: usableWidth * 0.18, halign: 'center' },
+        2: { cellWidth: usableWidth * 0.34 }
+      }
+    })
+
+    let nextY = Number(doc.lastAutoTable?.finalY || y) + 10
+    doc.setFont('times', 'bold')
+    doc.setFontSize(12)
+    doc.text('B. Laporan Ketahfizan', margin, nextY)
+    nextY += 6
+    doc.setFont('times', 'normal')
+    doc.text(`Muhaffiz: ${detail.muhaffiz || '-'}`, margin + 8, nextY)
+    nextY += 7
+    doc.text(`Nomor HP: ${detail.nomorHpMuhaffiz || '-'}`, margin + 8, nextY)
+
+    const tableBodyTahfiz = [
+      [
+        'Kehadiran di halaqah',
+        `${detail.nilaiKehadiranHalaqah || '-'}`,
+        `Sakit ${detail.sakitHalaqah || 0} kali\nIzin ${detail.izinHalaqah || 0} kali`
+      ],
+      [
+        'Akhlak di halaqah',
+        `${detail.nilaiAkhlakHalaqah || '-'}`,
+        `${detail.keteranganAkhlakHalaqah || '-'}`
+      ],
+      [
+        'Ujian bulanan',
+        `${detail.nilaiUjianBulanan || '-'}`,
+        `${detail.keteranganUjianBulanan || '-'}`
+      ],
+      [
+        'Target hafalan',
+        `${detail.nilaiTargetHafalan || '-'}`,
+        `${detail.keteranganTargetHafalan || '-'}`
+      ],
+      [
+        'Capaian hafalan bulanan',
+        `${detail.nilaiCapaianHafalanBulanan || '-'}`,
+        '-'
+      ],
+      [
+        'Jumlah hafalan',
+        `${detail.nilaiJumlahHafalan || '-'}`,
+        '-'
+      ],
+      [
+        {
+          content: `Catatan muhaffiz:\n${detail.catatanMuhaffiz || '-'}`,
+          colSpan: 3,
+          styles: { halign: 'left' }
+        }
+      ]
+    ]
+
+    doc.autoTable({
+      startY: nextY + 5,
+      margin: { left: margin + 8, right: margin },
+      head: [['Aspek Penilaian', 'Nilai', 'Keterangan']],
+      body: tableBodyTahfiz,
       theme: 'grid',
       styles: {
         font: 'times',
@@ -6102,6 +6627,563 @@ function backToRaporList() {
   renderRaporSantriList()
 }
 
+function getMonitoringRange(periode) {
+  const range = getPeriodeRange(periode)
+  if (!range) return null
+  return { start: range.start, end: range.end }
+}
+
+function getWeekRangeWithinPeriod(periode) {
+  const range = getPeriodeRange(periode)
+  if (!range) return null
+  const periodStart = new Date(`${range.start}T00:00:00`)
+  const periodEnd = new Date(`${range.end}T00:00:00`)
+  const now = new Date()
+  const end = now < periodEnd ? now : periodEnd
+  const start = new Date(end)
+  start.setDate(start.getDate() - 6)
+  const finalStart = start < periodStart ? periodStart : start
+  return {
+    start: finalStart.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10)
+  }
+}
+
+function getAbsensiDateBounds(absensiRows = []) {
+  let min = ''
+  let max = ''
+  ;(absensiRows || []).forEach(row => {
+    const tanggal = String(row?.tanggal || '').slice(0, 10)
+    if (!tanggal) return
+    if (!min || tanggal < min) min = tanggal
+    if (!max || tanggal > max) max = tanggal
+  })
+  return { min, max }
+}
+
+function getMonitoringSantriRange({ mode, periode, absensiRows, semester }) {
+  const selectedMode = String(mode || 'bulan')
+  if (selectedMode === 'hari') {
+    const day = String(monitoringState.santriDate || getDateInputToday())
+    return { start: day, end: day }
+  }
+  if (selectedMode === 'pekan') {
+    const weekRange = getRangeFromWeekInput(monitoringState.santriWeek || getWeekInputToday())
+    if (weekRange) return weekRange
+  }
+  if (selectedMode === 'semester') {
+    const byRows = getAbsensiDateBounds(absensiRows)
+    if (byRows.min && byRows.max) return { start: byRows.min, end: byRows.max }
+    const monthRange = getMonitoringRange(periode)
+    if (monthRange) return monthRange
+  }
+  const month = String(monitoringState.santriMonth || periode || getMonthInputToday())
+  const monthRange = getMonitoringRange(month)
+  if (monthRange) return monthRange
+  const fallbackDay = getDateInputToday()
+  return { start: fallbackDay, end: fallbackDay }
+}
+
+function getMonitoringSantriRangeLabel(mode, range) {
+  if (!range?.start || !range?.end) return '-'
+  const selectedMode = String(mode || 'bulan')
+  if (selectedMode === 'hari') return `Hari: ${range.start}`
+  if (selectedMode === 'pekan') return `Pekan: ${range.start} s.d. ${range.end}`
+  if (selectedMode === 'semester') {
+    const semesterName = String((activeSemesterCache && activeSemesterCache.value?.nama) || '')
+    return semesterName
+      ? `Semester ${semesterName}: ${range.start} s.d. ${range.end}`
+      : `Semester: ${range.start} s.d. ${range.end}`
+  }
+  return `Bulan: ${range.start.slice(0, 7)}`
+}
+
+function getHariFromDate(dateText) {
+  const date = new Date(`${dateText}T00:00:00`)
+  const names = ['minggu', 'senin', 'selasa', 'rabu', 'kamis', 'jumat', 'sabtu']
+  return names[date.getDay()] || ''
+}
+
+function getDatesByDayNameInRange(startDate, endDate, dayName) {
+  const target = normalizeHari(dayName)
+  if (!target) return []
+  const rows = []
+  const cursor = new Date(`${startDate}T00:00:00`)
+  const end = new Date(`${endDate}T00:00:00`)
+  while (cursor <= end) {
+    const text = cursor.toISOString().slice(0, 10)
+    if (normalizeHari(getHariFromDate(text)) === target) rows.push(text)
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return rows
+}
+
+function buildSantriDailyStatus(rows) {
+  const grouped = new Map()
+  ;(rows || []).forEach(row => {
+    const sid = String(row.santri_id || '')
+    const tanggal = String(row.tanggal || '').slice(0, 10)
+    if (!sid || !tanggal) return
+    const key = `${sid}|${tanggal}`
+    if (!grouped.has(key)) grouped.set(key, [])
+    grouped.get(key).push(String(row.status || '').trim().toLowerCase())
+  })
+
+  const finalMap = new Map()
+  grouped.forEach((statuses, key) => {
+    const hasHadir = statuses.some(item => item === 'hadir' || item === 'terlambat')
+    let status = 'alpa'
+    if (hasHadir) status = 'hadir'
+    else if (statuses.includes('sakit')) status = 'sakit'
+    else if (statuses.includes('izin')) status = 'izin'
+    else if (statuses.includes('alpa')) status = 'alpa'
+    finalMap.set(key, status)
+  })
+  return finalMap
+}
+
+async function loadMonitoringData(periode) {
+  const range = getMonitoringRange(periode)
+  if (!range) throw new Error('Periode tidak valid.')
+
+  const semester = await getActiveSemester()
+  const semesterId = String(semester?.id || '')
+  if (!semesterId) {
+    return { guruRows: [], guruDetail: [], santriRows: [], santriWeeklyRows: [] }
+  }
+
+  const [distribusiRes, jadwalRes, absensiRes, kelasRes, mapelRes, karyawanRes, santriRes] = await Promise.all([
+    sb.from('distribusi_mapel').select('id, kelas_id, mapel_id, guru_id, semester_id').eq('semester_id', semesterId),
+    sb.from('jadwal_pelajaran').select('id, distribusi_id, hari, jam_mulai, jam_selesai'),
+    sb.from('absensi_santri')
+      .select('id, tanggal, kelas_id, mapel_id, guru_id, santri_id, status, semester_id, guru_pengganti_id')
+      .eq('semester_id', semesterId),
+    sb.from('kelas').select('id, nama_kelas'),
+    sb.from('mapel').select('id, nama'),
+    sb.from('karyawan').select('id, nama, role, aktif'),
+    sb.from('santri').select('id, nama, kelas_id, aktif').eq('aktif', true)
+  ])
+
+  const firstError = distribusiRes.error || jadwalRes.error || absensiRes.error || kelasRes.error || mapelRes.error || karyawanRes.error || santriRes.error
+  if (firstError) throw firstError
+
+  const distribusiList = distribusiRes.data || []
+  const distribusiMap = new Map(distribusiList.map(item => [String(item.id), item]))
+  const kelasMap = new Map((kelasRes.data || []).map(item => [String(item.id), item]))
+  const mapelMap = new Map((mapelRes.data || []).map(item => [String(item.id), item]))
+  const karyawanMap = new Map((karyawanRes.data || []).map(item => [String(item.id), item]))
+  const santriMap = new Map((santriRes.data || []).map(item => [String(item.id), item]))
+  const jadwalRows = (jadwalRes.data || []).filter(item => distribusiMap.has(String(item.distribusi_id || '')))
+  const absensiRows = absensiRes.data || []
+  const guruAbsensiRows = absensiRows.filter(row => {
+    const tanggal = String(row.tanggal || '').slice(0, 10)
+    return !!tanggal && tanggal >= range.start && tanggal <= range.end
+  })
+
+  const expectedSessions = []
+  jadwalRows.forEach(jadwal => {
+    const distribusi = distribusiMap.get(String(jadwal.distribusi_id || ''))
+    if (!distribusi) return
+    const dates = getDatesByDayNameInRange(range.start, range.end, jadwal.hari)
+    dates.forEach(tanggal => {
+      expectedSessions.push({
+        tanggal,
+        guru_id: String(distribusi.guru_id || ''),
+        kelas_id: String(distribusi.kelas_id || ''),
+        mapel_id: String(distribusi.mapel_id || ''),
+        jam_label: `${toTimeLabel(jadwal.jam_mulai)}-${toTimeLabel(jadwal.jam_selesai)}`
+      })
+    })
+  })
+
+  const absensiSessionMap = new Map()
+  guruAbsensiRows.forEach(row => {
+    const key = `${String(row.tanggal || '').slice(0, 10)}|${String(row.kelas_id || '')}|${String(row.mapel_id || '')}|${String(row.guru_id || '')}`
+    if (!absensiSessionMap.has(key)) absensiSessionMap.set(key, [])
+    absensiSessionMap.get(key).push(row)
+  })
+
+  const summaryByGuru = new Map()
+  const detailRows = []
+  expectedSessions.forEach(item => {
+    if (!item.guru_id) return
+    const key = `${item.tanggal}|${item.kelas_id}|${item.mapel_id}|${item.guru_id}`
+    const rows = absensiSessionMap.get(key) || []
+    const penggantiIds = [...new Set(rows.map(row => String(row.guru_pengganti_id || '')).filter(Boolean))]
+    const status = rows.length === 0 ? 'Tidak Masuk' : (penggantiIds.length ? 'Diganti' : 'Masuk')
+
+    const summary = summaryByGuru.get(item.guru_id) || {
+      guru_id: item.guru_id,
+      nama: String(karyawanMap.get(item.guru_id)?.nama || '-'),
+      total: 0,
+      masuk: 0,
+      diganti: 0,
+      tidak_masuk: 0
+    }
+    summary.total += 1
+    if (status === 'Masuk') summary.masuk += 1
+    else if (status === 'Diganti') summary.diganti += 1
+    else summary.tidak_masuk += 1
+    summaryByGuru.set(item.guru_id, summary)
+
+    detailRows.push({
+      guru_id: item.guru_id,
+      tanggal: item.tanggal,
+      kelas: String(kelasMap.get(item.kelas_id)?.nama_kelas || '-'),
+      mapel: String(mapelMap.get(item.mapel_id)?.nama || '-'),
+      jam: item.jam_label,
+      status,
+      pengganti: penggantiIds.map(id => String(karyawanMap.get(id)?.nama || id)).join(', ') || '-'
+    })
+  })
+
+  const santriMode = String(monitoringState.santriMode || 'bulan')
+  const santriRange = getMonitoringSantriRange({
+    mode: santriMode,
+    periode,
+    absensiRows,
+    semester
+  })
+  const santriFilteredRows = absensiRows.filter(row => {
+    const tanggal = String(row.tanggal || '').slice(0, 10)
+    if (!tanggal) return false
+    return tanggal >= santriRange.start && tanggal <= santriRange.end
+  })
+  const dailyStatusMap = buildSantriDailyStatus(santriFilteredRows)
+  const santriAggMap = new Map()
+  dailyStatusMap.forEach((status, key) => {
+    if (status === 'hadir') return
+    const [sid] = key.split('|')
+    const santri = santriMap.get(sid)
+    if (!santri) return
+    if (!santriAggMap.has(sid)) {
+      santriAggMap.set(sid, {
+        santri_id: sid,
+        nama: String(santri.nama || '-'),
+        kelas: String(kelasMap.get(String(santri.kelas_id || ''))?.nama_kelas || '-'),
+        sakit: 0,
+        izin: 0,
+        alpa: 0,
+        total: 0
+      })
+    }
+    const item = santriAggMap.get(sid)
+    item.total += 1
+    if (status === 'sakit') item.sakit += 1
+    else if (status === 'izin') item.izin += 1
+    else item.alpa += 1
+  })
+
+  const santriWeeklyMap = new Map()
+  dailyStatusMap.forEach((status, key) => {
+    if (status === 'hadir') return
+    const [sid, tanggal] = key.split('|')
+    const santri = santriMap.get(sid)
+    if (!santri) return
+    if (!santriWeeklyMap.has(sid)) {
+      santriWeeklyMap.set(sid, {
+        santri_id: sid,
+        nama: String(santri.nama || '-'),
+        kelas: String(kelasMap.get(String(santri.kelas_id || ''))?.nama_kelas || '-'),
+        kejadian: []
+      })
+    }
+    santriWeeklyMap.get(sid).kejadian.push(`${tanggal} (${status})`)
+  })
+
+  const guruRows = Array.from(summaryByGuru.values()).sort((a, b) => a.nama.localeCompare(b.nama, undefined, { sensitivity: 'base' }))
+  const santriRows = Array.from(santriAggMap.values()).sort((a, b) => b.total - a.total || a.nama.localeCompare(b.nama, undefined, { sensitivity: 'base' }))
+  const santriWeeklyRows = Array.from(santriWeeklyMap.values())
+    .map(item => ({ ...item, detail: item.kejadian.join(', ') }))
+    .sort((a, b) => b.kejadian.length - a.kejadian.length || a.nama.localeCompare(b.nama, undefined, { sensitivity: 'base' }))
+
+  return {
+    guruRows,
+    guruDetail: detailRows,
+    santriRows,
+    santriWeeklyRows,
+    santriRangeLabel: getMonitoringSantriRangeLabel(santriMode, santriRange)
+  }
+}
+
+function renderMonitoringGuruPane() {
+  const box = document.getElementById('monitoring-guru-pane')
+  if (!box) return
+  const rows = monitoringState.guruRows || []
+  if (!rows.length) {
+    box.innerHTML = '<div class="placeholder-card">Belum ada data monitoring guru pada periode ini.</div>'
+    return
+  }
+
+  let html = `
+    <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px;">
+      <table style="width:100%; min-width:760px; border-collapse:collapse; font-size:13px;">
+        <thead><tr style="background:#f8fafc;">
+          <th style="padding:8px; border:1px solid #e2e8f0;">Nama Guru</th>
+          <th style="padding:8px; border:1px solid #e2e8f0; width:90px;">Total</th>
+          <th style="padding:8px; border:1px solid #e2e8f0; width:90px;">Masuk</th>
+          <th style="padding:8px; border:1px solid #e2e8f0; width:90px;">Diganti</th>
+          <th style="padding:8px; border:1px solid #e2e8f0; width:110px;">Tidak Masuk</th>
+          <th style="padding:8px; border:1px solid #e2e8f0; width:140px;">Aksi</th>
+        </tr></thead><tbody>
+  `
+  html += rows.map(item => `
+    <tr>
+      <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.nama)}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${item.total}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${item.masuk}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${item.diganti}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${item.tidak_masuk}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">
+        <button type="button" class="modal-btn modal-btn-secondary" onclick="showMonitoringGuruDetail('${escapeHtml(String(item.guru_id || ''))}')">Tampilkan Data</button>
+      </td>
+    </tr>
+  `).join('')
+  html += '</tbody></table></div>'
+
+  const selectedGuruId = String(monitoringState.selectedGuruId || '')
+  let detail = (monitoringState.guruDetail || []).slice()
+  if (selectedGuruId) detail = detail.filter(item => String(item.guru_id || '') === selectedGuruId)
+  detail.sort((a, b) => {
+    const byDate = String(a.tanggal || '').localeCompare(String(b.tanggal || ''))
+    if (byDate !== 0) return byDate
+    return String(a.kelas || '').localeCompare(String(b.kelas || ''))
+  })
+  const selectedGuruName = selectedGuruId
+    ? String((monitoringState.guruRows || []).find(g => String(g.guru_id || '') === selectedGuruId)?.nama || '-')
+    : ''
+  const filterNote = selectedGuruId
+    ? `<div style="margin-top:8px; display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap;">
+         <div style="font-size:12px; color:#334155;">Menampilkan detail: <strong>${escapeHtml(selectedGuruName)}</strong></div>
+         <button type="button" class="modal-btn modal-btn-secondary" onclick="showMonitoringGuruDetail('')">Tampilkan Semua</button>
+       </div>`
+    : ''
+  const detailHtml = detail.length
+    ? `
+      ${filterNote}
+      <div style="margin-top:10px; overflow:auto; border:1px solid #e2e8f0; border-radius:10px;">
+        <table style="width:100%; min-width:980px; border-collapse:collapse; font-size:13px;">
+          <thead><tr style="background:#f8fafc;">
+            <th style="padding:8px; border:1px solid #e2e8f0;">Tanggal</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Guru</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Kelas</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Mapel</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Jam</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Status</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Pengganti</th>
+          </tr></thead>
+          <tbody>
+            ${detail.map(item => `
+              <tr>
+                <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.tanggal)}</td>
+                <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(String((monitoringState.guruRows || []).find(g => g.guru_id === item.guru_id)?.nama || '-'))}</td>
+                <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.kelas)}</td>
+                <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.mapel)}</td>
+                <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.jam)}</td>
+                <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.status)}</td>
+                <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.pengganti)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `
+    : '<div class="placeholder-card" style="margin-top:10px;">Belum ada detail sesi untuk filter ini.</div>'
+
+  box.innerHTML = html + detailHtml
+}
+
+function renderMonitoringSantriPane() {
+  const ringkasBox = document.getElementById('monitoring-santri-ringkas')
+  const weeklyBox = document.getElementById('monitoring-santri-weekly')
+  const labelEl = document.getElementById('monitoring-santri-range-label')
+  if (!ringkasBox || !weeklyBox) return
+  if (labelEl) labelEl.textContent = String(monitoringState.santriRangeLabel || '-')
+
+  const santriRows = monitoringState.santriRows || []
+  if (!santriRows.length) {
+    ringkasBox.innerHTML = '<div class="placeholder-card">Tidak ada data ketidakhadiran santri pada periode ini.</div>'
+  } else {
+    let html = `
+      <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px;">
+        <table style="width:100%; min-width:860px; border-collapse:collapse; font-size:13px;">
+          <thead><tr style="background:#f8fafc;">
+            <th style="padding:8px; border:1px solid #e2e8f0;">Nama Santri</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Kelas</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; width:90px;">Sakit</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; width:90px;">Izin</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; width:90px;">Alpa</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; width:90px;">Total</th>
+          </tr></thead><tbody>
+    `
+    html += santriRows.map(item => `
+      <tr>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.nama)}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.kelas)}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${item.sakit}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${item.izin}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${item.alpa}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${item.total}</td>
+      </tr>
+    `).join('')
+    html += '</tbody></table></div>'
+    ringkasBox.innerHTML = html
+  }
+
+  const weeklyRows = monitoringState.santriWeeklyRows || []
+  if (!weeklyRows.length) {
+    weeklyBox.innerHTML = '<div class="placeholder-card">Tidak ada detail ketidakhadiran santri pada rentang yang dipilih.</div>'
+    return
+  }
+  let weeklyHtml = `
+    <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px;">
+      <table style="width:100%; min-width:760px; border-collapse:collapse; font-size:13px;">
+        <thead><tr style="background:#f8fafc;">
+          <th style="padding:8px; border:1px solid #e2e8f0;">Nama Santri</th>
+          <th style="padding:8px; border:1px solid #e2e8f0;">Kelas</th>
+          <th style="padding:8px; border:1px solid #e2e8f0;">Detail Ketidakhadiran</th>
+        </tr></thead><tbody>
+  `
+  weeklyHtml += weeklyRows.map(item => `
+    <tr>
+      <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.nama)}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.kelas)}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.detail)}</td>
+    </tr>
+  `).join('')
+  weeklyHtml += '</tbody></table></div>'
+  weeklyBox.innerHTML = weeklyHtml
+}
+
+function setMonitoringTab(tab) {
+  const validTab = tab === 'santri' ? 'santri' : 'guru'
+  monitoringState.tab = validTab
+  const guruPane = document.getElementById('monitoring-pane-guru')
+  const santriPane = document.getElementById('monitoring-pane-santri')
+  if (guruPane) guruPane.style.display = validTab === 'guru' ? 'block' : 'none'
+  if (santriPane) santriPane.style.display = validTab === 'santri' ? 'block' : 'none'
+  document.querySelectorAll('.monitoring-tab-btn').forEach(btn => {
+    const isActive = btn.getAttribute('data-monitoring-tab') === validTab
+    btn.style.background = isActive ? '#d4d456ff' : '#fff'
+    btn.style.borderColor = isActive ? '#d4d456ff' : '#cbd5e1'
+    btn.style.color = '#0f172a'
+  })
+}
+
+function showMonitoringGuruDetail(guruId = '') {
+  monitoringState.selectedGuruId = String(guruId || '')
+  renderMonitoringGuruPane()
+}
+
+function onMonitoringSantriModeChange() {
+  const mode = String(document.getElementById('monitoring-santri-mode')?.value || 'bulan')
+  monitoringState.santriMode = mode
+  const dayWrap = document.getElementById('monitoring-santri-day-wrap')
+  const weekWrap = document.getElementById('monitoring-santri-week-wrap')
+  const monthWrap = document.getElementById('monitoring-santri-month-wrap')
+  if (dayWrap) dayWrap.style.display = mode === 'hari' ? '' : 'none'
+  if (weekWrap) weekWrap.style.display = mode === 'pekan' ? '' : 'none'
+  if (monthWrap) monthWrap.style.display = mode === 'bulan' ? '' : 'none'
+}
+
+async function reloadMonitoringData() {
+  const periode = String(document.getElementById('monitoring-periode')?.value || getMonthInputToday())
+  monitoringState.periode = periode
+  monitoringState.santriMode = String(document.getElementById('monitoring-santri-mode')?.value || monitoringState.santriMode || 'bulan')
+  monitoringState.santriDate = String(document.getElementById('monitoring-santri-date')?.value || monitoringState.santriDate || getDateInputToday())
+  monitoringState.santriWeek = String(document.getElementById('monitoring-santri-week')?.value || monitoringState.santriWeek || getWeekInputToday())
+  monitoringState.santriMonth = String(document.getElementById('monitoring-santri-month')?.value || monitoringState.santriMonth || periode)
+  const info = document.getElementById('monitoring-loading-info')
+  if (info) info.textContent = 'Memuat data monitoring...'
+  try {
+    const data = await loadMonitoringData(periode)
+    monitoringState = { ...monitoringState, ...data }
+    renderMonitoringGuruPane()
+    renderMonitoringSantriPane()
+    if (info) info.textContent = ''
+  } catch (error) {
+    console.error(error)
+    if (info) info.textContent = `Gagal load monitoring: ${error.message || 'Unknown error'}`
+  }
+}
+
+async function renderMonitoringPage() {
+  const content = document.getElementById('guru-content')
+  if (!content) return
+  const periode = monitoringState.periode || getMonthInputToday()
+  const santriMode = monitoringState.santriMode || 'bulan'
+  const santriDate = monitoringState.santriDate || getDateInputToday()
+  const santriWeek = monitoringState.santriWeek || getWeekInputToday()
+  const santriMonth = monitoringState.santriMonth || periode
+  monitoringState.periode = periode
+  monitoringState.santriMode = santriMode
+  monitoringState.santriDate = santriDate
+  monitoringState.santriWeek = santriWeek
+  monitoringState.santriMonth = santriMonth
+
+  content.innerHTML = `
+    <div style="display:grid; gap:12px;">
+      <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+          <div style="display:flex; gap:8px; align-items:center;">
+            <button type="button" class="monitoring-tab-btn" data-monitoring-tab="guru" onclick="setMonitoringTab('guru')" style="border:1px solid #d4d456ff; background:#d4d456ff; border-radius:999px; padding:8px 14px; font-size:12px; font-weight:700; cursor:pointer;">Monitor Guru</button>
+            <button type="button" class="monitoring-tab-btn" data-monitoring-tab="santri" onclick="setMonitoringTab('santri')" style="border:1px solid #cbd5e1; background:#fff; border-radius:999px; padding:8px 14px; font-size:12px; font-weight:700; cursor:pointer;">Monitor Santri</button>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <input id="monitoring-periode" class="guru-field" type="month" value="${escapeHtml(periode)}" style="max-width:180px;">
+            <button type="button" class="modal-btn modal-btn-primary" onclick="reloadMonitoringData()">Refresh</button>
+          </div>
+        </div>
+        <div id="monitoring-loading-info" style="margin-top:8px; font-size:12px; color:#64748b;"></div>
+      </div>
+
+      <div id="monitoring-pane-guru" style="display:block;">
+        <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+          <div style="font-weight:700; margin-bottom:8px; color:#0f172a;">Monitoring Kehadiran Guru per Kelas</div>
+          <div id="monitoring-guru-pane">Loading...</div>
+        </div>
+      </div>
+
+      <div id="monitoring-pane-santri" style="display:none;">
+        <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px; margin-bottom:12px;">
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <label style="font-size:12px; color:#475569;">Lihat data:</label>
+            <select id="monitoring-santri-mode" class="guru-field" style="max-width:160px;" onchange="onMonitoringSantriModeChange()">
+              <option value="hari" ${santriMode === 'hari' ? 'selected' : ''}>Hari</option>
+              <option value="pekan" ${santriMode === 'pekan' ? 'selected' : ''}>Pekan</option>
+              <option value="bulan" ${santriMode === 'bulan' ? 'selected' : ''}>Bulan</option>
+              <option value="semester" ${santriMode === 'semester' ? 'selected' : ''}>Semester</option>
+            </select>
+            <div id="monitoring-santri-day-wrap" style="display:${santriMode === 'hari' ? '' : 'none'};">
+              <input id="monitoring-santri-date" class="guru-field" type="date" value="${escapeHtml(santriDate)}" style="max-width:180px;">
+            </div>
+            <div id="monitoring-santri-week-wrap" style="display:${santriMode === 'pekan' ? '' : 'none'};">
+              <input id="monitoring-santri-week" class="guru-field" type="week" value="${escapeHtml(santriWeek)}" style="max-width:180px;">
+            </div>
+            <div id="monitoring-santri-month-wrap" style="display:${santriMode === 'bulan' ? '' : 'none'};">
+              <input id="monitoring-santri-month" class="guru-field" type="month" value="${escapeHtml(santriMonth)}" style="max-width:180px;">
+            </div>
+            <button type="button" class="modal-btn modal-btn-primary" onclick="reloadMonitoringData()">Terapkan</button>
+            <span id="monitoring-santri-range-label" style="margin-left:auto; font-size:12px; color:#334155;"></span>
+          </div>
+        </div>
+        <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px; margin-bottom:12px;">
+          <div style="font-weight:700; margin-bottom:8px; color:#0f172a;">Santri Tidak Masuk di Kelas</div>
+          <div id="monitoring-santri-ringkas">Loading...</div>
+        </div>
+        <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+          <div style="font-weight:700; margin-bottom:8px; color:#0f172a;">Detail Ketidakhadiran Santri</div>
+          <div id="monitoring-santri-weekly">Loading...</div>
+        </div>
+      </div>
+    </div>
+  `
+
+  setMonitoringTab(monitoringState.tab || 'guru')
+  onMonitoringSantriModeChange()
+  await reloadMonitoringData()
+}
+
 async function setupRaporAccess(forceReload = false) {
   const isWaliKelas = await getIsWaliKelas(forceReload)
   const raporBtn = document.getElementById('guru-nav-rapor')
@@ -6139,13 +7221,22 @@ async function setupRaporAccess(forceReload = false) {
   return isWaliKelas
 }
 
+async function setupMonitoringAccess(forceReload = false) {
+  const isAllowed = await getIsWakasekAkademik(forceReload)
+  const btn = document.getElementById('guru-nav-monitoring')
+  if (btn) btn.style.display = isAllowed ? '' : 'none'
+  return isAllowed
+}
+
 async function loadGuruPage(page) {
   const requestedPage = String(page || DEFAULT_GURU_PAGE)
   const validPages = Object.keys(PAGE_TITLES)
   const targetPage = validPages.includes(requestedPage) ? requestedPage : DEFAULT_GURU_PAGE
 
   const isWaliKelas = await setupRaporAccess()
+  const isWakasekAkademik = await setupMonitoringAccess()
   const isLaporanPage = targetPage === 'laporan' || targetPage === 'laporan-absensi' || targetPage === 'laporan-pekanan' || targetPage === 'laporan-bulanan'
+  const isMonitoringPage = targetPage === 'monitoring'
   if ((targetPage === 'rapor' || isLaporanPage) && !isWaliKelas) {
     const blockedTitle = targetPage === 'rapor' ? 'Rapor' : 'Laporan'
     const blockedMessage = targetPage === 'rapor'
@@ -6153,6 +7244,13 @@ async function loadGuruPage(page) {
       : 'Menu laporan hanya dapat diakses oleh guru dengan role wali kelas.'
     renderPlaceholder(blockedTitle, blockedMessage)
     setTopbarTitle(targetPage === 'rapor' ? 'rapor' : 'laporan')
+    setNavActive('')
+    closeTopbarUserMenu()
+    return
+  }
+  if (isMonitoringPage && !isWakasekAkademik) {
+    renderPlaceholder('Monitoring', 'Menu monitoring hanya dapat diakses oleh wakasek akademik.')
+    setTopbarTitle('monitoring')
     setNavActive('')
     closeTopbarUserMenu()
     return
@@ -6194,6 +7292,10 @@ async function loadGuruPage(page) {
       return
     case 'mapel':
       await renderMapelPage()
+      setGuruPageCache(targetPage)
+      return
+    case 'monitoring':
+      await renderMonitoringPage()
       setGuruPageCache(targetPage)
       return
     case 'tugas':
@@ -6244,6 +7346,8 @@ window.onInputNilaiMapelChange = onInputNilaiMapelChange
 window.onInputNilaiJenisChange = onInputNilaiJenisChange
 window.saveInputNilaiBatch = saveInputNilaiBatch
 window.onLaporanBulananPeriodChange = onLaporanBulananPeriodChange
+window.onLaporanBulananAkhlakHalaqahChange = onLaporanBulananAkhlakHalaqahChange
+window.onLaporanBulananUjianBulananChange = onLaporanBulananUjianBulananChange
 window.saveMonthlyWaTemplate = saveMonthlyWaTemplate
 window.startMonthlyWaTemplateEdit = startMonthlyWaTemplateEdit
 window.cancelMonthlyWaTemplateEdit = cancelMonthlyWaTemplateEdit
@@ -6260,6 +7364,10 @@ window.openRaporSantriDetail = openRaporSantriDetail
 window.quickPrintRaporSantri = quickPrintRaporSantri
 window.printRaporDetail = printRaporDetail
 window.backToRaporList = backToRaporList
+window.setMonitoringTab = setMonitoringTab
+window.reloadMonitoringData = reloadMonitoringData
+window.showMonitoringGuruDetail = showMonitoringGuruDetail
+window.onMonitoringSantriModeChange = onMonitoringSantriModeChange
 window.saveMapelRaporDesc = saveMapelRaporDesc
 window.openMapelDetail = openMapelDetail
 window.toggleGuruAvailableMapelSection = toggleGuruAvailableMapelSection
@@ -6284,6 +7392,7 @@ window.submitGuruDailyTask = submitGuruDailyTask
 document.addEventListener('DOMContentLoaded', () => {
   setupCustomPopupSystem()
   setupRaporAccess(true)
+  setupMonitoringAccess(true).catch(error => console.error(error))
   setGuruWelcomeName()
   const lastPage = localStorage.getItem(GURU_LAST_PAGE_KEY) || DEFAULT_GURU_PAGE
   loadGuruPage(lastPage)
