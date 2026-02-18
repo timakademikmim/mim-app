@@ -1086,12 +1086,14 @@ function animateGuruSidebarSubmenu(submenu, expand) {
       if (event.propertyName !== 'max-height') return
       if (submenu.classList.contains('open')) {
         submenu.style.maxHeight = 'none'
+        submenu.classList.add('content-visible')
       }
     })
     submenu.dataset.animBound = '1'
   }
 
   if (expand) {
+    submenu.classList.remove('content-visible')
     submenu.classList.add('open')
     submenu.style.maxHeight = '0px'
     requestAnimationFrame(() => {
@@ -1101,6 +1103,7 @@ function animateGuruSidebarSubmenu(submenu, expand) {
   }
 
   const currentHeight = submenu.scrollHeight
+  submenu.classList.remove('content-visible')
   submenu.style.maxHeight = `${currentHeight}px`
   submenu.getBoundingClientRect()
   submenu.classList.remove('open')
