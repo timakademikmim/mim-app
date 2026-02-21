@@ -1,3 +1,10 @@
+html,
+body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 body {
   margin: 0;
   font-family: "Poppins", Arial, sans-serif;
@@ -6,6 +13,9 @@ body {
 .layout {
   display: flex;
   height: 100vh;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .sidebar {
@@ -130,6 +140,105 @@ body {
   font-weight: 600;
 }
 
+.role-switcher {
+  margin-top: auto;
+  padding-top: 14px;
+  color: #93c5fd;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.role-switcher-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: #93c5fd;
+}
+
+.role-switcher-toggle {
+  margin: 4px 0 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #93c5fd;
+  width: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: center;
+}
+
+.role-switcher-toggle:hover,
+.role-switcher-toggle:focus-visible,
+.role-switcher-item:hover,
+.role-switcher-item:focus-visible {
+  background: transparent !important;
+  color: #93c5fd;
+  outline: none;
+}
+
+.role-switcher-arrow {
+  font-size: 11px;
+  color: #93c5fd;
+  transition: transform 0.2s ease;
+}
+
+.role-switcher.open .role-switcher-arrow {
+  transform: rotate(180deg);
+}
+
+.role-switcher-menu {
+  display: none;
+  position: fixed;
+  left: 0;
+  top: 0;
+  transform: none;
+  min-width: 120px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(59, 130, 246, 0.12);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 8px 20px rgba(30, 64, 175, 0.12);
+  z-index: 200000;
+  text-align: center;
+}
+
+.role-switcher.open .role-switcher-menu {
+  display: block;
+}
+
+.role-switcher-item {
+  margin: 0;
+  padding: 5px 0;
+  border: none;
+  background: transparent;
+  color: #93c5fd;
+  width: 100%;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: block;
+}
+
+.sidebar .role-switcher-toggle,
+.sidebar .role-switcher-item {
+  text-align: center;
+}
+
+.role-switcher.single-role .role-switcher-arrow {
+  display: none;
+}
+
 .sidebar button[disabled] {
   opacity: 0.55;
   cursor: not-allowed;
@@ -137,12 +246,14 @@ body {
 
 .content {
   flex: 1;
+  min-width: 0;
   padding: 30px;
   background: #f1f5f9;
   display: flex;
   flex-direction: column;
   position: relative;
   padding-bottom: 46px;
+  overflow-x: hidden;
 }
 
 .topbar {
@@ -469,6 +580,7 @@ body {
   border: 1px solid #e2e8f0;
   padding: 20px;
   flex: 1;
+  min-width: 0;
   overflow: auto;
 }
 

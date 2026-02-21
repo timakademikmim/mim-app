@@ -24,7 +24,6 @@ const GURU_PAGE_CACHEABLE = new Set([
   'input-nilai',
   'input-absensi',
   'jadwal',
-  'mapel',
   'tugas',
   'laporan-pekanan',
   'laporan-absensi',
@@ -1092,13 +1091,27 @@ function animateGuruSidebarSubmenu(submenu, expand) {
     submenu.dataset.animBound = '1'
   }
 
+  const isOpen = submenu.classList.contains('open')
+
   if (expand) {
+    if (isOpen) {
+      submenu.classList.add('content-visible')
+      submenu.style.maxHeight = 'none'
+      return
+    }
+
     submenu.classList.remove('content-visible')
     submenu.classList.add('open')
     submenu.style.maxHeight = '0px'
     requestAnimationFrame(() => {
       submenu.style.maxHeight = `${submenu.scrollHeight}px`
     })
+    return
+  }
+
+  if (!isOpen) {
+    submenu.classList.remove('content-visible')
+    submenu.style.maxHeight = '0px'
     return
   }
 
@@ -5108,7 +5121,7 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
   const santriList = await getSantriByKelas(distribusi.kelas_id)
   const santriMap = new Map((santriList || []).map(item => [String(item.id), item]))
 
-  const [nilaiRes, absensiRes] = await Promise.all([
+  const [nilaiRes, absensiByDistribusiRes, absensiByMapelRes] = await Promise.all([
     sb
       .from('nilai_akademik')
       .select('*')
@@ -5117,31 +5130,45 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
     sb
       .from(ATTENDANCE_TABLE)
       .select('*')
+      .eq('distribusi_id', String(distribusi.id))
+      .order('tanggal', { ascending: false }),
+    sb
+      .from(ATTENDANCE_TABLE)
+      .select('*')
+      .eq('kelas_id', String(distribusi.kelas_id))
+      .eq('mapel_id', String(distribusi.mapel_id))
+      .eq('semester_id', String(distribusi.semester_id))
       .order('tanggal', { ascending: false })
-      .limit(2000)
   ])
 
   let absensiErrorMessage = ''
   let absensiRows = []
-  if (absensiRes.error) {
-    const msg = String(absensiRes.error.message || '')
-    if (isMissingAbsensiTableError(absensiRes.error)) {
+  const absensiError = absensiByDistribusiRes.error || absensiByMapelRes.error
+  if (absensiError) {
+    const msg = String(absensiError.message || '')
+    if (isMissingAbsensiTableError(absensiError)) {
       absensiErrorMessage = buildAbsensiMissingTableMessage()
     } else {
       absensiErrorMessage = `Gagal load absensi: ${msg || 'Unknown error'}`
     }
   } else {
-    absensiRows = (absensiRes.data || []).filter(row => {
-      const byDistribusi = row.distribusi_id !== undefined && row.distribusi_id !== null
-        ? String(row.distribusi_id) === String(distribusi.id)
-        : false
-      if (byDistribusi) return true
-
-      const matchKelas = row.kelas_id !== undefined ? String(row.kelas_id) === String(distribusi.kelas_id) : true
-      const matchMapel = row.mapel_id !== undefined ? String(row.mapel_id) === String(distribusi.mapel_id) : true
-      const matchSemester = row.semester_id !== undefined ? String(row.semester_id) === String(distribusi.semester_id) : true
-      return matchKelas && matchMapel && matchSemester
+    const mergedAbsensiRows = []
+    const seenKeys = new Set()
+    ;[...(absensiByDistribusiRes.data || []), ...(absensiByMapelRes.data || [])].forEach(row => {
+      const rowId = String(row?.id || '').trim()
+      const dedupeKey = rowId || [
+        String(row?.santri_id || ''),
+        String(row?.tanggal || ''),
+        String(row?.mapel_id || ''),
+        String(row?.kelas_id || ''),
+        String(row?.semester_id || ''),
+        String(row?.status || '')
+      ].join('|')
+      if (!dedupeKey || seenKeys.has(dedupeKey)) return
+      seenKeys.add(dedupeKey)
+      mergedAbsensiRows.push(row)
     })
+    absensiRows = mergedAbsensiRows
   }
 
   const nilaiRows = nilaiRes.error ? [] : (nilaiRes.data || []).filter(row => santriMap.has(String(row.santri_id)))
@@ -5216,8 +5243,8 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
 
       return `
         <tr>
-          <td style="padding:8px; border:1px solid #e2e8f0; text-align:center; width:60px;">${index + 1}</td>
-          <td style="padding:8px; border:1px solid #e2e8f0; min-width:200px;">${escapeHtml(santri.nama || '-')}</td>
+          <td style="padding:8px; border:1px solid #e2e8f0; text-align:center; width:60px; min-width:60px; position:sticky; left:0; z-index:2; background:#fff;">${index + 1}</td>
+          <td style="padding:8px; border:1px solid #e2e8f0; min-width:200px; position:sticky; left:60px; z-index:2; background:#fff;">${escapeHtml(santri.nama || '-')}</td>
           ${cells || '<td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">-</td>'}
         </tr>
       `
@@ -5308,7 +5335,7 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
       ${absensiErrorMessage
         ? `<div class="placeholder-card">${escapeHtml(absensiErrorMessage)}</div>`
         : absensiDateList.length
-          ? `<div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px;"><table style="width:100%; min-width:780px; border-collapse:collapse; font-size:13px;"><thead><tr style="background:#f8fafc;"><th style="padding:8px; border:1px solid #e2e8f0; width:60px;">No</th><th style="padding:8px; border:1px solid #e2e8f0; min-width:200px; text-align:left;">Nama</th>${absensiDateHeaderHtml}</tr></thead><tbody>${absensiPivotRowsHtml}</tbody></table></div>
+          ? `<div style="display:block; width:100%; max-width:100%; overflow-x:auto; overflow-y:hidden; border:1px solid #e2e8f0; border-radius:10px;"><table style="width:max-content; min-width:100%; border-collapse:separate; border-spacing:0; font-size:13px;"><thead><tr style="background:#f8fafc;"><th style="padding:8px; border:1px solid #e2e8f0; width:60px; min-width:60px; position:sticky; left:0; z-index:5; background:#f8fafc;">No</th><th style="padding:8px; border:1px solid #e2e8f0; min-width:200px; text-align:left; position:sticky; left:60px; z-index:5; background:#f8fafc;">Nama</th>${absensiDateHeaderHtml}</tr></thead><tbody>${absensiPivotRowsHtml}</tbody></table></div>
              ${editAbsensi ? '<div style="margin-top:10px;"><button type="button" class="modal-btn modal-btn-primary" onclick="saveMapelAbsensiEdit()">Simpan Perubahan Absensi</button></div>' : ''}`
           : '<div class="placeholder-card">Belum ada data absensi.</div>'
       }
@@ -5394,6 +5421,7 @@ function setMapelDetailTab(tab) {
 
 function goBackToMapelList() {
   clearMapelDetailState()
+  clearGuruPageCache('mapel')
   currentMapelDetailDistribusiId = ''
   currentMapelDetailState = null
   currentMapelEditMode = { absensi: false, nilai: false }
@@ -7406,3 +7434,4 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!wrap.contains(event.target)) closeTopbarUserMenu()
   })
 })
+

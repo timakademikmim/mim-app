@@ -217,6 +217,7 @@ function setActiveSidebarTab(page) {
     page === 'kelas-distribusi-mapel' ||
     page === 'kelas-guru-mapel' ||
     page === 'jadwal' ||
+    page === 'kalender-akademik' ||
     page === 'santri' ||
     page === 'alumni' ||
     page === 'santri-detail'
@@ -814,13 +815,27 @@ function animateSidebarSubmenu(submenu, expand) {
     submenu.dataset.animBound = '1'
   }
 
+  const isOpen = submenu.classList.contains('open')
+
   if (expand) {
+    if (isOpen) {
+      submenu.classList.add('content-visible')
+      submenu.style.maxHeight = 'none'
+      return
+    }
+
     submenu.classList.remove('content-visible')
     submenu.classList.add('open')
     submenu.style.maxHeight = '0px'
     requestAnimationFrame(() => {
       submenu.style.maxHeight = `${submenu.scrollHeight}px`
     })
+    return
+  }
+
+  if (!isOpen) {
+    submenu.classList.remove('content-visible')
+    submenu.style.maxHeight = '0px'
     return
   }
 
@@ -1072,6 +1087,7 @@ async function loadExternalPage(page, params = {}) {
   }
   document.body.appendChild(script)
 }
+
 
 
 
