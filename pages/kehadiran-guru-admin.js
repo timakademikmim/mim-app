@@ -332,6 +332,7 @@ async function loadKehadiranGuruAdminData(periode) {
   const summaryByGuru = new Map()
   const detailByGuru = new Map()
   const penggantiCountMap = new Map()
+  const penggantiByGuruMap = new Map()
 
   expectedSessions.forEach(session => {
     const guruId = String(session.guru_id || '')
@@ -390,6 +391,15 @@ async function loadKehadiranGuruAdminData(periode) {
           penggantiCountMap.set(pid, new Set())
         }
         penggantiCountMap.get(pid).add(sessionKey)
+
+        if (!penggantiByGuruMap.has(pid)) {
+          penggantiByGuruMap.set(pid, new Map())
+        }
+        const byGuru = penggantiByGuruMap.get(pid)
+        if (!byGuru.has(guruId)) {
+          byGuru.set(guruId, new Set())
+        }
+        byGuru.get(guruId).add(sessionKey)
       })
     }
   })
@@ -406,12 +416,23 @@ async function loadKehadiranGuruAdminData(periode) {
   })
 
   const penggantiRows = Array.from(penggantiCountMap.entries())
-    .map(([id, set]) => ({
-      pengganti_id: id,
-      nama: String(karyawanMap.get(id)?.nama || id),
-      role: String(karyawanMap.get(id)?.role || ''),
-      total_ganti: set.size
-    }))
+    .map(([id, set]) => {
+      const byGuru = penggantiByGuruMap.get(id) || new Map()
+      const gantiSiapa = Array.from(byGuru.entries())
+        .map(([gid, sesSet]) => ({
+          guru_id: gid,
+          nama: String(karyawanMap.get(gid)?.nama || gid),
+          total: sesSet.size
+        }))
+        .sort((a, b) => b.total - a.total || String(a.nama || '').localeCompare(String(b.nama || ''), undefined, { sensitivity: 'base' }))
+      return {
+        pengganti_id: id,
+        nama: String(karyawanMap.get(id)?.nama || id),
+        role: String(karyawanMap.get(id)?.role || ''),
+        total_ganti: set.size,
+        ganti_siapa: gantiSiapa
+      }
+    })
     .sort((a, b) => b.total_ganti - a.total_ganti || a.nama.localeCompare(b.nama, undefined, { sensitivity: 'base' }))
 
   return { summaryRows, detailByGuru, penggantiRows }
@@ -539,6 +560,7 @@ function renderKehadiranGuruPengganti() {
             <th style="padding:8px; border:1px solid #e2e8f0; width:60px;">No</th>
             <th style="padding:8px; border:1px solid #e2e8f0;">Nama Karyawan Pengganti</th>
             <th style="padding:8px; border:1px solid #e2e8f0; width:150px;">Total Mengganti</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Menggantikan Siapa</th>
           </tr>
         </thead>
         <tbody>
@@ -549,6 +571,7 @@ function renderKehadiranGuruPengganti() {
       <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${index + 1}</td>
       <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(row.nama || '-')}</td>
       <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${row.total_ganti}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">${(row.ganti_siapa || []).map(item => `${escapeHtml(item.nama || '-')} (${item.total}x)`).join(' | ') || '-'}</td>
     </tr>
   `).join('')
 

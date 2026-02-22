@@ -2,15 +2,52 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8">
-  <title>Halaman Musyrif</title>
+  <title>Panel Musyrif</title>
   <link rel="icon" type="image/png" href="00%20Logo%20MIM%20.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="guru.css?v=20260222-02">
 </head>
 
 <body data-role="musyrif">
+  <div class="layout">
+    <aside class="sidebar">
+      <img src="00 Logo MIM .png" alt="Logo Musyrif" class="sidebar-logo">
+      <button class="guru-nav-btn" data-page="dashboard" onclick="loadMusyrifPage('dashboard')">Dashboard</button>
+      <button class="guru-nav-btn" data-page="laporan-bulanan" onclick="loadMusyrifPage('laporan-bulanan')">Laporan Bulanan</button>
+    </aside>
 
-  <h1 id="welcome"></h1>
-  <button onclick="logout()">Logout</button>
+    <main class="content">
+      <div class="topbar">
+        <div id="musyrif-topbar-title" class="topbar-title">Dashboard</div>
+        <div class="topbar-user-menu-wrap">
+          <button type="button" class="topbar-user-trigger" onclick="toggleTopbarUserMenu()">
+            <span id="welcome" class="topbar-user-name"></span>
+            <span class="topbar-user-arrow">&#9662;</span>
+          </button>
+          <div id="topbar-user-menu" class="topbar-user-menu">
+            <button type="button" onclick="openMusyrifProfile()">Profil</button>
+            <button type="button" onclick="logout()">Logout</button>
+          </div>
+        </div>
+      </div>
+      <div id="musyrif-content" class="content-area">Loading...</div>
+      <div class="page-bg-signature" aria-hidden="true">Copyright &copy; BnB Studio</div>
+    </main>
+  </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="role-page.js"></script>
+  <script src="musyrif.js?v=20260222-02"></script>
+
+  <div id="app-popup-overlay" class="app-popup-overlay" aria-hidden="true">
+    <div class="app-popup-card" role="dialog" aria-modal="true" aria-labelledby="app-popup-message">
+      <div id="app-popup-message" class="app-popup-message"></div>
+      <div id="app-popup-actions" class="app-popup-actions">
+        <button type="button" id="app-popup-ok-btn">OK</button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>

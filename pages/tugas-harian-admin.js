@@ -43,6 +43,23 @@ function getMonthRange(periode) {
   return { start, end }
 }
 
+function isAhadDate(dateText) {
+  const text = String(dateText || '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false
+  const date = new Date(`${text}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return false
+  return date.getDay() === 0
+}
+
+function shiftToNonAhad(dateText) {
+  const text = String(dateText || '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return ''
+  const date = new Date(`${text}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return ''
+  while (date.getDay() === 0) date.setDate(date.getDate() + 1)
+  return date.toISOString().slice(0, 10)
+}
+
 function getDateListByPeriode(periode) {
   const range = getMonthRange(periode)
   if (!range) return []
@@ -50,7 +67,8 @@ function getDateListByPeriode(periode) {
   let cursor = new Date(`${range.start}T00:00:00`)
   const end = new Date(`${range.end}T00:00:00`)
   while (cursor <= end) {
-    dates.push(cursor.toISOString().slice(0, 10))
+    const text = cursor.toISOString().slice(0, 10)
+    if (!isAhadDate(text)) dates.push(text)
     cursor.setDate(cursor.getDate() + 1)
   }
   return dates
@@ -62,14 +80,17 @@ function getDateListByTaskFrequency(periode, frekuensi) {
   if (!monthRange) return []
 
   if (mode === 'bulanan') {
-    return [monthRange.start]
+    const first = shiftToNonAhad(monthRange.start)
+    return first && first.startsWith(`${periode}-`) ? [first] : []
   }
   if (mode === 'pekanan') {
     const dates = []
     let cursor = new Date(`${monthRange.start}T00:00:00`)
+    if (cursor.getDay() === 0) cursor.setDate(cursor.getDate() + 1)
     const end = new Date(`${monthRange.end}T00:00:00`)
     while (cursor <= end) {
-      dates.push(cursor.toISOString().slice(0, 10))
+      const text = cursor.toISOString().slice(0, 10)
+      if (!isAhadDate(text)) dates.push(text)
       cursor.setDate(cursor.getDate() + 7)
     }
     return dates
@@ -307,7 +328,7 @@ async function loadAdminDailyTaskData(periode) {
 
   return {
     tahunAjaran,
-    templates: templateRes.data || [],
+    templates: (templateRes.data || []).filter(item => !isAhadDate(String(item?.tanggal || ''))),
     submissions: submissionRes.data || [],
     guruList
   }
@@ -691,6 +712,8 @@ async function setAdminDailyTaskToNextMonth() {
       : []
     const targetDates = sourceDates
       .map(src => shiftDateToNextMonth(src))
+      .map(dateText => shiftToNonAhad(dateText))
+      .filter(dateText => String(dateText || '').startsWith(`${nextPeriode}-`))
       .filter(Boolean)
 
     targetDates.forEach(tanggal => {

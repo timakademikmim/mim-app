@@ -30,6 +30,7 @@ body {
   border-right: 1px solid #e2e8f0;
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-gutter: stable;
   padding-bottom: 28px;
 }
 

@@ -227,6 +227,9 @@ function setActiveSidebarTab(page) {
     page === 'ketahfizan-hafalan' ||
     page === 'ketahfizan-jadwal'
 
+  const isKesantrianGroup =
+    page === 'kesantrian-kamar'
+
   const isKaryawanGroup =
     page === 'karyawan' ||
     page === 'guru' ||
@@ -248,6 +251,10 @@ function setActiveSidebarTab(page) {
       button.classList.toggle('active', isKetahfizanGroup)
       return
     }
+    if (btnPage === 'kesantrian') {
+      button.classList.toggle('active', isKesantrianGroup)
+      return
+    }
     if (btnPage === 'mutabaah-karyawan') {
       button.classList.toggle('active', page === 'set-tugas' || page === 'tugas-harian' || page === 'mutabaah-karyawan')
       return
@@ -266,6 +273,7 @@ function setActiveSidebarTab(page) {
 
   setAkademikSidebarMenuExpanded(isAkademikGroup)
   setKetahfizanSidebarMenuExpanded(isKetahfizanGroup)
+  setKesantrianSidebarMenuExpanded(isKesantrianGroup)
   setKaryawanSidebarMenuExpanded(isKaryawanGroup)
 }
 
@@ -284,6 +292,7 @@ function setTopbarTitle(page) {
     'ketahfizan-halaqah': 'Data Halaqah',
     'ketahfizan-hafalan': 'Data Hafalan',
     'ketahfizan-jadwal': 'Jadwal Halaqah',
+    'kesantrian-kamar': 'Data Kamar',
     'kalender-akademik': 'Kalender Akademik',
     'kehadiran-guru': 'Kehadiran Karyawan',
     santri: 'Data Siswa',
@@ -801,6 +810,17 @@ function setKetahfizanSidebarMenuExpanded(expanded) {
   }
 }
 
+function setKesantrianSidebarMenuExpanded(expanded) {
+  const submenu = document.getElementById('sidebar-kesantrian-submenu')
+  if (!submenu) return
+  animateSidebarSubmenu(submenu, expanded)
+
+  const parentBtn = document.querySelector('.sidebar-parent-btn[data-page="kesantrian"]')
+  if (parentBtn) {
+    parentBtn.classList.toggle('expanded', expanded)
+  }
+}
+
 function animateSidebarSubmenu(submenu, expand) {
   if (!submenu) return
 
@@ -855,6 +875,7 @@ function toggleAkademikSidebarMenu() {
   if (willExpand) {
     setKaryawanSidebarMenuExpanded(false)
     setKetahfizanSidebarMenuExpanded(false)
+    setKesantrianSidebarMenuExpanded(false)
   }
 }
 
@@ -866,6 +887,7 @@ function toggleKaryawanSidebarMenu() {
   if (willExpand) {
     setAkademikSidebarMenuExpanded(false)
     setKetahfizanSidebarMenuExpanded(false)
+    setKesantrianSidebarMenuExpanded(false)
   }
 }
 
@@ -876,6 +898,19 @@ function toggleKetahfizanSidebarMenu() {
   setKetahfizanSidebarMenuExpanded(willExpand)
   if (willExpand) {
     setAkademikSidebarMenuExpanded(false)
+    setKaryawanSidebarMenuExpanded(false)
+    setKesantrianSidebarMenuExpanded(false)
+  }
+}
+
+function toggleKesantrianSidebarMenu() {
+  const submenu = document.getElementById('sidebar-kesantrian-submenu')
+  if (!submenu) return
+  const willExpand = !submenu.classList.contains('open')
+  setKesantrianSidebarMenuExpanded(willExpand)
+  if (willExpand) {
+    setAkademikSidebarMenuExpanded(false)
+    setKetahfizanSidebarMenuExpanded(false)
     setKaryawanSidebarMenuExpanded(false)
   }
 }
@@ -918,6 +953,16 @@ function getKetahfizanPageFromSubtab(subtab) {
 
 function loadKetahfizanFromSidebar(subtab) {
   const page = getKetahfizanPageFromSubtab(subtab)
+  loadPage(page, { subtab })
+}
+
+function getKesantrianPageFromSubtab(subtab) {
+  if (subtab === 'kamar') return 'kesantrian-kamar'
+  return 'kesantrian-kamar'
+}
+
+function loadKesantrianFromSidebar(subtab) {
+  const page = getKesantrianPageFromSubtab(subtab)
   loadPage(page, { subtab })
 }
 
@@ -989,6 +1034,9 @@ function loadPage(page, params = {}) {
       break
     case 'ketahfizan-jadwal':
       loadExternalPage('ketahfizan', { subtab: 'jadwal-halaqah' })
+      break
+    case 'kesantrian-kamar':
+      loadExternalPage('kesantrian', { subtab: 'kamar' })
       break
     case 'kalender-akademik':
       loadExternalPage('kalender-akademik')
@@ -1070,6 +1118,10 @@ async function loadExternalPage(page, params = {}) {
     }
     if (page === 'ketahfizan' && typeof initKetahfizanPage === 'function') {
       initKetahfizanPage(params)
+      return
+    }
+    if (page === 'kesantrian' && typeof initKesantrianPage === 'function') {
+      initKesantrianPage(params)
     }
   }
 
