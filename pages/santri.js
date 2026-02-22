@@ -219,6 +219,14 @@ function isMissingTableError(error) {
   return false
 }
 
+function isMissingColumnError(error) {
+  const code = String(error?.code || '').toUpperCase()
+  const msg = String(error?.message || '').toLowerCase()
+  if (code === '42703') return true
+  if (msg.includes('column') && msg.includes('does not exist')) return true
+  return false
+}
+
 async function safeDeleteRelatedBySantriId(tableName, santriId) {
   const { error } = await sb
     .from(tableName)
@@ -227,6 +235,7 @@ async function safeDeleteRelatedBySantriId(tableName, santriId) {
 
   if (!error) return
   if (isMissingTableError(error)) return
+  if (isMissingColumnError(error)) return
   throw error
 }
 
@@ -285,7 +294,9 @@ function getKnownEditFields() {
     'status',
     'created_at',
     'updated_at',
-    'kelas'
+    'kelas',
+    '__santri_key',
+    '__history_ids'
   ]
 }
 
@@ -304,6 +315,7 @@ async function clearSantriCacheByTahun() {
 function renderEditExtraFields(santri) {
   const known = new Set(getKnownEditFields())
   currentEditExtraFieldKeys = Object.keys(santri || {}).filter(key => {
+    if (String(key || '').startsWith('__')) return false
     if (known.has(key)) return false
     const value = santri[key]
     return value === null || typeof value !== 'object'
@@ -720,6 +732,10 @@ async function modalEditSantri() {
         alert(buildSantriStatusColumnMissingMessage())
         return
       }
+      if (isMissingColumnError(error)) {
+        alert(`Gagal edit santri: kolom tidak ditemukan (${error.message || 'Unknown error'})`)
+        return
+      }
       if (error.code === '23505') {
         alert('NISN sudah terdaftar')
         return
@@ -956,6 +972,7 @@ async function hapusSantri(id) {
 
     if (error) {
       console.error(error)
+      if (isMissingTableError(error)) continue
       if (String(error?.code || '') === '23503') {
         alert('Gagal hapus santri karena masih terhubung dengan data lain (foreign key).')
         return

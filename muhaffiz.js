@@ -6,6 +6,10 @@ const MONTHLY_REPORT_TABLE = 'laporan_bulanan_wali'
 const MUHAFFIZ_LAST_PAGE_KEY = 'muhaffiz_last_page'
 const TOPBAR_KALENDER_TABLE = 'kalender_akademik'
 const TOPBAR_KALENDER_DEFAULT_COLOR = '#2563eb'
+const HALAQAH_TABLE = 'halaqah'
+const HALAQAH_SCHEDULE_TABLE = 'jadwal_halaqah'
+const TOPBAR_NOTIF_READ_KEY = 'muhaffiz_topbar_notif_read'
+const TOPBAR_NOTIF_RANGE_KEY = 'muhaffiz_topbar_notif_range_days'
 
 const PAGE_TITLES = {
   dashboard: 'Dashboard',
@@ -26,6 +30,12 @@ let topbarKalenderState = {
   month: '',
   selectedDateKey: '',
   visible: false
+}
+let topbarNotifState = {
+  items: [],
+  loaded: false,
+  rangeDays: 3,
+  readMap: {}
 }
 let muhaffizDashboardAgendaRows = []
 
@@ -54,6 +64,12 @@ function toNullableNumber(rawValue) {
   const num = Number(text)
   if (!Number.isFinite(num)) return NaN
   return num
+}
+
+function toTimeLabel(value) {
+  const text = String(value || '').trim()
+  if (!text) return '-'
+  return text.length >= 5 ? text.slice(0, 5) : text
 }
 
 function getMonthInputToday() {
@@ -190,6 +206,7 @@ function setTopbarTitle(page) {
 function toggleTopbarUserMenu() {
   const menu = document.getElementById('topbar-user-menu')
   if (!menu) return
+  closeTopbarNotifMenu()
   menu.classList.toggle('open')
 }
 
@@ -197,6 +214,254 @@ function closeTopbarUserMenu() {
   const menu = document.getElementById('topbar-user-menu')
   if (!menu) return
   menu.classList.remove('open')
+}
+
+function closeTopbarNotifMenu() {
+  const menu = document.getElementById('topbar-notif-menu')
+  if (!menu) return
+  menu.classList.remove('open')
+}
+
+function loadMuhaffizNotifPrefs() {
+  try {
+    const raw = localStorage.getItem(TOPBAR_NOTIF_READ_KEY)
+    const parsed = raw ? JSON.parse(raw) : {}
+    topbarNotifState.readMap = parsed && typeof parsed === 'object' ? parsed : {}
+  } catch (_err) {
+    topbarNotifState.readMap = {}
+  }
+  const rangeRaw = Number(localStorage.getItem(TOPBAR_NOTIF_RANGE_KEY) || '3')
+  topbarNotifState.rangeDays = [1, 3, 7].includes(rangeRaw) ? rangeRaw : 3
+}
+
+function saveMuhaffizNotifReadMap() {
+  try {
+    localStorage.setItem(TOPBAR_NOTIF_READ_KEY, JSON.stringify(topbarNotifState.readMap || {}))
+  } catch (_err) {}
+}
+
+function setMuhaffizNotifRangeDays(days) {
+  const value = Number(days)
+  topbarNotifState.rangeDays = [1, 3, 7].includes(value) ? value : 3
+  localStorage.setItem(TOPBAR_NOTIF_RANGE_KEY, String(topbarNotifState.rangeDays))
+}
+
+function buildMuhaffizNotifDateKeys() {
+  const keys = []
+  const span = Number(topbarNotifState.rangeDays || 3)
+  const now = new Date()
+  for (let i = 0; i < span; i += 1) {
+    const date = new Date(now.getTime() + (i * 24 * 60 * 60 * 1000))
+    const key = getTopbarKalenderDateKey(date)
+    if (key) keys.push(key)
+  }
+  return keys
+}
+
+function ensureTopbarNotification() {
+  const wrap = document.querySelector('.topbar-user-menu-wrap')
+  if (!wrap) return
+  if (document.getElementById('topbar-notif-trigger') && document.getElementById('topbar-notif-menu')) return
+
+  const notifBtn = document.createElement('button')
+  notifBtn.type = 'button'
+  notifBtn.id = 'topbar-notif-trigger'
+  notifBtn.className = 'topbar-notif-trigger'
+  notifBtn.title = 'Notifikasi Aktivitas'
+  notifBtn.innerHTML = '<span aria-hidden="true">&#128276;</span><span id="topbar-notif-badge" class="topbar-notif-badge hidden">0</span>'
+  notifBtn.addEventListener('click', async event => {
+    event.preventDefault()
+    event.stopPropagation()
+    await toggleTopbarNotifMenu()
+  })
+
+  const notifMenu = document.createElement('div')
+  notifMenu.id = 'topbar-notif-menu'
+  notifMenu.className = 'topbar-notif-menu'
+  notifMenu.innerHTML = '<div class="topbar-notif-head">Aktivitas</div><div class="topbar-notif-empty">Memuat notifikasi...</div>'
+
+  wrap.insertBefore(notifBtn, wrap.firstChild)
+  wrap.insertBefore(notifMenu, notifBtn.nextSibling)
+}
+
+function formatNotifDateLabel(dateKey) {
+  const text = String(dateKey || '').trim()
+  if (!text) return '-'
+  const date = new Date(`${text}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return text
+  return date.toLocaleDateString('id-ID', { weekday: 'long', day: '2-digit', month: 'long' })
+}
+
+function getMuhaffizNotifId(item) {
+  return String(item?.id || `${item?.type || ''}|${item?.title || ''}|${item?.meta || ''}|${item?.sortKey || ''}`)
+}
+
+function isMuhaffizNotifRead(item) {
+  return topbarNotifState.readMap?.[getMuhaffizNotifId(item)] === true
+}
+
+function markMuhaffizNotifRead(id) {
+  const key = String(id || '').trim()
+  if (!key) return
+  if (!topbarNotifState.readMap) topbarNotifState.readMap = {}
+  topbarNotifState.readMap[key] = true
+  saveMuhaffizNotifReadMap()
+}
+
+function markMuhaffizNotifItemRead(id) {
+  markMuhaffizNotifRead(id)
+  renderTopbarNotifMenu(topbarNotifState.items)
+  setTopbarNotifBadge((topbarNotifState.items || []).filter(item => !isMuhaffizNotifRead(item)).length)
+}
+
+function markAllMuhaffizNotifRead() {
+  ;(topbarNotifState.items || []).forEach(item => markMuhaffizNotifRead(getMuhaffizNotifId(item)))
+  renderTopbarNotifMenu(topbarNotifState.items)
+  setTopbarNotifBadge(0)
+}
+
+function setMuhaffizNotifRangeFilter(days) {
+  setMuhaffizNotifRangeDays(days)
+  topbarNotifState.loaded = false
+  refreshMuhaffizTopbarNotifications(true).catch(error => console.error(error))
+}
+
+function renderTopbarNotifMenu(items = []) {
+  const menu = document.getElementById('topbar-notif-menu')
+  if (!menu) return
+  const list = Array.isArray(items) ? items : []
+  const selectedRange = Number(topbarNotifState.rangeDays || 3)
+  const filtersHtml = [1, 3, 7].map(days => (
+    `<button type="button" class="topbar-notif-filter-btn ${selectedRange === days ? 'active' : ''}" onclick="setMuhaffizNotifRangeFilter(${days})">${days === 1 ? 'Hari ini' : `${days} hari`}</button>`
+  )).join('')
+  const headHtml = `
+    <div class="topbar-notif-head">
+      <div class="topbar-notif-head-row">
+        <span>Aktivitas Terdekat</span>
+        <button type="button" class="topbar-notif-mark-btn" onclick="markAllMuhaffizNotifRead()">Tandai semua dibaca</button>
+      </div>
+      <div class="topbar-notif-filters">${filtersHtml}</div>
+    </div>
+  `
+  if (!list.length) {
+    menu.innerHTML = `${headHtml}<div class="topbar-notif-empty">Belum ada notifikasi aktivitas terdekat.</div>`
+    return
+  }
+  const rowsHtml = list.map(item => `
+    <button type="button" class="topbar-notif-item ${isMuhaffizNotifRead(item) ? 'read' : 'unread'}" data-notif-id="${escapeHtml(getMuhaffizNotifId(item))}" onclick="markMuhaffizNotifItemRead(this.getAttribute('data-notif-id'))">
+      <div class="topbar-notif-type">${escapeHtml(item.type || 'Aktivitas')}</div>
+      <div class="topbar-notif-title">${escapeHtml(item.title || '-')}</div>
+      <div class="topbar-notif-meta">${escapeHtml(item.meta || '-')}</div>
+      ${item.desc ? `<div class="topbar-notif-desc">${escapeHtml(item.desc)}</div>` : ''}
+      <div class="topbar-notif-status">${isMuhaffizNotifRead(item) ? 'Dibaca' : 'Belum dibaca'}</div>
+    </button>
+  `).join('')
+  menu.innerHTML = `${headHtml}${rowsHtml}`
+}
+
+function setTopbarNotifBadge(count) {
+  const badge = document.getElementById('topbar-notif-badge')
+  if (!badge) return
+  const total = Number.isFinite(Number(count)) ? Number(count) : 0
+  if (total <= 0) {
+    badge.textContent = '0'
+    badge.classList.add('hidden')
+    return
+  }
+  badge.classList.remove('hidden')
+  badge.textContent = total > 99 ? '99+' : String(total)
+}
+
+async function fetchMuhaffizTopbarNotifications() {
+  const items = []
+  const dateKeys = buildMuhaffizNotifDateKeys()
+
+  try {
+    await loadTopbarCalendarData()
+    const byDate = getTopbarKalenderEventsByDate()
+    const seenCalendar = new Set()
+    dateKeys.forEach(dateKey => {
+      const rows = byDate.get(dateKey) || []
+      rows.forEach(row => {
+        const id = String(row?.id || '')
+        if (!id || seenCalendar.has(id)) return
+        seenCalendar.add(id)
+        const mulai = getTopbarKalenderDateKey(row?.mulai)
+        const selesai = getTopbarKalenderDateKey(row?.selesai || row?.mulai)
+        const range = selesai && selesai !== mulai ? `${formatNotifDateLabel(mulai)} - ${formatNotifDateLabel(selesai)}` : formatNotifDateLabel(mulai)
+        items.push({
+          id: `agenda|${id}`,
+          type: 'Agenda Akademik',
+          title: String(row?.judul || '-'),
+          meta: range || '-',
+          desc: String(row?.detail || '').trim(),
+          sortKey: `${mulai || dateKey} 00:00`
+        })
+      })
+    })
+  } catch (error) {
+    console.error(error)
+  }
+
+  try {
+    const muhaffizId = String(muhaffizState?.profile?.id || '').trim()
+    if (muhaffizId) {
+      const [halaqahRes, jadwalRes] = await Promise.all([
+        sb.from(HALAQAH_TABLE).select('id, nama').eq('muhaffiz_id', muhaffizId).order('nama'),
+        sb.from(HALAQAH_SCHEDULE_TABLE).select('id, nama_sesi, jam_mulai, jam_selesai, urutan').order('urutan', { ascending: true }).order('jam_mulai', { ascending: true })
+      ])
+      if (!halaqahRes.error && !jadwalRes.error) {
+        const halaqahNames = (halaqahRes.data || []).map(item => String(item?.nama || '').trim()).filter(Boolean)
+        const halaqahLabel = halaqahNames.length ? halaqahNames.join(', ') : 'Belum ada halaqah binaan'
+        dateKeys.forEach(dateKey => {
+          ;(jadwalRes.data || []).forEach(row => {
+            items.push({
+              id: `halaqah|${dateKey}|${String(row?.id || '')}`,
+              type: 'Jam Halaqah',
+              title: String(row?.nama_sesi || 'Sesi Halaqah'),
+              meta: `${formatNotifDateLabel(dateKey)} | ${toTimeLabel(row?.jam_mulai)}-${toTimeLabel(row?.jam_selesai)}`,
+              desc: `Halaqah: ${halaqahLabel}`,
+              sortKey: `${dateKey} ${String(row?.jam_mulai || '00:00')}`
+            })
+          })
+        })
+      }
+    }
+  } catch (error) {
+    console.error(error)
+  }
+
+  items.sort((a, b) => String(a.sortKey || '').localeCompare(String(b.sortKey || '')))
+  return items.slice(0, 30)
+}
+
+async function refreshMuhaffizTopbarNotifications(forceReload = false) {
+  ensureTopbarNotification()
+  if (!forceReload && topbarNotifState.loaded) {
+    renderTopbarNotifMenu(topbarNotifState.items)
+    setTopbarNotifBadge((topbarNotifState.items || []).filter(item => !isMuhaffizNotifRead(item)).length)
+    return
+  }
+  const items = await fetchMuhaffizTopbarNotifications()
+  topbarNotifState.items = items
+  topbarNotifState.loaded = true
+  renderTopbarNotifMenu(items)
+  setTopbarNotifBadge(items.filter(item => !isMuhaffizNotifRead(item)).length)
+}
+
+async function toggleTopbarNotifMenu() {
+  ensureTopbarNotification()
+  const menu = document.getElementById('topbar-notif-menu')
+  if (!menu) return
+  const willOpen = !menu.classList.contains('open')
+  closeTopbarUserMenu()
+  if (!willOpen) {
+    closeTopbarNotifMenu()
+    return
+  }
+  menu.classList.add('open')
+  menu.innerHTML = '<div class="topbar-notif-head">Aktivitas</div><div class="topbar-notif-empty">Memuat notifikasi...</div>'
+  await refreshMuhaffizTopbarNotifications(true)
 }
 
 async function renderDashboard() {
@@ -911,6 +1176,9 @@ window.saveMuhaffizLaporanDetail = saveMuhaffizLaporanDetail
 window.onMuhaffizAkhlakChange = onMuhaffizAkhlakChange
 window.onMuhaffizUjianChange = onMuhaffizUjianChange
 window.toggleTopbarUserMenu = toggleTopbarUserMenu
+window.setMuhaffizNotifRangeFilter = setMuhaffizNotifRangeFilter
+window.markAllMuhaffizNotifRead = markAllMuhaffizNotifRead
+window.markMuhaffizNotifItemRead = markMuhaffizNotifItemRead
 window.openTopbarCalendarPopup = openTopbarCalendarPopup
 window.closeTopbarCalendarPopup = closeTopbarCalendarPopup
 window.shiftTopbarCalendarMonth = shiftTopbarCalendarMonth
@@ -921,6 +1189,8 @@ window.logout = logout
 
 document.addEventListener('DOMContentLoaded', async () => {
   setupCustomPopupSystem()
+  loadMuhaffizNotifPrefs()
+  ensureTopbarNotification()
 
   const loginId = String(localStorage.getItem('login_id') || '').trim()
   if (!loginId) {
@@ -945,10 +1215,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const lastPage = localStorage.getItem(MUHAFFIZ_LAST_PAGE_KEY) || 'dashboard'
   await loadMuhaffizPage(lastPage)
+  refreshMuhaffizTopbarNotifications().catch(error => console.error(error))
 
   document.addEventListener('click', event => {
     const wrap = document.querySelector('.topbar-user-menu-wrap')
     if (!wrap) return
-    if (!wrap.contains(event.target)) closeTopbarUserMenu()
+    if (!wrap.contains(event.target)) {
+      closeTopbarUserMenu()
+      closeTopbarNotifMenu()
+    }
   })
 })

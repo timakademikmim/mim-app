@@ -537,13 +537,6 @@ function renderDetailForm(santri, kelasList) {
       </select>
     </div>
 
-    <div style="margin-bottom:10px;">
-      <label style="display:flex; gap:8px; align-items:center;">
-        <input type="checkbox" id="detail-aktif" ${santri.aktif ? 'checked' : ''}>
-        Aktif
-      </label>
-    </div>
-
     <div style="margin-top:14px; margin-bottom:8px; font-size:14px; font-weight:700; color:#334155;">
       Data Orang Tua
     </div>
@@ -1388,7 +1381,6 @@ async function saveSantriDetail() {
   const nisn = document.getElementById('detail-nisn')?.value.trim() || ''
   const jenis_kelamin = document.getElementById('detail-jk')?.value || ''
   const kelas_id = document.getElementById('detail-kelas-id')?.value || ''
-  const aktif = document.getElementById('detail-aktif')?.checked ?? true
   const ayah = document.getElementById('detail-ayah')?.value.trim() || ''
   const ibu = document.getElementById('detail-ibu')?.value.trim() || ''
   const noHpAyah = document.getElementById('detail-no-hp-ayah')?.value.trim() || ''
@@ -1408,8 +1400,7 @@ async function saveSantriDetail() {
     nama,
     nisn: nisn || null,
     jenis_kelamin,
-    kelas_id,
-    aktif
+    kelas_id
   }
 
   const assignedAyah = assignSantriFieldByKeys(

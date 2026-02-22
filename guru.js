@@ -17,6 +17,8 @@ const TOPBAR_KALENDER_TABLE = 'kalender_akademik'
 const SCHOOL_PROFILE_TABLE = 'struktur_sekolah'
 const TOPBAR_KALENDER_CACHE_KEY = 'kalender_akademik:list'
 const TOPBAR_KALENDER_CACHE_TTL_MS = 2 * 60 * 1000
+const TOPBAR_NOTIF_READ_KEY = 'guru_topbar_notif_read'
+const TOPBAR_NOTIF_RANGE_KEY = 'guru_topbar_notif_range_days'
 const GURU_PAGE_CACHE_TTL_MS = 90 * 1000
 const GURU_PAGE_CACHEABLE = new Set([
   'dashboard',
@@ -106,6 +108,12 @@ let topbarKalenderState = {
   month: '',
   selectedDateKey: '',
   visible: false
+}
+let topbarNotifState = {
+  items: [],
+  loaded: false,
+  rangeDays: 3,
+  readMap: {}
 }
 let schoolProfileCache = null
 let guruDashboardAgendaRows = []
@@ -1773,6 +1781,7 @@ async function popupConfirm(message) {
 function toggleTopbarUserMenu() {
   const menu = document.getElementById('topbar-user-menu')
   if (!menu) return
+  closeTopbarNotifMenu()
   menu.classList.toggle('open')
 }
 
@@ -1780,6 +1789,255 @@ function closeTopbarUserMenu() {
   const menu = document.getElementById('topbar-user-menu')
   if (!menu) return
   menu.classList.remove('open')
+}
+
+function closeTopbarNotifMenu() {
+  const menu = document.getElementById('topbar-notif-menu')
+  if (!menu) return
+  menu.classList.remove('open')
+}
+
+function loadGuruNotifPrefs() {
+  try {
+    const raw = localStorage.getItem(TOPBAR_NOTIF_READ_KEY)
+    const parsed = raw ? JSON.parse(raw) : {}
+    topbarNotifState.readMap = parsed && typeof parsed === 'object' ? parsed : {}
+  } catch (_err) {
+    topbarNotifState.readMap = {}
+  }
+  const rangeRaw = Number(localStorage.getItem(TOPBAR_NOTIF_RANGE_KEY) || '3')
+  topbarNotifState.rangeDays = [1, 3, 7].includes(rangeRaw) ? rangeRaw : 3
+}
+
+function saveGuruNotifReadMap() {
+  try {
+    localStorage.setItem(TOPBAR_NOTIF_READ_KEY, JSON.stringify(topbarNotifState.readMap || {}))
+  } catch (_err) {}
+}
+
+function setGuruNotifRangeDays(days) {
+  const value = Number(days)
+  topbarNotifState.rangeDays = [1, 3, 7].includes(value) ? value : 3
+  localStorage.setItem(TOPBAR_NOTIF_RANGE_KEY, String(topbarNotifState.rangeDays))
+}
+
+function buildGuruNotifDateKeys() {
+  const keys = []
+  const span = Number(topbarNotifState.rangeDays || 3)
+  const now = new Date()
+  for (let i = 0; i < span; i += 1) {
+    const date = new Date(now.getTime() + (i * 24 * 60 * 60 * 1000))
+    const key = getTopbarKalenderDateKey(date)
+    if (key) keys.push(key)
+  }
+  return keys
+}
+
+function ensureTopbarNotification() {
+  const wrap = document.querySelector('.topbar-user-menu-wrap')
+  if (!wrap) return
+  if (document.getElementById('topbar-notif-trigger') && document.getElementById('topbar-notif-menu')) return
+
+  const notifBtn = document.createElement('button')
+  notifBtn.type = 'button'
+  notifBtn.id = 'topbar-notif-trigger'
+  notifBtn.className = 'topbar-notif-trigger'
+  notifBtn.title = 'Notifikasi Aktivitas'
+  notifBtn.innerHTML = '<span aria-hidden="true">&#128276;</span><span id="topbar-notif-badge" class="topbar-notif-badge hidden">0</span>'
+  notifBtn.addEventListener('click', async event => {
+    event.preventDefault()
+    event.stopPropagation()
+    await toggleTopbarNotifMenu()
+  })
+
+  const notifMenu = document.createElement('div')
+  notifMenu.id = 'topbar-notif-menu'
+  notifMenu.className = 'topbar-notif-menu'
+  notifMenu.innerHTML = '<div class="topbar-notif-head">Aktivitas</div><div class="topbar-notif-empty">Memuat notifikasi...</div>'
+
+  wrap.insertBefore(notifBtn, wrap.firstChild)
+  wrap.insertBefore(notifMenu, notifBtn.nextSibling)
+}
+
+function formatNotifDateLabel(dateKey) {
+  const text = String(dateKey || '').trim()
+  if (!text) return '-'
+  const date = new Date(`${text}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return text
+  return date.toLocaleDateString('id-ID', { weekday: 'long', day: '2-digit', month: 'long' })
+}
+
+function getGuruNotifId(item) {
+  return String(item?.id || `${item?.type || ''}|${item?.title || ''}|${item?.meta || ''}|${item?.sortKey || ''}`)
+}
+
+function isGuruNotifRead(item) {
+  return topbarNotifState.readMap?.[getGuruNotifId(item)] === true
+}
+
+function markGuruNotifRead(id) {
+  const key = String(id || '').trim()
+  if (!key) return
+  if (!topbarNotifState.readMap) topbarNotifState.readMap = {}
+  topbarNotifState.readMap[key] = true
+  saveGuruNotifReadMap()
+}
+
+function markGuruNotifItemRead(id) {
+  markGuruNotifRead(id)
+  renderTopbarNotifMenu(topbarNotifState.items)
+  setTopbarNotifBadge((topbarNotifState.items || []).filter(item => !isGuruNotifRead(item)).length)
+}
+
+function markAllGuruNotifRead() {
+  ;(topbarNotifState.items || []).forEach(item => markGuruNotifRead(getGuruNotifId(item)))
+  renderTopbarNotifMenu(topbarNotifState.items)
+  setTopbarNotifBadge(0)
+}
+
+function setGuruNotifRangeFilter(days) {
+  setGuruNotifRangeDays(days)
+  topbarNotifState.loaded = false
+  refreshGuruTopbarNotifications(true).catch(error => console.error(error))
+}
+
+function renderTopbarNotifMenu(items = []) {
+  const menu = document.getElementById('topbar-notif-menu')
+  if (!menu) return
+
+  const list = Array.isArray(items) ? items : []
+  const selectedRange = Number(topbarNotifState.rangeDays || 3)
+  const filtersHtml = [1, 3, 7].map(days => (
+    `<button type="button" class="topbar-notif-filter-btn ${selectedRange === days ? 'active' : ''}" onclick="setGuruNotifRangeFilter(${days})">${days === 1 ? 'Hari ini' : `${days} hari`}</button>`
+  )).join('')
+  const headHtml = `
+    <div class="topbar-notif-head">
+      <div class="topbar-notif-head-row">
+        <span>Aktivitas Terdekat</span>
+        <button type="button" class="topbar-notif-mark-btn" onclick="markAllGuruNotifRead()">Tandai semua dibaca</button>
+      </div>
+      <div class="topbar-notif-filters">${filtersHtml}</div>
+    </div>
+  `
+
+  if (!list.length) {
+    menu.innerHTML = `${headHtml}<div class="topbar-notif-empty">Belum ada notifikasi aktivitas terdekat.</div>`
+    return
+  }
+
+  const rowsHtml = list.map(item => `
+    <button type="button" class="topbar-notif-item ${isGuruNotifRead(item) ? 'read' : 'unread'}" data-notif-id="${escapeHtml(getGuruNotifId(item))}" onclick="markGuruNotifItemRead(this.getAttribute('data-notif-id'))">
+      <div class="topbar-notif-type">${escapeHtml(item.type || 'Aktivitas')}</div>
+      <div class="topbar-notif-title">${escapeHtml(item.title || '-')}</div>
+      <div class="topbar-notif-meta">${escapeHtml(item.meta || '-')}</div>
+      ${item.desc ? `<div class="topbar-notif-desc">${escapeHtml(item.desc)}</div>` : ''}
+      <div class="topbar-notif-status">${isGuruNotifRead(item) ? 'Dibaca' : 'Belum dibaca'}</div>
+    </button>
+  `).join('')
+
+  menu.innerHTML = `${headHtml}${rowsHtml}`
+}
+
+function setTopbarNotifBadge(count) {
+  const badge = document.getElementById('topbar-notif-badge')
+  if (!badge) return
+  const total = Number.isFinite(Number(count)) ? Number(count) : 0
+  if (total <= 0) {
+    badge.textContent = '0'
+    badge.classList.add('hidden')
+    return
+  }
+  badge.classList.remove('hidden')
+  badge.textContent = total > 99 ? '99+' : String(total)
+}
+
+async function fetchGuruTopbarNotifications() {
+  const items = []
+  const dateKeys = buildGuruNotifDateKeys()
+
+  try {
+    await loadTopbarCalendarData()
+    const byDate = getTopbarKalenderEventsByDate()
+    const seenCalendar = new Set()
+    dateKeys.forEach(dateKey => {
+      const rows = byDate.get(dateKey) || []
+      rows.forEach(row => {
+        const id = String(row?.id || '')
+        if (!id || seenCalendar.has(id)) return
+        seenCalendar.add(id)
+        const mulai = getTopbarKalenderDateKey(row?.mulai)
+        const selesai = getTopbarKalenderDateKey(row?.selesai || row?.mulai)
+        const range = selesai && selesai !== mulai ? `${formatNotifDateLabel(mulai)} - ${formatNotifDateLabel(selesai)}` : formatNotifDateLabel(mulai)
+        items.push({
+          id: `agenda|${id}`,
+          type: 'Agenda Akademik',
+          title: String(row?.judul || '-'),
+          meta: range || '-',
+          desc: String(row?.detail || '').trim(),
+          sortKey: `${mulai || dateKey} 00:00`
+        })
+      })
+    })
+  } catch (error) {
+    console.error(error)
+  }
+
+  try {
+    const ctx = await getGuruContext()
+    const distribusiMap = new Map((ctx?.activeDistribusiList || []).map(item => [String(item.id || ''), item]))
+    ;(ctx?.jadwalList || []).forEach(item => {
+      const distribusi = distribusiMap.get(String(item?.distribusi_id || ''))
+      if (!distribusi) return
+      dateKeys.forEach(dateKey => {
+        const dayName = normalizeHari(getHariFromDate(dateKey))
+        if (!dayName || normalizeHari(item?.hari) !== dayName) return
+        const kelas = ctx?.kelasMap?.get(String(distribusi?.kelas_id || ''))
+        const mapel = ctx?.mapelMap?.get(String(distribusi?.mapel_id || ''))
+        items.push({
+          id: `ajar|${dateKey}|${String(item?.id || '')}|${String(distribusi?.id || '')}`,
+          type: 'Jam Mengajar',
+          title: `${getMapelLabel(mapel)} - ${String(kelas?.nama_kelas || '-')}`,
+          meta: `${formatNotifDateLabel(dateKey)} | ${toTimeLabel(item?.jam_mulai)}-${toTimeLabel(item?.jam_selesai)}`,
+          desc: '',
+          sortKey: `${dateKey} ${String(item?.jam_mulai || '00:00')}`
+        })
+      })
+    })
+  } catch (error) {
+    console.error(error)
+  }
+
+  items.sort((a, b) => String(a.sortKey || '').localeCompare(String(b.sortKey || '')))
+  return items.slice(0, 30)
+}
+
+async function refreshGuruTopbarNotifications(forceReload = false) {
+  ensureTopbarNotification()
+  if (!forceReload && topbarNotifState.loaded) {
+    renderTopbarNotifMenu(topbarNotifState.items)
+    setTopbarNotifBadge((topbarNotifState.items || []).filter(item => !isGuruNotifRead(item)).length)
+    return
+  }
+  const items = await fetchGuruTopbarNotifications()
+  topbarNotifState.items = items
+  topbarNotifState.loaded = true
+  renderTopbarNotifMenu(items)
+  setTopbarNotifBadge(items.filter(item => !isGuruNotifRead(item)).length)
+}
+
+async function toggleTopbarNotifMenu() {
+  ensureTopbarNotification()
+  const menu = document.getElementById('topbar-notif-menu')
+  if (!menu) return
+  const willOpen = !menu.classList.contains('open')
+  closeTopbarUserMenu()
+  if (!willOpen) {
+    closeTopbarNotifMenu()
+    return
+  }
+  menu.classList.add('open')
+  menu.innerHTML = '<div class="topbar-notif-head">Aktivitas</div><div class="topbar-notif-empty">Memuat notifikasi...</div>'
+  await refreshGuruTopbarNotifications(true)
 }
 
 async function getCurrentGuruRow() {
@@ -2231,13 +2489,33 @@ function getAbsensiDistribusiCandidates() {
   })
 }
 
+function getSelectedAbsensiHari() {
+  const tanggal = String(document.getElementById('absensi-tanggal')?.value || '').trim()
+  if (!tanggal) return ''
+  return normalizeHari(getHariFromDate(tanggal))
+}
+
 function renderAbsensiMapelOptions() {
   const mapelSelect = document.getElementById('absensi-mapel')
   if (!mapelSelect) return
 
+  const prevValue = String(mapelSelect.value || '')
   const kelasId = String(document.getElementById('absensi-kelas')?.value || '')
+  const selectedHari = getSelectedAbsensiHari()
   const ctx = guruContextCache
   const list = (ctx?.activeDistribusiList || []).filter(item => String(item.kelas_id || '') === kelasId)
+  let defaultMapelId = ''
+  if (selectedHari) {
+    const distribusiById = new Map(list.map(item => [String(item.id || ''), item]))
+    const firstMatch = (ctx?.jadwalList || []).find(item => {
+      if (normalizeHari(item?.hari) !== selectedHari) return false
+      return distribusiById.has(String(item.distribusi_id || ''))
+    })
+    if (firstMatch) {
+      const distribusi = distribusiById.get(String(firstMatch.distribusi_id || ''))
+      defaultMapelId = String(distribusi?.mapel_id || '')
+    }
+  }
 
   const uniqueMapelIds = [...new Set(list.map(item => String(item.mapel_id || '')).filter(Boolean))]
   mapelSelect.innerHTML = '<option value="">-- Pilih Mapel --</option>'
@@ -2249,6 +2527,14 @@ function renderAbsensiMapelOptions() {
     opt.textContent = getMapelLabel(mapel)
     mapelSelect.appendChild(opt)
   })
+
+  if (prevValue && uniqueMapelIds.includes(prevValue)) {
+    mapelSelect.value = prevValue
+    return
+  }
+  if (defaultMapelId && uniqueMapelIds.includes(defaultMapelId)) {
+    mapelSelect.value = defaultMapelId
+  }
 }
 
 function renderAbsensiJamOptions() {
@@ -2257,10 +2543,12 @@ function renderAbsensiJamOptions() {
   if (!jamSelect1 && !jamSelect2) return
 
   const candidates = getAbsensiDistribusiCandidates()
+  const selectedHari = getSelectedAbsensiHari()
   const ctx = guruContextCache
 
   const jadwalMap = new Map()
   ;(ctx?.jadwalList || []).forEach(item => {
+    if (selectedHari && normalizeHari(item?.hari) !== selectedHari) return
     if (!candidates.find(c => String(c.id) === String(item.distribusi_id))) return
     jadwalMap.set(String(item.id), item)
   })
@@ -2289,16 +2577,20 @@ function renderAbsensiJamOptions() {
         selectEl.appendChild(opt)
       })
     })
-    if (jamSelect1 && selected1) jamSelect1.value = selected1
-    if (jamSelect2 && selected2) jamSelect2.value = selected2
+    if (jamSelect1) jamSelect1.value = ''
+    if (jamSelect2) jamSelect2.value = ''
     return
   }
 
+  const matchedJamValues = []
   jadwalList.forEach(item => {
     const key = `${toTimeLabel(item.jam_mulai)}|${toTimeLabel(item.jam_selesai)}`
     const jam = jamByRange.get(key)
     const optValue = jam?.id ? String(jam.id) : ''
     const jamNama = jam?.nama || `${toTimeLabel(item.jam_mulai)}-${toTimeLabel(item.jam_selesai)}`
+    if (optValue && !matchedJamValues.includes(optValue)) {
+      matchedJamValues.push(optValue)
+    }
     targetSelects.forEach(selectEl => {
       const opt = document.createElement('option')
       opt.value = optValue
@@ -2307,8 +2599,37 @@ function renderAbsensiJamOptions() {
     })
   })
 
-  if (jamSelect1 && selected1) jamSelect1.value = selected1
-  if (jamSelect2 && selected2) jamSelect2.value = selected2
+  const jam1Values = jamSelect1 ? Array.from(jamSelect1.options || []).map(opt => String(opt.value || '')) : []
+  const jam2Values = jamSelect2 ? Array.from(jamSelect2.options || []).map(opt => String(opt.value || '')) : []
+
+  if (!matchedJamValues.length) {
+    if (jamSelect1) jamSelect1.value = ''
+    if (jamSelect2) jamSelect2.value = ''
+    return
+  }
+
+  if (jamSelect1) {
+    if (selected1 && matchedJamValues.includes(selected1) && jam1Values.includes(selected1)) {
+      jamSelect1.value = selected1
+    } else if (matchedJamValues[0] && jam1Values.includes(matchedJamValues[0])) {
+      jamSelect1.value = matchedJamValues[0]
+    } else {
+      jamSelect1.value = ''
+    }
+  }
+  if (jamSelect2) {
+    const jam1Value = String(jamSelect1?.value || '')
+    if (selected2 && selected2 !== jam1Value && matchedJamValues.includes(selected2) && jam2Values.includes(selected2)) {
+      jamSelect2.value = selected2
+    } else {
+      const jam2Default = matchedJamValues.find(value => value && value !== jam1Value) || ''
+      if (jam2Default && jam2Values.includes(jam2Default)) {
+        jamSelect2.value = jam2Default
+      } else {
+        jamSelect2.value = ''
+      }
+    }
+  }
 }
 
 async function handleAbsensiKelasMapelChange() {
@@ -2372,7 +2693,7 @@ async function renderAbsensiPage() {
       <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:10px; align-items:end;">
         <div>
           <label class="guru-label">Tanggal</label>
-          <input id="absensi-tanggal" class="guru-field" type="date" value="${today}">
+          <input id="absensi-tanggal" class="guru-field" type="date" value="${today}" onchange="onAbsensiTanggalChange()">
         </div>
         <div>
           <label class="guru-label">Kelas</label>
@@ -2432,7 +2753,6 @@ async function renderAbsensiPage() {
 
 async function onAbsensiKelasChange() {
   renderAbsensiMapelOptions()
-  document.getElementById('absensi-mapel').value = ''
   renderAbsensiJamOptions()
 
   const kelasId = String(document.getElementById('absensi-kelas')?.value || '')
@@ -2442,6 +2762,17 @@ async function onAbsensiKelasChange() {
 
 async function onAbsensiMapelChange() {
   await handleAbsensiKelasMapelChange()
+}
+
+async function onAbsensiTanggalChange() {
+  const mapelSelect = document.getElementById('absensi-mapel')
+  const prevMapel = String(mapelSelect?.value || '')
+  renderAbsensiMapelOptions()
+  if (mapelSelect && prevMapel) {
+    const stillExists = Array.from(mapelSelect.options || []).some(opt => String(opt.value || '') === prevMapel)
+    if (!stillExists) mapelSelect.value = ''
+  }
+  renderAbsensiJamOptions()
 }
 
 function onAbsensiPenggantiToggle() {
@@ -2597,6 +2928,9 @@ async function saveGuruAbsensi() {
   }
 
   alert('Absensi berhasil disimpan.')
+  document.querySelectorAll('[data-absen-santri-id]').forEach(selectEl => {
+    selectEl.value = 'Hadir'
+  })
   clearGuruPageCache('input-absensi')
   clearGuruPageCache('laporan-absensi')
   } finally {
@@ -5084,6 +5418,7 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
   currentMapelDetailState = null
   const content = document.getElementById('guru-content')
   if (!content || !currentMapelDetailDistribusiId) return
+  content.classList.add('mapel-detail-locked')
 
   content.innerHTML = 'Loading detail mapel...'
 
@@ -5311,6 +5646,7 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
     }).join('')
 
   content.innerHTML = `
+    <div class="mapel-detail-shell">
     <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
       <button type="button" class="mapel-back-btn" onclick="goBackToMapelList()">&lt;</button>
       <div style="font-weight:700; color:#0f172a;">${escapeHtml(getMapelLabel(mapel))} - ${escapeHtml(kelas?.nama_kelas || '-')} - ${escapeHtml(getSemesterLabel(semester))}</div>
@@ -5335,7 +5671,7 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
       ${absensiErrorMessage
         ? `<div class="placeholder-card">${escapeHtml(absensiErrorMessage)}</div>`
         : absensiDateList.length
-          ? `<div style="display:block; width:100%; max-width:100%; overflow-x:auto; overflow-y:hidden; border:1px solid #e2e8f0; border-radius:10px;"><table style="width:max-content; min-width:100%; border-collapse:separate; border-spacing:0; font-size:13px;"><thead><tr style="background:#f8fafc;"><th style="padding:8px; border:1px solid #e2e8f0; width:60px; min-width:60px; position:sticky; left:0; z-index:5; background:#f8fafc;">No</th><th style="padding:8px; border:1px solid #e2e8f0; min-width:200px; text-align:left; position:sticky; left:60px; z-index:5; background:#f8fafc;">Nama</th>${absensiDateHeaderHtml}</tr></thead><tbody>${absensiPivotRowsHtml}</tbody></table></div>
+          ? `<div class="mapel-table-scroll mapel-absensi-table-scroll"><table style="width:max-content; min-width:100%; border-collapse:separate; border-spacing:0; font-size:13px;"><thead><tr style="background:#f8fafc;"><th style="padding:8px; border:1px solid #e2e8f0; width:60px; min-width:60px; position:sticky; left:0; z-index:5; background:#f8fafc;">No</th><th style="padding:8px; border:1px solid #e2e8f0; min-width:200px; text-align:left; position:sticky; left:60px; z-index:5; background:#f8fafc;">Nama</th>${absensiDateHeaderHtml}</tr></thead><tbody>${absensiPivotRowsHtml}</tbody></table></div>
              ${editAbsensi ? '<div style="margin-top:10px;"><button type="button" class="modal-btn modal-btn-primary" onclick="saveMapelAbsensiEdit()">Simpan Perubahan Absensi</button></div>' : ''}`
           : '<div class="placeholder-card">Belum ada data absensi.</div>'
       }
@@ -5349,7 +5685,7 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
           <div style="font-size:12px; color:#64748b;">Klik nilai untuk melihat detail input</div>
         </div>
       </div>
-      <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px;">
+      <div class="mapel-table-scroll mapel-nilai-table-scroll">
         <table style="width:100%; min-width:1040px; border-collapse:collapse; font-size:13px;">
           <thead>
             <tr style="background:#f8fafc;">
@@ -5399,6 +5735,7 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
           <button id="btn-save-rapor-desc" type="button" class="modal-btn modal-btn-primary" onclick="saveMapelRaporDesc('${escapeHtml(String(distribusi.id || ''))}')">Simpan Deskripsi Rapor</button>
         </div>
       </div>
+    </div>
     </div>
 
   `
@@ -7263,6 +7600,8 @@ async function loadGuruPage(page) {
   const requestedPage = String(page || DEFAULT_GURU_PAGE)
   const validPages = Object.keys(PAGE_TITLES)
   const targetPage = validPages.includes(requestedPage) ? requestedPage : DEFAULT_GURU_PAGE
+  const contentEl = document.getElementById('guru-content')
+  if (contentEl) contentEl.classList.remove('mapel-detail-locked')
 
   const isWaliKelas = await setupRaporAccess()
   const isWakasekAkademik = await setupMonitoringAccess()
@@ -7365,11 +7704,15 @@ window.loadGuruInputFromSidebar = loadGuruInputFromSidebar
 window.loadGuruLaporanFromSidebar = loadGuruLaporanFromSidebar
 window.openGuruProfile = () => loadGuruPage('profil')
 window.toggleTopbarUserMenu = toggleTopbarUserMenu
+window.setGuruNotifRangeFilter = setGuruNotifRangeFilter
+window.markAllGuruNotifRead = markAllGuruNotifRead
+window.markGuruNotifItemRead = markGuruNotifItemRead
 window.openGuruDashboardAgendaPopup = openGuruDashboardAgendaPopup
 window.closeGuruDashboardAgendaPopup = closeGuruDashboardAgendaPopup
 window.saveGuruProfil = saveGuruProfil
 window.onAbsensiKelasChange = onAbsensiKelasChange
 window.onAbsensiMapelChange = onAbsensiMapelChange
+window.onAbsensiTanggalChange = onAbsensiTanggalChange
 window.onAbsensiPenggantiToggle = onAbsensiPenggantiToggle
 window.saveGuruAbsensi = saveGuruAbsensi
 window.onInputNilaiKelasChange = onInputNilaiKelasChange
@@ -7422,6 +7765,9 @@ window.submitGuruDailyTask = submitGuruDailyTask
 
 document.addEventListener('DOMContentLoaded', () => {
   setupCustomPopupSystem()
+  loadGuruNotifPrefs()
+  ensureTopbarNotification()
+  refreshGuruTopbarNotifications().catch(error => console.error(error))
   setupRaporAccess(true)
   setupMonitoringAccess(true).catch(error => console.error(error))
   setGuruWelcomeName()
@@ -7431,7 +7777,10 @@ document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('click', event => {
     const wrap = document.querySelector('.topbar-user-menu-wrap')
     if (!wrap) return
-    if (!wrap.contains(event.target)) closeTopbarUserMenu()
+    if (!wrap.contains(event.target)) {
+      closeTopbarUserMenu()
+      closeTopbarNotifMenu()
+    }
   })
 })
 

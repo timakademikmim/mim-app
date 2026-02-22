@@ -617,8 +617,9 @@ body {
 }
 
 .table-scroll-area {
-  max-height: calc(100vh - 340px);
-  overflow: auto;
+  max-height: calc(100vh - 280px);
+  overflow-y: auto;
+  overflow-x: auto;
   padding-right: 4px;
 }
 
