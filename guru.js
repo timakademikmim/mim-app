@@ -7728,6 +7728,7 @@ async function loadMonitoringData(periode) {
   const guruAbsensiRows = absensiRows
 
   const expectedSessions = []
+  const expectedSessionKeys = new Set()
   jadwalRows.forEach(jadwal => {
     const distribusi = distribusiMap.get(String(jadwal.distribusi_id || ''))
     if (!distribusi) return
@@ -7737,7 +7738,7 @@ async function loadMonitoringData(periode) {
     const jamKey = `${String(jamMulai || '').slice(0, 5)}|${String(jamSelesai || '').slice(0, 5)}|${String(jadwal.jam_pelajaran_id || '')}`
     const dates = getDatesByDayNameInRange(range.start, range.end, jadwal.hari)
     dates.forEach(tanggal => {
-      expectedSessions.push({
+      const row = {
         tanggal,
         guru_id: String(distribusi.guru_id || ''),
         kelas_id: String(distribusi.kelas_id || ''),
@@ -7745,7 +7746,11 @@ async function loadMonitoringData(periode) {
         semester_id: String(distribusi.semester_id || ''),
         jam_key: jamKey,
         jam_label: `${toTimeLabel(jamMulai)}-${toTimeLabel(jamSelesai)}`
-      })
+      }
+      const dedupeKey = `${row.tanggal}|${row.guru_id}|${row.kelas_id}|${row.mapel_id}|${row.jam_key}`
+      if (expectedSessionKeys.has(dedupeKey)) return
+      expectedSessionKeys.add(dedupeKey)
+      expectedSessions.push(row)
     })
   })
 
