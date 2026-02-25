@@ -24,6 +24,9 @@ const EXAM_ARABIC_FONT_BOLD_VFS_KEY = 'traditional-arabic-bold.ttf'
 const EXAM_PRINT_BACKGROUND_URL = 'Bg Ujian.png'
 const TOPBAR_KALENDER_TABLE = 'kalender_akademik'
 const SCHOOL_PROFILE_TABLE = 'struktur_sekolah'
+const KALENDER_ACTIVITY_LIBUR_SEMUA = 'libur_semua_kegiatan'
+const KALENDER_ACTIVITY_LIBUR_AKADEMIK = 'libur_akademik'
+const KALENDER_ACTIVITY_LIBUR_KETAHFIZAN = 'libur_ketahfizan'
 const TOPBAR_KALENDER_CACHE_KEY = 'kalender_akademik:list'
 const TOPBAR_KALENDER_CACHE_TTL_MS = 2 * 60 * 1000
 const TOPBAR_NOTIF_READ_KEY = 'guru_topbar_notif_read'
@@ -102,7 +105,8 @@ let guruDailyTaskState = {
   tanggal: '',
   templates: [],
   submissions: [],
-  guruId: ''
+  guruId: '',
+  academicHolidayDates: new Set()
 }
 let raporState = {
   guru: null,
@@ -519,6 +523,65 @@ function getPeriodeRange(periode) {
   const endDate = new Date(year, month, 0)
   const end = `${yearText}-${monthText}-${String(endDate.getDate()).padStart(2, '0')}`
   return { start, end, year, month }
+}
+
+function normalizeKalenderActivityType(value) {
+  const raw = String(value || '').trim().toLowerCase()
+  if (raw === KALENDER_ACTIVITY_LIBUR_SEMUA) return KALENDER_ACTIVITY_LIBUR_SEMUA
+  if (raw === KALENDER_ACTIVITY_LIBUR_AKADEMIK) return KALENDER_ACTIVITY_LIBUR_AKADEMIK
+  if (raw === KALENDER_ACTIVITY_LIBUR_KETAHFIZAN) return KALENDER_ACTIVITY_LIBUR_KETAHFIZAN
+  return ''
+}
+
+function inferKalenderActivityTypeFromRow(row) {
+  const normalized = normalizeKalenderActivityType(row?.jenis_kegiatan)
+  if (normalized) return normalized
+  const text = `${String(row?.judul || '')} ${String(row?.detail || '')}`.toLowerCase()
+  if (text.includes('libur semua')) return KALENDER_ACTIVITY_LIBUR_SEMUA
+  if (text.includes('libur akademik')) return KALENDER_ACTIVITY_LIBUR_AKADEMIK
+  if (text.includes('libur ketahfiz')) return KALENDER_ACTIVITY_LIBUR_KETAHFIZAN
+  return ''
+}
+
+function isKalenderMissingActivityTypeColumnError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  return msg.includes('jenis_kegiatan') && (msg.includes('schema cache') || msg.includes('column') || msg.includes('does not exist'))
+}
+
+function isKalenderAcademicHolidayType(type) {
+  return type === KALENDER_ACTIVITY_LIBUR_AKADEMIK || type === KALENDER_ACTIVITY_LIBUR_SEMUA
+}
+
+async function getAcademicHolidayDateSetByRange(startDate, endDate) {
+  const queryWithType = await sb
+    .from(TOPBAR_KALENDER_TABLE)
+    .select('id, judul, detail, jenis_kegiatan, mulai, selesai')
+
+  let rows = []
+  if (!queryWithType.error) {
+    rows = queryWithType.data || []
+  } else if (isKalenderMissingActivityTypeColumnError(queryWithType.error)) {
+    const fallback = await sb
+      .from(TOPBAR_KALENDER_TABLE)
+      .select('id, judul, detail, mulai, selesai')
+    if (fallback.error) throw fallback.error
+    rows = fallback.data || []
+  } else {
+    const msg = String(queryWithType.error?.message || '').toLowerCase()
+    if (msg.includes(TOPBAR_KALENDER_TABLE) && (msg.includes('does not exist') || msg.includes('schema cache'))) return new Set()
+    throw queryWithType.error
+  }
+
+  const dateSet = new Set()
+  ;(rows || []).forEach(item => {
+    const kind = inferKalenderActivityTypeFromRow(item)
+    if (!isKalenderAcademicHolidayType(kind)) return
+    const keys = getTopbarKalenderRangeKeys(item?.mulai, item?.selesai || item?.mulai)
+    keys.forEach(key => {
+      if (key >= startDate && key <= endDate) dateSet.add(key)
+    })
+  })
+  return dateSet
 }
 
 function getPeriodeLabel(periode) {
@@ -1268,6 +1331,7 @@ function adjustDailyTaskDateForPeriode(dateText, periode) {
 async function loadGuruDailyTaskData(periode) {
   const range = getPeriodeRange(periode)
   if (!range) throw new Error('Periode tidak valid')
+  const academicHolidayDates = await getAcademicHolidayDateSetByRange(range.start, range.end)
 
   const ctx = await getGuruContext(false)
   const guruId = String(ctx?.guru?.id || '')
@@ -1299,8 +1363,12 @@ async function loadGuruDailyTaskData(periode) {
 
   return {
     guruId,
-    templates: (templateRes.data || []).filter(item => !isAhadForDailyTask(String(item?.tanggal || ''))),
-    submissions: submitRes.data || []
+    templates: (templateRes.data || []).filter(item => {
+      const tanggal = String(item?.tanggal || '').slice(0, 10)
+      return !isAhadForDailyTask(tanggal) && !academicHolidayDates.has(tanggal)
+    }),
+    submissions: (submitRes.data || []).filter(item => !academicHolidayDates.has(String(item?.tanggal || '').slice(0, 10))),
+    academicHolidayDates
   }
 }
 
@@ -1308,8 +1376,13 @@ function renderGuruDailyTaskRows() {
   const box = document.getElementById('guru-tugas-list')
   if (!box) return
   const tanggal = String(guruDailyTaskState.tanggal || '')
+  const holidaySet = guruDailyTaskState.academicHolidayDates instanceof Set ? guruDailyTaskState.academicHolidayDates : new Set()
   if (isAhadForDailyTask(tanggal)) {
     box.innerHTML = '<div class="placeholder-card">Hari Ahad libur. Mutabaah tidak diinput pada hari Ahad.</div>'
+    return
+  }
+  if (holidaySet.has(tanggal)) {
+    box.innerHTML = '<div class="placeholder-card">Tanggal ini libur akademik. Mutabaah tidak dihitung.</div>'
     return
   }
   const templates = (guruDailyTaskState.templates || []).filter(item => item.aktif !== false && String(item.tanggal || '') === tanggal)
@@ -1444,7 +1517,8 @@ async function renderTugasHarianPage(forceReload = false) {
       tanggal: tanggalValue,
       guruId: data.guruId,
       templates: data.templates,
-      submissions: data.submissions
+      submissions: data.submissions,
+      academicHolidayDates: data.academicHolidayDates instanceof Set ? data.academicHolidayDates : new Set()
     }
     renderGuruDailyTaskRows()
     renderGuruDailyTaskSummary()
@@ -1473,12 +1547,17 @@ async function submitGuruDailyTask() {
   const guruId = String(guruDailyTaskState.guruId || '')
   const tanggal = String(document.getElementById('guru-tugas-tanggal')?.value || '').trim()
   const periode = String(document.getElementById('guru-tugas-periode')?.value || '').trim()
+  const holidaySet = guruDailyTaskState.academicHolidayDates instanceof Set ? guruDailyTaskState.academicHolidayDates : new Set()
   if (!guruId || !tanggal || !periode) {
     alert('Periode dan tanggal wajib diisi.')
     return
   }
   if (isAhadForDailyTask(tanggal)) {
     alert('Hari Ahad libur. Mutabaah tidak bisa disubmit pada hari Ahad.')
+    return
+  }
+  if (holidaySet.has(tanggal)) {
+    alert('Tanggal ini libur akademik. Mutabaah tidak dihitung.')
     return
   }
   if (!tanggal.startsWith(`${periode}-`)) {
@@ -2286,6 +2365,17 @@ function setTopbarNotifBadge(count) {
 async function fetchGuruTopbarNotifications() {
   const items = []
   const dateKeys = buildGuruNotifDateKeys()
+  const sortedDateKeys = [...dateKeys].sort()
+  let academicHolidayDates = new Set()
+  if (sortedDateKeys.length) {
+    const rangeStart = sortedDateKeys[0]
+    const rangeEnd = sortedDateKeys[sortedDateKeys.length - 1]
+    try {
+      academicHolidayDates = await getAcademicHolidayDateSetByRange(rangeStart, rangeEnd)
+    } catch (error) {
+      console.warn('Gagal memuat libur akademik untuk notifikasi.', error)
+    }
+  }
 
   try {
     await loadTopbarCalendarData()
@@ -2300,9 +2390,17 @@ async function fetchGuruTopbarNotifications() {
         const mulai = getTopbarKalenderDateKey(row?.mulai)
         const selesai = getTopbarKalenderDateKey(row?.selesai || row?.mulai)
         const range = selesai && selesai !== mulai ? `${formatNotifDateLabel(mulai)} - ${formatNotifDateLabel(selesai)}` : formatNotifDateLabel(mulai)
+        const activityType = inferKalenderActivityTypeFromRow(row)
+        const agendaType = activityType === KALENDER_ACTIVITY_LIBUR_SEMUA
+          ? 'Libur Semua Kegiatan'
+          : activityType === KALENDER_ACTIVITY_LIBUR_AKADEMIK
+            ? 'Libur Akademik'
+            : activityType === KALENDER_ACTIVITY_LIBUR_KETAHFIZAN
+              ? 'Libur Ketahfizan'
+              : 'Agenda Akademik'
         items.push({
           id: `agenda|${id}`,
-          type: 'Agenda Akademik',
+          type: agendaType,
           title: String(row?.judul || '-'),
           meta: range || '-',
           desc: String(row?.detail || '').trim(),
@@ -2321,6 +2419,7 @@ async function fetchGuruTopbarNotifications() {
       const distribusi = distribusiMap.get(String(item?.distribusi_id || ''))
       if (!distribusi) return
       dateKeys.forEach(dateKey => {
+        if (academicHolidayDates.has(dateKey)) return
         const dayName = normalizeHari(getHariFromDate(dateKey))
         if (!dayName || normalizeHari(item?.hari) !== dayName) return
         const kelas = ctx?.kelasMap?.get(String(distribusi?.kelas_id || ''))
@@ -3360,7 +3459,7 @@ async function recalculateNilaiAkademikFromInput(distribusi, santriIdList) {
       .in('santri_id', santriIdList),
     sb
       .from(ATTENDANCE_TABLE)
-      .select('santri_id, status')
+      .select('santri_id, tanggal, status')
       .eq('kelas_id', distribusi.kelas_id)
       .eq('mapel_id', distribusi.mapel_id)
       .eq('semester_id', distribusi.semester_id)
@@ -3371,7 +3470,17 @@ async function recalculateNilaiAkademikFromInput(distribusi, santriIdList) {
   if (absensiRes.error) throw absensiRes.error
 
   const inputRows = inputRes.data || []
-  const absensiRows = absensiRes.data || []
+  const absensiRowsRaw = absensiRes.data || []
+  const absensiBounds = getAbsensiDateBounds(absensiRowsRaw)
+  let academicHolidayDates = new Set()
+  if (absensiBounds.min && absensiBounds.max) {
+    try {
+      academicHolidayDates = await getAcademicHolidayDateSetByRange(absensiBounds.min, absensiBounds.max)
+    } catch (error) {
+      console.warn('Gagal memuat libur akademik untuk perhitungan nilai kehadiran.', error)
+    }
+  }
+  const absensiRows = absensiRowsRaw.filter(row => !academicHolidayDates.has(String(row?.tanggal || '').slice(0, 10)))
 
   const aggregate = new Map()
   inputRows.forEach(row => {
@@ -3452,7 +3561,7 @@ async function recalculateNilaiKehadiranFromAbsensi(distribusi, santriIdList) {
   const [absensiRes, existingRes] = await Promise.all([
     sb
       .from(ATTENDANCE_TABLE)
-      .select('santri_id, status')
+      .select('santri_id, tanggal, status')
       .eq('kelas_id', distribusi.kelas_id)
       .eq('mapel_id', distribusi.mapel_id)
       .eq('semester_id', distribusi.semester_id)
@@ -3468,8 +3577,20 @@ async function recalculateNilaiKehadiranFromAbsensi(distribusi, santriIdList) {
   if (absensiRes.error) throw absensiRes.error
   if (existingRes.error) throw existingRes.error
 
+  const absensiRowsRaw = absensiRes.data || []
+  const absensiBounds = getAbsensiDateBounds(absensiRowsRaw)
+  let academicHolidayDates = new Set()
+  if (absensiBounds.min && absensiBounds.max) {
+    try {
+      academicHolidayDates = await getAcademicHolidayDateSetByRange(absensiBounds.min, absensiBounds.max)
+    } catch (error) {
+      console.warn('Gagal memuat libur akademik untuk perhitungan nilai kehadiran.', error)
+    }
+  }
+  const absensiRows = absensiRowsRaw.filter(row => !academicHolidayDates.has(String(row?.tanggal || '').slice(0, 10)))
+
   const absensiBySantri = new Map()
-  ;(absensiRes.data || []).forEach(row => {
+  ;(absensiRows || []).forEach(row => {
     const sid = String(row.santri_id || '')
     if (!sid) return
     if (!absensiBySantri.has(sid)) absensiBySantri.set(sid, [])
@@ -4096,15 +4217,24 @@ async function renderLaporanAbsensiPage(forceReload = false) {
     return
   }
 
+  let academicHolidayDates = new Set()
+  try {
+    academicHolidayDates = await getAcademicHolidayDateSetByRange(periodeRange.start, periodeRange.end)
+  } catch (error) {
+    console.warn('Gagal memuat libur akademik untuk laporan absensi.', error)
+  }
+
+  const absensiFilteredRows = (absensiRows || []).filter(row => !academicHolidayDates.has(String(row?.tanggal || '').slice(0, 10)))
+
   const bySantri = new Map()
-  ;(absensiRows || []).forEach(row => {
+  ;(absensiFilteredRows || []).forEach(row => {
     const sid = String(row.santri_id || '')
     if (!sid) return
     if (!bySantri.has(sid)) bySantri.set(sid, [])
     bySantri.get(sid).push(row)
   })
 
-  laporanBulananState.absensiRows = absensiRows || []
+  laporanBulananState.absensiRows = absensiFilteredRows || []
 
   const rowsHtml = santriList.map((santri, index) => {
     const sid = String(santri.id || '')
@@ -5659,13 +5789,30 @@ async function loadJadwalGuru() {
     return
   }
 
+  const periodeAktif = getMonthInputToday()
+  const rangeAktif = getPeriodeRange(periodeAktif)
+  let academicHolidayDates = new Set()
+  if (rangeAktif?.start && rangeAktif?.end) {
+    try {
+      academicHolidayDates = await getAcademicHolidayDateSetByRange(rangeAktif.start, rangeAktif.end)
+    } catch (error) {
+      console.warn('Gagal memuat libur akademik untuk jadwal guru.', error)
+    }
+  }
+
   const distribusiMap = new Map(distribusiList.map(item => [String(item.id), item]))
+  let totalSesiEfektif = 0
 
   const tableRows = rows.map(item => {
     const distribusi = distribusiMap.get(String(item.distribusi_id))
     const kelas = ctx.kelasMap.get(String(distribusi?.kelas_id || ''))
     const mapel = ctx.mapelMap.get(String(distribusi?.mapel_id || ''))
     const semester = ctx.semesterMap.get(String(distribusi?.semester_id || ''))
+    const sesiTanggal = rangeAktif
+      ? getDatesByDayNameInRange(rangeAktif.start, rangeAktif.end, item.hari)
+      : []
+    const sesiEfektif = sesiTanggal.filter(tanggal => !academicHolidayDates.has(tanggal)).length
+    totalSesiEfektif += sesiEfektif
 
     return `
       <tr>
@@ -5674,6 +5821,7 @@ async function loadJadwalGuru() {
         <td style="padding:10px; border:1px solid #e2e8f0;">${escapeHtml(kelas?.nama_kelas || '-')}</td>
         <td style="padding:10px; border:1px solid #e2e8f0;">${escapeHtml(getMapelLabel(mapel))}</td>
         <td style="padding:10px; border:1px solid #e2e8f0;">${escapeHtml(getSemesterLabel(semester))}</td>
+        <td style="padding:10px; border:1px solid #e2e8f0; text-align:center;">${sesiEfektif}</td>
       </tr>
     `
   }).join('')
@@ -5682,8 +5830,23 @@ async function loadJadwalGuru() {
     <div style="font-size:14px; font-weight:600; margin-bottom:10px; color:#334155;">
       Jadwal mengajar: ${escapeHtml(ctx.guru.nama || ctx.guru.id_karyawan || '-')}
     </div>
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; margin-bottom:10px;">
+      <div style="border:1px solid #e2e8f0; border-radius:10px; background:#fff; padding:10px;">
+        <div style="font-size:12px; color:#64748b;">Periode Efektif</div>
+        <div style="font-size:16px; font-weight:700; color:#0f172a;">${escapeHtml(getPeriodeLabel(periodeAktif))}</div>
+      </div>
+      <div style="border:1px solid #e2e8f0; border-radius:10px; background:#fff; padding:10px;">
+        <div style="font-size:12px; color:#64748b;">Total Sesi Mengajar Efektif</div>
+        <div style="font-size:16px; font-weight:700; color:#0f172a;">${totalSesiEfektif}</div>
+      </div>
+      <div style="border:1px solid #e2e8f0; border-radius:10px; background:#fff; padding:10px;">
+        <div style="font-size:12px; color:#64748b;">Tanggal Libur Akademik</div>
+        <div style="font-size:16px; font-weight:700; color:#0f172a;">${academicHolidayDates.size}</div>
+      </div>
+    </div>
+    <div style="font-size:12px; color:#64748b; margin-bottom:8px;">Sesi bulan berjalan sudah menyesuaikan kalender akademik (libur akademik/libur semua kegiatan tidak dihitung).</div>
     <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:12px;">
-      <table style="width:100%; border-collapse:collapse; min-width:700px; font-size:13px;">
+      <table style="width:100%; border-collapse:collapse; min-width:860px; font-size:13px;">
         <thead>
           <tr style="background:#f8fafc;">
             <th style="padding:10px; border:1px solid #e2e8f0; text-align:left; width:110px;">Hari</th>
@@ -5691,6 +5854,7 @@ async function loadJadwalGuru() {
             <th style="padding:10px; border:1px solid #e2e8f0; text-align:left;">Kelas</th>
             <th style="padding:10px; border:1px solid #e2e8f0; text-align:left;">Mapel</th>
             <th style="padding:10px; border:1px solid #e2e8f0; text-align:left; width:170px;">Semester</th>
+            <th style="padding:10px; border:1px solid #e2e8f0; text-align:center; width:130px;">Sesi Bulan Ini</th>
           </tr>
         </thead>
         <tbody>
@@ -7664,6 +7828,12 @@ function buildSantriDailyStatus(rows) {
 async function loadMonitoringData(periode) {
   const range = getMonitoringRange(periode)
   if (!range) throw new Error('Periode tidak valid.')
+  let academicHolidayDates = new Set()
+  try {
+    academicHolidayDates = await getAcademicHolidayDateSetByRange(range.start, range.end)
+  } catch (error) {
+    console.warn('Gagal memuat libur akademik untuk monitoring.', error)
+  }
 
   const semester = await getActiveSemester()
   const semesterId = String(semester?.id || '')
@@ -7695,7 +7865,7 @@ async function loadMonitoringData(periode) {
 
   const distribusiAll = distribusiRes.data || []
   const distribusiAllMap = new Map(distribusiAll.map(item => [String(item?.id || ''), item]))
-  const absensiRows = absensiRes.data || []
+  const absensiRows = (absensiRes.data || []).filter(row => !academicHolidayDates.has(String(row?.tanggal || '').slice(0, 10)))
   const inferredSemesterIds = [...new Set(
     absensiRows
       .map(item => String(item?.semester_id || '').trim())
@@ -7738,6 +7908,7 @@ async function loadMonitoringData(periode) {
     const jamKey = `${String(jamMulai || '').slice(0, 5)}|${String(jamSelesai || '').slice(0, 5)}|${String(jadwal.jam_pelajaran_id || '')}`
     const dates = getDatesByDayNameInRange(range.start, range.end, jadwal.hari)
     dates.forEach(tanggal => {
+      if (academicHolidayDates.has(tanggal)) return
       const row = {
         tanggal,
         guru_id: String(distribusi.guru_id || ''),
@@ -7835,6 +8006,7 @@ async function loadMonitoringData(periode) {
   const santriFilteredRows = absensiRows.filter(row => {
     const tanggal = String(row.tanggal || '').slice(0, 10)
     if (!tanggal) return false
+    if (academicHolidayDates.has(tanggal)) return false
     return tanggal >= santriRange.start && tanggal <= santriRange.end
   })
   const dailyStatusMap = buildSantriDailyStatus(santriFilteredRows)
@@ -8965,7 +9137,7 @@ async function createExamPdfDoc(jadwal, soal) {
     }
   }
 
-  const setBold = () => doc.setFont(isAr ? EXAM_ARABIC_FONT_NAME : 'times', isAr ? 'normal' : 'bold')
+  const setBold = () => doc.setFont(isAr ? EXAM_ARABIC_FONT_NAME : 'times', 'normal')
   const setNormal = () => doc.setFont(isAr ? EXAM_ARABIC_FONT_NAME : 'times', 'normal')
   const safeSplit = (text, width) => {
     try {
@@ -8978,6 +9150,10 @@ async function createExamPdfDoc(jadwal, soal) {
   if (typeof doc.setR2L === 'function') doc.setR2L(false)
   const lineX = (indent = 0) => (isAr ? pageWidth - margin - indent : margin + indent)
   const toRtl = text => (isAr ? `\u202B${String(text || '')}\u202C` : String(text || ''))
+  const bodyFontSize = isAr ? 16 : 11
+  const lineStep = isAr ? 7 : 5
+  const metaStep = isAr ? 8 : 6
+  const blockGap = isAr ? 3 : 2
   const drawLine = (text, indent = 0) => {
     const str = toRtl(text)
     if (isAr) doc.text(str, lineX(indent), y, { align: 'right' })
@@ -8993,7 +9169,7 @@ async function createExamPdfDoc(jadwal, soal) {
       const wrappedLine = toRtl(line)
       if (isAr) doc.text(wrappedLine, lineX(indent), y, { align: 'right' })
       else doc.text(wrappedLine, lineX(indent), y)
-      y += 5
+      y += lineStep
     })
   }
 
@@ -9002,15 +9178,15 @@ async function createExamPdfDoc(jadwal, soal) {
   doc.text(textMap.title, pageWidth / 2, y, { align: 'center' })
   y += 8
   setNormal()
-  doc.setFontSize(11)
+  doc.setFontSize(bodyFontSize)
   drawLine(`${textMap.jenis}: ${String(jadwal?.jenis || '-')}`)
-  y += 6
+  y += metaStep
   drawLine(`${textMap.namaUjian}: ${String(jadwal?.nama || '-')}`)
-  y += 6
+  y += metaStep
   drawLine(`${textMap.kelasMapel}: ${String(jadwal?.kelas || '-')} | ${textMap.mapel}: ${String(jadwal?.mapel || '-')}`)
-  y += 6
+  y += metaStep
   drawLine(`${textMap.tanggalWaktu}: ${String(jadwal?.tanggal || '-')} | ${textMap.waktu}: ${toTimeLabel(jadwal?.jam_mulai)} - ${toTimeLabel(jadwal?.jam_selesai)}`)
-  y += 6
+  y += metaStep
   drawLine(`${textMap.guru}: ${String(soal?.guru_nama || '-')}`)
   y += 8
 
@@ -9018,16 +9194,19 @@ async function createExamPdfDoc(jadwal, soal) {
   if (instruksi) {
     setBold()
     drawLine(`${textMap.instruksiUmum}:`)
-    y += 5
+    y += lineStep
     setNormal()
     drawWrapped(instruksi, usableWidth, 0)
-    y += 2
+    y += blockGap
   }
 
   const questions = parseExamQuestions(soal?.questions_json)
   const sections = buildExamPrintSections(questions, soal?.bentuk_soal)
   const questionIndent = 4
   const optionIndent = 10
+  const headingMarkerGap = 10
+  const questionMarkerGap = 8
+  const optionMarkerGap = 8
   sections.forEach((section, sectionIndex) => {
     const headingParts = getExamPrintTypeParts(section.type, sectionIndex, lang)
     const heading = `${headingParts.marker} ${headingParts.label}`
@@ -9040,15 +9219,15 @@ async function createExamPdfDoc(jadwal, soal) {
       setBold()
       drawLine(headingParts.marker)
       setNormal()
-      drawLine(headingParts.label, 16)
+      drawLine(headingParts.label, headingMarkerGap)
     } else {
       setBold()
       drawLine(heading)
     }
-    y += 5
+    y += lineStep
     setNormal()
     drawWrapped(instruksiModel, usableWidth - 4, 4)
-    y += 2
+    y += blockGap
 
     const sectionItems = section.items || []
     if (section.type === 'isi-titik') {
@@ -9064,7 +9243,7 @@ async function createExamPdfDoc(jadwal, soal) {
       if (fragList.length) {
         const fragLine = `Pilihan kata: (${fragList.join(', ')})`
         drawWrapped(fragLine, usableWidth - optionIndent, optionIndent)
-        y += 2
+        y += blockGap
       }
     }
 
@@ -9075,21 +9254,21 @@ async function createExamPdfDoc(jadwal, soal) {
       setNormal()
       if (isAr) {
         const noPrefix = formatExamMarker(formatExamNumber(no, lang), lang)
-        const qLines = safeSplit(qTextRaw, usableWidth - questionIndent - 14)
+        const qLines = safeSplit(qTextRaw, usableWidth - questionIndent - questionMarkerGap)
         if (y > 285) {
           doc.addPage()
           y = margin
         }
         doc.text(toRtl(noPrefix), lineX(questionIndent), y, { align: 'right' })
-        doc.text(toRtl(String(qLines[0] || '-')), lineX(questionIndent + 14), y, { align: 'right' })
-        y += 5
+        doc.text(toRtl(String(qLines[0] || '-')), lineX(questionIndent + questionMarkerGap), y, { align: 'right' })
+        y += lineStep
         for (let li = 1; li < qLines.length; li += 1) {
           if (y > 285) {
             doc.addPage()
             y = margin
           }
-          doc.text(toRtl(String(qLines[li] || '')), lineX(questionIndent + 14), y, { align: 'right' })
-          y += 5
+          doc.text(toRtl(String(qLines[li] || '')), lineX(questionIndent + questionMarkerGap), y, { align: 'right' })
+          y += lineStep
         }
       } else {
         const title = `${formatExamMarker(formatExamNumber(no, lang), lang)} ${qTextRaw}`
@@ -9117,7 +9296,7 @@ async function createExamPdfDoc(jadwal, soal) {
             }
             doc.text(pair[0], leftX, y)
             doc.text(pair[1], rightX, y)
-            y += 5
+            y += lineStep
           })
         } else {
           const optLines = isAr
@@ -9136,21 +9315,21 @@ async function createExamPdfDoc(jadwal, soal) {
             if (isAr) {
               const marker = formatExamMarker(String(line.marker || ''), lang)
               const val = String(line.text || '-')
-              const vLines = safeSplit(val, usableWidth - optionIndent - 14)
+              const vLines = safeSplit(val, usableWidth - optionIndent - optionMarkerGap)
               doc.text(toRtl(marker), lineX(optionIndent), y, { align: 'right' })
-              doc.text(toRtl(String(vLines[0] || '-')), lineX(optionIndent + 14), y, { align: 'right' })
-              y += 5
+              doc.text(toRtl(String(vLines[0] || '-')), lineX(optionIndent + optionMarkerGap), y, { align: 'right' })
+              y += lineStep
               for (let vi = 1; vi < vLines.length; vi += 1) {
                 if (y > 285) {
                   doc.addPage()
                   y = margin
                 }
-                doc.text(toRtl(String(vLines[vi] || '')), lineX(optionIndent + 14), y, { align: 'right' })
-                y += 5
+                doc.text(toRtl(String(vLines[vi] || '')), lineX(optionIndent + optionMarkerGap), y, { align: 'right' })
+                y += lineStep
               }
             } else {
               doc.text(line, margin + optionIndent, y)
-              y += 5
+              y += lineStep
             }
           })
         }
@@ -9171,7 +9350,7 @@ async function createExamPdfDoc(jadwal, soal) {
             doc.text(colA, margin + optionIndent, y)
             doc.text(colB, margin + optionIndent + 60, y)
           }
-          y += 5
+          y += lineStep
           setNormal()
           pairs.forEach((pair, idxPair) => {
             if (y > 285) {
@@ -9187,11 +9366,11 @@ async function createExamPdfDoc(jadwal, soal) {
               doc.text(left, margin + optionIndent, y)
               doc.text(right, margin + optionIndent + 60, y)
             }
-            y += 5
+            y += lineStep
           })
         }
       }
-      y += 2
+      y += blockGap
     })
   })
 
@@ -9380,10 +9559,11 @@ async function buildExamWordHtml(jadwal, soal) {
 <head><meta charset="utf-8"><title>${escapeHtml(textMap.title)}</title>
 <style>
 @page { size: A4; margin: 15mm; }
-body { font-family: ${wordFontFamily}; ${wordBidiCss} ${wordDirectionCss} margin: 0; padding: 15mm; color: #111; }
-.page-bg { position: fixed; top: 0; left: 0; width: 210mm; height: 297mm; z-index: 0; }
-.page-bg img { width: 100%; height: 100%; display: block; }
-.doc-wrap { position: relative; z-index: 1; }
+body { font-family: ${wordFontFamily}; ${wordBidiCss} ${wordDirectionCss} margin: 0; padding: 0; color: #111; }
+.doc-wrap { position: relative; width: 210mm; min-height: 297mm; box-sizing: border-box; padding: 15mm; }
+.page-bg { position: absolute; top: 0; left: 0; width: 210mm; height: 297mm; z-index: 0; pointer-events: none; }
+.page-bg img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.doc-content { position: relative; z-index: 1; }
 h1 { text-align: center; font-size: 22px; margin: 0 0 12px 0; }
 .meta p { margin: 4px 0; font-size: 14px; }
 .sec { margin-top: 14px; }
@@ -9398,8 +9578,9 @@ li { margin: 8px 0; }
 </style></head>
 <body>
 ${bgDataUrl ? `<!--[if gte mso 9]><v:background id="bg" o:bwmode="white"><v:fill type="frame" src="${bgDataUrl}" /></v:background><![endif]-->` : ''}
-${bgDataUrl ? `<div class="page-bg"><img src="${bgDataUrl}" alt=""></div>` : ''}
 <div class="doc-wrap">
+${bgDataUrl ? `<div class="page-bg"><img src="${bgDataUrl}" alt=""></div>` : ''}
+<div class="doc-content">
 <h1>${escapeHtml(textMap.title)}</h1>
 <div class="meta">
 <p><strong>${escapeHtml(textMap.jenis)}:</strong> ${escapeHtml(String(jadwal?.jenis || '-'))}</p>
@@ -9410,6 +9591,7 @@ ${bgDataUrl ? `<div class="page-bg"><img src="${bgDataUrl}" alt=""></div>` : ''}
 ${instruksiUmum}
 </div>
 ${sectionHtml}
+</div>
 </div>
 </body></html>`
 }
@@ -10115,11 +10297,8 @@ async function printGuruUjianActive(format = '') {
       questions_json: JSON.stringify(questions),
       status: 'draft'
     }
-    const lang = parseExamInstruksiMeta(soal.instruksi).lang || 'ID'
-    if (mode === 'word' || (mode !== 'pdf' && lang === 'AR')) {
-      const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasTarget || '-')}.doc`
-      await exportExamWordFile({ ...jadwal, kelas: kelasTarget }, soal, fileName)
-      return
+    if (mode === 'word') {
+      console.info('Mode Word dinonaktifkan sementara. Mengalihkan ke PDF.')
     }
     const doc = await createExamPdfDoc({ ...jadwal, kelas: kelasTarget }, soal)
     if (!doc) {
@@ -10166,11 +10345,8 @@ async function printGuruUjianByRow(rowKeyEncoded, format = '') {
       alert('Soal belum tersedia untuk dicetak.')
       return
     }
-    const lang = parseExamInstruksiMeta(soalRes.data?.instruksi).lang || 'ID'
-    if (mode === 'word' || (mode !== 'pdf' && lang === 'AR')) {
-      const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.doc`
-      await exportExamWordFile({ ...jadwal, kelas: kelasNama }, soalRes.data, fileName)
-      return
+    if (mode === 'word') {
+      console.info('Mode Word dinonaktifkan sementara. Mengalihkan ke PDF.')
     }
 
     const doc = await createExamPdfDoc({ ...jadwal, kelas: kelasNama }, soalRes.data)
@@ -10187,9 +10363,6 @@ async function printGuruUjianByRow(rowKeyEncoded, format = '') {
 }
 
 async function chooseExamPrintFormatPopup() {
-  // Always use native confirm for this flow to avoid hidden custom-popup issues.
-  const asWord = window.confirm('Cetak sebagai Word?\nPilih OK untuk Word, Cancel untuk PDF.')
-  if (asWord) return 'word'
   return 'pdf'
 }
 
@@ -10202,73 +10375,13 @@ async function chooseAndPrintGuruUjianByRow(rowKeyEncoded) {
 }
 
 async function exportGuruUjianActiveWord() {
-  try {
-    const jadwal = ujianGuruState.activeJadwal
-    if (!jadwal?.id) {
-      alert('Pilih jadwal ujian terlebih dahulu.')
-      return
-    }
-    const questions = collectGuruUjianQuestions()
-    if (!questions || !questions.length) {
-      alert('Minimal isi satu soal sebelum export Word.')
-      return
-    }
-    const jumlahNomor = Number(document.getElementById('guru-ujian-jumlah')?.value || questions.length || 0)
-    const bahasaSoal = String(document.getElementById('guru-ujian-lang')?.value || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
-    const instruksi = String(document.getElementById('guru-ujian-instruksi')?.value || '').trim()
-    const kelasTarget = String(ujianGuruState.activeKelasName || '-')
-    const soal = {
-      guru_nama: String(ujianGuruState.activeSoal?.guru_nama || ''),
-      bentuk_soal: 'campuran',
-      jumlah_nomor: Number.isFinite(jumlahNomor) ? Math.max(1, Math.round(jumlahNomor)) : questions.length,
-      instruksi: buildExamInstruksiWithMeta(bahasaSoal, instruksi),
-      questions_json: JSON.stringify(questions),
-      status: 'draft'
-    }
-    const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasTarget || '-')}.doc`
-    await exportExamWordFile({ ...jadwal, kelas: kelasTarget }, soal, fileName)
-  } catch (err) {
-    console.error('exportGuruUjianActiveWord error:', err)
-    alert(`Export Word gagal: ${String(err?.message || err || 'Unknown error')}`)
-  }
+  alert('Export Word dinonaktifkan sementara. File akan diunduh sebagai PDF.')
+  await printGuruUjianActive('pdf')
 }
 
 async function exportGuruUjianByRowWord(rowKeyEncoded) {
-  try {
-    const decodedKey = decodeURIComponent(String(rowKeyEncoded || '')).trim()
-    if (!decodedKey) return
-    const [jadwalId, kelasNamaRaw] = decodedKey.split('|')
-    const kelasNama = String(kelasNamaRaw || '-').trim() || '-'
-    const jadwal = (ujianGuruState.rows || []).find(item => String(item.rowKey || '') === decodedKey)?.jadwal || (ujianGuruState.rows || []).find(item => String(item.jadwal?.id || '') === String(jadwalId || ''))?.jadwal
-    if (!jadwal) return
-
-    const ctx = await getGuruContext()
-    let soalRes = await sb
-      .from(EXAM_QUESTION_TABLE)
-      .select('id, jadwal_id, kelas_target, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status')
-      .eq('jadwal_id', String(jadwalId || ''))
-      .eq('guru_id', String(ctx.guru.id))
-      .eq('kelas_target', kelasNama)
-      .maybeSingle()
-
-    if (soalRes.error && isExamColumnMissingError(soalRes.error)) {
-      soalRes = await sb
-        .from(EXAM_QUESTION_TABLE)
-        .select('id, jadwal_id, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status')
-        .eq('jadwal_id', String(jadwalId || ''))
-        .eq('guru_id', String(ctx.guru.id))
-        .maybeSingle()
-    }
-    if (soalRes.error || !soalRes.data) {
-      alert('Soal belum tersedia untuk export Word.')
-      return
-    }
-    const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.doc`
-    await exportExamWordFile({ ...jadwal, kelas: kelasNama }, soalRes.data, fileName)
-  } catch (err) {
-    console.error('exportGuruUjianByRowWord error:', err)
-    alert(`Export Word gagal: ${String(err?.message || err || 'Unknown error')}`)
-  }
+  alert('Export Word dinonaktifkan sementara. File akan diunduh sebagai PDF.')
+  await printGuruUjianByRow(rowKeyEncoded, 'pdf')
 }
 
 async function setupRaporAccess(forceReload = false) {

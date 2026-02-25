@@ -6,6 +6,77 @@ const KG_ADMIN_STATE = {
   penggantiRows: [],
   roleMode: 'guru'
 }
+const KG_KALENDER_TABLE = 'kalender_akademik'
+const KG_LIBUR_SEMUA = 'libur_semua_kegiatan'
+const KG_LIBUR_AKADEMIK = 'libur_akademik'
+
+function normalizeKgKalenderType(value) {
+  const raw = String(value || '').trim().toLowerCase()
+  if (raw === KG_LIBUR_SEMUA) return KG_LIBUR_SEMUA
+  if (raw === KG_LIBUR_AKADEMIK) return KG_LIBUR_AKADEMIK
+  return ''
+}
+
+function inferKgKalenderType(row) {
+  const direct = normalizeKgKalenderType(row?.jenis_kegiatan)
+  if (direct) return direct
+  const text = `${String(row?.judul || '')} ${String(row?.detail || '')}`.toLowerCase()
+  if (text.includes('libur semua')) return KG_LIBUR_SEMUA
+  if (text.includes('libur akademik')) return KG_LIBUR_AKADEMIK
+  return ''
+}
+
+function isKgMissingKalenderTypeColumnError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  return msg.includes('jenis_kegiatan') && (msg.includes('schema cache') || msg.includes('column') || msg.includes('does not exist'))
+}
+
+function getKgDateRangeKeys(startValue, endValue) {
+  const startText = normalizeKgDateText(startValue)
+  const endText = normalizeKgDateText(endValue || startValue)
+  if (!startText) return []
+  const start = new Date(`${startText}T00:00:00`)
+  const end = new Date(`${endText}T00:00:00`)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return [startText]
+  const result = []
+  const cursor = new Date(start)
+  while (cursor.getTime() <= end.getTime()) {
+    result.push(formatKgLocalDate(cursor))
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return result
+}
+
+async function getKgAcademicHolidayDateSet(startDate, endDate) {
+  const withType = await sb
+    .from(KG_KALENDER_TABLE)
+    .select('id, judul, detail, jenis_kegiatan, mulai, selesai')
+  let rows = []
+  if (!withType.error) {
+    rows = withType.data || []
+  } else if (isKgMissingKalenderTypeColumnError(withType.error)) {
+    const fallback = await sb
+      .from(KG_KALENDER_TABLE)
+      .select('id, judul, detail, mulai, selesai')
+    if (fallback.error) throw fallback.error
+    rows = fallback.data || []
+  } else {
+    const msg = String(withType.error?.message || '').toLowerCase()
+    if (msg.includes(KG_KALENDER_TABLE) && (msg.includes('does not exist') || msg.includes('schema cache'))) return new Set()
+    throw withType.error
+  }
+
+  const dateSet = new Set()
+  ;(rows || []).forEach(item => {
+    const type = inferKgKalenderType(item)
+    if (type !== KG_LIBUR_SEMUA && type !== KG_LIBUR_AKADEMIK) return
+    const keys = getKgDateRangeKeys(item?.mulai, item?.selesai || item?.mulai)
+    keys.forEach(key => {
+      if (key >= startDate && key <= endDate) dateSet.add(key)
+    })
+  })
+  return dateSet
+}
 
 function parseKgRoleList(rawRole) {
   if (Array.isArray(rawRole)) {
@@ -368,6 +439,12 @@ function buildKgSessionAggMaps(absensiRows, jamMap, distribusiMap = new Map()) {
 async function loadKehadiranGuruAdminData(periode) {
   const range = getKgMonthRange(periode)
   if (!range) throw new Error('Periode tidak valid.')
+  let academicHolidayDates = new Set()
+  try {
+    academicHolidayDates = await getKgAcademicHolidayDateSet(range.start, range.end)
+  } catch (error) {
+    console.warn('Gagal memuat libur akademik untuk kehadiran guru admin.', error)
+  }
 
   const { semesterId } = await getKgActiveSemesterByTahunAktif()
 
@@ -395,7 +472,7 @@ async function loadKehadiranGuruAdminData(periode) {
 
   const distribusiAll = distribusiRes.data || []
   const distribusiAllMap = new Map(distribusiAll.map(item => [String(item?.id || ''), item]))
-  const absensiRows = absensiRes.data || []
+  const absensiRows = (absensiRes.data || []).filter(item => !academicHolidayDates.has(normalizeKgDateText(item?.tanggal)))
   const inferredSemesterIds = [...new Set(
     absensiRows
       .map(item => String(item?.semester_id || '').trim())
@@ -457,6 +534,7 @@ async function loadKehadiranGuruAdminData(periode) {
 
     const dates = getKgDatesByHariInRange(range, jadwal.hari)
     dates.forEach(tanggal => {
+      if (academicHolidayDates.has(tanggal)) return
       expectedSessions.push({
         tanggal,
         hari: getKgHariLabel(jadwal.hari),

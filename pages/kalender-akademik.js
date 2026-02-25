@@ -2,6 +2,7 @@ const KALENDER_AKADEMIK_TABLE = 'kalender_akademik'
 const KALENDER_AKADEMIK_CACHE_KEY = 'kalender_akademik:list'
 const KALENDER_AKADEMIK_CACHE_TTL_MS = 2 * 60 * 1000
 const DEFAULT_KALENDER_COLOR = '#2563eb'
+const KALENDER_ACTIVITY_TYPES = ['', 'libur_semua_kegiatan', 'libur_akademik', 'libur_ketahfizan']
 let currentEditKalenderAkademikId = null
 let currentKalenderAkademikList = []
 let currentKalenderAkademikMonth = ''
@@ -51,12 +52,29 @@ function normalizeKalenderColor(value) {
   return DEFAULT_KALENDER_COLOR
 }
 
+function normalizeKalenderActivityType(value) {
+  const raw = String(value || '').trim().toLowerCase()
+  return KALENDER_ACTIVITY_TYPES.includes(raw) ? raw : ''
+}
+
+function getKalenderActivityLabel(value) {
+  const kind = normalizeKalenderActivityType(value)
+  if (kind === 'libur_semua_kegiatan') return 'Libur Semua Kegiatan'
+  if (kind === 'libur_akademik') return 'Libur Akademik'
+  if (kind === 'libur_ketahfizan') return 'Libur Ketahfizan'
+  return '-'
+}
+
 function getKalenderAkademikMissingTableMessage() {
-  return `Tabel '${KALENDER_AKADEMIK_TABLE}' belum ada di Supabase.\n\nSilakan buat tabel:\n- id (uuid primary key, default gen_random_uuid())\n- judul (text)\n- mulai (timestamptz)\n- selesai (timestamptz, nullable)\n- detail (text, nullable)\n- warna (text, default '#2563eb')\n- created_at (timestamptz default now())`
+  return `Tabel '${KALENDER_AKADEMIK_TABLE}' belum ada di Supabase.\n\nSilakan buat tabel:\n- id (uuid primary key, default gen_random_uuid())\n- judul (text)\n- jenis_kegiatan (text, nullable)\n- mulai (timestamptz)\n- selesai (timestamptz, nullable)\n- detail (text, nullable)\n- warna (text, default '#2563eb')\n- created_at (timestamptz default now())`
 }
 
 function getKalenderAkademikMissingColorMessage() {
   return `Kolom warna belum ada di tabel '${KALENDER_AKADEMIK_TABLE}'.\n\nJalankan SQL:\nalter table public.${KALENDER_AKADEMIK_TABLE} add column if not exists warna text default '#2563eb';`
+}
+
+function getKalenderAkademikMissingActivityTypeMessage() {
+  return `Kolom jenis_kegiatan belum ada di tabel '${KALENDER_AKADEMIK_TABLE}'.\n\nJalankan SQL:\nalter table public.${KALENDER_AKADEMIK_TABLE} add column if not exists jenis_kegiatan text null;`
 }
 
 function isKalenderAkademikMissingTableError(error) {
@@ -68,6 +86,11 @@ function isKalenderAkademikMissingTableError(error) {
 function isKalenderAkademikMissingColorError(error) {
   const msg = String(error?.message || '').toLowerCase()
   return msg.includes('warna') && (msg.includes('schema cache') || msg.includes('column') || msg.includes('does not exist'))
+}
+
+function isKalenderAkademikMissingActivityTypeError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  return msg.includes('jenis_kegiatan') && (msg.includes('schema cache') || msg.includes('column') || msg.includes('does not exist'))
 }
 
 function createKalenderAkademikModal() {
@@ -88,6 +111,13 @@ function createKalenderAkademikModal() {
     <div style="background:#fff; margin:50px auto; padding:24px; border-radius:8px; width:460px; max-width:calc(100vw - 24px); box-shadow:0 2px 12px #0002; position:relative;">
       <h3 id="ka-modal-title">Tambah Kegiatan Akademik</h3>
       <input class="ka-field" type="text" id="ka-judul" placeholder="Judul kegiatan" style="${getKalenderAkademikInsetFieldStyle('margin-bottom:8px;')}">
+      <label for="ka-jenis-kegiatan" style="display:block; margin:0 4px 4px; font-size:12px; color:#475569;">Jenis Kegiatan (opsional)</label>
+      <select class="ka-field" id="ka-jenis-kegiatan" style="${getKalenderAkademikInsetFieldStyle('margin-bottom:8px;')}">
+        <option value="">-- Kegiatan Umum --</option>
+        <option value="libur_semua_kegiatan">Libur Semua Kegiatan</option>
+        <option value="libur_akademik">Libur Akademik</option>
+        <option value="libur_ketahfizan">Libur Ketahfizan</option>
+      </select>
       <label for="ka-warna" style="display:block; margin:0 4px 4px; font-size:12px; color:#475569;">Warna Penanda</label>
       <input type="color" id="ka-warna" value="${DEFAULT_KALENDER_COLOR}" style="width:58px; height:36px; border:none; background:transparent; margin-bottom:8px; cursor:pointer;">
       <label for="ka-mulai" style="display:block; margin:0 4px 4px; font-size:12px; color:#475569;">Mulai (Tanggal)</label>
@@ -115,6 +145,7 @@ function openKalenderAkademikModal(id = '') {
 
   const titleEl = document.getElementById('ka-modal-title')
   const judulEl = document.getElementById('ka-judul')
+  const jenisKegiatanEl = document.getElementById('ka-jenis-kegiatan')
   const warnaEl = document.getElementById('ka-warna')
   const mulaiEl = document.getElementById('ka-mulai')
   const selesaiEl = document.getElementById('ka-selesai')
@@ -122,6 +153,7 @@ function openKalenderAkademikModal(id = '') {
 
   if (titleEl) titleEl.textContent = row ? 'Edit Kegiatan Akademik' : 'Tambah Kegiatan Akademik'
   if (judulEl) judulEl.value = row?.judul || ''
+  if (jenisKegiatanEl) jenisKegiatanEl.value = normalizeKalenderActivityType(row?.jenis_kegiatan)
   if (warnaEl) warnaEl.value = normalizeKalenderColor(row?.warna)
   if (mulaiEl) mulaiEl.value = String(row?.mulai || '').slice(0, 10)
   if (selesaiEl) selesaiEl.value = String(row?.selesai || '').slice(0, 10)
@@ -140,6 +172,7 @@ function closeKalenderAkademikModal() {
 
 function parseKalenderAkademikForm() {
   const judul = String(document.getElementById('ka-judul')?.value || '').trim()
+  const jenisKegiatan = normalizeKalenderActivityType(document.getElementById('ka-jenis-kegiatan')?.value || '')
   const warna = normalizeKalenderColor(document.getElementById('ka-warna')?.value || DEFAULT_KALENDER_COLOR)
   const mulai = String(document.getElementById('ka-mulai')?.value || '').trim()
   const selesai = String(document.getElementById('ka-selesai')?.value || '').trim()
@@ -159,6 +192,7 @@ function parseKalenderAkademikForm() {
   return {
     payload: {
       judul,
+      jenis_kegiatan: jenisKegiatan || null,
       warna,
       mulai: mulaiDate.toISOString(),
       selesai: selesai ? new Date(`${selesai}T00:00:00`).toISOString() : null,
@@ -186,6 +220,10 @@ async function saveKalenderAkademik() {
     }
     if (isKalenderAkademikMissingColorError(error)) {
       alert(getKalenderAkademikMissingColorMessage())
+      return
+    }
+    if (isKalenderAkademikMissingActivityTypeError(error)) {
+      alert(getKalenderAkademikMissingActivityTypeMessage())
       return
     }
     console.error(error)
@@ -236,6 +274,7 @@ function renderKalenderAkademikTable(container, rows) {
           <tr style="background:#f8fafc;">
             <th style="padding:8px; border:1px solid #e2e8f0; width:50px;">No</th>
             <th style="padding:8px; border:1px solid #e2e8f0;">Kegiatan</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; width:170px;">Jenis</th>
             <th style="padding:8px; border:1px solid #e2e8f0; width:170px;">Mulai</th>
             <th style="padding:8px; border:1px solid #e2e8f0; width:170px;">Selesai</th>
             <th style="padding:8px; border:1px solid #e2e8f0;">Detail</th>
@@ -254,6 +293,7 @@ function renderKalenderAkademikTable(container, rows) {
           ${escapeHtml(item.judul || '-')}
           <span style="position:absolute; top:0; left:0; bottom:0; width:4px; background:${escapeHtml(warna)};"></span>
         </td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(getKalenderActivityLabel(item.jenis_kegiatan))}</td>
         <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(formatDateLocal(item.mulai))}</td>
         <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(formatDateLocal(item.selesai))}</td>
         <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.detail || '-')}</td>
@@ -402,6 +442,7 @@ function renderKalenderAkademikDateDetail() {
           <span style="display:inline-block; width:10px; height:10px; border-radius:999px; background:${escapeHtml(warna)};"></span>
           <strong style="font-size:13px; color:#0f172a;">${escapeHtml(item.judul || '-')}</strong>
         </div>
+        <div style="margin-top:6px; font-size:12px; color:#334155;">Jenis: ${escapeHtml(getKalenderActivityLabel(item.jenis_kegiatan))}</div>
         <div style="margin-top:6px; font-size:12px; color:#475569;">${escapeHtml(formatDateLocal(item.mulai))}${item.selesai ? ` - ${escapeHtml(formatDateLocal(item.selesai))}` : ''}</div>
         <div style="margin-top:6px; font-size:12px; color:#334155;">${escapeHtml(item.detail || '-')}</div>
       </div>
@@ -427,30 +468,43 @@ function shiftKalenderAkademikMonth(step) {
 async function fetchKalenderAkademikRows() {
   const fullQuery = await sb
     .from(KALENDER_AKADEMIK_TABLE)
-    .select('id, judul, warna, mulai, selesai, detail, created_at')
+    .select('id, judul, jenis_kegiatan, warna, mulai, selesai, detail, created_at')
     .order('mulai', { ascending: true })
 
   if (!fullQuery.error) {
-    return (fullQuery.data || []).map(item => ({ ...item, warna: normalizeKalenderColor(item.warna) }))
+    return (fullQuery.data || []).map(item => ({
+      ...item,
+      warna: normalizeKalenderColor(item.warna),
+      jenis_kegiatan: normalizeKalenderActivityType(item.jenis_kegiatan)
+    }))
   }
 
   if (isKalenderAkademikMissingTableError(fullQuery.error)) {
     throw fullQuery.error
   }
 
-  if (!isKalenderAkademikMissingColorError(fullQuery.error)) {
+  const missingColor = isKalenderAkademikMissingColorError(fullQuery.error)
+  const missingActivityType = isKalenderAkademikMissingActivityTypeError(fullQuery.error)
+  if (!missingColor && !missingActivityType) {
     throw fullQuery.error
   }
 
-  const fallback = await sb
-    .from(KALENDER_AKADEMIK_TABLE)
-    .select('id, judul, mulai, selesai, detail, created_at')
-    .order('mulai', { ascending: true })
+  const fallbackSelect = missingColor && missingActivityType
+    ? 'id, judul, mulai, selesai, detail, created_at'
+    : (missingColor
+        ? 'id, judul, jenis_kegiatan, mulai, selesai, detail, created_at'
+        : 'id, judul, warna, mulai, selesai, detail, created_at')
+  const fallback = await sb.from(KALENDER_AKADEMIK_TABLE).select(fallbackSelect).order('mulai', { ascending: true })
 
   if (fallback.error) throw fallback.error
 
-  alert(getKalenderAkademikMissingColorMessage())
-  return (fallback.data || []).map(item => ({ ...item, warna: DEFAULT_KALENDER_COLOR }))
+  if (missingColor) alert(getKalenderAkademikMissingColorMessage())
+  if (missingActivityType) alert(getKalenderAkademikMissingActivityTypeMessage())
+  return (fallback.data || []).map(item => ({
+    ...item,
+    warna: normalizeKalenderColor(item.warna),
+    jenis_kegiatan: normalizeKalenderActivityType(item.jenis_kegiatan)
+  }))
 }
 
 async function loadKalenderAkademik(forceRefresh = false) {

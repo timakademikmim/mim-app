@@ -11,6 +11,77 @@ const adminDailyTaskState = {
   guruList: [],
   selectedGuruId: ''
 }
+const ADMIN_TASK_KALENDER_TABLE = 'kalender_akademik'
+const ADMIN_TASK_LIBUR_SEMUA = 'libur_semua_kegiatan'
+const ADMIN_TASK_LIBUR_AKADEMIK = 'libur_akademik'
+
+function normalizeAdminTaskKalenderType(value) {
+  const raw = String(value || '').trim().toLowerCase()
+  if (raw === ADMIN_TASK_LIBUR_SEMUA) return ADMIN_TASK_LIBUR_SEMUA
+  if (raw === ADMIN_TASK_LIBUR_AKADEMIK) return ADMIN_TASK_LIBUR_AKADEMIK
+  return ''
+}
+
+function inferAdminTaskKalenderType(row) {
+  const direct = normalizeAdminTaskKalenderType(row?.jenis_kegiatan)
+  if (direct) return direct
+  const text = `${String(row?.judul || '')} ${String(row?.detail || '')}`.toLowerCase()
+  if (text.includes('libur semua')) return ADMIN_TASK_LIBUR_SEMUA
+  if (text.includes('libur akademik')) return ADMIN_TASK_LIBUR_AKADEMIK
+  return ''
+}
+
+function isAdminTaskMissingKalenderTypeColumnError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  return msg.includes('jenis_kegiatan') && (msg.includes('schema cache') || msg.includes('column') || msg.includes('does not exist'))
+}
+
+function getAdminTaskDateRangeKeys(startValue, endValue) {
+  const startText = String(startValue || '').slice(0, 10)
+  const endText = String(endValue || startValue || '').slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startText)) return []
+  const start = new Date(`${startText}T00:00:00`)
+  const end = new Date(`${endText}T00:00:00`)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return [startText]
+  const result = []
+  const cursor = new Date(start)
+  while (cursor.getTime() <= end.getTime()) {
+    result.push(cursor.toISOString().slice(0, 10))
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return result
+}
+
+async function getAdminTaskAcademicHolidayDates(startDate, endDate) {
+  const withType = await sb
+    .from(ADMIN_TASK_KALENDER_TABLE)
+    .select('id, judul, detail, jenis_kegiatan, mulai, selesai')
+  let rows = []
+  if (!withType.error) {
+    rows = withType.data || []
+  } else if (isAdminTaskMissingKalenderTypeColumnError(withType.error)) {
+    const fallback = await sb
+      .from(ADMIN_TASK_KALENDER_TABLE)
+      .select('id, judul, detail, mulai, selesai')
+    if (fallback.error) throw fallback.error
+    rows = fallback.data || []
+  } else {
+    const msg = String(withType.error?.message || '').toLowerCase()
+    if (msg.includes(ADMIN_TASK_KALENDER_TABLE) && (msg.includes('does not exist') || msg.includes('schema cache'))) return new Set()
+    throw withType.error
+  }
+
+  const dateSet = new Set()
+  ;(rows || []).forEach(item => {
+    const type = inferAdminTaskKalenderType(item)
+    if (type !== ADMIN_TASK_LIBUR_SEMUA && type !== ADMIN_TASK_LIBUR_AKADEMIK) return
+    const keys = getAdminTaskDateRangeKeys(item?.mulai, item?.selesai || item?.mulai)
+    keys.forEach(key => {
+      if (key >= startDate && key <= endDate) dateSet.add(key)
+    })
+  })
+  return dateSet
+}
 
 function getAdminDailyTaskMissingTableMessage() {
   return `Tabel tugas harian belum ada di Supabase.\n\nSilakan buat tabel berikut:\n\n1) ${DAILY_TASK_TEMPLATE_TABLE}\n- id (uuid primary key, default gen_random_uuid())\n- tahun_ajaran_id (uuid, nullable)\n- tanggal (date)\n- judul (text)\n- deskripsi (text, nullable)\n- aktif (boolean, default true)\n- created_at (timestamptz, default now())\n\n2) ${DAILY_TASK_SUBMIT_TABLE}\n- id (uuid primary key, default gen_random_uuid())\n- template_id (uuid)\n- guru_id (uuid)\n- tanggal (date)\n- status (text: selesai/belum)\n- catatan (text, nullable)\n- submitted_at (timestamptz, default now())\n- updated_at (timestamptz, default now())\n\nUnique disarankan:\n- ${DAILY_TASK_TEMPLATE_TABLE}: (tahun_ajaran_id, tanggal, judul)\n- ${DAILY_TASK_SUBMIT_TABLE}: (template_id, guru_id, tanggal)`
@@ -289,6 +360,12 @@ async function getActiveTahunAjaranAdminDailyTask() {
 async function loadAdminDailyTaskData(periode) {
   const range = getMonthRange(periode)
   if (!range) throw new Error('Periode tidak valid')
+  let academicHolidayDates = new Set()
+  try {
+    academicHolidayDates = await getAdminTaskAcademicHolidayDates(range.start, range.end)
+  } catch (error) {
+    console.warn('Gagal memuat libur akademik untuk mutabaah admin.', error)
+  }
 
   const tahunAjaran = await getActiveTahunAjaranAdminDailyTask()
   const tahunAjaranId = tahunAjaran?.id || null
@@ -328,8 +405,11 @@ async function loadAdminDailyTaskData(periode) {
 
   return {
     tahunAjaran,
-    templates: (templateRes.data || []).filter(item => !isAhadDate(String(item?.tanggal || ''))),
-    submissions: submissionRes.data || [],
+    templates: (templateRes.data || []).filter(item => {
+      const tanggal = String(item?.tanggal || '').slice(0, 10)
+      return !isAhadDate(tanggal) && !academicHolidayDates.has(tanggal)
+    }),
+    submissions: (submissionRes.data || []).filter(item => !academicHolidayDates.has(String(item?.tanggal || '').slice(0, 10))),
     guruList
   }
 }
