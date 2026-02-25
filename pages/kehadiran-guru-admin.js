@@ -419,7 +419,7 @@ function buildKgSessionAggMaps(absensiRows, jamMap, distribusiMap = new Map()) {
     const mapelId = String(row.mapel_id || distribusi?.mapel_id || '')
     const guruId = String(row.guru_id || distribusi?.guru_id || '')
     const semesterId = String(row.semester_id || distribusi?.semester_id || '')
-    if (!tanggal || !kelasId || !mapelId || !guruId) return
+    if (!tanggal || !kelasId || !mapelId) return
 
     const jamData = row.jam_pelajaran_id ? jamMap.get(String(row.jam_pelajaran_id)) : null
     const jamKey = getKgJamMatchKey(jamData?.jam_mulai, jamData?.jam_selesai, row.jam_pelajaran_id)
@@ -443,16 +443,20 @@ function buildKgSessionAggMaps(absensiRows, jamMap, distribusiMap = new Map()) {
       if (note) item.notes.add(note)
     }
 
-    apply(genericMap, keyGeneric)
-    apply(exactMap, keyExact)
+    if (guruId) {
+      apply(genericMap, keyGeneric)
+      apply(exactMap, keyExact)
+    }
     apply(broadMap, keyBroad)
     apply(broadNoSemMap, keyBroadNoSem)
 
-    if (!genericSessionSetMap.has(keyGeneric)) {
-      genericSessionSetMap.set(keyGeneric, new Set())
-    }
     const marker = jamKey || '__NO_JAM__'
-    genericSessionSetMap.get(keyGeneric).add(marker)
+    if (guruId) {
+      if (!genericSessionSetMap.has(keyGeneric)) {
+        genericSessionSetMap.set(keyGeneric, new Set())
+      }
+      genericSessionSetMap.get(keyGeneric).add(marker)
+    }
 
     if (!broadSessionSetMap.has(keyBroad)) {
       broadSessionSetMap.set(keyBroad, new Set())
