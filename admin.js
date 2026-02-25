@@ -6,6 +6,7 @@ const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 const sb = supabase.createClient(supabaseUrl, supabaseKey)
 const externalPageHtmlCache = {}
 const externalPageScriptLoaded = {}
+const EXTERNAL_PAGE_ASSET_VERSION = '20260225-legacyfix-02'
 const pageDataCache = window.__pageDataCache || {}
 window.__pageDataCache = pageDataCache
 
@@ -1073,8 +1074,9 @@ async function loadExternalPage(page, params = {}) {
   const area = document.getElementById('content-area')
   if (!area) return
 
+  const htmlUrl = `pages/${page}.html?v=${EXTERNAL_PAGE_ASSET_VERSION}`
   if (!externalPageHtmlCache[page]) {
-    const response = await fetch(`pages/${page}.html`)
+    const response = await fetch(htmlUrl)
     externalPageHtmlCache[page] = await response.text()
   }
   area.innerHTML = externalPageHtmlCache[page]
@@ -1151,7 +1153,7 @@ async function loadExternalPage(page, params = {}) {
   }
 
   const script = document.createElement('script')
-  script.src = `pages/${page}.js?v=20260224-06`
+  script.src = `pages/${page}.js?v=${EXTERNAL_PAGE_ASSET_VERSION}`
   script.defer = true
   script.onload = () => {
     externalPageScriptLoaded[page] = true
