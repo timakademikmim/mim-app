@@ -8297,6 +8297,11 @@ async function renderMonitoringPage() {
 
   setMonitoringTab(monitoringState.tab || 'guru')
   onMonitoringSantriModeChange()
+  const periodeEl = document.getElementById('monitoring-periode')
+  if (periodeEl && !periodeEl.dataset.bound) {
+    periodeEl.addEventListener('change', () => reloadMonitoringData())
+    periodeEl.dataset.bound = 'true'
+  }
   await reloadMonitoringData()
 }
 
@@ -10340,8 +10345,9 @@ async function loadGuruPage(page) {
   if (targetPage !== 'profil') localStorage.setItem(GURU_LAST_PAGE_KEY, targetPage)
   closeTopbarUserMenu()
 
-  const cachedHtml = getGuruPageCache(targetPage)
-  if (cachedHtml) {
+  const allowPageCache = targetPage !== 'monitoring'
+  const cachedHtml = allowPageCache ? getGuruPageCache(targetPage) : ''
+  if (allowPageCache && cachedHtml) {
     const content = document.getElementById('guru-content')
     if (content) {
       content.innerHTML = cachedHtml
@@ -10379,7 +10385,7 @@ async function loadGuruPage(page) {
       return
     case 'monitoring':
       await renderMonitoringPage()
-      setGuruPageCache(targetPage)
+      clearGuruPageCache(targetPage)
       return
     case 'tugas':
       await renderTugasHarianPage()
