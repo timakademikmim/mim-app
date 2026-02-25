@@ -529,7 +529,29 @@ async function loadKehadiranGuruAdminData(periode) {
       .map(item => String(item?.semester_id || '').trim())
       .filter(Boolean)
   )]
-  const mergedInferredSemesterIds = [...new Set([...inferredSemesterIds, ...inferredSemesterIdsFromDistribusi])]
+  const inferredSemesterIdsFromKelasMapel = [...new Set(
+    absensiRows.flatMap(item => {
+      const kelasId = String(item?.kelas_id || '').trim()
+      const mapelId = String(item?.mapel_id || '').trim()
+      const guruId = String(item?.guru_id || '').trim()
+      if (!kelasId || !mapelId) return []
+
+      const candidates = distribusiAll.filter(dist => {
+        if (String(dist?.kelas_id || '').trim() !== kelasId) return false
+        if (String(dist?.mapel_id || '').trim() !== mapelId) return false
+        if (!guruId) return true
+        return String(dist?.guru_id || '').trim() === guruId
+      })
+      return candidates
+        .map(dist => String(dist?.semester_id || '').trim())
+        .filter(Boolean)
+    })
+  )]
+  const mergedInferredSemesterIds = [...new Set([
+    ...inferredSemesterIds,
+    ...inferredSemesterIdsFromDistribusi,
+    ...inferredSemesterIdsFromKelasMapel
+  ])]
   const targetSemesterIds = mergedInferredSemesterIds.length
     ? mergedInferredSemesterIds
     : [String(semesterId || '').trim()].filter(Boolean)
