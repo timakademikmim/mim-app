@@ -141,6 +141,24 @@ function getKgHariFromDate(dateText) {
   return names[date.getDay()] || ''
 }
 
+function normalizeKgDateText(value) {
+  return String(value || '').slice(0, 10)
+}
+
+function withKgButtonLoading(button, loadingLabel, runner) {
+  if (!button) return runner()
+  const prevDisabled = button.disabled === true
+  const prevText = button.textContent
+  button.disabled = true
+  if (loadingLabel) button.textContent = loadingLabel
+  return Promise.resolve()
+    .then(() => runner())
+    .finally(() => {
+      button.disabled = prevDisabled
+      button.textContent = prevText
+    })
+}
+
 function formatKgLocalDate(date) {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
@@ -234,6 +252,155 @@ async function getKgActiveSemesterByTahunAktif() {
 
   const semesterAktif = (semData || []).find(item => asBool(item?.aktif)) || semData?.[0] || null
   return { tahunAjaranId, semesterId: String(semesterAktif?.id || '') }
+}
+
+function pickLegacyDistribusiForAbsensiRow(row, distribusiList, jadwalByDistribusi, distribusiById) {
+  const existingDistribusi = distribusiById.get(String(row?.distribusi_id || ''))
+  if (existingDistribusi) return existingDistribusi
+
+  const kelasId = String(row?.kelas_id || '')
+  const mapelId = String(row?.mapel_id || '')
+  const semesterId = String(row?.semester_id || '')
+  const guruId = String(row?.guru_id || '')
+  const tanggal = normalizeKgDateText(row?.tanggal)
+  const hari = normalizeKgHari(getKgHariFromDate(tanggal))
+
+  const byKelasMapel = (distribusiList || []).filter(item =>
+    String(item?.kelas_id || '') === kelasId &&
+    String(item?.mapel_id || '') === mapelId
+  )
+  if (!byKelasMapel.length) return null
+
+  const bySemester = semesterId
+    ? byKelasMapel.filter(item => String(item?.semester_id || '') === semesterId)
+    : byKelasMapel
+  const base = bySemester.length ? bySemester : byKelasMapel
+
+  const byGuru = guruId
+    ? base.filter(item => String(item?.guru_id || '') === guruId)
+    : base
+  const narrowed = byGuru.length ? byGuru : base
+
+  const byHari = narrowed.filter(item => {
+    const key = String(item?.id || '')
+    const jadwalList = jadwalByDistribusi.get(key) || []
+    return jadwalList.some(j => normalizeKgHari(j?.hari) === hari)
+  })
+  if (byHari.length === 1) return byHari[0]
+  if (narrowed.length === 1) return narrowed[0]
+
+  return byHari[0] || narrowed[0] || null
+}
+
+function resolveLegacyJamPelajaranIdForRow(row, distribusi, jadwalByDistribusi) {
+  const currentJamId = String(row?.jam_pelajaran_id || '').trim()
+  if (currentJamId) return currentJamId
+  if (!distribusi) return ''
+
+  const tanggal = normalizeKgDateText(row?.tanggal)
+  const hari = normalizeKgHari(getKgHariFromDate(tanggal))
+  const jadwalList = (jadwalByDistribusi.get(String(distribusi.id || '')) || [])
+    .filter(item => normalizeKgHari(item?.hari) === hari)
+
+  if (jadwalList.length !== 1) return ''
+  return String(jadwalList[0]?.jam_pelajaran_id || '').trim()
+}
+
+async function repairLegacyKehadiranGuruData() {
+  const startDate = '2026-01-01'
+  const endDate = '2026-02-28'
+  if (!confirm(`Rapikan data absensi lama periode ${startDate} s/d ${endDate}?\n\nProses ini akan mengisi/menyamakan distribusi, guru, semester, dan jam pelajaran bila bisa dipastikan dari jadwal.`)) {
+    return
+  }
+
+  const triggerBtn = document.getElementById('kg-btn-repair-legacy')
+  await withKgButtonLoading(triggerBtn, 'Merapikan...', async () => {
+    const [distribusiRes, jadwalRes, absensiRes] = await Promise.all([
+      sb.from('distribusi_mapel').select('id, kelas_id, mapel_id, guru_id, semester_id'),
+      getKgJadwalRows(),
+      sb
+        .from('absensi_santri')
+        .select('id, tanggal, kelas_id, mapel_id, guru_id, jam_pelajaran_id, distribusi_id, semester_id')
+        .gte('tanggal', startDate)
+        .lte('tanggal', endDate)
+        .order('tanggal', { ascending: true })
+    ])
+
+    const firstError = distribusiRes.error || jadwalRes.error || absensiRes.error
+    if (firstError) throw firstError
+
+    const distribusiList = distribusiRes.data || []
+    const distribusiById = new Map(distribusiList.map(item => [String(item?.id || ''), item]))
+    const jadwalByDistribusi = new Map()
+    ;(jadwalRes.data || []).forEach(item => {
+      const key = String(item?.distribusi_id || '')
+      if (!key) return
+      if (!jadwalByDistribusi.has(key)) jadwalByDistribusi.set(key, [])
+      jadwalByDistribusi.get(key).push(item)
+    })
+
+    const rows = absensiRes.data || []
+    if (!rows.length) {
+      alert('Tidak ada data absensi lama yang perlu dirapikan.')
+      return
+    }
+
+    const pending = []
+    rows.forEach(row => {
+      const distribusi = pickLegacyDistribusiForAbsensiRow(row, distribusiList, jadwalByDistribusi, distribusiById)
+      if (!distribusi) return
+
+      const target = {
+        distribusi_id: String(distribusi.id || '') || null,
+        kelas_id: String(distribusi.kelas_id || '') || null,
+        mapel_id: String(distribusi.mapel_id || '') || null,
+        guru_id: String(distribusi.guru_id || '') || null,
+        semester_id: String(distribusi.semester_id || '') || null
+      }
+      const inferredJamId = resolveLegacyJamPelajaranIdForRow(row, distribusi, jadwalByDistribusi)
+      if (inferredJamId) target.jam_pelajaran_id = inferredJamId
+
+      const changed = (
+        String(row?.distribusi_id || '') !== String(target.distribusi_id || '') ||
+        String(row?.kelas_id || '') !== String(target.kelas_id || '') ||
+        String(row?.mapel_id || '') !== String(target.mapel_id || '') ||
+        String(row?.guru_id || '') !== String(target.guru_id || '') ||
+        String(row?.semester_id || '') !== String(target.semester_id || '') ||
+        (inferredJamId && String(row?.jam_pelajaran_id || '') !== inferredJamId)
+      )
+      if (!changed) return
+
+      pending.push({
+        id: String(row.id || ''),
+        payload: target
+      })
+    })
+
+    if (!pending.length) {
+      alert('Data lama sudah rapi, tidak ada perubahan.')
+      await loadKehadiranGuruAdminPage(true)
+      return
+    }
+
+    let successCount = 0
+    for (const item of pending) {
+      const { error } = await sb
+        .from('absensi_santri')
+        .update(item.payload)
+        .eq('id', item.id)
+      if (error) {
+        console.error(error)
+        throw error
+      }
+      successCount += 1
+    }
+
+    alert(`Perapihan selesai. ${successCount} baris absensi lama diperbarui.`)
+    await loadKehadiranGuruAdminPage(true)
+  }).catch(error => {
+    console.error(error)
+    alert(`Gagal merapikan data lama: ${String(error?.message || 'Unknown error')}`)
+  })
 }
 
 function buildKgSessionAggMaps(absensiRows, jamMap, distribusiMap = new Map()) {
@@ -757,3 +924,4 @@ window.initKehadiranGuruAdminPage = initKehadiranGuruAdminPage
 window.loadKehadiranGuruAdminPage = loadKehadiranGuruAdminPage
 window.openKehadiranGuruDetail = openKehadiranGuruDetail
 window.setKehadiranKaryawanMode = setKehadiranKaryawanMode
+window.repairLegacyKehadiranGuruData = repairLegacyKehadiranGuruData
