@@ -593,13 +593,11 @@ async function loadKehadiranGuruAdminData(periode) {
     })
   })
 
-  const { exactMap, genericMap, broadMap, broadNoSemMap, genericSessionCount, broadSessionCount, broadNoSemSessionCount } = buildKgSessionAggMaps(absensiRows, jamMap, distribusiAllMap)
+  const { exactMap, genericMap, broadMap, broadNoSemMap, genericSessionCount } = buildKgSessionAggMaps(absensiRows, jamMap, distribusiAllMap)
   const summaryByGuru = new Map()
   const detailByGuru = new Map()
   const penggantiCountMap = new Map()
   const penggantiByGuruMap = new Map()
-  const broadRemainingCount = new Map(broadSessionCount)
-  const broadNoSemRemainingCount = new Map(broadNoSemSessionCount)
 
   const sessionsByGeneric = new Map()
   expectedSessions.forEach(session => {
@@ -635,24 +633,16 @@ async function loadKehadiranGuruAdminData(periode) {
       }
       if (!agg) {
         const broadKey = `${session.tanggal}|${session.kelas_id}|${session.mapel_id}|${session.semester_id || ''}`
-        const broadRemaining = Number(broadRemainingCount.get(broadKey) || 0)
-        if (broadRemaining > 0) {
-          const broadAgg = broadMap.get(broadKey) || null
-          if (broadAgg) {
-            agg = broadAgg
-            broadRemainingCount.set(broadKey, broadRemaining - 1)
-          }
+        const broadAgg = broadMap.get(broadKey) || null
+        if (broadAgg) {
+          agg = broadAgg
         }
       }
       if (!agg) {
         const broadNoSemKey = `${session.tanggal}|${session.kelas_id}|${session.mapel_id}`
-        const broadNoSemRemaining = Number(broadNoSemRemainingCount.get(broadNoSemKey) || 0)
-        if (broadNoSemRemaining > 0) {
-          const broadNoSemAgg = broadNoSemMap.get(broadNoSemKey) || null
-          if (broadNoSemAgg) {
-            agg = broadNoSemAgg
-            broadNoSemRemainingCount.set(broadNoSemKey, broadNoSemRemaining - 1)
-          }
+        const broadNoSemAgg = broadNoSemMap.get(broadNoSemKey) || null
+        if (broadNoSemAgg) {
+          agg = broadNoSemAgg
         }
       }
 
