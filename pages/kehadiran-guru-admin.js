@@ -438,7 +438,7 @@ async function rebuildLegacyKehadiranGuruData() {
   const endDate = '2026-02-28'
   if (!confirm(
     `Bangun ulang total absensi ${startDate} s/d ${endDate}?\n\n` +
-    `Aksi ini akan menghapus lalu menulis ulang data absensi pada rentang tersebut dengan format kunci yang konsisten.\n` +
+    `Aksi ini akan menormalkan data absensi pada rentang tersebut dengan format kunci yang konsisten (tanpa menghapus massal).\n` +
     `Lanjutkan?`
   )) return
 
@@ -479,6 +479,7 @@ async function rebuildLegacyKehadiranGuruData() {
       const distribusi = pickLegacyDistribusiForAbsensiRow(row, distribusiList, jadwalByDistribusi, distribusiById)
       const inferredJamId = resolveLegacyJamPelajaranIdForRow(row, distribusi, jadwalByDistribusi)
       const normalized = {
+        _source_id: String(row.id || ''),
         tanggal: normalizeKgDateText(row.tanggal),
         kelas_id: String(distribusi?.kelas_id || row.kelas_id || '') || null,
         mapel_id: String(distribusi?.mapel_id || row.mapel_id || '') || null,
@@ -492,6 +493,7 @@ async function rebuildLegacyKehadiranGuruData() {
         keterangan_pengganti: String(row.keterangan_pengganti || '').trim() || null
       }
 
+      if (!normalized._source_id) return
       if (!normalized.tanggal || !normalized.kelas_id || !normalized.mapel_id || !normalized.santri_id) return
       const key = buildLegacyRewriteKey(normalized)
       if (!canonicalMap.has(key)) {
@@ -514,24 +516,28 @@ async function rebuildLegacyKehadiranGuruData() {
       return
     }
 
-    const { error: deleteError } = await sb
-      .from('absensi_santri')
-      .delete()
-      .gte('tanggal', startDate)
-      .lte('tanggal', endDate)
-    if (deleteError) throw deleteError
-
-    const chunkSize = 500
-    for (let i = 0; i < canonicalRows.length; i += chunkSize) {
-      const chunk = canonicalRows.slice(i, i + chunkSize)
-      let insertRes = await sb.from('absensi_santri').insert(chunk)
-      if (insertRes.error && isKgMissingPenggantiColumnError(insertRes.error)) {
-        insertRes = await sb.from('absensi_santri').insert(stripPenggantiFields(chunk))
+    let successCount = 0
+    for (const item of canonicalRows) {
+      const sourceId = String(item._source_id || '').trim()
+      if (!sourceId) continue
+      const payload = { ...item }
+      delete payload._source_id
+      let updateRes = await sb
+        .from('absensi_santri')
+        .update(payload)
+        .eq('id', sourceId)
+      if (updateRes.error && isKgMissingPenggantiColumnError(updateRes.error)) {
+        const safePayload = stripPenggantiFields([payload])[0]
+        updateRes = await sb
+          .from('absensi_santri')
+          .update(safePayload)
+          .eq('id', sourceId)
       }
-      if (insertRes.error) throw insertRes.error
+      if (updateRes.error) throw updateRes.error
+      successCount += 1
     }
 
-    alert(`Bangun ulang selesai. ${canonicalRows.length} baris ditulis ulang untuk ${startDate} s/d ${endDate}.`)
+    alert(`Bangun ulang selesai. ${successCount} baris dinormalisasi untuk ${startDate} s/d ${endDate}.`)
     await loadKehadiranGuruAdminPage(true)
   }).catch(error => {
     console.error(error)
