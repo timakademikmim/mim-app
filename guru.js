@@ -7623,8 +7623,14 @@ function getDatesByDayNameInRange(startDate, endDate, dayName) {
   const rows = []
   const cursor = new Date(`${startDate}T00:00:00`)
   const end = new Date(`${endDate}T00:00:00`)
+  const toLocalDate = date => {
+    const y = date.getFullYear()
+    const m = String(date.getMonth() + 1).padStart(2, '0')
+    const d = String(date.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
   while (cursor <= end) {
-    const text = cursor.toISOString().slice(0, 10)
+    const text = toLocalDate(cursor)
     if (normalizeHari(getHariFromDate(text)) === target) rows.push(text)
     cursor.setDate(cursor.getDate() + 1)
   }
@@ -7661,42 +7667,74 @@ async function loadMonitoringData(periode) {
 
   const semester = await getActiveSemester()
   const semesterId = String(semester?.id || '')
-  if (!semesterId) {
-    return { guruRows: [], guruDetail: [], santriRows: [], santriWeeklyRows: [] }
+
+  const getMonitoringJadwalRows = async () => {
+    const withJamId = await sb.from('jadwal_pelajaran').select('id, distribusi_id, hari, jam_mulai, jam_selesai, jam_pelajaran_id')
+    if (!withJamId.error) return withJamId
+    const msg = String(withJamId.error?.message || '').toLowerCase()
+    if (!msg.includes('jam_pelajaran_id')) return withJamId
+    return await sb.from('jadwal_pelajaran').select('id, distribusi_id, hari, jam_mulai, jam_selesai')
   }
 
-  const [distribusiRes, jadwalRes, absensiRes, kelasRes, mapelRes, karyawanRes, santriRes] = await Promise.all([
-    sb.from('distribusi_mapel').select('id, kelas_id, mapel_id, guru_id, semester_id').eq('semester_id', semesterId),
-    sb.from('jadwal_pelajaran').select('id, distribusi_id, hari, jam_mulai, jam_selesai'),
+  const [distribusiRes, jadwalRes, absensiRes, kelasRes, mapelRes, karyawanRes, santriRes, jamRes] = await Promise.all([
+    sb.from('distribusi_mapel').select('id, kelas_id, mapel_id, guru_id, semester_id'),
+    getMonitoringJadwalRows(),
     sb.from('absensi_santri')
-      .select('id, tanggal, kelas_id, mapel_id, guru_id, santri_id, status, semester_id, guru_pengganti_id')
-      .eq('semester_id', semesterId),
+      .select('id, tanggal, kelas_id, mapel_id, guru_id, santri_id, status, semester_id, distribusi_id, jam_pelajaran_id, guru_pengganti_id')
+      .gte('tanggal', range.start)
+      .lte('tanggal', range.end),
     sb.from('kelas').select('id, nama_kelas'),
     sb.from('mapel').select('id, nama'),
     sb.from('karyawan').select('id, nama, role, aktif'),
-    sb.from('santri').select('id, nama, kelas_id, aktif').eq('aktif', true)
+    sb.from('santri').select('id, nama, kelas_id, aktif').eq('aktif', true),
+    sb.from('jam_pelajaran').select('id, jam_mulai, jam_selesai')
   ])
 
-  const firstError = distribusiRes.error || jadwalRes.error || absensiRes.error || kelasRes.error || mapelRes.error || karyawanRes.error || santriRes.error
+  const firstError = distribusiRes.error || jadwalRes.error || absensiRes.error || kelasRes.error || mapelRes.error || karyawanRes.error || santriRes.error || jamRes.error
   if (firstError) throw firstError
 
-  const distribusiList = distribusiRes.data || []
+  const distribusiAll = distribusiRes.data || []
+  const distribusiAllMap = new Map(distribusiAll.map(item => [String(item?.id || ''), item]))
+  const absensiRows = absensiRes.data || []
+  const inferredSemesterIds = [...new Set(
+    absensiRows
+      .map(item => String(item?.semester_id || '').trim())
+      .filter(Boolean)
+  )]
+  const inferredSemesterIdsFromDistribusi = [...new Set(
+    absensiRows
+      .map(item => distribusiAllMap.get(String(item?.distribusi_id || '')))
+      .map(item => String(item?.semester_id || '').trim())
+      .filter(Boolean)
+  )]
+  const mergedSemesterIds = [...new Set([
+    ...inferredSemesterIds,
+    ...inferredSemesterIdsFromDistribusi
+  ])]
+  const targetSemesterIds = mergedSemesterIds.length
+    ? mergedSemesterIds
+    : [semesterId].filter(Boolean)
+
+  const distribusiList = targetSemesterIds.length
+    ? distribusiAll.filter(item => targetSemesterIds.includes(String(item?.semester_id || '').trim()))
+    : distribusiAll
   const distribusiMap = new Map(distribusiList.map(item => [String(item.id), item]))
   const kelasMap = new Map((kelasRes.data || []).map(item => [String(item.id), item]))
   const mapelMap = new Map((mapelRes.data || []).map(item => [String(item.id), item]))
   const karyawanMap = new Map((karyawanRes.data || []).map(item => [String(item.id), item]))
   const santriMap = new Map((santriRes.data || []).map(item => [String(item.id), item]))
+  const jamMap = new Map((jamRes.data || []).map(item => [String(item.id), item]))
   const jadwalRows = (jadwalRes.data || []).filter(item => distribusiMap.has(String(item.distribusi_id || '')))
-  const absensiRows = absensiRes.data || []
-  const guruAbsensiRows = absensiRows.filter(row => {
-    const tanggal = String(row.tanggal || '').slice(0, 10)
-    return !!tanggal && tanggal >= range.start && tanggal <= range.end
-  })
+  const guruAbsensiRows = absensiRows
 
   const expectedSessions = []
   jadwalRows.forEach(jadwal => {
     const distribusi = distribusiMap.get(String(jadwal.distribusi_id || ''))
     if (!distribusi) return
+    const jamData = jadwal.jam_pelajaran_id ? jamMap.get(String(jadwal.jam_pelajaran_id)) : null
+    const jamMulai = jamData?.jam_mulai || jadwal.jam_mulai
+    const jamSelesai = jamData?.jam_selesai || jadwal.jam_selesai
+    const jamKey = `${String(jamMulai || '').slice(0, 5)}|${String(jamSelesai || '').slice(0, 5)}|${String(jadwal.jam_pelajaran_id || '')}`
     const dates = getDatesByDayNameInRange(range.start, range.end, jadwal.hari)
     dates.forEach(tanggal => {
       expectedSessions.push({
@@ -7704,24 +7742,56 @@ async function loadMonitoringData(periode) {
         guru_id: String(distribusi.guru_id || ''),
         kelas_id: String(distribusi.kelas_id || ''),
         mapel_id: String(distribusi.mapel_id || ''),
-        jam_label: `${toTimeLabel(jadwal.jam_mulai)}-${toTimeLabel(jadwal.jam_selesai)}`
+        semester_id: String(distribusi.semester_id || ''),
+        jam_key: jamKey,
+        jam_label: `${toTimeLabel(jamMulai)}-${toTimeLabel(jamSelesai)}`
       })
     })
   })
 
-  const absensiSessionMap = new Map()
+  const exactMap = new Map()
+  const genericMap = new Map()
+  const guruDayMap = new Map()
+  const broadMap = new Map()
+  const broadNoSemMap = new Map()
+  const pushToMap = (map, key, row) => {
+    if (!map.has(key)) map.set(key, [])
+    map.get(key).push(row)
+  }
   guruAbsensiRows.forEach(row => {
-    const key = `${String(row.tanggal || '').slice(0, 10)}|${String(row.kelas_id || '')}|${String(row.mapel_id || '')}|${String(row.guru_id || '')}`
-    if (!absensiSessionMap.has(key)) absensiSessionMap.set(key, [])
-    absensiSessionMap.get(key).push(row)
+    const tanggal = String(row.tanggal || '').slice(0, 10)
+    const distribusi = distribusiAllMap.get(String(row.distribusi_id || '')) || null
+    const kelasId = String(row.kelas_id || distribusi?.kelas_id || '')
+    const mapelId = String(row.mapel_id || distribusi?.mapel_id || '')
+    const guruId = String(row.guru_id || distribusi?.guru_id || '')
+    const semesterRef = String(row.semester_id || distribusi?.semester_id || '')
+    if (!tanggal || !kelasId || !mapelId) return
+    const jamData = row.jam_pelajaran_id ? jamMap.get(String(row.jam_pelajaran_id)) : null
+    const jamKey = `${String(jamData?.jam_mulai || '').slice(0, 5)}|${String(jamData?.jam_selesai || '').slice(0, 5)}|${String(row.jam_pelajaran_id || '')}`
+    if (guruId) {
+      pushToMap(exactMap, `${tanggal}|${kelasId}|${mapelId}|${guruId}|${jamKey}`, row)
+      pushToMap(genericMap, `${tanggal}|${kelasId}|${mapelId}|${guruId}`, row)
+      pushToMap(guruDayMap, `${tanggal}|${guruId}`, row)
+    }
+    pushToMap(broadMap, `${tanggal}|${kelasId}|${mapelId}|${semesterRef}`, row)
+    pushToMap(broadNoSemMap, `${tanggal}|${kelasId}|${mapelId}`, row)
   })
 
   const summaryByGuru = new Map()
   const detailRows = []
   expectedSessions.forEach(item => {
     if (!item.guru_id) return
-    const key = `${item.tanggal}|${item.kelas_id}|${item.mapel_id}|${item.guru_id}`
-    const rows = absensiSessionMap.get(key) || []
+    const keyExact = `${item.tanggal}|${item.kelas_id}|${item.mapel_id}|${item.guru_id}|${item.jam_key}`
+    const keyGeneric = `${item.tanggal}|${item.kelas_id}|${item.mapel_id}|${item.guru_id}`
+    const keyGuruDay = `${item.tanggal}|${item.guru_id}`
+    const keyBroad = `${item.tanggal}|${item.kelas_id}|${item.mapel_id}|${item.semester_id || ''}`
+    const keyBroadNoSem = `${item.tanggal}|${item.kelas_id}|${item.mapel_id}`
+    const rows = exactMap.get(keyExact)
+      || genericMap.get(keyGeneric)
+      || guruDayMap.get(keyGuruDay)
+      || broadMap.get(keyBroad)
+      || broadNoSemMap.get(keyBroadNoSem)
+      || []
     const penggantiIds = [...new Set(rows.map(row => String(row.guru_pengganti_id || '')).filter(Boolean))]
     const status = rows.length === 0 ? 'Tidak Masuk' : (penggantiIds.length ? 'Diganti' : 'Masuk')
 
