@@ -403,6 +403,142 @@ async function repairLegacyKehadiranGuruData() {
   })
 }
 
+function normalizeLegacyStatus(status) {
+  const raw = String(status || '').trim().toLowerCase()
+  if (raw === 'terlambat') return 'Terlambat'
+  if (raw === 'sakit') return 'Sakit'
+  if (raw === 'izin') return 'Izin'
+  if (raw === 'alpa') return 'Alpa'
+  return 'Hadir'
+}
+
+function buildLegacyRewriteKey(row) {
+  return [
+    String(row.tanggal || ''),
+    String(row.kelas_id || ''),
+    String(row.mapel_id || ''),
+    String(row.guru_id || ''),
+    String(row.semester_id || ''),
+    String(row.santri_id || ''),
+    String(row.jam_pelajaran_id || '')
+  ].join('|')
+}
+
+function stripPenggantiFields(rows) {
+  return (rows || []).map(item => {
+    const next = { ...item }
+    delete next.guru_pengganti_id
+    delete next.keterangan_pengganti
+    return next
+  })
+}
+
+async function rebuildLegacyKehadiranGuruData() {
+  const startDate = '2026-01-01'
+  const endDate = '2026-02-28'
+  if (!confirm(
+    `Bangun ulang total absensi ${startDate} s/d ${endDate}?\n\n` +
+    `Aksi ini akan menghapus lalu menulis ulang data absensi pada rentang tersebut dengan format kunci yang konsisten.\n` +
+    `Lanjutkan?`
+  )) return
+
+  const triggerBtn = document.getElementById('kg-btn-rebuild-legacy')
+  await withKgButtonLoading(triggerBtn, 'Membangun ulang...', async () => {
+    const [distribusiRes, jadwalRes, absensiRes] = await Promise.all([
+      sb.from('distribusi_mapel').select('id, kelas_id, mapel_id, guru_id, semester_id'),
+      getKgJadwalRows(),
+      sb
+        .from('absensi_santri')
+        .select('id, tanggal, kelas_id, mapel_id, guru_id, jam_pelajaran_id, distribusi_id, semester_id, santri_id, status, guru_pengganti_id, keterangan_pengganti')
+        .gte('tanggal', startDate)
+        .lte('tanggal', endDate)
+        .order('tanggal', { ascending: true })
+    ])
+
+    const firstError = distribusiRes.error || jadwalRes.error || absensiRes.error
+    if (firstError) throw firstError
+
+    const distribusiList = distribusiRes.data || []
+    const distribusiById = new Map(distribusiList.map(item => [String(item?.id || ''), item]))
+    const jadwalByDistribusi = new Map()
+    ;(jadwalRes.data || []).forEach(item => {
+      const key = String(item?.distribusi_id || '')
+      if (!key) return
+      if (!jadwalByDistribusi.has(key)) jadwalByDistribusi.set(key, [])
+      jadwalByDistribusi.get(key).push(item)
+    })
+
+    const rows = absensiRes.data || []
+    if (!rows.length) {
+      alert('Tidak ada data Januari-Februari yang bisa dibangun ulang.')
+      return
+    }
+
+    const canonicalMap = new Map()
+    rows.forEach(row => {
+      const distribusi = pickLegacyDistribusiForAbsensiRow(row, distribusiList, jadwalByDistribusi, distribusiById)
+      const inferredJamId = resolveLegacyJamPelajaranIdForRow(row, distribusi, jadwalByDistribusi)
+      const normalized = {
+        tanggal: normalizeKgDateText(row.tanggal),
+        kelas_id: String(distribusi?.kelas_id || row.kelas_id || '') || null,
+        mapel_id: String(distribusi?.mapel_id || row.mapel_id || '') || null,
+        guru_id: String(distribusi?.guru_id || row.guru_id || '') || null,
+        jam_pelajaran_id: String(inferredJamId || row.jam_pelajaran_id || '') || null,
+        semester_id: String(distribusi?.semester_id || row.semester_id || '') || null,
+        distribusi_id: String(distribusi?.id || row.distribusi_id || '') || null,
+        santri_id: String(row.santri_id || '') || null,
+        status: normalizeLegacyStatus(row.status),
+        guru_pengganti_id: String(row.guru_pengganti_id || '') || null,
+        keterangan_pengganti: String(row.keterangan_pengganti || '').trim() || null
+      }
+
+      if (!normalized.tanggal || !normalized.kelas_id || !normalized.mapel_id || !normalized.santri_id) return
+      const key = buildLegacyRewriteKey(normalized)
+      if (!canonicalMap.has(key)) {
+        canonicalMap.set(key, normalized)
+        return
+      }
+      const existing = canonicalMap.get(key)
+      if (!existing.guru_pengganti_id && normalized.guru_pengganti_id) {
+        existing.guru_pengganti_id = normalized.guru_pengganti_id
+      }
+      if (!existing.keterangan_pengganti && normalized.keterangan_pengganti) {
+        existing.keterangan_pengganti = normalized.keterangan_pengganti
+      }
+      canonicalMap.set(key, existing)
+    })
+
+    const canonicalRows = Array.from(canonicalMap.values())
+    if (!canonicalRows.length) {
+      alert('Tidak ada baris valid untuk ditulis ulang.')
+      return
+    }
+
+    const { error: deleteError } = await sb
+      .from('absensi_santri')
+      .delete()
+      .gte('tanggal', startDate)
+      .lte('tanggal', endDate)
+    if (deleteError) throw deleteError
+
+    const chunkSize = 500
+    for (let i = 0; i < canonicalRows.length; i += chunkSize) {
+      const chunk = canonicalRows.slice(i, i + chunkSize)
+      let insertRes = await sb.from('absensi_santri').insert(chunk)
+      if (insertRes.error && isKgMissingPenggantiColumnError(insertRes.error)) {
+        insertRes = await sb.from('absensi_santri').insert(stripPenggantiFields(chunk))
+      }
+      if (insertRes.error) throw insertRes.error
+    }
+
+    alert(`Bangun ulang selesai. ${canonicalRows.length} baris ditulis ulang untuk ${startDate} s/d ${endDate}.`)
+    await loadKehadiranGuruAdminPage(true)
+  }).catch(error => {
+    console.error(error)
+    alert(`Gagal bangun ulang data lama: ${String(error?.message || 'Unknown error')}`)
+  })
+}
+
 function buildKgSessionAggMaps(absensiRows, jamMap, distribusiMap = new Map()) {
   const exactMap = new Map()
   const genericMap = new Map()
@@ -1015,3 +1151,4 @@ window.loadKehadiranGuruAdminPage = loadKehadiranGuruAdminPage
 window.openKehadiranGuruDetail = openKehadiranGuruDetail
 window.setKehadiranKaryawanMode = setKehadiranKaryawanMode
 window.repairLegacyKehadiranGuruData = repairLegacyKehadiranGuruData
+window.rebuildLegacyKehadiranGuruData = rebuildLegacyKehadiranGuruData
