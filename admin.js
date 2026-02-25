@@ -217,6 +217,8 @@ function setActiveSidebarTab(page) {
     page === 'kelas-distribusi-mapel' ||
     page === 'kelas-guru-mapel' ||
     page === 'jadwal' ||
+    page === 'ujian' ||
+    page === 'jadwal-ujian' ||
     page === 'kalender-akademik' ||
     page === 'santri' ||
     page === 'alumni' ||
@@ -289,6 +291,8 @@ function setTopbarTitle(page) {
     'kelas-distribusi-mapel': 'Distribusi Mapel',
     'kelas-guru-mapel': 'Data Mapel',
     jadwal: 'Jadwal Pelajaran',
+    ujian: 'Ujian',
+    'jadwal-ujian': 'Jadwal Ujian',
     'ketahfizan-halaqah': 'Data Halaqah',
     'ketahfizan-hafalan': 'Data Hafalan',
     'ketahfizan-jadwal': 'Jadwal Halaqah',
@@ -918,6 +922,8 @@ function toggleKesantrianSidebarMenu() {
 function getAkademikPageFromSubtab(subtab) {
   if (subtab === 'kelas') return 'kelas'
   if (subtab === 'jadwal') return 'jadwal'
+  if (subtab === 'ujian') return 'ujian'
+  if (subtab === 'jadwal-ujian') return 'jadwal-ujian'
   if (subtab === 'kalender-akademik') return 'kalender-akademik'
   if (subtab === 'set-tugas') return 'set-tugas'
   if (subtab === 'santri') return 'santri'
@@ -1026,6 +1032,12 @@ function loadPage(page, params = {}) {
     case 'jadwal':
       loadExternalPage('jadwal')
       break
+    case 'ujian':
+      loadExternalPage('ujian')
+      break
+    case 'jadwal-ujian':
+      loadExternalPage('jadwal-ujian')
+      break
     case 'ketahfizan-halaqah':
       loadExternalPage('ketahfizan', { subtab: 'halaqah' })
       break
@@ -1104,6 +1116,14 @@ async function loadExternalPage(page, params = {}) {
       initJadwalPage()
       return
     }
+    if (page === 'ujian' && typeof initUjianPage === 'function') {
+      initUjianPage()
+      return
+    }
+    if (page === 'jadwal-ujian' && typeof initJadwalUjianPage === 'function') {
+      initJadwalUjianPage()
+      return
+    }
     if (page === 'kalender-akademik' && typeof initKalenderAkademikPage === 'function') {
       initKalenderAkademikPage()
       return
@@ -1131,7 +1151,7 @@ async function loadExternalPage(page, params = {}) {
   }
 
   const script = document.createElement('script')
-  script.src = `pages/${page}.js`
+  script.src = `pages/${page}.js?v=20260224-06`
   script.defer = true
   script.onload = () => {
     externalPageScriptLoaded[page] = true

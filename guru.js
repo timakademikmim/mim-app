@@ -13,6 +13,15 @@ const MONTHLY_REPORT_STORAGE_BUCKET = 'laporan-bulanan'
 const MONTHLY_REPORT_WA_TEMPLATE_KEY = 'laporan_bulanan_wa_template'
 const DAILY_TASK_TEMPLATE_TABLE = 'tugas_harian_template'
 const DAILY_TASK_SUBMIT_TABLE = 'tugas_harian_submit'
+const EXAM_SCHEDULE_TABLE = 'jadwal_ujian'
+const EXAM_QUESTION_TABLE = 'soal_ujian'
+const EXAM_ARABIC_FONT_FILE = 'Traditional Arabic Regular.ttf'
+const EXAM_ARABIC_FONT_NAME = 'TraditionalArabic'
+const EXAM_ARABIC_FONT_BOLD_FILE = 'Traditional Arabic Bold.ttf'
+const EXAM_ARABIC_FONT_BOLD_NAME = 'TraditionalArabicBold'
+const EXAM_ARABIC_FONT_VFS_KEY = 'traditional-arabic-regular.ttf'
+const EXAM_ARABIC_FONT_BOLD_VFS_KEY = 'traditional-arabic-bold.ttf'
+const EXAM_PRINT_BACKGROUND_URL = 'Bg Ujian.png'
 const TOPBAR_KALENDER_TABLE = 'kalender_akademik'
 const SCHOOL_PROFILE_TABLE = 'struktur_sekolah'
 const TOPBAR_KALENDER_CACHE_KEY = 'kalender_akademik:list'
@@ -30,7 +39,8 @@ const GURU_PAGE_CACHEABLE = new Set([
   'laporan-pekanan',
   'laporan-absensi',
   'laporan-bulanan',
-  'rapor'
+  'rapor',
+  'ujian'
 ])
 const TOPBAR_KALENDER_DEFAULT_COLOR = '#2563eb'
 const RAPOR_PDF_BACKGROUND_URL = 'Background Rapor.png'
@@ -47,6 +57,7 @@ const PAGE_TITLES = {
   'laporan-pekanan': 'Laporan Pekanan',
   'laporan-bulanan': 'Laporan Bulanan',
   jadwal: 'Jadwal',
+  ujian: 'Ujian',
   mapel: 'Mapel',
   monitoring: 'Monitoring',
   absensi: 'Absensi',
@@ -132,6 +143,23 @@ let monitoringState = {
   santriRows: [],
   santriWeeklyRows: []
 }
+let ujianGuruState = {
+  rows: [],
+  mapelPairs: new Set(),
+  classListByMapelPerangkatan: new Map(),
+  soalByJadwal: new Map(),
+  openFolders: new Set(),
+  supportsKelasTarget: true,
+  activeJadwal: null,
+  activeKelasName: '',
+  sectionDefs: [],
+  activeSoal: null
+}
+let examArabicFontBase64 = ''
+let examArabicFontBoldBase64 = ''
+let examArabicFontLoadPromise = null
+let examPrintBackgroundDataUrl = ''
+let examPrintBackgroundLoadPromise = null
 
 function getGuruPageCache(page) {
   if (!GURU_PAGE_CACHEABLE.has(String(page || ''))) return ''
@@ -2068,6 +2096,43 @@ function loadGuruNotifPrefs() {
     topbarNotifState.readMap = parsed && typeof parsed === 'object' ? parsed : {}
   } catch (_err) {
     topbarNotifState.readMap = {}
+  }
+
+  window.showPopupChoices = function showPopupChoices(message, choices = []) {
+    return new Promise(resolve => {
+      messageEl.textContent = String(message ?? '')
+      actionsEl.innerHTML = ''
+
+      const list = Array.isArray(choices) ? choices : []
+      if (!list.length) {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.textContent = 'Tutup'
+        btn.className = 'app-popup-primary'
+        btn.onclick = () => {
+          closePopup()
+          resolve('')
+        }
+        actionsEl.appendChild(btn)
+      } else {
+        list.forEach((choice, idx) => {
+          const btn = document.createElement('button')
+          btn.type = 'button'
+          btn.textContent = String(choice?.label || `Opsi ${idx + 1}`)
+          if (choice?.primary) btn.className = 'app-popup-primary'
+          btn.onclick = () => {
+            closePopup()
+            resolve(String(choice?.value || ''))
+          }
+          actionsEl.appendChild(btn)
+        })
+      }
+
+      overlay.classList.add('open')
+      overlay.setAttribute('aria-hidden', 'false')
+      const focusBtn = actionsEl.querySelector('button.app-popup-primary') || actionsEl.querySelector('button')
+      if (focusBtn) focusBtn.focus()
+    })
   }
   const rangeRaw = Number(localStorage.getItem(TOPBAR_NOTIF_RANGE_KEY) || '3')
   topbarNotifState.rangeDays = [1, 3, 7].includes(rangeRaw) ? rangeRaw : 3
@@ -8165,6 +8230,1967 @@ async function renderMonitoringPage() {
   await reloadMonitoringData()
 }
 
+function normalizeExamLookup(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+function getExamPerangkatanFromClassName(kelasName) {
+  const text = String(kelasName || '').trim().toLowerCase()
+  if (!text) return 'SMP'
+  if (text.includes('smp') || /^([789])([a-z]|\b|[-\s]|$)/i.test(text) || /\b7\b|\b8\b|\b9\b/.test(text)) return 'SMP'
+  if (text.includes('sma') || text.includes('ma ') || text.endsWith(' ma') || /^(x|xi|xii)(\b|[-\s]|$)/i.test(text) || /\b10\b|\b11\b|\b12\b/.test(text)) return 'SMA'
+  return 'SMP'
+}
+
+function getExamMapelBaseLabel(mapelText) {
+  const raw = String(mapelText || '').trim()
+  if (!raw) return ''
+  return raw
+    .replace(/\(\s*(SMP|SMA|Umum)\s*\)/ig, '')
+    .replace(/(\s+(SMP|SMA|Umum))+$/i, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
+function parseExamMetaFromSchedule(row) {
+  const raw = String(row?.keterangan || '').trim()
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch (_err) {
+    return {}
+  }
+}
+
+function splitExamClassTokens(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return []
+  const normalized = raw.replace(/\s+(dan|&)\s+/ig, ',')
+  return [...new Set(
+    normalized
+      .split(/[;,/|]+/)
+      .map(item => String(item || '').trim())
+      .filter(Boolean)
+  )]
+}
+
+function getExamRowClassLabel(row) {
+  const meta = parseExamMetaFromSchedule(row)
+  const classRows = Array.isArray(meta?.class_rows) ? meta.class_rows : []
+  const kelasNames = [...new Set(classRows.map(item => String(item?.kelas_nama || '').trim()).filter(Boolean))]
+  if (kelasNames.length) return kelasNames.join(', ')
+  return String(row?.kelas || '-')
+}
+
+function getExamRowClassList(row, fallbackClassNames = []) {
+  const meta = parseExamMetaFromSchedule(row)
+  const classRows = Array.isArray(meta?.class_rows) ? meta.class_rows : []
+  const kelasNames = [...new Set(classRows.map(item => String(item?.kelas_nama || '').trim()).filter(Boolean))]
+  if (kelasNames.length) return kelasNames
+
+  const altMetaList = []
+    .concat(Array.isArray(meta?.kelas_list) ? meta.kelas_list : [])
+    .concat(Array.isArray(meta?.kelas_rows) ? meta.kelas_rows.map(item => item?.kelas_nama || item?.kelas || '') : [])
+    .concat(Array.isArray(meta?.classes) ? meta.classes : [])
+  const metaClasses = [...new Set(altMetaList.map(item => String(item || '').trim()).filter(Boolean))]
+  if (metaClasses.length) return metaClasses
+
+  const fallbackFromDistribusi = [...new Set(
+    (Array.isArray(fallbackClassNames) ? fallbackClassNames : [])
+      .map(item => String(item || '').trim())
+      .filter(Boolean)
+  )]
+  if (fallbackFromDistribusi.length) return fallbackFromDistribusi
+
+  const fallback = String(row?.kelas || '').trim()
+  const splitFallback = splitExamClassTokens(fallback)
+  return splitFallback.length ? splitFallback : (fallback ? [fallback] : [])
+}
+
+function getExamRowMapelLabel(row) {
+  const meta = parseExamMetaFromSchedule(row)
+  const mapelRaw = String(meta?.mapel_nama || '').trim() || String(row?.mapel || '').trim()
+  const mapelBase = getExamMapelBaseLabel(mapelRaw)
+  return mapelBase || '-'
+}
+
+function isExamTableMissingError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  const code = String(error?.code || '').toUpperCase()
+  return code === '42P01' ||
+    msg.includes('does not exist') ||
+    msg.includes('relation') ||
+    msg.includes('could not find the table') ||
+    msg.includes(`public.${EXAM_SCHEDULE_TABLE}`) ||
+    msg.includes(`public.${EXAM_QUESTION_TABLE}`)
+}
+
+function isExamColumnMissingError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  return msg.includes('column') || msg.includes('schema cache')
+}
+
+function buildExamScheduleMissingTableMessage() {
+  return `Tabel '${EXAM_SCHEDULE_TABLE}' belum ada.\n\nJalankan SQL:\ncreate table if not exists public.${EXAM_SCHEDULE_TABLE} (\n  id uuid primary key default gen_random_uuid(),\n  jenis text not null,\n  nama text not null,\n  kelas text not null,\n  mapel text not null,\n  tanggal date not null,\n  jam_mulai time,\n  jam_selesai time,\n  lokasi text,\n  keterangan text,\n  created_at timestamptz not null default now(),\n  updated_at timestamptz not null default now()\n);`
+}
+
+function buildExamQuestionMissingTableMessage() {
+  return `Tabel '${EXAM_QUESTION_TABLE}' belum ada.\n\nJalankan SQL:\ncreate table if not exists public.${EXAM_QUESTION_TABLE} (\n  id uuid primary key default gen_random_uuid(),\n  jadwal_id uuid not null,\n  guru_id text not null,\n  guru_nama text,\n  bentuk_soal text,\n  jumlah_nomor integer,\n  instruksi text,\n  questions_json text,\n  status text not null default 'draft',\n  created_at timestamptz not null default now(),\n  updated_at timestamptz not null default now()\n);\n\ncreate unique index if not exists soal_ujian_jadwal_guru_uidx on public.${EXAM_QUESTION_TABLE}(jadwal_id, guru_id);`
+}
+
+function parseExamQuestions(value) {
+  if (Array.isArray(value)) return value
+  const raw = String(value || '').trim()
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch (_err) {
+    return []
+  }
+}
+
+async function ensureExamArabicFontLoaded() {
+  if (examArabicFontBase64) return true
+  if (examArabicFontLoadPromise) return examArabicFontLoadPromise
+  examArabicFontLoadPromise = (async () => {
+    try {
+      const loadFile = async (filename, required = true) => {
+        const candidates = [
+          String(filename || '').trim(),
+          `./${String(filename || '').trim()}`,
+          `../${String(filename || '').trim()}`,
+          `/${String(filename || '').trim()}`
+        ].filter(Boolean)
+        let lastErr = null
+        for (const candidate of candidates) {
+          try {
+            const res = await fetch(encodeURI(candidate), { cache: 'no-cache' })
+            if (!res.ok) throw new Error(`HTTP ${res.status}`)
+            const buf = await res.arrayBuffer()
+            const bytes = new Uint8Array(buf)
+            let binary = ''
+            const chunkSize = 0x8000
+            for (let i = 0; i < bytes.length; i += chunkSize) {
+              binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
+            }
+            return btoa(binary)
+          } catch (err) {
+            lastErr = err
+          }
+        }
+        if (!required) return ''
+        throw (lastErr || new Error(`Gagal memuat font: ${String(filename || '-')}`))
+      }
+      examArabicFontBase64 = await loadFile(EXAM_ARABIC_FONT_FILE, true)
+      examArabicFontBoldBase64 = await loadFile(EXAM_ARABIC_FONT_BOLD_FILE, false)
+      return Boolean(examArabicFontBase64)
+    } catch (err) {
+      console.warn('Gagal memuat font Arab untuk PDF.', err)
+      examArabicFontBase64 = ''
+      examArabicFontBoldBase64 = ''
+      return false
+    } finally {
+      examArabicFontLoadPromise = null
+    }
+  })()
+  return examArabicFontLoadPromise
+}
+
+async function ensureExamPrintBackgroundLoaded() {
+  if (examPrintBackgroundDataUrl) return examPrintBackgroundDataUrl
+  if (examPrintBackgroundLoadPromise) return examPrintBackgroundLoadPromise
+  examPrintBackgroundLoadPromise = (async () => {
+    try {
+      const candidates = [EXAM_PRINT_BACKGROUND_URL, 'Ujian.png', 'bg ujian.png']
+      let dataUrl = ''
+      for (const candidate of candidates) {
+        try {
+          dataUrl = await loadPdfBackgroundDataUrl(candidate)
+          if (dataUrl) break
+        } catch (_err) {}
+      }
+      examPrintBackgroundDataUrl = dataUrl
+      return examPrintBackgroundDataUrl
+    } catch (err) {
+      console.warn('Gagal memuat background ujian.', err)
+      examPrintBackgroundDataUrl = ''
+      return ''
+    } finally {
+      examPrintBackgroundLoadPromise = null
+    }
+  })()
+  return examPrintBackgroundLoadPromise
+}
+
+function parseExamInstruksiMeta(value) {
+  const raw = String(value || '')
+  const marker = raw.match(/^\[\[LANG:(AR|ID)\]\]\s*\n?/i)
+  const lang = marker ? String(marker[1] || 'ID').toUpperCase() : 'ID'
+  const text = marker ? raw.slice(marker[0].length) : raw
+  return {
+    lang: lang === 'AR' ? 'AR' : 'ID',
+    text: String(text || '').trim()
+  }
+}
+
+function buildExamInstruksiWithMeta(lang, text) {
+  const safeLang = String(lang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+  const body = String(text || '').trim()
+  if (!body && safeLang === 'ID') return null
+  if (!body) return `[[LANG:${safeLang}]]`
+  return `[[LANG:${safeLang}]]\n${body}`
+}
+
+function getExamPdfStaticText(langCode) {
+  const lang = String(langCode || 'ID').toUpperCase()
+  if (lang === 'AR') {
+    return {
+      title: 'أسئلة الامتحان',
+      jenis: 'النوع',
+      namaUjian: 'اسم الاختبار',
+      kelasMapel: 'الصف',
+      mapel: 'المادة',
+      tanggalWaktu: 'التاريخ',
+      waktu: 'الوقت',
+      guru: 'المعلم',
+      instruksiUmum: 'تعليمات عامة',
+      modelSoal: 'نموذج الأسئلة'
+    }
+  }
+  return {
+    title: 'SOAL UJIAN',
+    jenis: 'Jenis',
+    namaUjian: 'Nama Ujian',
+    kelasMapel: 'Kelas',
+    mapel: 'Mapel',
+    tanggalWaktu: 'Tanggal',
+    waktu: 'Waktu',
+    guru: 'Guru',
+    instruksiUmum: 'Instruksi Umum',
+    modelSoal: 'Model Soal'
+  }
+}
+
+function toArabicIndicDigits(value) {
+  const map = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩']
+  return String(value == null ? '' : value).replace(/\d/g, d => map[Number(d)] || d)
+}
+
+function formatExamNumber(value, langCode = 'ID') {
+  const lang = String(langCode || 'ID').toUpperCase()
+  return lang === 'AR' ? toArabicIndicDigits(value) : String(value)
+}
+
+function getExamMarkerSeparator(langCode = 'ID') {
+  return '.'
+}
+
+function formatExamMarker(token, langCode = 'ID') {
+  const lang = String(langCode || 'ID').toUpperCase()
+  const body = String(token || '')
+  return lang === 'AR' ? `.${body}` : `${body}.`
+}
+
+function getArabicLetterByIndex(index) {
+  const letters = ['أ', 'ب', 'ج', 'د', 'هـ', 'و', 'ز', 'ح', 'ط', 'ي', 'ك', 'ل', 'م', 'ن', 'س', 'ع', 'ف', 'ص', 'ق', 'ر', 'ش', 'ت', 'ث', 'خ', 'ذ', 'ض']
+  return letters[Number(index || 0) % letters.length]
+}
+
+function buildExamPrintSections(questions, fallbackType = 'pilihan-ganda') {
+  const rows = Array.isArray(questions) ? questions : []
+  const sections = []
+  let currentType = ''
+  let currentItems = []
+  rows.forEach((item, idx) => {
+    const qType = normalizeExamQuestionType(item?.type, fallbackType)
+    const numbered = {
+      ...item,
+      no: Number(item?.no || (idx + 1))
+    }
+    if (!currentType) {
+      currentType = qType
+      currentItems.push(numbered)
+      return
+    }
+    if (qType !== currentType) {
+      sections.push({ type: currentType, items: currentItems })
+      currentType = qType
+      currentItems = [numbered]
+      return
+    }
+    currentItems.push(numbered)
+  })
+  if (currentItems.length) sections.push({ type: currentType || 'pilihan-ganda', items: currentItems })
+  return sections
+}
+
+function getExamPrintTypeTitle(type, index, langCode = 'ID') {
+  const parts = getExamPrintTypeParts(type, index, langCode)
+  return `${parts.marker} ${parts.label}`
+}
+
+function getExamPrintTypeParts(type, index, langCode = 'ID') {
+  const lang = String(langCode || 'ID').toUpperCase()
+  let label = 'Pilihan Ganda'
+  if (lang === 'AR') {
+    if (type === 'esai') label = 'مقال'
+    else if (type === 'pasangkan-kata') label = 'وصل الكلمات'
+    else if (type === 'isi-titik') label = 'املأ الفراغ'
+    else label = 'اختيار من متعدد'
+  } else {
+    if (type === 'esai') label = 'Esai'
+    else if (type === 'pasangkan-kata') label = 'Pasangkan Kata'
+    else if (type === 'isi-titik') label = 'Isi Titik Kosong'
+  }
+  const code = lang === 'AR' ? getArabicLetterByIndex(index) : String.fromCharCode(65 + (Number(index || 0) % 26))
+  return {
+    marker: formatExamMarker(code, lang),
+    label
+  }
+}
+
+function getExamPrintTypeInstruction(type, langCode = 'ID') {
+  const lang = String(langCode || 'ID').toUpperCase()
+  if (lang === 'AR') {
+    if (type === 'esai') return 'أجب عن الأسئلة التالية بوضوح وصحة.'
+    if (type === 'pasangkan-kata') return 'صِل كلمات العمود (أ) بما يناسبها في العمود (ب).'
+    if (type === 'isi-titik') return 'أكمل الفراغ بالكلمة المناسبة من الكلمات المعطاة.'
+    return 'اختر إجابة واحدة صحيحة.'
+  }
+  if (type === 'esai') return 'Jawablah soal berikut dengan jelas dan benar.'
+  if (type === 'pasangkan-kata') return 'Pasangkan kata pada baris A dengan pasangan yang tepat pada baris B.'
+  if (type === 'isi-titik') return 'Lengkapi bagian yang kosong dengan penggalan kata yang disediakan.'
+  return 'Pilihlah satu jawaban yang paling tepat.'
+}
+
+function normalizeExamQuestionType(value, fallbackType = '') {
+  const raw = String(value || '').trim().toLowerCase()
+  if (raw === 'esai' || raw === 'essay') return 'esai'
+  if (raw === 'pilihan-ganda' || raw === 'pilihan ganda' || raw === 'pg') return 'pilihan-ganda'
+  if (raw === 'pasangkan-kata' || raw === 'pasangkan kata' || raw === 'matching') return 'pasangkan-kata'
+  if (raw === 'isi-titik' || raw === 'isi titik' || raw === 'fill-blank' || raw === 'fill blank') return 'isi-titik'
+  const fallback = String(fallbackType || '').trim().toLowerCase()
+  if (fallback === 'esai' || fallback === 'essay') return 'esai'
+  if (fallback === 'pasangkan-kata' || fallback === 'pasangkan kata' || fallback === 'matching') return 'pasangkan-kata'
+  if (fallback === 'isi-titik' || fallback === 'isi titik' || fallback === 'fill-blank' || fallback === 'fill blank') return 'isi-titik'
+  return 'pilihan-ganda'
+}
+
+function deriveExamSectionsFromQuestions(questions, fallbackType = 'pilihan-ganda', totalCount = 0) {
+  const rows = Array.isArray(questions) ? questions : []
+  let maxNo = 0
+  rows.forEach((item, idx) => {
+    const no = Number(item?.no || (idx + 1))
+    if (Number.isFinite(no) && no > maxNo) maxNo = no
+  })
+  const safeCount = Number.isFinite(totalCount) ? Math.max(1, Math.min(200, Math.round(totalCount))) : Math.max(1, maxNo || 1)
+  const typeMap = new Array(safeCount + 1).fill(normalizeExamQuestionType('', fallbackType))
+  rows.forEach((item, idx) => {
+    const no = Number(item?.no || (idx + 1))
+    if (!Number.isFinite(no) || no <= 0 || no > safeCount) return
+    typeMap[no] = normalizeExamQuestionType(item?.type, fallbackType)
+  })
+  const sections = []
+  let start = 1
+  let current = typeMap[1]
+  for (let i = 2; i <= safeCount; i += 1) {
+    if (typeMap[i] === current) continue
+    const segmentItems = rows.filter((item, idx) => {
+      const no = Number(item?.no || (idx + 1))
+      return no >= start && no <= (i - 1)
+    })
+    const fragSet = new Set()
+    segmentItems.forEach(item => {
+      const frags = Array.isArray(item?.fragments) ? item.fragments : []
+      frags.forEach(f => {
+        const txt = String(f || '').trim()
+        if (txt) fragSet.add(txt)
+      })
+    })
+    sections.push({ type: current, start, end: i - 1, wordPool: [...fragSet].join(', '), blankCount: (i - 1) - start + 1 })
+    start = i
+    current = typeMap[i]
+  }
+  {
+    const segmentItems = rows.filter((item, idx) => {
+      const no = Number(item?.no || (idx + 1))
+      return no >= start && no <= safeCount
+    })
+    const fragSet = new Set()
+    segmentItems.forEach(item => {
+      const frags = Array.isArray(item?.fragments) ? item.fragments : []
+      frags.forEach(f => {
+        const txt = String(f || '').trim()
+        if (txt) fragSet.add(txt)
+      })
+    })
+    sections.push({ type: current, start, end: safeCount, wordPool: [...fragSet].join(', '), blankCount: safeCount - start + 1 })
+  }
+  return sections
+}
+
+function parseGuruUjianRangeValue(value, maxCount) {
+  const raw = String(value || '').trim()
+  if (!raw) return null
+  const num = Number(raw)
+  if (!Number.isFinite(num)) return null
+  const rounded = Math.round(num)
+  return Math.max(1, Math.min(Math.max(1, maxCount), rounded))
+}
+
+function estimateGuruUjianTotalFromSections(rawSections = [], fallbackTotal = 1) {
+  const source = Array.isArray(rawSections) ? rawSections : []
+  let cursor = 1
+  source.forEach(item => {
+    const type = normalizeExamQuestionType(item?.type, 'pilihan-ganda')
+    const parsedEnd = parseGuruUjianRangeValue(item?.end, 200)
+    const parsedCount = parseGuruUjianRangeValue(item?.count, 200)
+    let length = 1
+    if (parsedCount !== null) {
+      length = parsedCount
+    } else if (type === 'isi-titik') {
+      const words = String(item?.wordPool || item?.words || '').split(',').map(x => String(x || '').trim()).filter(Boolean)
+      length = Math.max(1, words.length || 1)
+    } else if (parsedEnd !== null && parsedEnd >= cursor) {
+      length = (parsedEnd - cursor + 1)
+    }
+    cursor += Math.max(1, length)
+  })
+  const estimated = cursor - 1
+  const fallback = Number.isFinite(Number(fallbackTotal)) ? Math.max(0, Math.round(Number(fallbackTotal))) : 0
+  return source.length ? Math.max(1, estimated) : fallback
+}
+
+function normalizeGuruUjianSections(totalCount, rawSections = []) {
+  const safeCount = Number.isFinite(totalCount) ? Math.max(0, Math.min(200, Math.round(totalCount))) : 0
+  const list = []
+  let cursor = 1
+  ;(Array.isArray(rawSections) ? rawSections : []).forEach(item => {
+    if (cursor > safeCount) return
+    const type = normalizeExamQuestionType(item?.type, 'pilihan-ganda')
+    let end = cursor
+    let wordPool = ''
+    let blankCount = null
+    let countHint = null
+    const parsedCount = parseGuruUjianRangeValue(item?.count, safeCount)
+    if (type === 'isi-titik') {
+      wordPool = String(item?.wordPool || item?.words || '').trim()
+      const words = wordPool.split(',').map(x => String(x || '').trim()).filter(Boolean)
+      const autoCount = parsedCount === null ? Math.max(1, words.length || 1) : parsedCount
+      blankCount = autoCount
+      countHint = autoCount
+      end = Math.min(safeCount, cursor + autoCount - 1)
+    } else {
+      const parsedEnd = parseGuruUjianRangeValue(item?.end, safeCount)
+      if (parsedCount !== null) {
+        countHint = parsedCount
+        end = Math.min(safeCount, cursor + parsedCount - 1)
+      } else {
+        end = parsedEnd === null ? cursor : Math.max(cursor, parsedEnd)
+      }
+    }
+    list.push({ type, start: cursor, end, wordPool, blankCount, countHint })
+    cursor = end + 1
+  })
+  if (!list.length) return []
+  return list.map(item => ({
+    type: normalizeExamQuestionType(item.type, 'pilihan-ganda'),
+    start: Math.max(1, Math.min(Math.max(1, safeCount), Number(item.start || 1))),
+    end: Math.max(1, Math.min(Math.max(1, safeCount), Number(item.end || Math.max(1, safeCount)))),
+    wordPool: String(item.wordPool || '').trim(),
+    blankCount: Number.isFinite(Number(item.blankCount)) ? Math.max(1, Math.min(Math.max(1, safeCount), Math.round(Number(item.blankCount)))) : null,
+    count: Number.isFinite(Number(item.countHint)) ? Math.max(1, Math.min(Math.max(1, safeCount), Math.round(Number(item.countHint)))) : Math.max(1, Math.min(Math.max(1, safeCount), Number(item.end || 1) - Number(item.start || 1) + 1)),
+    wordList: String(item.wordPool || '').split(',').map(x => String(x || '').trim()).filter(Boolean)
+  }))
+}
+
+function readGuruUjianSectionsFromDom() {
+  const sectionRows = document.querySelectorAll('.guru-ujian-section-row')
+  const rows = []
+  sectionRows.forEach((rowEl, idx) => {
+    const dataIndex = Number(rowEl?.dataset?.index || idx)
+    const type = String(document.getElementById(`guru-ujian-section-type-${dataIndex}`)?.value || 'pilihan-ganda')
+    const end = document.getElementById(`guru-ujian-section-end-${dataIndex}`)?.value
+    const words = String(document.getElementById(`guru-ujian-section-words-${dataIndex}`)?.value || '')
+    const count = document.getElementById(`guru-ujian-section-count-${dataIndex}`)?.value
+    rows.push({ type, end, words, count })
+  })
+  return rows
+}
+
+function getGuruUjianSectionsSource(preferred = null) {
+  if (Array.isArray(preferred) && preferred.length) return preferred
+  const fromDom = readGuruUjianSectionsFromDom()
+  if (Array.isArray(fromDom) && fromDom.length) return fromDom
+  if (Array.isArray(ujianGuruState.sectionDefs) && ujianGuruState.sectionDefs.length) return ujianGuruState.sectionDefs
+  return []
+}
+
+function renderGuruUjianSectionRows(sourceSections = null) {
+  const wrap = document.getElementById('guru-ujian-sections')
+  if (!wrap) return
+  const baseSections = getGuruUjianSectionsSource(sourceSections)
+  const totalCount = estimateGuruUjianTotalFromSections(baseSections, Number(document.getElementById('guru-ujian-jumlah')?.value || 0))
+  const safeCount = Math.max(0, Math.min(200, totalCount))
+  const normalized = normalizeGuruUjianSections(safeCount, baseSections)
+  ujianGuruState.sectionDefs = normalized.map(item => ({ type: item.type, end: item.end, words: item.wordPool, count: item.count }))
+  const totalEl = document.getElementById('guru-ujian-jumlah')
+  if (totalEl) totalEl.value = String(normalized[normalized.length - 1]?.end || 0)
+  wrap.innerHTML = `
+    <div style="border:1px dashed #cbd5e1; border-radius:10px; padding:10px; display:grid; grid-template-columns:1fr 180px auto; gap:8px; align-items:end;">
+      <div>
+        <label class="guru-label">Tambah Model Soal</label>
+        <select id="guru-ujian-new-section-type" class="guru-field">
+          <option value="pilihan-ganda">Pilihan Ganda</option>
+          <option value="esai">Esai</option>
+          <option value="pasangkan-kata">Pasangkan Kata (A-B)</option>
+          <option value="isi-titik">Isi Titik Kosong</option>
+        </select>
+      </div>
+      <div>
+        <label class="guru-label">Jumlah Soal</label>
+        <input id="guru-ujian-new-section-count" class="guru-field" type="number" min="1" max="200" value="1">
+      </div>
+      <div>
+        <button type="button" class="modal-btn" onclick="addGuruUjianSection()">Tambahkan</button>
+      </div>
+    </div>
+  `
+}
+
+function getGuruUjianTypeMap(totalCount, options = {}) {
+  const baseSections = getGuruUjianSectionsSource(options.sections)
+  const estimatedTotal = estimateGuruUjianTotalFromSections(baseSections, totalCount)
+  const safeCount = Number.isFinite(estimatedTotal) ? Math.max(0, Math.min(200, Math.round(estimatedTotal))) : 0
+  const sections = normalizeGuruUjianSections(safeCount, baseSections)
+  const errors = []
+  const typeMap = new Array(Math.max(0, safeCount) + 1).fill('pilihan-ganda')
+  sections.forEach(item => {
+    for (let i = item.start; i <= item.end; i += 1) typeMap[i] = item.type
+  })
+  if (!sections.length) errors.push('Tambahkan minimal 1 model soal.')
+  return { typeMap, errors, safeCount, sections }
+}
+
+function getGuruUjianDraftByNumber() {
+  const map = new Map()
+  const rows = document.querySelectorAll('.guru-ujian-question-row')
+  rows.forEach(rowEl => {
+    const no = Number(rowEl?.dataset?.no || 0)
+    if (!Number.isFinite(no) || no <= 0) return
+    const type = normalizeExamQuestionType(rowEl?.dataset?.type || 'pilihan-ganda', 'pilihan-ganda')
+    const text = String(document.getElementById(`guru-ujian-q-${no}`)?.value || '')
+    if (type === 'pilihan-ganda') {
+      map.set(no, {
+        no,
+        type,
+        text,
+        options: {
+          a: String(document.getElementById(`guru-ujian-q-${no}-a`)?.value || ''),
+          b: String(document.getElementById(`guru-ujian-q-${no}-b`)?.value || ''),
+          c: String(document.getElementById(`guru-ujian-q-${no}-c`)?.value || ''),
+          d: String(document.getElementById(`guru-ujian-q-${no}-d`)?.value || '')
+        },
+        answer: String(document.getElementById(`guru-ujian-q-${no}-answer`)?.value || '')
+      })
+    } else if (type === 'pasangkan-kata') {
+      const pairs = [1, 2, 3, 4].map(n => ({
+        a: String(document.getElementById(`guru-ujian-q-${no}-a${n}`)?.value || ''),
+        b: String(document.getElementById(`guru-ujian-q-${no}-b${n}`)?.value || '')
+      }))
+      map.set(no, { no, type, text, pairs })
+    } else if (type === 'isi-titik') {
+      const answer = String(document.getElementById(`guru-ujian-q-${no}-answer`)?.value || '')
+      map.set(no, { no, type, text, answer })
+    } else {
+      map.set(no, { no, type, text })
+    }
+  })
+  return map
+}
+
+function toExamStatusLabel(status) {
+  const normalized = String(status || '').trim().toLowerCase()
+  if (normalized === 'submitted') return 'Terkirim'
+  if (normalized === 'draft') return 'Draft'
+  return '-'
+}
+
+async function createExamPdfDoc(jadwal, soal) {
+  const jsPdfApi = window.jspdf
+  if (!jsPdfApi || typeof jsPdfApi.jsPDF !== 'function') {
+    alert('Library PDF belum termuat. Refresh halaman lalu coba lagi.')
+    return null
+  }
+  const { jsPDF } = jsPdfApi
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  const margin = 15
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const pageHeight = doc.internal.pageSize.getHeight()
+  const usableWidth = pageWidth - margin * 2
+  let y = margin
+
+  await ensureExamPrintBackgroundLoaded()
+  const drawPageBackground = () => {
+    if (!examPrintBackgroundDataUrl) return
+    try {
+      doc.addImage(examPrintBackgroundDataUrl, 'PNG', 0, 0, pageWidth, pageHeight, undefined, 'FAST')
+    } catch (bgErr) {
+      console.warn('Gagal render background ujian.', bgErr)
+    }
+  }
+  const originalAddPage = doc.addPage.bind(doc)
+  doc.addPage = (...args) => {
+    const out = originalAddPage(...args)
+    drawPageBackground()
+    return out
+  }
+  drawPageBackground()
+
+  const instruksiMeta = parseExamInstruksiMeta(soal?.instruksi)
+  const lang = instruksiMeta.lang || 'ID'
+  const isAr = lang === 'AR'
+  if (isAr) {
+    await ensureExamArabicFontLoaded()
+    if (!examArabicFontBase64) return null
+  }
+  const textMap = getExamPdfStaticText(lang)
+  let arabicRegularReady = false
+
+  if (isAr && examArabicFontBase64) {
+    const tryRegister = (vfsKey, familyName, base64) => {
+      try {
+        doc.addFileToVFS(vfsKey, base64)
+        doc.addFont(vfsKey, familyName, 'normal')
+        doc.setFont(familyName, 'normal')
+        return true
+      } catch (_err) {
+        return false
+      }
+    }
+    arabicRegularReady = tryRegister(EXAM_ARABIC_FONT_VFS_KEY, EXAM_ARABIC_FONT_NAME, examArabicFontBase64) ||
+      tryRegister(EXAM_ARABIC_FONT_FILE, EXAM_ARABIC_FONT_NAME, examArabicFontBase64)
+    if (!arabicRegularReady) {
+      console.warn('Registrasi font Arab regular gagal.')
+    }
+    if (!arabicRegularReady) return null
+    try {
+      doc.setFont(EXAM_ARABIC_FONT_NAME, 'normal')
+      doc.splitTextToSize('اختبار', 20)
+    } catch (fontErr) {
+      console.warn('Validasi font Arab regular gagal.', fontErr)
+      return null
+    }
+  }
+
+  const setBold = () => doc.setFont(isAr ? EXAM_ARABIC_FONT_NAME : 'times', isAr ? 'normal' : 'bold')
+  const setNormal = () => doc.setFont(isAr ? EXAM_ARABIC_FONT_NAME : 'times', 'normal')
+  const safeSplit = (text, width) => {
+    try {
+      return doc.splitTextToSize(String(text || ''), width)
+    } catch (err) {
+      console.warn('splitTextToSize gagal, fallback single-line.', err)
+      return [String(text || '')]
+    }
+  }
+  if (typeof doc.setR2L === 'function') doc.setR2L(false)
+  const lineX = (indent = 0) => (isAr ? pageWidth - margin - indent : margin + indent)
+  const toRtl = text => (isAr ? `\u202B${String(text || '')}\u202C` : String(text || ''))
+  const drawLine = (text, indent = 0) => {
+    const str = toRtl(text)
+    if (isAr) doc.text(str, lineX(indent), y, { align: 'right' })
+    else doc.text(str, lineX(indent), y)
+  }
+  const drawWrapped = (text, wrapWidth, indent = 0) => {
+    const lines = safeSplit(text, wrapWidth)
+    lines.forEach(line => {
+      if (y > 285) {
+        doc.addPage()
+        y = margin
+      }
+      const wrappedLine = toRtl(line)
+      if (isAr) doc.text(wrappedLine, lineX(indent), y, { align: 'right' })
+      else doc.text(wrappedLine, lineX(indent), y)
+      y += 5
+    })
+  }
+
+  setBold()
+  doc.setFontSize(14)
+  doc.text(textMap.title, pageWidth / 2, y, { align: 'center' })
+  y += 8
+  setNormal()
+  doc.setFontSize(11)
+  drawLine(`${textMap.jenis}: ${String(jadwal?.jenis || '-')}`)
+  y += 6
+  drawLine(`${textMap.namaUjian}: ${String(jadwal?.nama || '-')}`)
+  y += 6
+  drawLine(`${textMap.kelasMapel}: ${String(jadwal?.kelas || '-')} | ${textMap.mapel}: ${String(jadwal?.mapel || '-')}`)
+  y += 6
+  drawLine(`${textMap.tanggalWaktu}: ${String(jadwal?.tanggal || '-')} | ${textMap.waktu}: ${toTimeLabel(jadwal?.jam_mulai)} - ${toTimeLabel(jadwal?.jam_selesai)}`)
+  y += 6
+  drawLine(`${textMap.guru}: ${String(soal?.guru_nama || '-')}`)
+  y += 8
+
+  const instruksi = instruksiMeta.text
+  if (instruksi) {
+    setBold()
+    drawLine(`${textMap.instruksiUmum}:`)
+    y += 5
+    setNormal()
+    drawWrapped(instruksi, usableWidth, 0)
+    y += 2
+  }
+
+  const questions = parseExamQuestions(soal?.questions_json)
+  const sections = buildExamPrintSections(questions, soal?.bentuk_soal)
+  const questionIndent = 4
+  const optionIndent = 10
+  sections.forEach((section, sectionIndex) => {
+    const headingParts = getExamPrintTypeParts(section.type, sectionIndex, lang)
+    const heading = `${headingParts.marker} ${headingParts.label}`
+    const instruksiModel = getExamPrintTypeInstruction(section.type, lang)
+    if (y + 12 > 285) {
+      doc.addPage()
+      y = margin
+    }
+    if (isAr) {
+      setBold()
+      drawLine(headingParts.marker)
+      setNormal()
+      drawLine(headingParts.label, 16)
+    } else {
+      setBold()
+      drawLine(heading)
+    }
+    y += 5
+    setNormal()
+    drawWrapped(instruksiModel, usableWidth - 4, 4)
+    y += 2
+
+    const sectionItems = section.items || []
+    if (section.type === 'isi-titik') {
+      const fragSet = new Set()
+      sectionItems.forEach(item => {
+        const fragments = Array.isArray(item?.fragments) ? item.fragments : []
+        fragments.forEach(f => {
+          const txt = String(f || '').trim()
+          if (txt) fragSet.add(txt)
+        })
+      })
+      const fragList = [...fragSet]
+      if (fragList.length) {
+        const fragLine = `Pilihan kata: (${fragList.join(', ')})`
+        drawWrapped(fragLine, usableWidth - optionIndent, optionIndent)
+        y += 2
+      }
+    }
+
+    sectionItems.forEach((q, idx) => {
+      const isPg = section.type === 'pilihan-ganda'
+      const no = idx + 1
+      const qTextRaw = String(q?.text || '-')
+      setNormal()
+      if (isAr) {
+        const noPrefix = formatExamMarker(formatExamNumber(no, lang), lang)
+        const qLines = safeSplit(qTextRaw, usableWidth - questionIndent - 14)
+        if (y > 285) {
+          doc.addPage()
+          y = margin
+        }
+        doc.text(toRtl(noPrefix), lineX(questionIndent), y, { align: 'right' })
+        doc.text(toRtl(String(qLines[0] || '-')), lineX(questionIndent + 14), y, { align: 'right' })
+        y += 5
+        for (let li = 1; li < qLines.length; li += 1) {
+          if (y > 285) {
+            doc.addPage()
+            y = margin
+          }
+          doc.text(toRtl(String(qLines[li] || '')), lineX(questionIndent + 14), y, { align: 'right' })
+          y += 5
+        }
+      } else {
+        const title = `${formatExamMarker(formatExamNumber(no, lang), lang)} ${qTextRaw}`
+        drawWrapped(title, usableWidth - questionIndent, questionIndent)
+      }
+      if (isPg) {
+        const opts = q?.options || {}
+        const aTxt = `a. ${String(opts.a || '-')}`
+        const bTxt = `b. ${String(opts.b || '-')}`
+        const cTxt = `c. ${String(opts.c || '-')}`
+        const dTxt = `d. ${String(opts.d || '-')}`
+        const maxLen = Math.max(aTxt.length, bTxt.length, cTxt.length, dTxt.length)
+        const useTwoCols = maxLen <= 36 && !isAr
+        if (useTwoCols) {
+          const leftX = margin + optionIndent
+          const rightX = margin + optionIndent + 70
+          const rows = [
+            [aTxt, cTxt],
+            [bTxt, dTxt]
+          ]
+          rows.forEach(pair => {
+            if (y > 285) {
+              doc.addPage()
+              y = margin
+            }
+            doc.text(pair[0], leftX, y)
+            doc.text(pair[1], rightX, y)
+            y += 5
+          })
+        } else {
+          const optLines = isAr
+            ? [
+              { marker: 'أ', text: String(opts.a || '-') },
+              { marker: 'ب', text: String(opts.b || '-') },
+              { marker: 'ج', text: String(opts.c || '-') },
+              { marker: 'د', text: String(opts.d || '-') }
+            ]
+            : [aTxt, bTxt, cTxt, dTxt]
+          optLines.forEach(line => {
+            if (y > 285) {
+              doc.addPage()
+              y = margin
+            }
+            if (isAr) {
+              const marker = formatExamMarker(String(line.marker || ''), lang)
+              const val = String(line.text || '-')
+              const vLines = safeSplit(val, usableWidth - optionIndent - 14)
+              doc.text(toRtl(marker), lineX(optionIndent), y, { align: 'right' })
+              doc.text(toRtl(String(vLines[0] || '-')), lineX(optionIndent + 14), y, { align: 'right' })
+              y += 5
+              for (let vi = 1; vi < vLines.length; vi += 1) {
+                if (y > 285) {
+                  doc.addPage()
+                  y = margin
+                }
+                doc.text(toRtl(String(vLines[vi] || '')), lineX(optionIndent + 14), y, { align: 'right' })
+                y += 5
+              }
+            } else {
+              doc.text(line, margin + optionIndent, y)
+              y += 5
+            }
+          })
+        }
+      } else if (section.type === 'pasangkan-kata') {
+        const pairs = Array.isArray(q?.pairs) ? q.pairs : []
+        if (pairs.length) {
+          if (y > 282) {
+            doc.addPage()
+            y = margin
+          }
+          setBold()
+          const colA = isAr ? 'العمود أ' : 'Baris A'
+          const colB = isAr ? 'العمود ب' : 'Baris B'
+          if (isAr) {
+            doc.text(colA, lineX(optionIndent), y, { align: 'right' })
+            doc.text(colB, lineX(optionIndent + 60), y, { align: 'right' })
+          } else {
+            doc.text(colA, margin + optionIndent, y)
+            doc.text(colB, margin + optionIndent + 60, y)
+          }
+          y += 5
+          setNormal()
+          pairs.forEach((pair, idxPair) => {
+            if (y > 285) {
+              doc.addPage()
+              y = margin
+            }
+            const left = `${formatExamMarker(formatExamNumber(idxPair + 1, lang), lang)} ${String(pair?.a || '-')}`
+            const right = `${formatExamMarker((isAr ? getArabicLetterByIndex(idxPair) : String.fromCharCode(65 + idxPair)), lang)} ${String(pair?.b || '-')}`
+            if (isAr) {
+              doc.text(left, lineX(optionIndent), y, { align: 'right' })
+              doc.text(right, lineX(optionIndent + 60), y, { align: 'right' })
+            } else {
+              doc.text(left, margin + optionIndent, y)
+              doc.text(right, margin + optionIndent + 60, y)
+            }
+            y += 5
+          })
+        }
+      }
+      y += 2
+    })
+  })
+
+  return doc
+}
+
+function openExamBrowserPrint(jadwal, soal) {
+  const instruksiMeta = parseExamInstruksiMeta(soal?.instruksi)
+  const lang = instruksiMeta.lang || 'ID'
+  const textMap = getExamPdfStaticText(lang)
+  const isAr = lang === 'AR'
+  const questions = parseExamQuestions(soal?.questions_json)
+  const sections = buildExamPrintSections(questions, soal?.bentuk_soal)
+  const sectionHtml = sections.map((section, sectionIndex) => {
+    const headingParts = getExamPrintTypeParts(section.type, sectionIndex, lang)
+    const instruksiModel = getExamPrintTypeInstruction(section.type, lang)
+    const items = section.items || []
+    const extraLine = section.type === 'isi-titik'
+      ? (() => {
+          const fragSet = new Set()
+          items.forEach(item => {
+            const frags = Array.isArray(item?.fragments) ? item.fragments : []
+            frags.forEach(f => {
+              const txt = String(f || '').trim()
+              if (txt) fragSet.add(txt)
+            })
+          })
+          const list = [...fragSet]
+          if (!list.length) return ''
+          const label = isAr ? 'اختيارات الكلمات' : 'Pilihan kata'
+          return `<p><strong>${escapeHtml(label)}:</strong> (${escapeHtml(list.join(', '))})</p>`
+        })()
+      : ''
+
+    const questionsHtml = items.map((q, idx) => {
+      const no = idx + 1
+      const qText = `<div class="q-title">${escapeHtml(formatExamMarker(formatExamNumber(no, lang), lang))} ${escapeHtml(String(q?.text || '-'))}</div>`
+      if (section.type === 'pilihan-ganda') {
+        const opts = q?.options || {}
+        const mA = isAr ? 'أ' : 'a'
+        const mB = isAr ? 'ب' : 'b'
+        const mC = isAr ? 'ج' : 'c'
+        const mD = isAr ? 'د' : 'd'
+        return `
+          <li>
+            ${qText}
+            <div class="pg-grid">
+              <div>${escapeHtml(formatExamMarker(mA, lang))} ${escapeHtml(String(opts.a || '-'))}</div>
+              <div>${escapeHtml(formatExamMarker(mC, lang))} ${escapeHtml(String(opts.c || '-'))}</div>
+              <div>${escapeHtml(formatExamMarker(mB, lang))} ${escapeHtml(String(opts.b || '-'))}</div>
+              <div>${escapeHtml(formatExamMarker(mD, lang))} ${escapeHtml(String(opts.d || '-'))}</div>
+            </div>
+          </li>
+        `
+      }
+      if (section.type === 'pasangkan-kata') {
+        const pairs = Array.isArray(q?.pairs) ? q.pairs : []
+        const rows = pairs.map((pair, i) => `
+          <tr>
+            <td>${escapeHtml(formatExamMarker(formatExamNumber(i + 1, lang), lang))} ${escapeHtml(String(pair?.a || '-'))}</td>
+            <td>${escapeHtml(formatExamMarker((isAr ? getArabicLetterByIndex(i) : String.fromCharCode(65 + i)), lang))} ${escapeHtml(String(pair?.b || '-'))}</td>
+          </tr>
+        `).join('')
+        return `
+          <li>
+            ${qText}
+            <table class="pair-table">
+              <thead><tr><th>${isAr ? 'العمود أ' : 'Baris A'}</th><th>${isAr ? 'العمود ب' : 'Baris B'}</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </li>
+        `
+      }
+      return `<li>${qText}</li>`
+    }).join('')
+
+    return `
+      <section class="sec">
+        <h3><strong>${escapeHtml(headingParts.marker)}</strong> ${escapeHtml(headingParts.label)}</h3>
+        <p>${escapeHtml(instruksiModel)}</p>
+        ${extraLine}
+        <ol>${questionsHtml}</ol>
+      </section>
+    `
+  }).join('')
+
+  const instruksiUmum = instruksiMeta.text
+    ? `<p><strong>${escapeHtml(textMap.instruksiUmum)}:</strong> ${escapeHtml(instruksiMeta.text)}</p>`
+    : ''
+
+  const html = `
+<!doctype html>
+<html lang="${isAr ? 'ar' : 'id'}" dir="${isAr ? 'rtl' : 'ltr'}">
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtml(textMap.title)}</title>
+  <style>
+    body { font-family: 'Times New Roman', serif; margin: 20px; color: #111; }
+    h1 { text-align: center; font-size: 22px; margin: 0 0 12px 0; }
+    .meta p { margin: 4px 0; font-size: 14px; }
+    .sec { margin-top: 14px; }
+    .sec h3 { margin: 0 0 6px 0; font-size: 16px; }
+    .sec p { margin: 4px 0; font-size: 14px; }
+    ol { margin: 6px 0 0 0; padding-${isAr ? 'right' : 'left'}: 20px; }
+    li { margin: 8px 0; }
+    .q-title { margin-bottom: 4px; }
+    .pg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 18px; margin-${isAr ? 'right' : 'left'}: 20px; }
+    .pair-table { border-collapse: collapse; width: 100%; margin-top: 4px; }
+    .pair-table th, .pair-table td { border: 1px solid #999; padding: 4px 6px; font-size: 13px; text-align: ${isAr ? 'right' : 'left'}; }
+    @media print { body { margin: 10mm; } }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(textMap.title)}</h1>
+  <div class="meta">
+    <p><strong>${escapeHtml(textMap.jenis)}:</strong> ${escapeHtml(String(jadwal?.jenis || '-'))}</p>
+    <p><strong>${escapeHtml(textMap.namaUjian)}:</strong> ${escapeHtml(String(jadwal?.nama || '-'))}</p>
+    <p><strong>${escapeHtml(textMap.kelasMapel)}:</strong> ${escapeHtml(String(jadwal?.kelas || '-'))} | <strong>${escapeHtml(textMap.mapel)}:</strong> ${escapeHtml(String(jadwal?.mapel || '-'))}</p>
+    <p><strong>${escapeHtml(textMap.tanggalWaktu)}:</strong> ${escapeHtml(String(jadwal?.tanggal || '-'))} | <strong>${escapeHtml(textMap.waktu)}:</strong> ${escapeHtml(`${toTimeLabel(jadwal?.jam_mulai)} - ${toTimeLabel(jadwal?.jam_selesai)}`)}</p>
+    <p><strong>${escapeHtml(textMap.guru)}:</strong> ${escapeHtml(String(soal?.guru_nama || '-'))}</p>
+    ${instruksiUmum}
+  </div>
+  ${sectionHtml}
+</body>
+</html>`
+
+  const printWin = window.open('', '_blank')
+  if (!printWin) {
+    alert('Popup diblokir browser. Izinkan popup untuk mencetak soal Arab.')
+    return
+  }
+  printWin.document.open()
+  printWin.document.write(html)
+  printWin.document.close()
+  printWin.focus()
+  setTimeout(() => {
+    printWin.print()
+  }, 250)
+}
+
+async function buildExamWordHtml(jadwal, soal) {
+  const instruksiMeta = parseExamInstruksiMeta(soal?.instruksi)
+  const lang = instruksiMeta.lang || 'ID'
+  const textMap = getExamPdfStaticText(lang)
+  const isAr = lang === 'AR'
+  const bgDataUrl = await ensureExamPrintBackgroundLoaded()
+  const questions = parseExamQuestions(soal?.questions_json)
+  const sections = buildExamPrintSections(questions, soal?.bentuk_soal)
+  const wordFontFamily = isAr ? '"Traditional Arabic","Times New Roman",serif' : '"Times New Roman",serif'
+  const wordDirectionCss = isAr ? 'direction:rtl; unicode-bidi:embed; text-align:right;' : 'direction:ltr; text-align:left;'
+  const wordBidiCss = isAr ? 'mso-bidi-font-family:"Traditional Arabic"; mso-fareast-font-family:"Traditional Arabic";' : ''
+  const markerHtml = token => {
+    const marker = formatExamMarker(token, lang)
+    if (!isAr) return escapeHtml(marker)
+    return `<span class="ar-marker">${escapeHtml(marker)}</span>`
+  }
+  const sectionHtml = sections.map((section, sectionIndex) => {
+    const headingParts = getExamPrintTypeParts(section.type, sectionIndex, lang)
+    const instruksiModel = getExamPrintTypeInstruction(section.type, lang)
+    const items = section.items || []
+    const questionsHtml = items.map((q, idx) => {
+      const no = idx + 1
+      const qText = `<div class="q-title">${markerHtml(formatExamNumber(no, lang))} ${escapeHtml(String(q?.text || '-'))}</div>`
+      if (section.type === 'pilihan-ganda') {
+        const opts = q?.options || {}
+        const mA = isAr ? 'أ' : 'a'
+        const mB = isAr ? 'ب' : 'b'
+        const mC = isAr ? 'ج' : 'c'
+        const mD = isAr ? 'د' : 'd'
+        return `<li>${qText}<div class="pg-grid">
+          <div>${markerHtml(mA)} ${escapeHtml(String(opts.a || '-'))}</div>
+          <div>${markerHtml(mC)} ${escapeHtml(String(opts.c || '-'))}</div>
+          <div>${markerHtml(mB)} ${escapeHtml(String(opts.b || '-'))}</div>
+          <div>${markerHtml(mD)} ${escapeHtml(String(opts.d || '-'))}</div>
+        </div></li>`
+      }
+      return `<li>${qText}</li>`
+    }).join('')
+    return `<section class="sec"><h3><strong>${isAr ? `<span class="ar-marker">${escapeHtml(headingParts.marker)}</span>` : escapeHtml(headingParts.marker)}</strong> ${escapeHtml(headingParts.label)}</h3><p>${escapeHtml(instruksiModel)}</p><ol>${questionsHtml}</ol></section>`
+  }).join('')
+  const instruksiUmum = instruksiMeta.text
+    ? `<p><strong>${escapeHtml(textMap.instruksiUmum)}:</strong> ${escapeHtml(instruksiMeta.text)}</p>`
+    : ''
+  return `<!doctype html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns:v="urn:schemas-microsoft-com:vml" lang="${isAr ? 'ar' : 'id'}" dir="${isAr ? 'rtl' : 'ltr'}">
+<head><meta charset="utf-8"><title>${escapeHtml(textMap.title)}</title>
+<style>
+@page { size: A4; margin: 15mm; }
+body { font-family: ${wordFontFamily}; ${wordBidiCss} ${wordDirectionCss} margin: 0; padding: 15mm; color: #111; }
+.page-bg { position: fixed; top: 0; left: 0; width: 210mm; height: 297mm; z-index: 0; }
+.page-bg img { width: 100%; height: 100%; display: block; }
+.doc-wrap { position: relative; z-index: 1; }
+h1 { text-align: center; font-size: 22px; margin: 0 0 12px 0; }
+.meta p { margin: 4px 0; font-size: 14px; }
+.sec { margin-top: 14px; }
+.sec h3 { margin: 0 0 6px 0; font-size: 16px; }
+.sec p { margin: 4px 0; font-size: 14px; }
+ol { margin: 6px 0 0 0; padding-${isAr ? 'right' : 'left'}: 20px; }
+li { margin: 8px 0; }
+.q-title { margin-bottom: 4px; }
+.pg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 18px; margin-${isAr ? 'right' : 'left'}: 20px; }
+.ar-marker { display:inline-block; white-space:nowrap; direction:rtl; unicode-bidi:isolate-override; min-width:20px; }
+* { font-family: ${wordFontFamily}; ${wordBidiCss} }
+</style></head>
+<body>
+${bgDataUrl ? `<!--[if gte mso 9]><v:background id="bg" o:bwmode="white"><v:fill type="frame" src="${bgDataUrl}" /></v:background><![endif]-->` : ''}
+${bgDataUrl ? `<div class="page-bg"><img src="${bgDataUrl}" alt=""></div>` : ''}
+<div class="doc-wrap">
+<h1>${escapeHtml(textMap.title)}</h1>
+<div class="meta">
+<p><strong>${escapeHtml(textMap.jenis)}:</strong> ${escapeHtml(String(jadwal?.jenis || '-'))}</p>
+<p><strong>${escapeHtml(textMap.namaUjian)}:</strong> ${escapeHtml(String(jadwal?.nama || '-'))}</p>
+<p><strong>${escapeHtml(textMap.kelasMapel)}:</strong> ${escapeHtml(String(jadwal?.kelas || '-'))} | <strong>${escapeHtml(textMap.mapel)}:</strong> ${escapeHtml(String(jadwal?.mapel || '-'))}</p>
+<p><strong>${escapeHtml(textMap.tanggalWaktu)}:</strong> ${escapeHtml(String(jadwal?.tanggal || '-'))} | <strong>${escapeHtml(textMap.waktu)}:</strong> ${escapeHtml(`${toTimeLabel(jadwal?.jam_mulai)} - ${toTimeLabel(jadwal?.jam_selesai)}`)}</p>
+<p><strong>${escapeHtml(textMap.guru)}:</strong> ${escapeHtml(String(soal?.guru_nama || '-'))}</p>
+${instruksiUmum}
+</div>
+${sectionHtml}
+</div>
+</body></html>`
+}
+
+async function exportExamWordFile(jadwal, soal, fileName) {
+  const html = await buildExamWordHtml(jadwal, soal)
+  const blob = new Blob([`\ufeff${html}`], { type: 'application/msword;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = fileName
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  setTimeout(() => URL.revokeObjectURL(url), 1200)
+}
+
+async function renderUjianPage() {
+  const content = document.getElementById('guru-content')
+  if (!content) return
+  content.innerHTML = 'Loading ujian...'
+
+  let ctx
+  try {
+    ctx = await getGuruContext()
+  } catch (error) {
+    console.error(error)
+    content.innerHTML = `<div class="placeholder-card">Gagal load ujian: ${escapeHtml(error.message || 'Unknown error')}</div>`
+    return
+  }
+
+  if (!ctx?.guru?.id) {
+    content.innerHTML = '<div class="placeholder-card">Data guru tidak ditemukan.</div>'
+    return
+  }
+
+  const mapelPairsByClass = new Set(
+    (ctx.yearDistribusiList || []).map(item => {
+      const kelas = ctx.kelasMap.get(String(item.kelas_id || ''))
+      const mapel = ctx.mapelMap.get(String(item.mapel_id || ''))
+      return `${normalizeExamLookup(kelas?.nama_kelas)}|${normalizeExamLookup(getMapelLabel(mapel))}`
+    }).filter(Boolean)
+  )
+  const mapelPairsByPerangkatan = new Set(
+    (ctx.yearDistribusiList || []).map(item => {
+      const kelas = ctx.kelasMap.get(String(item.kelas_id || ''))
+      const mapel = ctx.mapelMap.get(String(item.mapel_id || ''))
+      const perangkatan = getExamPerangkatanFromClassName(kelas?.nama_kelas)
+      const mapelBase = getExamMapelBaseLabel(getMapelLabel(mapel))
+      if (!perangkatan || !mapelBase) return ''
+      return `${normalizeExamLookup(mapelBase)}|${normalizeExamLookup(perangkatan)}`
+    }).filter(Boolean)
+  )
+  const classListByMapelPerangkatan = new Map()
+  ;(ctx.yearDistribusiList || []).forEach(item => {
+    const kelas = ctx.kelasMap.get(String(item.kelas_id || ''))
+    const mapel = ctx.mapelMap.get(String(item.mapel_id || ''))
+    const kelasNama = String(kelas?.nama_kelas || '').trim()
+    const perangkatan = getExamPerangkatanFromClassName(kelasNama)
+    const mapelBase = getExamMapelBaseLabel(getMapelLabel(mapel))
+    if (!kelasNama || !perangkatan || !mapelBase) return
+    const key = `${normalizeExamLookup(mapelBase)}|${normalizeExamLookup(perangkatan)}`
+    if (!classListByMapelPerangkatan.has(key)) classListByMapelPerangkatan.set(key, new Set())
+    classListByMapelPerangkatan.get(key).add(kelasNama)
+  })
+  const normalizedClassMap = new Map()
+  classListByMapelPerangkatan.forEach((setValue, key) => {
+    normalizedClassMap.set(key, [...setValue].sort((a, b) => a.localeCompare(b)))
+  })
+  ujianGuruState.mapelPairs = mapelPairsByClass
+  ujianGuruState.classListByMapelPerangkatan = normalizedClassMap
+
+  const jadwalRes = await sb
+    .from(EXAM_SCHEDULE_TABLE)
+    .select('id, jenis, nama, kelas, mapel, tanggal, jam_mulai, jam_selesai, lokasi, keterangan')
+    .order('tanggal', { ascending: true })
+  if (jadwalRes.error) {
+    if (isExamTableMissingError(jadwalRes.error)) {
+      content.innerHTML = `<div class="placeholder-card">${escapeHtml(buildExamScheduleMissingTableMessage())}</div>`
+      return
+    }
+    console.error(jadwalRes.error)
+    content.innerHTML = `<div class="placeholder-card">Gagal load jadwal ujian: ${escapeHtml(jadwalRes.error.message || 'Unknown error')}</div>`
+    return
+  }
+
+  const filtered = (jadwalRes.data || []).filter(item => {
+    const keyByClass = `${normalizeExamLookup(item.kelas)}|${normalizeExamLookup(item.mapel)}`
+    if (mapelPairsByClass.has(keyByClass)) return true
+
+    const meta = parseExamMetaFromSchedule(item)
+    const perangkatan = String(meta?.perangkatan || '').trim() || String(item?.kelas || '').trim()
+    const mapelBase = getExamMapelBaseLabel(String(meta?.mapel_nama || '').trim()) || getExamMapelBaseLabel(item?.mapel)
+    const keyByPerangkatan = `${normalizeExamLookup(mapelBase)}|${normalizeExamLookup(perangkatan)}`
+    return mapelPairsByPerangkatan.has(keyByPerangkatan)
+  })
+  const examRows = []
+  filtered.forEach(item => {
+    const meta = parseExamMetaFromSchedule(item)
+    const perangkatan = String(meta?.perangkatan || '').trim() || String(item?.kelas || '').trim()
+    const mapelBase = getExamMapelBaseLabel(String(meta?.mapel_nama || '').trim()) || getExamMapelBaseLabel(item?.mapel)
+    const distKey = `${normalizeExamLookup(mapelBase)}|${normalizeExamLookup(perangkatan)}`
+    const fallbackClassNames = normalizedClassMap.get(distKey) || []
+    const kelasList = getExamRowClassList(item, fallbackClassNames)
+    if (!kelasList.length) {
+      examRows.push({
+        rowKey: `${String(item.id || '')}|-`,
+        jadwal: item,
+        kelasNama: '-',
+        mapelLabel: getExamRowMapelLabel(item)
+      })
+      return
+    }
+    kelasList.forEach(kelasNama => {
+      examRows.push({
+        rowKey: `${String(item.id || '')}|${kelasNama}`,
+        jadwal: item,
+        kelasNama,
+        mapelLabel: getExamRowMapelLabel(item)
+      })
+    })
+  })
+  ujianGuruState.rows = examRows
+
+  const jadwalIds = [...new Set(examRows.map(item => String(item.jadwal?.id || '')).filter(Boolean))]
+  const soalMap = new Map()
+  ujianGuruState.supportsKelasTarget = true
+  if (jadwalIds.length) {
+    let soalRes = await sb
+      .from(EXAM_QUESTION_TABLE)
+      .select('id, jadwal_id, kelas_target, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, updated_at')
+      .eq('guru_id', String(ctx.guru.id))
+      .in('jadwal_id', jadwalIds)
+
+    if (soalRes.error && isExamColumnMissingError(soalRes.error)) {
+      ujianGuruState.supportsKelasTarget = false
+      soalRes = await sb
+        .from(EXAM_QUESTION_TABLE)
+        .select('id, jadwal_id, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, updated_at')
+        .eq('guru_id', String(ctx.guru.id))
+        .in('jadwal_id', jadwalIds)
+    }
+    if (soalRes.error && !isExamTableMissingError(soalRes.error)) {
+      console.error(soalRes.error)
+      content.innerHTML = `<div class="placeholder-card">Gagal load soal ujian: ${escapeHtml(soalRes.error.message || 'Unknown error')}</div>`
+      return
+    }
+    ;(soalRes.data || []).forEach(item => {
+      const kelasTarget = String(item.kelas_target || '').trim()
+      const key = `${String(item.jadwal_id || '')}|${kelasTarget || '-'}`
+      soalMap.set(key, item)
+      if (!ujianGuruState.supportsKelasTarget && !kelasTarget) {
+        soalMap.set(`${String(item.jadwal_id || '')}|*`, item)
+      }
+    })
+  }
+  ujianGuruState.soalByJadwal = soalMap
+
+  const folderMap = new Map()
+  examRows.forEach(item => {
+    const folderName = String(item?.jadwal?.nama || '-').trim() || '-'
+    if (!folderMap.has(folderName)) folderMap.set(folderName, [])
+    folderMap.get(folderName).push(item)
+  })
+
+  const folderNames = [...folderMap.keys()].sort((a, b) => a.localeCompare(b))
+  const folderHtml = folderNames.map(folderName => {
+    const list = folderMap.get(folderName) || []
+    const sortedList = [...list].sort((a, b) => {
+      const kelasA = String(a?.kelasNama || '')
+      const kelasB = String(b?.kelasNama || '')
+      const kelasCmp = kelasA.localeCompare(kelasB, undefined, { sensitivity: 'base', numeric: true })
+      if (kelasCmp !== 0) return kelasCmp
+      const mapelCmp = String(a?.mapelLabel || '').localeCompare(String(b?.mapelLabel || ''), undefined, { sensitivity: 'base' })
+      if (mapelCmp !== 0) return mapelCmp
+      return String(a?.jadwal?.tanggal || '').localeCompare(String(b?.jadwal?.tanggal || ''))
+    })
+    const isOpen = ujianGuruState.openFolders.has(folderName)
+    const rowsHtml = sortedList.map((item, idx) => {
+      const sid = String(item.jadwal?.id || '')
+      const rowKey = String(item.rowKey || `${sid}|-`)
+      const soal = ujianGuruState.supportsKelasTarget
+        ? (soalMap.get(rowKey) || null)
+        : (soalMap.get(rowKey) || soalMap.get(`${sid}|*`) || null)
+      return `
+        <tr>
+          <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${idx + 1}</td>
+          <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.kelasNama || '-')}</td>
+          <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.mapelLabel || '-')}</td>
+          <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.jadwal?.tanggal || '-')}</td>
+          <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(toExamStatusLabel(soal?.status))}</td>
+          <td style="padding:8px; border:1px solid #e2e8f0; white-space:nowrap;">
+            <button type="button" class="modal-btn modal-btn-primary" onclick="openGuruUjianEditorPage('${encodeURIComponent(rowKey)}')">${soal ? 'Edit Soal' : 'Buat Soal'}</button>
+            <button type="button" class="modal-btn" ${soal ? '' : 'disabled'} onclick="chooseAndPrintGuruUjianByRow('${encodeURIComponent(rowKey)}')">Cetak</button>
+          </td>
+        </tr>
+      `
+    }).join('')
+
+    return `
+      <div class="placeholder-card" style="margin-bottom:10px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+          <div style="font-weight:700; color:#0f172a;">${escapeHtml(folderName)}</div>
+          <button type="button" class="modal-btn" onclick="toggleGuruExamFolder('${encodeURIComponent(folderName)}')">${isOpen ? 'Tutup' : 'Buka'}</button>
+        </div>
+        ${isOpen ? `
+          <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px; margin-top:8px;">
+            <table style="width:100%; min-width:980px; border-collapse:collapse; font-size:13px;">
+              <thead>
+                <tr style="background:#f8fafc;">
+                  <th style="padding:8px; border:1px solid #e2e8f0; width:44px;">No</th>
+                  <th style="padding:8px; border:1px solid #e2e8f0;">Kelas</th>
+                  <th style="padding:8px; border:1px solid #e2e8f0;">Mapel</th>
+                  <th style="padding:8px; border:1px solid #e2e8f0;">Tanggal</th>
+                  <th style="padding:8px; border:1px solid #e2e8f0;">Status</th>
+                  <th style="padding:8px; border:1px solid #e2e8f0; width:220px;">Aksi</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rowsHtml || '<tr><td colspan="6" style="padding:12px; text-align:center; border:1px solid #e2e8f0;">Tidak ada data.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        ` : ''}
+      </div>
+    `
+  }).join('')
+
+  content.innerHTML = `
+    <div class="placeholder-card" style="margin-bottom:12px;">
+      <div style="font-weight:700; margin-bottom:6px; color:#0f172a;">Folder Ujian</div>
+      <div style="font-size:12px; color:#64748b;">Klik folder ujian untuk menampilkan daftar mapel dan membuat soal.</div>
+    </div>
+    ${folderHtml || '<div class="placeholder-card">Belum ada jadwal ujian yang sesuai mapel Anda.</div>'}
+  `
+}
+
+function renderGuruUjianQuestionRows(forcedSections = null) {
+  const count = Number(document.getElementById('guru-ujian-jumlah')?.value || 0)
+  const listEl = document.getElementById('guru-ujian-questions')
+  if (!listEl) return
+  if (!document.querySelector('.guru-ujian-section-row')) {
+    renderGuruUjianSectionRows(forcedSections || ujianGuruState.sectionDefs)
+  }
+  const draftByNo = getGuruUjianDraftByNumber()
+  const existing = parseExamQuestions(ujianGuruState.activeSoal?.questions_json)
+  const fallbackType = String(ujianGuruState.activeSoal?.bentuk_soal || 'pilihan-ganda')
+  const existingByNo = new Map(
+    existing.map((item, idx) => {
+      const no = Number(item?.no || (idx + 1))
+      return [no, { ...item, no, type: normalizeExamQuestionType(item?.type, fallbackType) }]
+    })
+  )
+  const typeCfg = getGuruUjianTypeMap(count, { sections: forcedSections || ujianGuruState.sectionDefs })
+  const safeCount = typeCfg.safeCount
+  if (!safeCount || !(typeCfg.sections || []).length) {
+    listEl.innerHTML = '<div class="placeholder-card">Belum ada model soal. Tambahkan model soal di bagian bawah.</div>'
+    const infoEl = document.getElementById('guru-ujian-type-info')
+    if (infoEl) infoEl.textContent = 'Belum ada model soal.'
+    return
+  }
+  const sectionIndexByStart = new Map()
+  ;(typeCfg.sections || []).forEach((sec, idx) => {
+    sectionIndexByStart.set(Number(sec.start || 0), { ...sec, idx })
+  })
+  const localNoByAbsNo = new Map()
+  let prevType = ''
+  let localCounter = 0
+  for (let i = 1; i <= safeCount; i += 1) {
+    const t = typeCfg.typeMap[i] || 'pilihan-ganda'
+    if (i === 1 || t !== prevType) localCounter = 1
+    else localCounter += 1
+    localNoByAbsNo.set(i, localCounter)
+    prevType = t
+  }
+  let html = ''
+  for (let i = 1; i <= safeCount; i += 1) {
+    const prev = draftByNo.get(i) || existingByNo.get(i) || {}
+    const qType = typeCfg.typeMap[i] || 'pilihan-ganda'
+    const sectionForNo = (typeCfg.sections || []).find(sec => i >= sec.start && i <= sec.end) || null
+    const localNo = localNoByAbsNo.get(i) || i
+    if (sectionForNo && Number(sectionForNo.start) === i) {
+      const secData = sectionIndexByStart.get(i) || { idx: 0, ...sectionForNo }
+      const secIdx = Number(secData.idx || 0)
+      const secCount = Math.max(1, Number(secData.end || i) - Number(secData.start || i) + 1)
+      html += `
+        <div class="placeholder-card guru-ujian-section-row" data-index="${secIdx}" style="margin-bottom:8px; border-color:#cbd5e1; background:#f8fafc;">
+          <div style="display:grid; grid-template-columns:1fr 180px auto; gap:8px; align-items:end;">
+            <div>
+              <label class="guru-label">Model Soal</label>
+              <select id="guru-ujian-section-type-${secIdx}" class="guru-field" onchange="onGuruUjianSectionChange()">
+                <option value="pilihan-ganda" ${qType === 'pilihan-ganda' ? 'selected' : ''}>Pilihan Ganda</option>
+                <option value="esai" ${qType === 'esai' ? 'selected' : ''}>Esai</option>
+                <option value="pasangkan-kata" ${qType === 'pasangkan-kata' ? 'selected' : ''}>Pasangkan Kata (A-B)</option>
+                <option value="isi-titik" ${qType === 'isi-titik' ? 'selected' : ''}>Isi Titik Kosong</option>
+              </select>
+            </div>
+            <div>
+              <label class="guru-label">Jumlah Soal</label>
+              <input id="guru-ujian-section-count-${secIdx}" class="guru-field" type="number" min="1" max="200" value="${escapeHtml(String(secCount))}" onchange="onGuruUjianSectionChange()">
+            </div>
+            <div>
+              <button type="button" class="modal-btn" ${(typeCfg.sections || []).length > 1 ? '' : 'disabled'} onclick="removeGuruUjianSection(${secIdx})">Hapus</button>
+            </div>
+          </div>
+          <input id="guru-ujian-section-end-${secIdx}" type="hidden" value="${escapeHtml(String(sectionForNo.end || i))}">
+          ${qType === 'isi-titik' ? `
+            <div style="margin-top:8px;">
+              <label class="guru-label">Pilihan Kata (pisahkan koma)</label>
+              <input id="guru-ujian-section-words-${secIdx}" class="guru-field" type="text" value="${escapeHtml(String(sectionForNo.wordPool || ''))}" placeholder="ana, ila, aina" onchange="onGuruUjianSectionChange()">
+            </div>
+          ` : ''}
+        </div>
+      `
+    }
+    if (qType === 'pilihan-ganda') {
+      const opts = prev.options || {}
+      html += `
+        <div class="placeholder-card guru-ujian-question-row" data-no="${i}" data-type="pilihan-ganda" style="margin-bottom:8px;">
+          <div style="font-weight:700; margin-bottom:6px;">Nomor ${localNo} <span style="font-weight:600; color:#2563eb;">(Pilihan Ganda)</span></div>
+          <textarea id="guru-ujian-q-${i}" class="guru-field" rows="2" placeholder="Tulis pertanyaan">${escapeHtml(String(prev.text || ''))}</textarea>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
+            <input id="guru-ujian-q-${i}-a" class="guru-field" type="text" placeholder="Opsi A" value="${escapeHtml(String(opts.a || ''))}">
+            <input id="guru-ujian-q-${i}-b" class="guru-field" type="text" placeholder="Opsi B" value="${escapeHtml(String(opts.b || ''))}">
+            <input id="guru-ujian-q-${i}-c" class="guru-field" type="text" placeholder="Opsi C" value="${escapeHtml(String(opts.c || ''))}">
+            <input id="guru-ujian-q-${i}-d" class="guru-field" type="text" placeholder="Opsi D" value="${escapeHtml(String(opts.d || ''))}">
+          </div>
+          <div style="margin-top:8px;">
+            <label class="guru-label">Kunci Jawaban</label>
+            <select id="guru-ujian-q-${i}-answer" class="guru-field" style="max-width:140px;">
+              <option value="">Pilih</option>
+              <option value="A" ${String(prev.answer || '') === 'A' ? 'selected' : ''}>A</option>
+              <option value="B" ${String(prev.answer || '') === 'B' ? 'selected' : ''}>B</option>
+              <option value="C" ${String(prev.answer || '') === 'C' ? 'selected' : ''}>C</option>
+              <option value="D" ${String(prev.answer || '') === 'D' ? 'selected' : ''}>D</option>
+            </select>
+          </div>
+        </div>
+      `
+    } else if (qType === 'pasangkan-kata') {
+      const pairs = Array.isArray(prev.pairs) ? prev.pairs : []
+      const getPair = idx => pairs[idx] || {}
+      html += `
+        <div class="placeholder-card guru-ujian-question-row" data-no="${i}" data-type="pasangkan-kata" style="margin-bottom:8px;">
+          <div style="font-weight:700; margin-bottom:6px;">Nomor ${localNo} <span style="font-weight:600; color:#7c3aed;">(Pasangkan Kata)</span></div>
+          <textarea id="guru-ujian-q-${i}" class="guru-field" rows="2" placeholder="Tulis instruksi singkat soal (opsional)">${escapeHtml(String(prev.text || ''))}</textarea>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
+            <input id="guru-ujian-q-${i}-a1" class="guru-field" type="text" placeholder="Baris A 1" value="${escapeHtml(String(getPair(0).a || ''))}">
+            <input id="guru-ujian-q-${i}-b1" class="guru-field" type="text" placeholder="Baris B 1" value="${escapeHtml(String(getPair(0).b || ''))}">
+            <input id="guru-ujian-q-${i}-a2" class="guru-field" type="text" placeholder="Baris A 2" value="${escapeHtml(String(getPair(1).a || ''))}">
+            <input id="guru-ujian-q-${i}-b2" class="guru-field" type="text" placeholder="Baris B 2" value="${escapeHtml(String(getPair(1).b || ''))}">
+            <input id="guru-ujian-q-${i}-a3" class="guru-field" type="text" placeholder="Baris A 3" value="${escapeHtml(String(getPair(2).a || ''))}">
+            <input id="guru-ujian-q-${i}-b3" class="guru-field" type="text" placeholder="Baris B 3" value="${escapeHtml(String(getPair(2).b || ''))}">
+            <input id="guru-ujian-q-${i}-a4" class="guru-field" type="text" placeholder="Baris A 4" value="${escapeHtml(String(getPair(3).a || ''))}">
+            <input id="guru-ujian-q-${i}-b4" class="guru-field" type="text" placeholder="Baris B 4" value="${escapeHtml(String(getPair(3).b || ''))}">
+          </div>
+        </div>
+      `
+    } else if (qType === 'isi-titik') {
+      const fragments = Array.isArray(sectionForNo?.wordList) ? sectionForNo.wordList : []
+      html += `
+        <div class="placeholder-card guru-ujian-question-row" data-no="${i}" data-type="isi-titik" style="margin-bottom:8px;">
+          <div style="font-weight:700; margin-bottom:6px;">Nomor ${localNo} <span style="font-weight:600; color:#ea580c;">(Isi Titik Kosong)</span></div>
+          <div style="font-size:12px; color:#64748b; margin-bottom:6px;">Pilihan kata: (${escapeHtml(fragments.join(', ') || '-')})</div>
+          <textarea id="guru-ujian-q-${i}" class="guru-field" rows="2" placeholder="Tulis kalimat dengan titik kosong, contoh: Ana ... ila madrasah.">${escapeHtml(String(prev.text || ''))}</textarea>
+          <input id="guru-ujian-q-${i}-answer" class="guru-field" type="text" placeholder="Jawaban benar" value="${escapeHtml(String(prev.answer || ''))}" style="margin-top:8px;">
+        </div>
+      `
+    } else {
+      html += `
+        <div class="placeholder-card guru-ujian-question-row" data-no="${i}" data-type="esai" style="margin-bottom:8px;">
+          <div style="font-weight:700; margin-bottom:6px;">Nomor ${localNo} <span style="font-weight:600; color:#0f766e;">(Esai)</span></div>
+          <textarea id="guru-ujian-q-${i}" class="guru-field" rows="3" placeholder="Tulis pertanyaan">${escapeHtml(String(prev.text || ''))}</textarea>
+        </div>
+      `
+    }
+  }
+  const infoEl = document.getElementById('guru-ujian-type-info')
+  if (infoEl) {
+    if (typeCfg.errors.length) {
+      infoEl.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(typeCfg.errors[0])}</span>`
+    } else {
+      const sectionLabel = (typeCfg.sections || []).map(item => {
+        const label = item.type === 'esai'
+          ? 'Esai'
+          : (item.type === 'pasangkan-kata'
+            ? 'Pasangkan Kata'
+            : (item.type === 'isi-titik' ? 'Isi Titik' : 'PG'))
+        return `${label} ${item.start}-${item.end}`
+      }).join(' | ')
+      infoEl.textContent = `Model aktif: ${sectionLabel || '-'}`
+    }
+  }
+  listEl.innerHTML = html
+}
+function toggleGuruExamFolder(folderNameEncoded) {
+  const key = decodeURIComponent(String(folderNameEncoded || '')).trim()
+  if (!key) return
+  if (ujianGuruState.openFolders.has(key)) ujianGuruState.openFolders.delete(key)
+  else ujianGuruState.openFolders.add(key)
+  renderUjianPage()
+}
+
+function openGuruUjianEditorPage(jadwalId) {
+  const decodedKey = decodeURIComponent(String(jadwalId || '')).trim()
+  if (!decodedKey) return
+  const row = (ujianGuruState.rows || []).find(item => String(item.rowKey || '') === decodedKey)
+  if (!row?.jadwal) return
+  const jadwal = row.jadwal
+  const sid = String(jadwal.id || '')
+  ujianGuruState.activeSoal = ujianGuruState.supportsKelasTarget
+    ? (ujianGuruState.soalByJadwal.get(decodedKey) || null)
+    : (ujianGuruState.soalByJadwal.get(decodedKey) || ujianGuruState.soalByJadwal.get(`${sid}|*`) || null)
+
+  const content = document.getElementById('guru-content')
+  if (!content) return
+
+  const existing = parseExamQuestions(ujianGuruState.activeSoal?.questions_json)
+  const countValue = ujianGuruState.activeSoal?.jumlah_nomor || existing.length || 0
+  const fallbackType = String(ujianGuruState.activeSoal?.bentuk_soal || 'pilihan-ganda')
+  const sections = deriveExamSectionsFromQuestions(existing, fallbackType, Number(countValue))
+  const instruksiMeta = parseExamInstruksiMeta(ujianGuruState.activeSoal?.instruksi)
+  const instruksi = String(instruksiMeta.text || '').trim()
+  const kelasLabel = String(row.kelasNama || '-')
+  const mapelLabel = String(row.mapelLabel || getExamRowMapelLabel(jadwal))
+
+  ujianGuruState.activeJadwal = jadwal
+  ujianGuruState.activeKelasName = kelasLabel
+  ujianGuruState.sectionDefs = sections.map(item => ({ type: item.type, end: item.end, words: item.wordPool || '', count: item.blankCount || null }))
+  content.innerHTML = `
+    <div class="placeholder-card" style="border-color:#93c5fd;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
+        <div style="font-weight:700; color:#0f172a;">Editor Soal - ${escapeHtml(jadwal.nama || '-')}</div>
+        <button type="button" class="modal-btn" onclick="backToGuruUjianList()">Kembali ke Folder</button>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:8px; margin-bottom:10px;">
+        <div class="placeholder-card"><strong>Kelas</strong><br>${escapeHtml(kelasLabel)}</div>
+        <div class="placeholder-card"><strong>Mapel</strong><br>${escapeHtml(mapelLabel)}</div>
+        <div class="placeholder-card"><strong>Tanggal</strong><br>${escapeHtml(String(jadwal?.tanggal || '-'))}</div>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:8px; margin-bottom:10px;">
+        <div>
+          <label class="guru-label">Jumlah Soal</label>
+          <input id="guru-ujian-jumlah" class="guru-field" type="number" min="0" max="200" value="${escapeHtml(String(countValue))}" readonly>
+        </div>
+      </div>
+      <div id="guru-ujian-type-info" style="font-size:12px; color:#64748b; margin:-4px 0 8px 0;"></div>
+      <div style="margin-bottom:10px;">
+        <label class="guru-label">Bahasa Soal</label>
+        <select id="guru-ujian-lang" class="guru-field" style="max-width:240px;">
+          <option value="ID" ${instruksiMeta.lang !== 'AR' ? 'selected' : ''}>Indonesia</option>
+          <option value="AR" ${instruksiMeta.lang === 'AR' ? 'selected' : ''}>Arab</option>
+        </select>
+      </div>
+      <div style="margin-bottom:10px;">
+        <label class="guru-label">Instruksi</label>
+        <textarea id="guru-ujian-instruksi" class="guru-field" rows="2" placeholder="Tulis instruksi pengerjaan soal...">${escapeHtml(instruksi)}</textarea>
+      </div>
+      <div id="guru-ujian-questions"></div>
+      <div id="guru-ujian-sections" style="margin-top:10px; margin-bottom:10px;"></div>
+      <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+        <button type="button" class="modal-btn" onclick="saveGuruUjian(false)">Simpan Draft</button>
+        <button type="button" class="modal-btn modal-btn-primary" onclick="saveGuruUjian(true)">Kirim Soal</button>
+        <button type="button" class="modal-btn" onclick="chooseAndPrintGuruUjianActive()">Cetak</button>
+      </div>
+    </div>
+  `
+  renderGuruUjianSectionRows(ujianGuruState.sectionDefs)
+  renderGuruUjianQuestionRows(ujianGuruState.sectionDefs)
+}
+
+function backToGuruUjianList() {
+  ujianGuruState.activeJadwal = null
+  ujianGuruState.activeKelasName = ''
+  ujianGuruState.sectionDefs = []
+  ujianGuruState.activeSoal = null
+  renderUjianPage()
+}
+
+function openGuruUjianEditor(jadwalId) {
+  const sid = String(jadwalId || '')
+  const row = (ujianGuruState.rows || []).find(item => String(item.rowKey || '') === sid || String(item.jadwal?.id || '') === sid)
+  if (!row) return
+  openGuruUjianEditorPage(encodeURIComponent(String(row.rowKey || sid)))
+}
+
+function closeGuruUjianEditor() {
+  backToGuruUjianList()
+}
+
+function onGuruUjianCountChange() {
+  const latest = getGuruUjianSectionsSource()
+  ujianGuruState.sectionDefs = latest
+  renderGuruUjianSectionRows(latest)
+  renderGuruUjianQuestionRows(latest)
+}
+
+function onGuruUjianShapeChange() {
+  const latest = getGuruUjianSectionsSource()
+  ujianGuruState.sectionDefs = latest
+  renderGuruUjianSectionRows(latest)
+  renderGuruUjianQuestionRows(latest)
+}
+
+function onGuruUjianSectionChange() {
+  const latest = getGuruUjianSectionsSource()
+  ujianGuruState.sectionDefs = latest
+  renderGuruUjianSectionRows(latest)
+  renderGuruUjianQuestionRows(latest)
+}
+
+function addGuruUjianSection() {
+  const current = Array.isArray(ujianGuruState.sectionDefs) ? [...ujianGuruState.sectionDefs] : []
+  const fromDom = readGuruUjianSectionsFromDom()
+  const baseCurrent = fromDom.length ? fromDom : current
+  const newType = String(document.getElementById('guru-ujian-new-section-type')?.value || 'pilihan-ganda')
+  const newCountRaw = document.getElementById('guru-ujian-new-section-count')?.value
+  const newCount = parseGuruUjianRangeValue(newCountRaw, 200) || 1
+  const base = baseCurrent.concat([{ type: newType, count: newCount }])
+  ujianGuruState.sectionDefs = base
+  renderGuruUjianSectionRows(base)
+  renderGuruUjianQuestionRows(base)
+}
+
+function removeGuruUjianSection(index) {
+  const idx = Number(index)
+  const fromDom = readGuruUjianSectionsFromDom()
+  const sections = fromDom.length ? fromDom : (Array.isArray(ujianGuruState.sectionDefs) ? [...ujianGuruState.sectionDefs] : [])
+  if (!Number.isFinite(idx) || idx < 0 || idx >= sections.length) return
+  if (sections.length <= 1) return
+  const next = sections.filter((_item, i) => i !== idx)
+  ujianGuruState.sectionDefs = next
+  renderGuruUjianSectionRows(next)
+  renderGuruUjianQuestionRows(next)
+}
+
+function collectGuruUjianQuestions() {
+  const count = Number(document.getElementById('guru-ujian-jumlah')?.value || 0)
+  const safeCount = Number.isFinite(count) ? Math.max(1, Math.min(200, Math.round(count))) : 1
+  const typeCfg = getGuruUjianTypeMap(safeCount)
+  if (typeCfg.errors.length) {
+    alert(typeCfg.errors[0])
+    return null
+  }
+  const questions = []
+  for (let i = 1; i <= safeCount; i += 1) {
+    const text = String(document.getElementById(`guru-ujian-q-${i}`)?.value || '').trim()
+    if (!text) continue
+    const qType = typeCfg.typeMap[i] || 'pilihan-ganda'
+    if (qType === 'pilihan-ganda') {
+      const options = {
+        a: String(document.getElementById(`guru-ujian-q-${i}-a`)?.value || '').trim(),
+        b: String(document.getElementById(`guru-ujian-q-${i}-b`)?.value || '').trim(),
+        c: String(document.getElementById(`guru-ujian-q-${i}-c`)?.value || '').trim(),
+        d: String(document.getElementById(`guru-ujian-q-${i}-d`)?.value || '').trim()
+      }
+      const answer = String(document.getElementById(`guru-ujian-q-${i}-answer`)?.value || '').trim().toUpperCase()
+      questions.push({ no: i, type: qType, text, options, answer })
+    } else if (qType === 'pasangkan-kata') {
+      const pairs = [1, 2, 3, 4].map(n => ({
+        a: String(document.getElementById(`guru-ujian-q-${i}-a${n}`)?.value || '').trim(),
+        b: String(document.getElementById(`guru-ujian-q-${i}-b${n}`)?.value || '').trim()
+      })).filter(item => item.a || item.b)
+      questions.push({ no: i, type: qType, text, pairs })
+    } else if (qType === 'isi-titik') {
+      const sectionForNo = (typeCfg.sections || []).find(sec => i >= sec.start && i <= sec.end) || null
+      const fragments = Array.isArray(sectionForNo?.wordList) ? sectionForNo.wordList : []
+      const answer = String(document.getElementById(`guru-ujian-q-${i}-answer`)?.value || '').trim()
+      questions.push({ no: i, type: qType, text, fragments, answer })
+    } else {
+      questions.push({ no: i, type: qType, text })
+    }
+  }
+  return questions
+}
+
+async function saveGuruUjian(submitMode) {
+  const jadwal = ujianGuruState.activeJadwal
+  const kelasTarget = String(ujianGuruState.activeKelasName || '').trim()
+  if (!jadwal?.id) {
+    alert('Jadwal ujian belum dipilih.')
+    return
+  }
+  const ctx = await getGuruContext()
+  if (!ctx?.guru?.id) {
+    alert('Data guru tidak ditemukan.')
+    return
+  }
+
+  const jumlahNomor = Number(document.getElementById('guru-ujian-jumlah')?.value || 0)
+  const bahasaSoal = String(document.getElementById('guru-ujian-lang')?.value || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+  const instruksi = String(document.getElementById('guru-ujian-instruksi')?.value || '').trim()
+  const questions = collectGuruUjianQuestions()
+  if (!questions) return
+  if (!questions.length) {
+    alert('Minimal isi satu soal.')
+    return
+  }
+
+  const payload = {
+    jadwal_id: String(jadwal.id),
+    kelas_target: kelasTarget || null,
+    guru_id: String(ctx.guru.id),
+    guru_nama: String(ctx.guru.nama || ctx.guru.id_karyawan || '').trim() || null,
+    bentuk_soal: 'campuran',
+    jumlah_nomor: Number.isFinite(jumlahNomor) ? Math.max(1, Math.round(jumlahNomor)) : questions.length,
+    instruksi: buildExamInstruksiWithMeta(bahasaSoal, instruksi),
+    questions_json: JSON.stringify(questions),
+    status: submitMode ? 'submitted' : 'draft',
+    updated_at: new Date().toISOString()
+  }
+
+  let query
+  if (!ujianGuruState.supportsKelasTarget) delete payload.kelas_target
+
+  const activeSoalKelas = String(ujianGuruState.activeSoal?.kelas_target || '').trim()
+  const isSameClassRecord = !ujianGuruState.supportsKelasTarget || activeSoalKelas === kelasTarget
+  if (ujianGuruState.activeSoal?.id && isSameClassRecord) {
+    query = sb
+      .from(EXAM_QUESTION_TABLE)
+      .update(payload)
+      .eq('id', ujianGuruState.activeSoal.id)
+      .select('id, jadwal_id, kelas_target, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, updated_at')
+      .maybeSingle()
+  } else {
+    query = sb
+      .from(EXAM_QUESTION_TABLE)
+      .insert([payload])
+      .select('id, jadwal_id, kelas_target, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, updated_at')
+      .maybeSingle()
+  }
+
+  const { data, error } = await query
+  if (error) {
+    const errMsg = String(error.message || '')
+    const errCode = String(error.code || '').toUpperCase()
+    if (errCode === '23505' && ujianGuruState.supportsKelasTarget) {
+      alert(
+        `Soal per kelas belum bisa disimpan karena index unik lama masih aktif.\n\n` +
+        `Jalankan SQL ini:\n` +
+        `drop index if exists public.soal_ujian_jadwal_guru_uidx;\n` +
+        `create unique index if not exists soal_ujian_jadwal_guru_kelas_uidx on public.${EXAM_QUESTION_TABLE}(jadwal_id, guru_id, kelas_target);`
+      )
+      return
+    }
+    if (isExamTableMissingError(error)) {
+      alert(buildExamQuestionMissingTableMessage())
+      return
+    }
+    if (isExamColumnMissingError(error)) {
+      alert(`Kolom tabel '${EXAM_QUESTION_TABLE}' belum sesuai.\nGunakan kolom: jadwal_id, kelas_target, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, updated_at.`)
+      return
+    }
+    console.error(error)
+    alert(`Gagal menyimpan soal ujian: ${errMsg || 'Unknown error'}`)
+    return
+  }
+
+  if (data && typeof data === 'object') {
+    ujianGuruState.activeSoal = data
+    const rowKey = `${String(data.jadwal_id || '')}|${String(data.kelas_target || '-')}`
+    ujianGuruState.soalByJadwal.set(rowKey, data)
+    if (!String(data.kelas_target || '').trim()) ujianGuruState.soalByJadwal.set(`${String(data.jadwal_id || '')}|*`, data)
+  }
+
+  alert(submitMode ? 'Soal berhasil dikirim.' : 'Draft soal berhasil disimpan.')
+  if (submitMode) {
+    await renderUjianPage()
+    return
+  }
+  renderGuruUjianQuestionRows(ujianGuruState.sectionDefs)
+}
+
+async function printGuruUjianByJadwal(jadwalId) {
+  const sid = String(jadwalId || '')
+  const row = (ujianGuruState.rows || []).find(item => String(item.jadwal?.id || '') === sid)
+  if (!row) return
+  await printGuruUjianByRow(encodeURIComponent(String(row.rowKey || `${sid}|-`)))
+}
+
+async function printGuruUjianActive(format = '') {
+  const mode = String(format || '').trim().toLowerCase()
+  try {
+    const jadwal = ujianGuruState.activeJadwal
+    if (!jadwal?.id) {
+      alert('Pilih jadwal ujian terlebih dahulu.')
+      return
+    }
+    const questions = collectGuruUjianQuestions()
+    if (!questions || !questions.length) {
+      alert('Minimal isi satu soal sebelum cetak.')
+      return
+    }
+    const jumlahNomor = Number(document.getElementById('guru-ujian-jumlah')?.value || questions.length || 0)
+    const bahasaSoal = String(document.getElementById('guru-ujian-lang')?.value || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+    const instruksi = String(document.getElementById('guru-ujian-instruksi')?.value || '').trim()
+    const kelasTarget = String(ujianGuruState.activeKelasName || '-')
+    const soal = {
+      guru_nama: String(ujianGuruState.activeSoal?.guru_nama || ''),
+      bentuk_soal: 'campuran',
+      jumlah_nomor: Number.isFinite(jumlahNomor) ? Math.max(1, Math.round(jumlahNomor)) : questions.length,
+      instruksi: buildExamInstruksiWithMeta(bahasaSoal, instruksi),
+      questions_json: JSON.stringify(questions),
+      status: 'draft'
+    }
+    const lang = parseExamInstruksiMeta(soal.instruksi).lang || 'ID'
+    if (mode === 'word' || (mode !== 'pdf' && lang === 'AR')) {
+      const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasTarget || '-')}.doc`
+      await exportExamWordFile({ ...jadwal, kelas: kelasTarget }, soal, fileName)
+      return
+    }
+    const doc = await createExamPdfDoc({ ...jadwal, kelas: kelasTarget }, soal)
+    if (!doc) {
+      alert('Cetak gagal: font Arab/PDF belum siap. Pastikan file TTF tersedia dan refresh halaman.')
+      return
+    }
+    const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasTarget || '-')}.pdf`
+    doc.save(fileName)
+  } catch (err) {
+    console.error('printGuruUjianActive error:', err)
+    alert(`Cetak gagal: ${String(err?.message || err || 'Unknown error')}`)
+  }
+}
+
+async function printGuruUjianByRow(rowKeyEncoded, format = '') {
+  const mode = String(format || '').trim().toLowerCase()
+  try {
+    const decodedKey = decodeURIComponent(String(rowKeyEncoded || '')).trim()
+    if (!decodedKey) return
+    const [jadwalId, kelasNamaRaw] = decodedKey.split('|')
+    const kelasNama = String(kelasNamaRaw || '-').trim() || '-'
+    const jadwal = (ujianGuruState.rows || []).find(item => String(item.rowKey || '') === decodedKey)?.jadwal || (ujianGuruState.rows || []).find(item => String(item.jadwal?.id || '') === String(jadwalId || ''))?.jadwal
+    if (!jadwal) return
+
+    const ctx = await getGuruContext()
+    let soalRes = await sb
+      .from(EXAM_QUESTION_TABLE)
+      .select('id, jadwal_id, kelas_target, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status')
+      .eq('jadwal_id', String(jadwalId || ''))
+      .eq('guru_id', String(ctx.guru.id))
+      .eq('kelas_target', kelasNama)
+      .maybeSingle()
+
+    if (soalRes.error && isExamColumnMissingError(soalRes.error)) {
+      soalRes = await sb
+        .from(EXAM_QUESTION_TABLE)
+        .select('id, jadwal_id, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status')
+        .eq('jadwal_id', String(jadwalId || ''))
+        .eq('guru_id', String(ctx.guru.id))
+        .maybeSingle()
+    }
+
+    if (soalRes.error || !soalRes.data) {
+      alert('Soal belum tersedia untuk dicetak.')
+      return
+    }
+    const lang = parseExamInstruksiMeta(soalRes.data?.instruksi).lang || 'ID'
+    if (mode === 'word' || (mode !== 'pdf' && lang === 'AR')) {
+      const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.doc`
+      await exportExamWordFile({ ...jadwal, kelas: kelasNama }, soalRes.data, fileName)
+      return
+    }
+
+    const doc = await createExamPdfDoc({ ...jadwal, kelas: kelasNama }, soalRes.data)
+    if (!doc) {
+      alert('Cetak gagal: font Arab/PDF belum siap. Pastikan file TTF tersedia dan refresh halaman.')
+      return
+    }
+    const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.pdf`
+    doc.save(fileName)
+  } catch (err) {
+    console.error('printGuruUjianByRow error:', err)
+    alert(`Cetak gagal: ${String(err?.message || err || 'Unknown error')}`)
+  }
+}
+
+async function chooseExamPrintFormatPopup() {
+  // Always use native confirm for this flow to avoid hidden custom-popup issues.
+  const asWord = window.confirm('Cetak sebagai Word?\nPilih OK untuk Word, Cancel untuk PDF.')
+  if (asWord) return 'word'
+  return 'pdf'
+}
+
+async function chooseAndPrintGuruUjianActive() {
+  await printGuruUjianActive()
+}
+
+async function chooseAndPrintGuruUjianByRow(rowKeyEncoded) {
+  await printGuruUjianByRow(rowKeyEncoded)
+}
+
+async function exportGuruUjianActiveWord() {
+  try {
+    const jadwal = ujianGuruState.activeJadwal
+    if (!jadwal?.id) {
+      alert('Pilih jadwal ujian terlebih dahulu.')
+      return
+    }
+    const questions = collectGuruUjianQuestions()
+    if (!questions || !questions.length) {
+      alert('Minimal isi satu soal sebelum export Word.')
+      return
+    }
+    const jumlahNomor = Number(document.getElementById('guru-ujian-jumlah')?.value || questions.length || 0)
+    const bahasaSoal = String(document.getElementById('guru-ujian-lang')?.value || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+    const instruksi = String(document.getElementById('guru-ujian-instruksi')?.value || '').trim()
+    const kelasTarget = String(ujianGuruState.activeKelasName || '-')
+    const soal = {
+      guru_nama: String(ujianGuruState.activeSoal?.guru_nama || ''),
+      bentuk_soal: 'campuran',
+      jumlah_nomor: Number.isFinite(jumlahNomor) ? Math.max(1, Math.round(jumlahNomor)) : questions.length,
+      instruksi: buildExamInstruksiWithMeta(bahasaSoal, instruksi),
+      questions_json: JSON.stringify(questions),
+      status: 'draft'
+    }
+    const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasTarget || '-')}.doc`
+    await exportExamWordFile({ ...jadwal, kelas: kelasTarget }, soal, fileName)
+  } catch (err) {
+    console.error('exportGuruUjianActiveWord error:', err)
+    alert(`Export Word gagal: ${String(err?.message || err || 'Unknown error')}`)
+  }
+}
+
+async function exportGuruUjianByRowWord(rowKeyEncoded) {
+  try {
+    const decodedKey = decodeURIComponent(String(rowKeyEncoded || '')).trim()
+    if (!decodedKey) return
+    const [jadwalId, kelasNamaRaw] = decodedKey.split('|')
+    const kelasNama = String(kelasNamaRaw || '-').trim() || '-'
+    const jadwal = (ujianGuruState.rows || []).find(item => String(item.rowKey || '') === decodedKey)?.jadwal || (ujianGuruState.rows || []).find(item => String(item.jadwal?.id || '') === String(jadwalId || ''))?.jadwal
+    if (!jadwal) return
+
+    const ctx = await getGuruContext()
+    let soalRes = await sb
+      .from(EXAM_QUESTION_TABLE)
+      .select('id, jadwal_id, kelas_target, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status')
+      .eq('jadwal_id', String(jadwalId || ''))
+      .eq('guru_id', String(ctx.guru.id))
+      .eq('kelas_target', kelasNama)
+      .maybeSingle()
+
+    if (soalRes.error && isExamColumnMissingError(soalRes.error)) {
+      soalRes = await sb
+        .from(EXAM_QUESTION_TABLE)
+        .select('id, jadwal_id, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status')
+        .eq('jadwal_id', String(jadwalId || ''))
+        .eq('guru_id', String(ctx.guru.id))
+        .maybeSingle()
+    }
+    if (soalRes.error || !soalRes.data) {
+      alert('Soal belum tersedia untuk export Word.')
+      return
+    }
+    const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.doc`
+    await exportExamWordFile({ ...jadwal, kelas: kelasNama }, soalRes.data, fileName)
+  } catch (err) {
+    console.error('exportGuruUjianByRowWord error:', err)
+    alert(`Export Word gagal: ${String(err?.message || err || 'Unknown error')}`)
+  }
+}
+
 async function setupRaporAccess(forceReload = false) {
   const isWaliKelas = await getIsWaliKelas(forceReload)
   const raporBtn = document.getElementById('guru-nav-rapor')
@@ -8273,6 +10299,10 @@ async function loadGuruPage(page) {
       await loadJadwalGuru()
       setGuruPageCache(targetPage)
       return
+    case 'ujian':
+      await renderUjianPage()
+      setGuruPageCache(targetPage)
+      return
     case 'mapel':
       await renderMapelPage()
       setGuruPageCache(targetPage)
@@ -8363,6 +10393,24 @@ window.showMonitoringSantriDetail = showMonitoringSantriDetail
 window.closeMonitoringDetailPopup = closeMonitoringDetailPopup
 window.onMonitoringSantriModeChange = onMonitoringSantriModeChange
 window.toggleMonitoringSantriSort = toggleMonitoringSantriSort
+window.toggleGuruExamFolder = toggleGuruExamFolder
+window.openGuruUjianEditorPage = openGuruUjianEditorPage
+window.backToGuruUjianList = backToGuruUjianList
+window.openGuruUjianEditor = openGuruUjianEditor
+window.closeGuruUjianEditor = closeGuruUjianEditor
+window.onGuruUjianCountChange = onGuruUjianCountChange
+window.onGuruUjianShapeChange = onGuruUjianShapeChange
+window.onGuruUjianSectionChange = onGuruUjianSectionChange
+window.addGuruUjianSection = addGuruUjianSection
+window.removeGuruUjianSection = removeGuruUjianSection
+window.saveGuruUjian = saveGuruUjian
+window.printGuruUjianByJadwal = printGuruUjianByJadwal
+window.printGuruUjianByRow = printGuruUjianByRow
+window.printGuruUjianActive = printGuruUjianActive
+window.chooseAndPrintGuruUjianByRow = chooseAndPrintGuruUjianByRow
+window.chooseAndPrintGuruUjianActive = chooseAndPrintGuruUjianActive
+window.exportGuruUjianByRowWord = exportGuruUjianByRowWord
+window.exportGuruUjianActiveWord = exportGuruUjianActiveWord
 window.onMonitoringSantriClassFilterChange = onMonitoringSantriClassFilterChange
 window.saveMapelRaporDesc = saveMapelRaporDesc
 window.openMapelDetail = openMapelDetail
@@ -8405,4 +10453,5 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   })
 })
+
 

@@ -1,0 +1,107 @@
+﻿<style>
+  .ju-card {
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    background: #fff;
+    padding: 14px;
+    margin-bottom: 14px;
+  }
+  .ju-label {
+    display: block;
+    font-size: 12px;
+    color: #475569;
+    margin: 0 4px 4px;
+  }
+  .ju-field {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    background: #f8fafc;
+    box-sizing: border-box;
+    outline: none;
+    font-size: 13px;
+  }
+  .ju-btn {
+    border: none;
+    border-radius: 999px;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    background: #2563eb;
+    color: #fff;
+  }
+  .ju-btn.secondary {
+    background: #fff;
+    color: #334155;
+    border: 1px solid #cbd5e1;
+  }
+  .ju-folder {
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 10px;
+    background: #fff;
+    margin-bottom: 10px;
+  }
+  .ju-modal-overlay {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(15, 23, 42, 0.35);
+    z-index: 9999;
+    padding: 16px;
+    box-sizing: border-box;
+  }
+  .ju-modal-card {
+    width: min(980px, calc(100vw - 24px));
+    max-height: calc(100vh - 24px);
+    overflow: auto;
+    background: #fff;
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
+    padding: 14px;
+  }
+</style>
+
+<div class="ju-card">
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+    <strong style="font-size:15px; color:#0f172a;">Pengaturan Jadwal Ujian</strong>
+    <div style="font-size:12px; color:#64748b;">Pilih jenis ujian untuk auto-generate folder dan daftar mapel perangkatan.</div>
+  </div>
+
+  <div style="display:flex; gap:10px; align-items:end; flex-wrap:wrap;">
+    <div style="min-width:220px;">
+      <label class="ju-label">Jenis Ujian</label>
+      <select id="ju-jenis-folder" class="ju-field">
+        <option>UTS</option>
+        <option>UAS</option>
+        <option>UN</option>
+        <option>Try Out</option>
+      </select>
+    </div>
+    <div>
+      <button type="button" class="ju-btn" onclick="createExamFolderFromJenis()">Buat Folder Ujian</button>
+    </div>
+  </div>
+</div>
+
+<div class="ju-card">
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
+    <strong style="font-size:15px; color:#0f172a;">Daftar Folder Ujian</strong>
+    <button type="button" class="ju-btn secondary" onclick="reloadJadwalUjianFolders()">Refresh</button>
+  </div>
+  <div id="ju-folder-list">Loading...</div>
+</div>
+
+<div id="ju-mapel-modal" class="ju-modal-overlay" onclick="closeJadwalMapelDetailModal(event)">
+  <div class="ju-modal-card" onclick="event.stopPropagation()">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px;">
+      <strong id="ju-mapel-modal-title" style="font-size:15px; color:#0f172a;">Detail Jadwal Mapel</strong>
+      <button type="button" class="ju-btn secondary" onclick="closeJadwalMapelDetailModal()">Tutup</button>
+    </div>
+    <div id="ju-mapel-modal-body">Loading...</div>
+  </div>
+</div>

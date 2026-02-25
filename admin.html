@@ -30,6 +30,8 @@
         <button class="sidebar-submenu-btn" data-page="alumni" onclick="loadAkademikFromSidebar('alumni')">Data Alumni</button>
         <button class="sidebar-submenu-btn" data-page="kelas-guru-mapel" onclick="loadAkademikFromSidebar('guru-mapel')">Data Mapel</button>
         <button class="sidebar-submenu-btn" data-page="jadwal" onclick="loadAkademikFromSidebar('jadwal')">Jadwal Pelajaran</button>
+        <button class="sidebar-submenu-btn" data-page="ujian" onclick="loadAkademikFromSidebar('ujian')">Ujian</button>
+        <button class="sidebar-submenu-btn" data-page="jadwal-ujian" onclick="loadAkademikFromSidebar('jadwal-ujian')">Jadwal Ujian</button>
       </div>
       <button class="sidebar-nav-btn sidebar-parent-btn" data-page="ketahfizan" onclick="toggleKetahfizanSidebarMenu()">
         Data Ketahfizan
@@ -77,6 +79,8 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
   <script src="role-page.js"></script>
   <script src="admin.js"></script>
 
