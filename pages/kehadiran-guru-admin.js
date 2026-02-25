@@ -406,9 +406,13 @@ async function repairLegacyKehadiranGuruData() {
 function buildKgSessionAggMaps(absensiRows, jamMap, distribusiMap = new Map()) {
   const exactMap = new Map()
   const genericMap = new Map()
+  const guruJamMap = new Map()
+  const guruDayMap = new Map()
   const broadMap = new Map()
   const broadNoSemMap = new Map()
   const genericSessionSetMap = new Map()
+  const guruJamSessionSetMap = new Map()
+  const guruDaySessionSetMap = new Map()
   const broadSessionSetMap = new Map()
   const broadNoSemSessionSetMap = new Map()
 
@@ -426,6 +430,8 @@ function buildKgSessionAggMaps(absensiRows, jamMap, distribusiMap = new Map()) {
 
     const keyExact = `${tanggal}|${kelasId}|${mapelId}|${guruId}|${jamKey}`
     const keyGeneric = `${tanggal}|${kelasId}|${mapelId}|${guruId}`
+    const keyGuruJam = `${tanggal}|${guruId}|${jamKey}`
+    const keyGuruDay = `${tanggal}|${guruId}`
     const keyBroad = `${tanggal}|${kelasId}|${mapelId}|${semesterId}`
     const keyBroadNoSem = `${tanggal}|${kelasId}|${mapelId}`
 
@@ -446,6 +452,8 @@ function buildKgSessionAggMaps(absensiRows, jamMap, distribusiMap = new Map()) {
     if (guruId) {
       apply(genericMap, keyGeneric)
       apply(exactMap, keyExact)
+      apply(guruJamMap, keyGuruJam)
+      apply(guruDayMap, keyGuruDay)
     }
     apply(broadMap, keyBroad)
     apply(broadNoSemMap, keyBroadNoSem)
@@ -456,6 +464,16 @@ function buildKgSessionAggMaps(absensiRows, jamMap, distribusiMap = new Map()) {
         genericSessionSetMap.set(keyGeneric, new Set())
       }
       genericSessionSetMap.get(keyGeneric).add(marker)
+
+      if (!guruJamSessionSetMap.has(keyGuruJam)) {
+        guruJamSessionSetMap.set(keyGuruJam, new Set())
+      }
+      guruJamSessionSetMap.get(keyGuruJam).add(marker)
+
+      if (!guruDaySessionSetMap.has(keyGuruDay)) {
+        guruDaySessionSetMap.set(keyGuruDay, new Set())
+      }
+      guruDaySessionSetMap.get(keyGuruDay).add(marker)
     }
 
     if (!broadSessionSetMap.has(keyBroad)) {
@@ -484,7 +502,29 @@ function buildKgSessionAggMaps(absensiRows, jamMap, distribusiMap = new Map()) {
     broadNoSemSessionCount.set(key, set.size)
   })
 
-  return { exactMap, genericMap, broadMap, broadNoSemMap, genericSessionCount, broadSessionCount, broadNoSemSessionCount }
+  const guruJamSessionCount = new Map()
+  guruJamSessionSetMap.forEach((set, key) => {
+    guruJamSessionCount.set(key, set.size)
+  })
+
+  const guruDaySessionCount = new Map()
+  guruDaySessionSetMap.forEach((set, key) => {
+    guruDaySessionCount.set(key, set.size)
+  })
+
+  return {
+    exactMap,
+    genericMap,
+    guruJamMap,
+    guruDayMap,
+    broadMap,
+    broadNoSemMap,
+    genericSessionCount,
+    broadSessionCount,
+    broadNoSemSessionCount,
+    guruJamSessionCount,
+    guruDaySessionCount
+  }
 }
 
 async function loadKehadiranGuruAdminData(periode) {
@@ -593,11 +633,23 @@ async function loadKehadiranGuruAdminData(periode) {
     })
   })
 
-  const { exactMap, genericMap, broadMap, broadNoSemMap, genericSessionCount } = buildKgSessionAggMaps(absensiRows, jamMap, distribusiAllMap)
+  const {
+    exactMap,
+    genericMap,
+    guruJamMap,
+    guruDayMap,
+    broadMap,
+    broadNoSemMap,
+    genericSessionCount,
+    guruJamSessionCount,
+    guruDaySessionCount
+  } = buildKgSessionAggMaps(absensiRows, jamMap, distribusiAllMap)
   const summaryByGuru = new Map()
   const detailByGuru = new Map()
   const penggantiCountMap = new Map()
   const penggantiByGuruMap = new Map()
+  const guruJamRemainingCount = new Map(guruJamSessionCount)
+  const guruDayRemainingCount = new Map(guruDaySessionCount)
 
   const sessionsByGeneric = new Map()
   expectedSessions.forEach(session => {
@@ -629,6 +681,28 @@ async function loadKehadiranGuruAdminData(periode) {
         if (fallbackAgg) {
           agg = fallbackAgg
           remainingFallbackSlots -= 1
+        }
+      }
+      if (!agg) {
+        const keyGuruJam = `${session.tanggal}|${session.guru_id}|${session.jam_key}`
+        const guruJamRemaining = Number(guruJamRemainingCount.get(keyGuruJam) || 0)
+        if (guruJamRemaining > 0) {
+          const guruJamAgg = guruJamMap.get(keyGuruJam) || null
+          if (guruJamAgg) {
+            agg = guruJamAgg
+            guruJamRemainingCount.set(keyGuruJam, guruJamRemaining - 1)
+          }
+        }
+      }
+      if (!agg) {
+        const keyGuruDay = `${session.tanggal}|${session.guru_id}`
+        const guruDayRemaining = Number(guruDayRemainingCount.get(keyGuruDay) || 0)
+        if (guruDayRemaining > 0) {
+          const guruDayAgg = guruDayMap.get(keyGuruDay) || null
+          if (guruDayAgg) {
+            agg = guruDayAgg
+            guruDayRemainingCount.set(keyGuruDay, guruDayRemaining - 1)
+          }
         }
       }
       if (!agg) {
