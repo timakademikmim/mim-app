@@ -11,7 +11,12 @@ let kesantrianState = {
   karyawanRows: [],
   kelasMap: new Map()
 }
-let ksDetailSelectedSantriSet = new Set()
+let kesantrianDetailState = {
+  kamarId: '',
+  selectedSet: new Set(),
+  blockedSet: new Set(),
+  search: ''
+}
 
 function ksEscapeHtml(value) {
   return String(value ?? '')
@@ -153,67 +158,87 @@ function ksSortSantriRows(rows) {
   return list
 }
 
-function ksGetSelectedSantriSetFromDom() {
-  return new Set(
-    [...document.querySelectorAll('[data-ks-santri-id]:checked')]
-      .map(el => String(el.getAttribute('data-ks-santri-id') || '').trim())
-      .filter(Boolean)
-  )
-}
-
-function ksSyncDetailSelectedSetFromDom() {
-  const inputs = [...document.querySelectorAll('[data-ks-santri-id]')]
-  inputs.forEach(el => {
-    const sid = String(el.getAttribute('data-ks-santri-id') || '').trim()
-    if (!sid) return
-    ksDetailSelectedSantriSet.delete(sid)
-    if (el.checked) ksDetailSelectedSantriSet.add(sid)
-  })
-}
-
-function ksGetKelasFilterOptions() {
-  const map = new Map()
-  ;(kesantrianState.santriRows || []).forEach(item => {
-    const kelasId = String(item?.kelas_id || '').trim()
-    if (!kelasId) return
-    const kelasNama = String(kesantrianState.kelasMap.get(kelasId)?.nama_kelas || '').trim()
-    if (!kelasNama) return
-    map.set(kelasId, kelasNama)
-  })
-  return [...map.entries()]
-    .sort((a, b) => a[1].localeCompare(b[1], 'id'))
-    .map(([id, nama]) => ({ id, nama }))
-}
-
-function ksBuildSantriChecklistHtml(selectedSet) {
-  const sortMode = String(document.getElementById('ks-santri-sort-mode')?.value || 'kelas')
-  const kelasFilter = String(document.getElementById('ks-santri-kelas-filter')?.value || '')
-  let rows = [...(kesantrianState.santriRows || [])]
-
-  if (kelasFilter) rows = rows.filter(item => String(item?.kelas_id || '') === kelasFilter)
-  rows = sortMode === 'nama' ? rows.sort((a, b) => String(a?.nama || '').localeCompare(String(b?.nama || ''), 'id')) : ksSortSantriRows(rows)
-  return ksRenderSantriChecklistHtml(rows, selectedSet)
-}
-
 function ksRefreshSantriChecklist() {
-  const grid = document.getElementById('ks-santri-check-grid')
-  if (!grid) return
-  ksSyncDetailSelectedSetFromDom()
-  grid.innerHTML = ksBuildSantriChecklistHtml(ksDetailSelectedSantriSet) || '<div style="font-size:13px; color:#64748b;">Belum ada santri aktif pada filter ini.</div>'
+  ksRenderKamarSantriPanels()
 }
 
 function ksRenderSantriChecklistHtml(rows, selectedSet) {
   return (rows || []).map(item => {
-    const checked = selectedSet.has(String(item.id)) ? 'checked' : ''
+    const sid = String(item.id || '')
+    const checked = selectedSet.has(sid) ? 'checked' : ''
     const kelasNama = kesantrianState.kelasMap.get(String(item.kelas_id || ''))?.nama_kelas || '-'
     return `
       <label class="ks-check-item">
-        <input type="checkbox" data-ks-santri-id="${ksEscapeHtml(String(item.id))}" ${checked}>
+        <input type="checkbox" data-ks-santri-id="${ksEscapeHtml(sid)}" ${checked} onchange="toggleKamarSantri('${ksEscapeHtml(sid)}', this.checked)">
         <span style="margin-left:6px; font-weight:600;">${ksEscapeHtml(item.nama || '-')}</span>
         <span style="display:block; margin-left:22px; font-size:11px; color:#64748b;">${ksEscapeHtml(kelasNama)}</span>
       </label>
     `
   }).join('')
+}
+
+function ksRenderSelectedSantriListHtml(rows) {
+  return (rows || []).map(item => {
+    const sid = String(item.id || '')
+    const kelasNama = kesantrianState.kelasMap.get(String(item.kelas_id || ''))?.nama_kelas || '-'
+    return `
+      <div class="ks-check-item" style="background:#f8fafc; display:grid; grid-template-columns:1fr auto; gap:8px; align-items:flex-start;">
+        <span>
+          <span style="font-weight:600;">${ksEscapeHtml(item.nama || '-')}</span>
+          <span style="display:block; font-size:11px; color:#64748b;">${ksEscapeHtml(kelasNama)}</span>
+        </span>
+        <button type="button" class="modal-btn modal-btn-danger" style="padding:2px 8px; min-width:auto; line-height:1; border-radius:999px;" onclick="removeKamarSantri('${ksEscapeHtml(sid)}')" title="Keluarkan dari kamar ini">x</button>
+      </div>
+    `
+  }).join('')
+}
+
+function ksRenderKamarSantriPanels() {
+  const checkGrid = document.getElementById('ks-santri-check-grid')
+  const selectedGrid = document.getElementById('ks-selected-santri-grid')
+  if (!checkGrid || !selectedGrid) return
+  const selectedSet = kesantrianDetailState.selectedSet || new Set()
+  const blockedSet = kesantrianDetailState.blockedSet || new Set()
+  const search = String(kesantrianDetailState.search || '').trim().toLowerCase()
+
+  const selectedRows = ksSortSantriRows(
+    (kesantrianState.santriRows || []).filter(item => selectedSet.has(String(item.id || '')))
+  )
+  selectedGrid.innerHTML = ksRenderSelectedSantriListHtml(selectedRows) || '<div style="font-size:12px; color:#64748b;">Belum ada santri di kamar ini.</div>'
+
+  const availableRows = ksSortSantriRows(
+    (kesantrianState.santriRows || []).filter(item => {
+      const sid = String(item.id || '')
+      if (!sid) return false
+      if (selectedSet.has(sid)) return false
+      if (blockedSet.has(sid)) return false
+      if (!search) return true
+      return String(item.nama || '').toLowerCase().includes(search)
+    })
+  )
+  checkGrid.innerHTML = ksRenderSantriChecklistHtml(availableRows, selectedSet) || '<div style="font-size:12px; color:#64748b;">Tidak ada santri tersedia.</div>'
+}
+
+function toggleKamarSantri(santriId, checked) {
+  const sid = String(santriId || '').trim()
+  if (!sid) return
+  if (!(kesantrianDetailState.selectedSet instanceof Set)) kesantrianDetailState.selectedSet = new Set()
+  if (checked) kesantrianDetailState.selectedSet.add(sid)
+  else kesantrianDetailState.selectedSet.delete(sid)
+  ksRenderKamarSantriPanels()
+}
+
+function removeKamarSantri(santriId) {
+  const sid = String(santriId || '').trim()
+  if (!sid) return
+  if (!(kesantrianDetailState.selectedSet instanceof Set)) kesantrianDetailState.selectedSet = new Set()
+  kesantrianDetailState.selectedSet.delete(sid)
+  ksRenderKamarSantriPanels()
+}
+
+function searchKamarSantri(keyword) {
+  kesantrianDetailState.search = String(keyword || '')
+  ksRenderKamarSantriPanels()
 }
 
 function ksRenderKamarTable() {
@@ -235,7 +260,10 @@ function ksRenderKamarTable() {
         <td style="padding:8px; border:1px solid #e2e8f0;">${ksEscapeHtml(musyrif?.nama || '-')}</td>
         <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${countMap.get(String(item.id)) || 0}</td>
         <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">
-          <button type="button" class="modal-btn modal-btn-primary" onclick="openKamarDetail('${ksEscapeHtml(String(item.id))}')">Detail</button>
+          <div style="display:flex; gap:6px; justify-content:center; flex-wrap:nowrap; white-space:nowrap;">
+            <button type="button" class="modal-btn modal-btn-primary" onclick="openKamarDetail('${ksEscapeHtml(String(item.id))}')">Detail</button>
+            <button type="button" class="modal-btn modal-btn-danger" onclick="deleteKamar('${ksEscapeHtml(String(item.id))}')">Hapus</button>
+          </div>
         </td>
       </tr>
     `
@@ -255,7 +283,7 @@ function ksRenderKamarTable() {
               <th style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Nama Kamar</th>
               <th style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Musyrif</th>
               <th style="padding:8px; border:1px solid #e2e8f0; width:150px;">Jumlah Santri</th>
-              <th style="padding:8px; border:1px solid #e2e8f0; width:130px;">Aksi</th>
+              <th style="padding:8px; border:1px solid #e2e8f0; width:200px;">Aksi</th>
             </tr>
           </thead>
           <tbody>
@@ -323,22 +351,30 @@ function openKamarDetail(kamarId) {
       .filter(item => String(item.kamar_id || '') === kid)
       .map(item => String(item.santri_id || ''))
   )
-  ksDetailSelectedSantriSet = new Set(selectedSantri)
+  const blockedSet = new Set(
+    (kesantrianState.kamarSantriRows || [])
+      .filter(item => String(item.kamar_id || '') !== kid)
+      .map(item => String(item.santri_id || ''))
+      .filter(Boolean)
+  )
+  kesantrianDetailState = {
+    kamarId: kid,
+    selectedSet: new Set(selectedSantri),
+    blockedSet,
+    search: ''
+  }
 
   const musyrifOptions = ksGetMusyrifOptions()
     .map(item => `<option value="${ksEscapeHtml(String(item.id))}" ${String(item.id) === String(kamar.musyrif_id || '') ? 'selected' : ''}>${ksEscapeHtml(item.nama || '-')}</option>`)
     .join('')
-  const kelasFilterOptions = ksGetKelasFilterOptions()
-    .map(item => `<option value="${ksEscapeHtml(item.id)}">${ksEscapeHtml(item.nama)}</option>`)
-    .join('')
-  const santriRowsHtml = ksRenderSantriChecklistHtml(ksSortSantriRows(kesantrianState.santriRows || []), ksDetailSelectedSantriSet)
-
   ksOpenModal(`
     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px;">
       <strong style="font-size:15px;">Detail Kamar: ${ksEscapeHtml(kamar.nama || '-')}</strong>
       <button type="button" class="modal-btn modal-btn-secondary" onclick="ksCloseModal()">Tutup</button>
     </div>
     <div style="display:grid; gap:8px; margin-bottom:10px;">
+      <label class="guru-label">Nama Kamar</label>
+      <input id="ks-detail-kamar-nama" class="ks-detail-field" type="text" value="${ksEscapeHtml(kamar.nama || '')}" placeholder="Nama kamar">
       <label class="guru-label">Musyrif Pembina Kamar</label>
       <select id="ks-detail-musyrif-id" class="ks-detail-field">
         <option value="">-- Pilih Musyrif --</option>
@@ -346,42 +382,47 @@ function openKamarDetail(kamarId) {
       </select>
       <div style="font-size:12px; color:#64748b;">Pilih satu musyrif yang bertanggung jawab untuk kamar ini.</div>
     </div>
+    <div style="font-size:12px; color:#64748b; margin-bottom:6px;">Santri di kamar ini:</div>
+    <div id="ks-selected-santri-grid" class="ks-check-grid" style="max-height:170px; overflow:auto; border:1px solid #e2e8f0; border-radius:10px; padding:8px; margin-bottom:10px;"></div>
     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
-      <div style="font-size:12px; color:#64748b;">Anggota santri kamar:</div>
+      <div style="font-size:12px; color:#64748b;">Tambah/atur santri kamar:</div>
       <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-        <select id="ks-santri-sort-mode" class="ks-detail-field" onchange="ksRefreshSantriChecklist()" style="max-width:190px;">
-          <option value="kelas" selected>Urutkan: Kelas</option>
-          <option value="nama">Urutkan: Nama</option>
-        </select>
-        <select id="ks-santri-kelas-filter" class="ks-detail-field" onchange="ksRefreshSantriChecklist()" style="max-width:220px;">
-          <option value="">Semua Kelas</option>
-          ${kelasFilterOptions}
-        </select>
+        <input id="ks-santri-search" class="ks-detail-field" type="text" placeholder="Cari nama santri..." style="max-width:220px;" oninput="searchKamarSantri(this.value)">
+        <button type="button" class="modal-btn modal-btn-secondary" onclick="ksRefreshSantriChecklist()">Sort Per Kelas</button>
       </div>
     </div>
-    <div id="ks-santri-check-grid" class="ks-check-grid" style="max-height:340px; overflow:auto; border:1px solid #e2e8f0; border-radius:10px; padding:8px;">
-      ${santriRowsHtml || '<div style="font-size:13px; color:#64748b;">Belum ada santri aktif.</div>'}
+    <div id="ks-santri-panel" class="ks-santri-panel">
+      <div id="ks-santri-check-grid" class="ks-check-grid" style="max-height:300px; overflow:auto; border:1px solid #e2e8f0; border-radius:10px; padding:8px;">
+        -
+      </div>
     </div>
     <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:10px;">
       <button type="button" class="modal-btn modal-btn-primary" onclick="saveKamarDetail('${ksEscapeHtml(kid)}')">Simpan Detail</button>
     </div>
   `)
+  ksRenderKamarSantriPanels()
 }
 
 async function saveKamarDetail(kamarId) {
   const kid = String(kamarId || '')
   if (!kid) return
+  const namaKamar = String(document.getElementById('ks-detail-kamar-nama')?.value || '').trim()
   const musyrifIdRaw = String(document.getElementById('ks-detail-musyrif-id')?.value || '').trim()
-  ksSyncDetailSelectedSetFromDom()
-  const selectedSantriIds = [...ksDetailSelectedSantriSet]
+  if (!namaKamar) {
+    alert('Nama kamar wajib diisi.')
+    return
+  }
+  const selectedSantriIds = [...(kesantrianDetailState.selectedSet || new Set())]
+    .map(item => String(item || '').trim())
+    .filter(Boolean)
 
   const { error: updateError } = await sb
     .from(KESANTRIAN_TABLE_KAMAR)
-    .update({ musyrif_id: musyrifIdRaw || null })
+    .update({ nama: namaKamar, musyrif_id: musyrifIdRaw || null })
     .eq('id', kid)
   if (updateError) {
     console.error(updateError)
-    alert(`Gagal menyimpan musyrif kamar: ${updateError.message || 'Unknown error'}`)
+    alert(`Gagal menyimpan detail kamar: ${updateError.message || 'Unknown error'}`)
     return
   }
 
@@ -412,6 +453,27 @@ async function saveKamarDetail(kamarId) {
   await renderKesantrianPage(true)
 }
 
+async function deleteKamar(kamarId) {
+  const kid = String(kamarId || '').trim()
+  if (!kid) return
+  const ok = typeof showPopupConfirm === 'function'
+    ? await showPopupConfirm('Yakin ingin menghapus kamar ini?')
+    : confirm('Yakin ingin menghapus kamar ini?')
+  if (!ok) return
+
+  const { error } = await sb
+    .from(KESANTRIAN_TABLE_KAMAR)
+    .delete()
+    .eq('id', kid)
+  if (error) {
+    console.error(error)
+    alert(`Gagal menghapus kamar: ${error.message || 'Unknown error'}`)
+    return
+  }
+  ksInvalidateCache()
+  await renderKesantrianPage(true)
+}
+
 function initKesantrianPage(params = {}) {
   const subtab = String(params?.subtab || '').trim()
   kesantrianState.subtab = subtab === 'kamar' ? 'kamar' : 'kamar'
@@ -420,7 +482,12 @@ function initKesantrianPage(params = {}) {
     modal.addEventListener('click', event => {
       if (event.target !== modal) return
       ksCloseModal()
-      ksDetailSelectedSantriSet = new Set()
+      kesantrianDetailState = {
+        kamarId: '',
+        selectedSet: new Set(),
+        blockedSet: new Set(),
+        search: ''
+      }
     })
     modal.dataset.bound = '1'
   }
@@ -432,5 +499,9 @@ window.openCreateKamarModal = openCreateKamarModal
 window.createKamar = createKamar
 window.openKamarDetail = openKamarDetail
 window.saveKamarDetail = saveKamarDetail
+window.deleteKamar = deleteKamar
 window.ksRefreshSantriChecklist = ksRefreshSantriChecklist
+window.searchKamarSantri = searchKamarSantri
+window.toggleKamarSantri = toggleKamarSantri
+window.removeKamarSantri = removeKamarSantri
 window.ksCloseModal = ksCloseModal
