@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="guru.css?v=20260227-sidebarfix-01">
+  <link rel="stylesheet" href="guru.css?v=20260303-topbar-avatar-01">
 </head>
 
 <body data-role="guru">
@@ -19,6 +19,7 @@
         <button class="guru-nav-btn" data-page="tugas" onclick="loadGuruPage('tugas')">Mutabaah</button>
         <button class="guru-nav-btn" data-page="perizinan" onclick="loadGuruPage('perizinan')">Perizinan</button>
         <button class="guru-nav-btn" data-page="jadwal" onclick="loadGuruPage('jadwal')">Jadwal</button>
+        <button class="guru-nav-btn" data-page="chat" onclick="loadGuruPage('chat')">Chat</button>
         <button class="guru-nav-btn" data-page="mapel" onclick="loadGuruPage('mapel')">Mapel</button>
         <button class="guru-nav-btn" data-page="ujian" onclick="loadGuruPage('ujian')">Ujian</button>
         <button class="guru-nav-btn" id="guru-nav-ekskul" data-page="ekskul" onclick="loadGuruPage('ekskul')" style="display:none;">Ekskul</button>
@@ -59,10 +60,12 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@^1/index.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
-  <script src="role-page.js"></script>
-  <script src="guru.js?v=20260302-ekskul-input-indikator-03"></script>
+  <script src="chat-module.js?v=20260303-chat-01"></script>
+  <script src="role-page.js?v=20260303-topbar-avatar-01"></script>
+  <script src="guru.js?v=20260303-chat-01"></script>
 
   <div id="app-popup-overlay" class="app-popup-overlay" aria-hidden="true">
     <div class="app-popup-card" role="dialog" aria-modal="true" aria-labelledby="app-popup-message">

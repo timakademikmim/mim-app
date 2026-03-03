@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="guru.css?v=20260227-sidebarfix-01">
+  <link rel="stylesheet" href="guru.css?v=20260303-topbar-avatar-01">
 </head>
 
 <body data-role="musyrif">
@@ -17,6 +17,8 @@
       <div class="sidebar-nav-scroll">
         <button class="guru-nav-btn" data-page="dashboard" onclick="loadMusyrifPage('dashboard')">Dashboard</button>
         <button class="guru-nav-btn" data-page="laporan-bulanan" onclick="loadMusyrifPage('laporan-bulanan')">Laporan Bulanan</button>
+        <button class="guru-nav-btn" data-page="chat" onclick="loadMusyrifPage('chat')">Chat</button>
+        <button class="guru-nav-btn" data-page="data-kamar" onclick="loadMusyrifPage('data-kamar')">Data Kamar</button>
         <button class="guru-nav-btn" data-page="perizinan-santri" onclick="loadMusyrifPage('perizinan-santri')">Perizinan Santri</button>
         <button class="guru-nav-btn" id="musyrif-nav-prestasi-pelanggaran" data-page="prestasi-pelanggaran" onclick="loadMusyrifPage('prestasi-pelanggaran')" style="display:none;">Prestasi & Pelanggaran</button>
         <button class="guru-nav-btn" id="musyrif-nav-ekskul" data-page="ekskul" onclick="loadMusyrifPage('ekskul')" style="display:none;">Ekskul</button>
@@ -43,9 +45,11 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@^1/index.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="role-page.js"></script>
-  <script src="musyrif.js?v=20260302-ekskul-input-indikator-03"></script>
+  <script src="chat-module.js?v=20260303-chat-01"></script>
+  <script src="role-page.js?v=20260303-topbar-avatar-01"></script>
+  <script src="musyrif.js?v=20260303-chat-01"></script>
 
   <div id="app-popup-overlay" class="app-popup-overlay" aria-hidden="true">
     <div class="app-popup-card" role="dialog" aria-modal="true" aria-labelledby="app-popup-message">

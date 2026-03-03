@@ -6,11 +6,11 @@ const ROLE_PAGE_MAP = {
   muhaffiz: 'muhaffiz.html',
   musyrif: 'musyrif.html'
 }
-let roles = []
 
+let roles = []
 try {
   roles = JSON.parse(localStorage.getItem('login_roles') || '[]')
-} catch (e) {
+} catch (_error) {
   roles = []
 }
 
@@ -31,120 +31,136 @@ if (requiredRole && !roles.includes(requiredRole)) {
   location.replace('index.html')
 }
 
-const welcomeEl = document.getElementById('welcome')
-if (welcomeEl) {
-  welcomeEl.textContent = `Selamat datang ${id} (${roles.join(', ')})`
+function getActiveRole() {
+  if (requiredRole && roles.includes(requiredRole)) return requiredRole
+  return roles[0] || ''
 }
 
-function initSidebarRoleSwitcher() {
-  const sidebarEl = document.querySelector('.sidebar')
-  if (!sidebarEl) return
+function getInitials(name) {
+  const parts = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+  if (!parts.length) return 'U'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return `${parts[0][0] || ''}${parts[1][0] || ''}`.toUpperCase()
+}
 
-  const roleList = [...new Set(roles)].filter(role => !!ROLE_PAGE_MAP[role])
-  if (!roleList.length) return
-
-  const activeRole = requiredRole && roleList.includes(requiredRole)
-    ? requiredRole
-    : roleList[0]
-
-  const wrap = document.createElement('div')
-  wrap.className = 'role-switcher'
-  wrap.innerHTML = `
-    <div class="role-switcher-label">Role</div>
-    <button type="button" class="role-switcher-toggle" aria-expanded="false" aria-label="Pilih role">
-      <span class="role-switcher-current">${activeRole}</span>
-      <span class="role-switcher-arrow">&#9662;</span>
-    </button>
-    <div class="role-switcher-menu" role="menu"></div>
+function setTopbarAvatar(name, fotoUrl = '') {
+  const trigger = document.querySelector('.topbar-user-trigger')
+  if (!trigger) return
+  trigger.classList.add('topbar-avatar-trigger')
+  trigger.innerHTML = `
+    <span class="topbar-avatar" id="topbar-avatar">
+      <span class="topbar-avatar-initials" id="topbar-avatar-initials">${getInitials(name)}</span>
+      <img id="topbar-avatar-img" class="topbar-avatar-img" alt="Avatar pengguna" style="display:none;">
+    </span>
+    <span id="welcome" class="topbar-user-name" style="display:none;">${String(name || '')}</span>
   `
 
-  const toggleBtn = wrap.querySelector('.role-switcher-toggle')
-  const menuEl = wrap.querySelector('.role-switcher-menu')
-  const currentEl = wrap.querySelector('.role-switcher-current')
-  if (!toggleBtn || !menuEl || !currentEl) return
+  const imgEl = document.getElementById('topbar-avatar-img')
+  const initialsEl = document.getElementById('topbar-avatar-initials')
+  if (!imgEl || !initialsEl) return
 
-  const optionRoles = roleList.filter(role => role !== activeRole)
-  if (!optionRoles.length) {
-    wrap.classList.add('single-role')
-    sidebarEl.appendChild(wrap)
+  const url = String(fotoUrl || '').trim()
+  if (!url) {
+    imgEl.style.display = 'none'
+    imgEl.src = ''
+    initialsEl.style.display = 'inline-flex'
     return
   }
-
-  menuEl.innerHTML = optionRoles
-    .map(role => `<button type="button" class="role-switcher-item" data-role="${role}" role="menuitem">${role}</button>`)
-    .join('')
-
-  const closeMenu = () => {
-    wrap.classList.remove('open')
-    toggleBtn.setAttribute('aria-expanded', 'false')
-    menuEl.style.left = ''
-    menuEl.style.top = ''
-  }
-
-  const placeMenu = () => {
-    const rect = toggleBtn.getBoundingClientRect()
-    const menuWidth = Math.max(menuEl.offsetWidth, 130)
-    const menuHeight = Math.max(menuEl.offsetHeight, 40)
-    const viewportW = window.innerWidth
-    const viewportH = window.innerHeight
-
-    let left = rect.right + 4
-    let top = rect.top + (rect.height / 2) - (menuHeight / 2)
-
-    if (left + menuWidth > viewportW - 8) {
-      left = Math.max(8, rect.left - menuWidth - 4)
-    }
-    if (top < 8) top = 8
-    if (top + menuHeight > viewportH - 8) {
-      top = Math.max(8, viewportH - menuHeight - 8)
-    }
-
-    menuEl.style.left = `${Math.round(left)}px`
-    menuEl.style.top = `${Math.round(top)}px`
-  }
-
-  toggleBtn.addEventListener('click', event => {
-    event.stopPropagation()
-    const willOpen = !wrap.classList.contains('open')
-    if (!willOpen) {
-      closeMenu()
-      return
-    }
-    wrap.classList.add('open')
-    toggleBtn.setAttribute('aria-expanded', 'true')
-    placeMenu()
-  })
-
-  menuEl.addEventListener('click', event => {
-    const btn = event.target.closest('.role-switcher-item')
-    if (!btn) return
-    const targetRole = String(btn.getAttribute('data-role') || '').trim().toLowerCase()
-    const targetPage = ROLE_PAGE_MAP[targetRole]
-    if (!targetRole || !targetPage) return
-    currentEl.textContent = targetRole
-    closeMenu()
-    location.href = targetPage
-  })
-
-  document.addEventListener('click', event => {
-    if (wrap.contains(event.target)) return
-    closeMenu()
-  })
-
-  window.addEventListener('resize', () => {
-    if (!wrap.classList.contains('open')) return
-    placeMenu()
-  })
-
-  window.addEventListener('scroll', () => {
-    if (!wrap.classList.contains('open')) return
-    placeMenu()
-  }, true)
-
-  sidebarEl.appendChild(wrap)
+  imgEl.src = url
+  imgEl.style.display = 'block'
+  initialsEl.style.display = 'none'
 }
 
-initSidebarRoleSwitcher()
+function initTopbarAccountMenu() {
+  const wrap = document.querySelector('.topbar-user-menu-wrap')
+  const trigger = document.querySelector('.topbar-user-trigger')
+  const menu = document.getElementById('topbar-user-menu')
+  if (!wrap || !trigger || !menu) return
+
+  const displayName = String(localStorage.getItem('login_name') || '').trim() || String(id || '').trim()
+  const photoUrl = String(localStorage.getItem('login_photo_url') || '').trim()
+  const activeRole = getActiveRole()
+  setTopbarAvatar(displayName, photoUrl)
+
+  menu.classList.add('topbar-account-menu')
+
+  let nameEl = document.getElementById('topbar-account-name')
+  if (!nameEl) {
+    nameEl = document.createElement('div')
+    nameEl.id = 'topbar-account-name'
+    nameEl.className = 'topbar-account-name'
+    menu.prepend(nameEl)
+  }
+  nameEl.textContent = displayName
+
+  let roleWrap = document.getElementById('topbar-role-switch-wrap')
+  if (!roleWrap) {
+    roleWrap = document.createElement('div')
+    roleWrap.id = 'topbar-role-switch-wrap'
+    roleWrap.className = 'topbar-role-switch-wrap'
+    roleWrap.innerHTML = `
+      <button type="button" id="topbar-role-switch-btn" class="topbar-role-switch-btn">Role</button>
+      <div id="topbar-role-switch-menu" class="topbar-role-switch-menu"></div>
+    `
+    const firstButton = menu.querySelector('button')
+    if (firstButton) firstButton.before(roleWrap)
+    else menu.appendChild(roleWrap)
+  }
+
+  const roleBtn = document.getElementById('topbar-role-switch-btn')
+  const roleMenu = document.getElementById('topbar-role-switch-menu')
+  if (!roleBtn || !roleMenu) return
+
+  roleBtn.textContent = `Role: ${activeRole || '-'}`
+  const optionRoles = [...new Set(roles)].filter(role => !!ROLE_PAGE_MAP[role] && role !== activeRole)
+  roleMenu.innerHTML = optionRoles.length
+    ? optionRoles.map(role => `<button type="button" class="topbar-role-option" data-role="${role}">${role}</button>`).join('')
+    : '<div class="topbar-role-empty">Tidak ada role lain</div>'
+
+  roleBtn.onclick = event => {
+    event.stopPropagation()
+    roleMenu.classList.toggle('open')
+  }
+
+  roleMenu.onclick = event => {
+    const btn = event.target.closest('.topbar-role-option')
+    if (!btn) return
+    const targetRole = String(btn.getAttribute('data-role') || '').trim().toLowerCase()
+    const page = ROLE_PAGE_MAP[targetRole]
+    if (!targetRole || !page) return
+    localStorage.setItem('login_role', targetRole)
+    location.href = page
+  }
+
+  document.addEventListener('click', event => {
+    if (roleWrap.contains(event.target)) return
+    roleMenu.classList.remove('open')
+  })
+}
+
+window.setTopbarUserIdentity = function setTopbarUserIdentity(nameOrObject, maybeFotoUrl) {
+  let name = ''
+  let fotoUrl = ''
+  if (typeof nameOrObject === 'object' && nameOrObject !== null) {
+    name = String(nameOrObject.name || nameOrObject.nama || '').trim()
+    fotoUrl = String(nameOrObject.fotoUrl || nameOrObject.photoUrl || nameOrObject.foto_url || '').trim()
+  } else {
+    name = String(nameOrObject || '').trim()
+    fotoUrl = String(maybeFotoUrl || '').trim()
+  }
+  if (name) localStorage.setItem('login_name', name)
+  if (fotoUrl) localStorage.setItem('login_photo_url', fotoUrl)
+  if (!fotoUrl) localStorage.removeItem('login_photo_url')
+
+  const accountNameEl = document.getElementById('topbar-account-name')
+  if (accountNameEl && name) accountNameEl.textContent = name
+  setTopbarAvatar(name || String(localStorage.getItem('login_name') || '').trim() || id, fotoUrl)
+}
+
+initTopbarAccountMenu()
 
 function logout() {
   localStorage.clear()

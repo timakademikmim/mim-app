@@ -3,6 +3,8 @@ const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 const sb = supabase.createClient(supabaseUrl, supabaseKey)
 
 const MONTHLY_REPORT_TABLE = 'laporan_bulanan_wali'
+const MONTHLY_REPORT_CAPAIAN_TEXT_COLUMN = 'keterangan_capaian_hafalan_bulanan'
+const MONTHLY_REPORT_JUMLAH_TEXT_COLUMN = 'keterangan_jumlah_hafalan_bulanan'
 const MUHAFFIZ_LAST_PAGE_KEY = 'muhaffiz_last_page'
 const TOPBAR_KALENDER_TABLE = 'kalender_akademik'
 const TOPBAR_KALENDER_DEFAULT_COLOR = '#2563eb'
@@ -13,9 +15,12 @@ const EKSKUL_TABLE = 'ekstrakurikuler'
 const EKSKUL_MEMBER_TABLE = 'ekstrakurikuler_anggota'
 const EKSKUL_INDIKATOR_TABLE = 'ekstrakurikuler_indikator'
 const EKSKUL_PROGRES_TABLE = 'ekstrakurikuler_progres'
+const EKSKUL_MONTHLY_TABLE = 'ekstrakurikuler_laporan_bulanan'
 const SANTRI_PRESTASI_TABLE = 'santri_prestasi'
 const SANTRI_PELANGGARAN_TABLE = 'santri_pelanggaran'
 const SANTRI_SURAT_BUCKET = 'surat-pemberitahuan'
+const KARYAWAN_FOTO_BUCKET = 'karyawan-foto'
+const KARYAWAN_FOTO_MAX_SIZE_BYTES = 300 * 1024
 const SCHOOL_PROFILE_TABLE = 'struktur_sekolah'
 const TOPBAR_NOTIF_READ_KEY = 'muhaffiz_topbar_notif_read'
 const TOPBAR_NOTIF_RANGE_KEY = 'muhaffiz_topbar_notif_range_days'
@@ -23,6 +28,8 @@ const TOPBAR_NOTIF_RANGE_KEY = 'muhaffiz_topbar_notif_range_days'
 const PAGE_TITLES = {
   dashboard: 'Dashboard',
   'laporan-bulanan': 'Laporan Bulanan',
+  chat: 'Chat',
+  'data-halaqah': 'Data Halaqah',
   'prestasi-pelanggaran': 'Prestasi & Pelanggaran',
   ekskul: 'Ekskul',
   profil: 'Profil'
@@ -58,7 +65,10 @@ let muhaffizEkskulState = {
   santriRows: [],
   progressRows: [],
   selectedEkskulId: '',
-  selectedSantriId: ''
+  selectedSantriId: '',
+  activeTab: 'progres',
+  monthlyPeriode: '',
+  monthlyRows: []
 }
 let muhaffizPrestasiPelanggaranState = {
   tab: 'prestasi',
@@ -75,6 +85,16 @@ let muhaffizBulkImportState = {
   errors: [],
   fileName: ''
 }
+let muhaffizManageHalaqahState = {
+  halaqahRows: [],
+  memberRows: [],
+  santriRows: [],
+  kelasMap: new Map(),
+  selectedHalaqahId: '',
+  selectedSet: new Set(),
+  blockedSet: new Set(),
+  search: ''
+}
 let wakasekKetahfizanAccessCache = null
 
 const MUHAFFIZ_BULK_EXCEL_HEADERS = [
@@ -85,11 +105,10 @@ const MUHAFFIZ_BULK_EXCEL_HEADERS = [
   'Izin',
   'Akhlak',
   'Ujian Bulanan',
-  'Target Hafalan (%)',
+  'Target Hafalan',
   'Ket. Target',
-  'Capaian (halaman)',
-  'Jumlah (halaman)',
-  'Jumlah (juz)',
+  'Capaian Hafalan',
+  'Jumlah Hafalan',
   'Catatan Muhaffiz'
 ]
 
@@ -100,6 +119,63 @@ function escapeHtml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;')
+}
+
+function getKaryawanFotoInitial(nama) {
+  const words = String(nama || '').trim().split(/\s+/).filter(Boolean)
+  if (!words.length) return 'U'
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase()
+  return `${words[0][0] || ''}${words[1][0] || ''}`.toUpperCase()
+}
+
+function renderMuhaffizProfilFotoPreview(fotoUrl, nama) {
+  const box = document.getElementById('muhaffiz-profil-foto-preview')
+  if (!box) return
+  const url = String(fotoUrl || '').trim()
+  if (url) {
+    box.innerHTML = `<img src="${escapeHtml(url)}" alt="Foto Profil" style="width:64px; height:64px; border-radius:999px; object-fit:cover; border:1px solid #cbd5e1;">`
+    return
+  }
+  box.innerHTML = `<span style="width:64px; height:64px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; background:#e2e8f0; color:#0f172a; font-weight:700; border:1px solid #cbd5e1;">${escapeHtml(getKaryawanFotoInitial(nama))}</span>`
+}
+
+function getFotoFileExt(fileName = '') {
+  const raw = String(fileName || '').trim().toLowerCase()
+  const parts = raw.split('.')
+  const ext = parts.length > 1 ? parts.pop() : ''
+  if (!ext) return 'jpg'
+  if (ext === 'jpeg') return 'jpg'
+  if (ext === 'png' || ext === 'jpg' || ext === 'webp') return ext
+  return 'jpg'
+}
+
+async function uploadMuhaffizProfilePhoto(event) {
+  const file = event?.target?.files?.[0]
+  if (!file) return
+  try {
+    if (!String(file.type || '').toLowerCase().startsWith('image/')) {
+      throw new Error('File harus berupa gambar (JPG, PNG, WEBP).')
+    }
+    if (Number(file.size || 0) > KARYAWAN_FOTO_MAX_SIZE_BYTES) {
+      throw new Error('Ukuran gambar maksimal 300 KB.')
+    }
+    const idKaryawan = String(document.getElementById('muhaffiz-profil-id-karyawan')?.value || 'muhaffiz').trim().replaceAll(' ', '_')
+    const ext = getFotoFileExt(file.name)
+    const filePath = `${idKaryawan}_${Date.now()}.${ext}`
+    const uploadRes = await sb.storage.from(KARYAWAN_FOTO_BUCKET).upload(filePath, file, { upsert: true })
+    if (uploadRes.error) throw uploadRes.error
+    const pub = sb.storage.from(KARYAWAN_FOTO_BUCKET).getPublicUrl(filePath)
+    const fotoUrl = String(pub?.data?.publicUrl || '').trim()
+    if (!fotoUrl) throw new Error('URL foto tidak valid.')
+    const input = document.getElementById('muhaffiz-profil-foto-url')
+    if (input) input.value = fotoUrl
+    const nama = String(document.getElementById('muhaffiz-profil-nama')?.value || '').trim()
+    renderMuhaffizProfilFotoPreview(fotoUrl, nama)
+  } catch (error) {
+    alert(`Gagal upload foto: ${error?.message || 'Unknown error'}`)
+  } finally {
+    if (event?.target) event.target.value = ''
+  }
 }
 
 function asBool(value) {
@@ -374,11 +450,27 @@ function setupCustomPopupSystem() {
 async function getCurrentMuhaffiz() {
   const loginId = String(localStorage.getItem('login_id') || '').trim()
   if (!loginId) return null
-  const { data, error } = await sb
-    .from('karyawan')
-    .select('id, id_karyawan, nama, no_hp, alamat, password, aktif')
-    .eq('id_karyawan', loginId)
-    .maybeSingle()
+  let data = null
+  let error = null
+  const variants = [
+    'id, id_karyawan, nama, no_hp, alamat, password, aktif, foto_url',
+    'id, id_karyawan, nama, no_hp, alamat, password, aktif'
+  ]
+  for (const selectCols of variants) {
+    const result = await sb
+      .from('karyawan')
+      .select(selectCols)
+      .eq('id_karyawan', loginId)
+      .maybeSingle()
+    if (!result.error) {
+      data = result.data || null
+      error = null
+      break
+    }
+    error = result.error
+    const msg = String(result.error?.message || '').toLowerCase()
+    if (!(msg.includes('column') && msg.includes('foto_url'))) break
+  }
   if (error) throw error
   if (!data || !asBool(data.aktif)) return null
   return data
@@ -390,7 +482,11 @@ async function setMuhaffizWelcomeName() {
     if (!profile) return
     muhaffizState.profile = profile
     const welcomeEl = document.getElementById('welcome')
-    if (welcomeEl) welcomeEl.textContent = String(profile.nama || profile.id_karyawan || '-')
+    const name = String(profile.nama || profile.id_karyawan || '-')
+    if (welcomeEl) welcomeEl.textContent = name
+    if (typeof window.setTopbarUserIdentity === 'function') {
+      window.setTopbarUserIdentity({ name, foto_url: String(profile.foto_url || '') })
+    }
   } catch (error) {
     console.error(error)
   }
@@ -1061,6 +1157,16 @@ function closeMuhaffizBulkInputModal() {
   overlay.style.display = 'none'
 }
 
+function isMuhaffizMissingCapaianTextColumnError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  return msg.includes('column') && msg.includes(MONTHLY_REPORT_CAPAIAN_TEXT_COLUMN)
+}
+
+function isMuhaffizMissingJumlahTextColumnError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  return msg.includes('column') && msg.includes(MONTHLY_REPORT_JUMLAH_TEXT_COLUMN)
+}
+
 function validateMuhaffizBulkRow(row) {
   const errors = []
   const nama = String(row.nama || '-')
@@ -1070,26 +1176,19 @@ function validateMuhaffizBulkRow(row) {
   const nilaiUjian = toNullableNumber(row.nilaiUjian)
   const nilaiTarget = toNullableNumber(row.nilaiTarget)
   const nilaiCapaian = toNullableNumber(row.nilaiCapaian)
-  const jumlahHalaman = toNullableNumber(row.jumlahHalaman)
-  const jumlahJuz = toNullableNumber(row.jumlahJuz)
 
   if (Number.isNaN(nilaiKehadiran)) errors.push(`${nama}: Kehadiran harus angka.`)
   if (Number.isNaN(sakit)) errors.push(`${nama}: Sakit harus angka.`)
   if (Number.isNaN(izin)) errors.push(`${nama}: Izin harus angka.`)
   if (Number.isNaN(nilaiUjian)) errors.push(`${nama}: Ujian bulanan harus angka.`)
   if (Number.isNaN(nilaiTarget)) errors.push(`${nama}: Target hafalan harus angka.`)
-  if (Number.isNaN(nilaiCapaian)) errors.push(`${nama}: Capaian hafalan harus angka.`)
-  if (Number.isNaN(jumlahHalaman)) errors.push(`${nama}: Jumlah hafalan halaman harus angka.`)
-  if (Number.isNaN(jumlahJuz)) errors.push(`${nama}: Jumlah hafalan juz harus angka.`)
 
   if (nilaiKehadiran !== null && (nilaiKehadiran < 0 || nilaiKehadiran > 100)) errors.push(`${nama}: Kehadiran harus 0-100.`)
   if (nilaiUjian !== null && (nilaiUjian < 0 || nilaiUjian > 100)) errors.push(`${nama}: Ujian bulanan harus 0-100.`)
-  if (nilaiTarget !== null && (nilaiTarget < 0 || nilaiTarget > 100)) errors.push(`${nama}: Target hafalan harus 0-100.`)
+  if (nilaiTarget !== null && nilaiTarget < 0) errors.push(`${nama}: Target hafalan tidak boleh minus.`)
   if (sakit !== null && sakit < 0) errors.push(`${nama}: Sakit tidak boleh minus.`)
   if (izin !== null && izin < 0) errors.push(`${nama}: Izin tidak boleh minus.`)
-  if (nilaiCapaian !== null && nilaiCapaian < 0) errors.push(`${nama}: Capaian hafalan tidak boleh minus.`)
-  if (jumlahHalaman !== null && jumlahHalaman < 0) errors.push(`${nama}: Jumlah hafalan halaman tidak boleh minus.`)
-  if (jumlahJuz !== null && jumlahJuz < 0) errors.push(`${nama}: Jumlah hafalan juz tidak boleh minus.`)
+  if (nilaiCapaian !== null && !Number.isNaN(nilaiCapaian) && nilaiCapaian < 0) errors.push(`${nama}: Capaian hafalan tidak boleh minus.`)
 
   const akhlakRaw = String(row.akhlak || '').trim().toUpperCase()
   if (akhlakRaw && !normalizeAkhlakGrade(akhlakRaw)) errors.push(`${nama}: Nilai akhlak halaqah harus A-E.`)
@@ -1145,8 +1244,7 @@ function setMuhaffizBulkDomRowValues(rowEl, rowData) {
   setVal('target', rowData.nilaiTarget)
   setVal('ket-target', rowData.ketTarget)
   setVal('capaian', rowData.nilaiCapaian)
-  setVal('jumlah-halaman', rowData.jumlahHalaman)
-  setVal('jumlah-juz', rowData.jumlahJuz)
+  setVal('jumlah', rowData.jumlah)
   setVal('catatan', rowData.catatan)
 }
 
@@ -1163,8 +1261,7 @@ function collectMuhaffizBulkRowsForTemplate() {
     nilaiTarget: String(row.querySelector('[data-bulk-field="target"]')?.value || '').trim(),
     ketTarget: String(row.querySelector('[data-bulk-field="ket-target"]')?.value || '').trim(),
     nilaiCapaian: String(row.querySelector('[data-bulk-field="capaian"]')?.value || '').trim(),
-    jumlahHalaman: String(row.querySelector('[data-bulk-field="jumlah-halaman"]')?.value || '').trim(),
-    jumlahJuz: String(row.querySelector('[data-bulk-field="jumlah-juz"]')?.value || '').trim(),
+    jumlah: String(row.querySelector('[data-bulk-field="jumlah"]')?.value || '').trim(),
     catatan: String(row.querySelector('[data-bulk-field="catatan"]')?.value || '').trim()
   }))
 }
@@ -1220,11 +1317,10 @@ function downloadMuhaffizBulkTemplate() {
     'Izin': item.izin || '',
     'Akhlak': item.akhlak || '',
     'Ujian Bulanan': item.nilaiUjian || '',
-    'Target Hafalan (%)': item.nilaiTarget || '',
+    'Target Hafalan': item.nilaiTarget || '',
     'Ket. Target': item.ketTarget || '',
-    'Capaian (halaman)': item.nilaiCapaian || '',
-    'Jumlah (halaman)': item.jumlahHalaman || '',
-    'Jumlah (juz)': item.jumlahJuz || '',
+    'Capaian Hafalan': item.nilaiCapaian || '',
+    'Jumlah Hafalan': item.jumlah || '',
     'Catatan Muhaffiz': item.catatan || ''
   }))
   const wb = window.XLSX.utils.book_new()
@@ -1264,6 +1360,9 @@ async function onMuhaffizBulkExcelFileChange(event) {
       const kelas = String(getMuhaffizImportCellByAliases(raw, ['Kelas'])) .trim()
       if (!nama && !kelas) return
 
+      const jumlahHafalanRaw = String(getMuhaffizImportCellByAliases(raw, ['Jumlah Hafalan', 'Jumlah'])).trim()
+      const jumlahHalamanLegacy = String(getMuhaffizImportCellByAliases(raw, ['Jumlah (halaman)', 'Jumlah Halaman'])).trim()
+      const jumlahJuzLegacy = String(getMuhaffizImportCellByAliases(raw, ['Jumlah (juz)', 'Jumlah Juz'])).trim()
       const rowData = {
         nama,
         kelas,
@@ -1272,11 +1371,10 @@ async function onMuhaffizBulkExcelFileChange(event) {
         izin: String(getMuhaffizImportCellByAliases(raw, ['Izin'])).trim(),
         akhlak: String(getMuhaffizImportCellByAliases(raw, ['Akhlak'])).trim(),
         nilaiUjian: String(getMuhaffizImportCellByAliases(raw, ['Ujian Bulanan', 'Ujian'])).trim(),
-        nilaiTarget: String(getMuhaffizImportCellByAliases(raw, ['Target Hafalan (%)', 'Target Hafalan', 'Target'])).trim(),
+        nilaiTarget: String(getMuhaffizImportCellByAliases(raw, ['Target Hafalan', 'Target Hafalan (%)', 'Target'])).trim(),
         ketTarget: String(getMuhaffizImportCellByAliases(raw, ['Ket. Target', 'Ket Target', 'Keterangan Target'])).trim(),
-        nilaiCapaian: String(getMuhaffizImportCellByAliases(raw, ['Capaian (halaman)', 'Capaian'])).trim(),
-        jumlahHalaman: String(getMuhaffizImportCellByAliases(raw, ['Jumlah (halaman)', 'Jumlah Halaman'])).trim(),
-        jumlahJuz: String(getMuhaffizImportCellByAliases(raw, ['Jumlah (juz)', 'Jumlah Juz'])).trim(),
+        nilaiCapaian: String(getMuhaffizImportCellByAliases(raw, ['Capaian Hafalan', 'Capaian (halaman)', 'Capaian'])).trim(),
+        jumlah: jumlahHafalanRaw || ((jumlahHalamanLegacy || jumlahJuzLegacy) ? `${jumlahHalamanLegacy || '-'} halaman / ${jumlahJuzLegacy || '-'} juz` : ''),
         catatan: String(getMuhaffizImportCellByAliases(raw, ['Catatan Muhaffiz', 'Catatan'])).trim()
       }
       parsedRows.push(rowData)
@@ -1343,11 +1441,25 @@ async function openMuhaffizBulkInputModal() {
   const santriIds = santriList.map(item => String(item.id || '')).filter(Boolean)
 
   const reportByKey = new Map()
-  const reportRes = await sb
+  let reportRes = await sb
     .from(MONTHLY_REPORT_TABLE)
-    .select('santri_id, kelas_id, guru_id, muhaffiz, no_hp_muhaffiz, nilai_kehadiran_halaqah, sakit_halaqah, izin_halaqah, nilai_akhlak_halaqah, nilai_ujian_bulanan, nilai_target_hafalan, keterangan_target_hafalan, nilai_capaian_hafalan_bulanan, nilai_jumlah_hafalan_halaman, nilai_jumlah_hafalan_juz, catatan_muhaffiz')
+    .select(`santri_id, kelas_id, guru_id, muhaffiz, no_hp_muhaffiz, nilai_kehadiran_halaqah, sakit_halaqah, izin_halaqah, nilai_akhlak_halaqah, nilai_ujian_bulanan, nilai_target_hafalan, keterangan_target_hafalan, nilai_capaian_hafalan_bulanan, ${MONTHLY_REPORT_CAPAIAN_TEXT_COLUMN}, ${MONTHLY_REPORT_JUMLAH_TEXT_COLUMN}, nilai_jumlah_hafalan_halaman, nilai_jumlah_hafalan_juz, catatan_muhaffiz`)
     .eq('periode', periode)
     .in('santri_id', santriIds)
+  if (reportRes.error && isMuhaffizMissingCapaianTextColumnError(reportRes.error)) {
+    reportRes = await sb
+      .from(MONTHLY_REPORT_TABLE)
+      .select('santri_id, kelas_id, guru_id, muhaffiz, no_hp_muhaffiz, nilai_kehadiran_halaqah, sakit_halaqah, izin_halaqah, nilai_akhlak_halaqah, nilai_ujian_bulanan, nilai_target_hafalan, keterangan_target_hafalan, nilai_capaian_hafalan_bulanan, nilai_jumlah_hafalan_halaman, nilai_jumlah_hafalan_juz, catatan_muhaffiz')
+      .eq('periode', periode)
+      .in('santri_id', santriIds)
+  }
+  if (reportRes.error && isMuhaffizMissingJumlahTextColumnError(reportRes.error)) {
+    reportRes = await sb
+      .from(MONTHLY_REPORT_TABLE)
+      .select(`santri_id, kelas_id, guru_id, muhaffiz, no_hp_muhaffiz, nilai_kehadiran_halaqah, sakit_halaqah, izin_halaqah, nilai_akhlak_halaqah, nilai_ujian_bulanan, nilai_target_hafalan, keterangan_target_hafalan, nilai_capaian_hafalan_bulanan, ${MONTHLY_REPORT_CAPAIAN_TEXT_COLUMN}, nilai_jumlah_hafalan_halaman, nilai_jumlah_hafalan_juz, catatan_muhaffiz`)
+      .eq('periode', periode)
+      .in('santri_id', santriIds)
+  }
   if (reportRes.error) {
     console.error(reportRes.error)
     body.innerHTML = `<div class="placeholder-card">Gagal load data laporan bulanan: ${escapeHtml(reportRes.error.message || 'Unknown error')}</div>`
@@ -1389,11 +1501,10 @@ async function openMuhaffizBulkInputModal() {
         <td style="padding:6px; border:1px solid #e2e8f0; min-width:90px;"><input data-bulk-field="izin" class="guru-field" type="number" min="0" step="1" value="${escapeHtml(toInputValue(report?.izin_halaqah))}"></td>
         <td style="padding:6px; border:1px solid #e2e8f0; min-width:95px;"><select data-bulk-field="akhlak" class="guru-field">${gradeOptions(nilaiAkhlak)}</select></td>
         <td style="padding:6px; border:1px solid #e2e8f0; min-width:110px;"><input data-bulk-field="ujian" class="guru-field" type="number" min="0" max="100" step="0.01" value="${escapeHtml(toInputValue(report?.nilai_ujian_bulanan))}"></td>
-        <td style="padding:6px; border:1px solid #e2e8f0; min-width:120px;"><input data-bulk-field="target" class="guru-field" type="number" min="0" max="100" step="0.01" value="${escapeHtml(toInputValue(report?.nilai_target_hafalan))}"></td>
+        <td style="padding:6px; border:1px solid #e2e8f0; min-width:120px;"><input data-bulk-field="target" class="guru-field" type="number" min="0" step="0.01" value="${escapeHtml(toInputValue(report?.nilai_target_hafalan))}"></td>
         <td style="padding:6px; border:1px solid #e2e8f0; min-width:200px;"><input data-bulk-field="ket-target" class="guru-field" type="text" value="${escapeHtml(String(report?.keterangan_target_hafalan || '').trim())}"></td>
-        <td style="padding:6px; border:1px solid #e2e8f0; min-width:140px;"><input data-bulk-field="capaian" class="guru-field" type="number" min="0" step="0.01" value="${escapeHtml(toInputValue(report?.nilai_capaian_hafalan_bulanan))}"></td>
-        <td style="padding:6px; border:1px solid #e2e8f0; min-width:130px;"><input data-bulk-field="jumlah-halaman" class="guru-field" type="number" min="0" step="0.01" value="${escapeHtml(toInputValue(report?.nilai_jumlah_hafalan_halaman))}"></td>
-        <td style="padding:6px; border:1px solid #e2e8f0; min-width:120px;"><input data-bulk-field="jumlah-juz" class="guru-field" type="number" min="0" step="0.01" value="${escapeHtml(toInputValue(report?.nilai_jumlah_hafalan_juz))}"></td>
+        <td style="padding:6px; border:1px solid #e2e8f0; min-width:200px;"><input data-bulk-field="capaian" class="guru-field" type="text" value="${escapeHtml(String(report?.[MONTHLY_REPORT_CAPAIAN_TEXT_COLUMN] || '').trim() || toInputValue(report?.nilai_capaian_hafalan_bulanan))}" placeholder="Contoh: Murojaah 1/2 juz"></td>
+        <td style="padding:6px; border:1px solid #e2e8f0; min-width:220px;"><input data-bulk-field="jumlah" class="guru-field" type="text" value="${escapeHtml(String(report?.[MONTHLY_REPORT_JUMLAH_TEXT_COLUMN] || '').trim() || ((report?.nilai_jumlah_hafalan_halaman !== null && report?.nilai_jumlah_hafalan_halaman !== undefined) || (report?.nilai_jumlah_hafalan_juz !== null && report?.nilai_jumlah_hafalan_juz !== undefined) ? `${toInputValue(report?.nilai_jumlah_hafalan_halaman)} halaman / ${toInputValue(report?.nilai_jumlah_hafalan_juz)} juz` : ''))}" placeholder="Contoh: 1 juz 5 halaman / murojaah juz 3"></td>
         <td style="padding:6px; border:1px solid #e2e8f0; min-width:260px;"><input data-bulk-field="catatan" class="guru-field" type="text" value="${escapeHtml(String(report?.catatan_muhaffiz || '').trim())}"></td>
       </tr>
     `
@@ -1414,7 +1525,7 @@ async function openMuhaffizBulkInputModal() {
       </div>
       <div id="muhaffiz-bulk-import-preview" style="display:none;"></div>
       <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px;">
-        <table style="width:100%; min-width:2200px; border-collapse:collapse; font-size:12px;">
+        <table style="width:100%; min-width:2100px; border-collapse:collapse; font-size:12px;">
           <thead>
             <tr style="background:#f8fafc;">
               <th style="padding:6px; border:1px solid #e2e8f0; width:44px;">No</th>
@@ -1425,11 +1536,10 @@ async function openMuhaffizBulkInputModal() {
               <th style="padding:6px; border:1px solid #e2e8f0;">Izin</th>
               <th style="padding:6px; border:1px solid #e2e8f0;">Akhlak</th>
               <th style="padding:6px; border:1px solid #e2e8f0;">Ujian Bulanan</th>
-              <th style="padding:6px; border:1px solid #e2e8f0;">Target Hafalan (%)</th>
+              <th style="padding:6px; border:1px solid #e2e8f0;">Target Hafalan</th>
               <th style="padding:6px; border:1px solid #e2e8f0;">Ket. Target</th>
-              <th style="padding:6px; border:1px solid #e2e8f0;">Capaian (halaman)</th>
-              <th style="padding:6px; border:1px solid #e2e8f0;">Jumlah (halaman)</th>
-              <th style="padding:6px; border:1px solid #e2e8f0;">Jumlah (juz)</th>
+              <th style="padding:6px; border:1px solid #e2e8f0;">Capaian Hafalan</th>
+              <th style="padding:6px; border:1px solid #e2e8f0;">Jumlah Hafalan</th>
               <th style="padding:6px; border:1px solid #e2e8f0;">Catatan Muhaffiz</th>
             </tr>
           </thead>
@@ -1467,8 +1577,7 @@ async function saveMuhaffizBulkInput() {
     const nilaiTarget = String(row.querySelector('[data-bulk-field="target"]')?.value || '').trim()
     const ketTarget = String(row.querySelector('[data-bulk-field="ket-target"]')?.value || '').trim()
     const nilaiCapaian = String(row.querySelector('[data-bulk-field="capaian"]')?.value || '').trim()
-    const jumlahHalaman = String(row.querySelector('[data-bulk-field="jumlah-halaman"]')?.value || '').trim()
-    const jumlahJuz = String(row.querySelector('[data-bulk-field="jumlah-juz"]')?.value || '').trim()
+    const jumlahHafalan = String(row.querySelector('[data-bulk-field="jumlah"]')?.value || '').trim()
     const catatan = String(row.querySelector('[data-bulk-field="catatan"]')?.value || '').trim()
 
     validationErrors.push(...validateMuhaffizBulkRow({
@@ -1480,8 +1589,7 @@ async function saveMuhaffizBulkInput() {
       nilaiUjian,
       nilaiTarget,
       nilaiCapaian,
-      jumlahHalaman,
-      jumlahJuz
+      jumlahHafalan
     }))
 
     if (!sid || !kelasId || !guruId) {
@@ -1491,6 +1599,7 @@ async function saveMuhaffizBulkInput() {
 
     const akhlakGrade = normalizeAkhlakGrade(akhlak)
     const ujianValue = toNullableNumber(nilaiUjian)
+    const capaianNumeric = toNullableNumber(nilaiCapaian)
     payload.push({
       periode,
       guru_id: guruId,
@@ -1507,9 +1616,11 @@ async function saveMuhaffizBulkInput() {
       keterangan_ujian_bulanan: ujianValue === null ? null : getUjianBulananKeterangan(ujianValue),
       nilai_target_hafalan: toNullableNumber(nilaiTarget),
       keterangan_target_hafalan: ketTarget || null,
-      nilai_capaian_hafalan_bulanan: toNullableNumber(nilaiCapaian),
-      nilai_jumlah_hafalan_halaman: toNullableNumber(jumlahHalaman),
-      nilai_jumlah_hafalan_juz: toNullableNumber(jumlahJuz),
+      nilai_capaian_hafalan_bulanan: Number.isNaN(capaianNumeric) ? null : capaianNumeric,
+      [MONTHLY_REPORT_CAPAIAN_TEXT_COLUMN]: nilaiCapaian || null,
+      [MONTHLY_REPORT_JUMLAH_TEXT_COLUMN]: jumlahHafalan || null,
+      nilai_jumlah_hafalan_halaman: null,
+      nilai_jumlah_hafalan_juz: null,
       catatan_muhaffiz: catatan || null
     })
   })
@@ -1524,9 +1635,29 @@ async function saveMuhaffizBulkInput() {
     return
   }
 
-  const { error } = await sb
+  let { error } = await sb
     .from(MONTHLY_REPORT_TABLE)
     .upsert(payload, { onConflict: 'periode,guru_id,kelas_id,santri_id' })
+  if (error && isMuhaffizMissingCapaianTextColumnError(error)) {
+    const payloadFallback = payload.map(item => {
+      const clone = { ...item }
+      delete clone[MONTHLY_REPORT_CAPAIAN_TEXT_COLUMN]
+      return clone
+    })
+    ;({ error } = await sb
+      .from(MONTHLY_REPORT_TABLE)
+      .upsert(payloadFallback, { onConflict: 'periode,guru_id,kelas_id,santri_id' }))
+  }
+  if (error && isMuhaffizMissingJumlahTextColumnError(error)) {
+    const payloadFallback = payload.map(item => {
+      const clone = { ...item }
+      delete clone[MONTHLY_REPORT_JUMLAH_TEXT_COLUMN]
+      return clone
+    })
+    ;({ error } = await sb
+      .from(MONTHLY_REPORT_TABLE)
+      .upsert(payloadFallback, { onConflict: 'periode,guru_id,kelas_id,santri_id' }))
+  }
 
   if (error) {
     console.error(error)
@@ -1673,14 +1804,35 @@ async function openMuhaffizLaporanDetail(santriId) {
   }
   const periode = muhaffizState.periode || getMonthInputToday()
 
-  const { data: reportRow, error } = await sb
+  let reportRes = await sb
     .from(MONTHLY_REPORT_TABLE)
-    .select('id, muhaffiz, no_hp_muhaffiz, nilai_kehadiran_halaqah, sakit_halaqah, izin_halaqah, nilai_akhlak_halaqah, keterangan_akhlak_halaqah, nilai_ujian_bulanan, keterangan_ujian_bulanan, nilai_target_hafalan, keterangan_target_hafalan, nilai_capaian_hafalan_bulanan, nilai_jumlah_hafalan_halaman, nilai_jumlah_hafalan_juz, catatan_muhaffiz')
+    .select(`id, muhaffiz, no_hp_muhaffiz, nilai_kehadiran_halaqah, sakit_halaqah, izin_halaqah, nilai_akhlak_halaqah, keterangan_akhlak_halaqah, nilai_ujian_bulanan, keterangan_ujian_bulanan, nilai_target_hafalan, keterangan_target_hafalan, nilai_capaian_hafalan_bulanan, ${MONTHLY_REPORT_CAPAIAN_TEXT_COLUMN}, ${MONTHLY_REPORT_JUMLAH_TEXT_COLUMN}, nilai_jumlah_hafalan_halaman, nilai_jumlah_hafalan_juz, catatan_muhaffiz`)
     .eq('periode', periode)
     .eq('guru_id', waliGuruId)
     .eq('kelas_id', String(santri.kelas_id))
     .eq('santri_id', sid)
     .maybeSingle()
+  if (reportRes.error && isMuhaffizMissingCapaianTextColumnError(reportRes.error)) {
+    reportRes = await sb
+      .from(MONTHLY_REPORT_TABLE)
+      .select('id, muhaffiz, no_hp_muhaffiz, nilai_kehadiran_halaqah, sakit_halaqah, izin_halaqah, nilai_akhlak_halaqah, keterangan_akhlak_halaqah, nilai_ujian_bulanan, keterangan_ujian_bulanan, nilai_target_hafalan, keterangan_target_hafalan, nilai_capaian_hafalan_bulanan, nilai_jumlah_hafalan_halaman, nilai_jumlah_hafalan_juz, catatan_muhaffiz')
+      .eq('periode', periode)
+      .eq('guru_id', waliGuruId)
+      .eq('kelas_id', String(santri.kelas_id))
+      .eq('santri_id', sid)
+      .maybeSingle()
+  }
+  if (reportRes.error && isMuhaffizMissingJumlahTextColumnError(reportRes.error)) {
+    reportRes = await sb
+      .from(MONTHLY_REPORT_TABLE)
+      .select(`id, muhaffiz, no_hp_muhaffiz, nilai_kehadiran_halaqah, sakit_halaqah, izin_halaqah, nilai_akhlak_halaqah, keterangan_akhlak_halaqah, nilai_ujian_bulanan, keterangan_ujian_bulanan, nilai_target_hafalan, keterangan_target_hafalan, nilai_capaian_hafalan_bulanan, ${MONTHLY_REPORT_CAPAIAN_TEXT_COLUMN}, nilai_jumlah_hafalan_halaman, nilai_jumlah_hafalan_juz, catatan_muhaffiz`)
+      .eq('periode', periode)
+      .eq('guru_id', waliGuruId)
+      .eq('kelas_id', String(santri.kelas_id))
+      .eq('santri_id', sid)
+      .maybeSingle()
+  }
+  const { data: reportRow, error } = reportRes
 
   if (error) {
     console.error(error)
@@ -1786,8 +1938,7 @@ async function openMuhaffizLaporanDetail(santriId) {
               <td style="padding:8px; border:1px solid #e2e8f0;">Target Hafalan</td>
               <td style="padding:8px; border:1px solid #e2e8f0;">
                 <div style="display:flex; gap:6px; align-items:center;">
-                  <input id="m-lap-nilai-target-hafalan" class="guru-field" type="number" min="0" max="100" step="0.01" value="${escapeHtml(toInputValue(reportRow?.nilai_target_hafalan))}">
-                  <span style="font-size:12px; color:#64748b;">%</span>
+                  <input id="m-lap-nilai-target-hafalan" class="guru-field" type="number" min="0" step="0.01" value="${escapeHtml(toInputValue(reportRow?.nilai_target_hafalan))}">
                 </div>
               </td>
               <td style="padding:8px; border:1px solid #e2e8f0;">
@@ -1798,8 +1949,7 @@ async function openMuhaffizLaporanDetail(santriId) {
               <td style="padding:8px; border:1px solid #e2e8f0;">Capaian Hafalan Bulanan</td>
               <td style="padding:8px; border:1px solid #e2e8f0;">
                 <div style="display:flex; gap:6px; align-items:center;">
-                  <input id="m-lap-nilai-capaian-hafalan" class="guru-field" type="number" min="0" step="0.01" value="${escapeHtml(toInputValue(reportRow?.nilai_capaian_hafalan_bulanan))}">
-                  <span style="font-size:12px; color:#64748b;">halaman</span>
+                  <input id="m-lap-ket-capaian-hafalan" class="guru-field" type="text" value="${escapeHtml(String(reportRow?.[MONTHLY_REPORT_CAPAIAN_TEXT_COLUMN] || '').trim() || toInputValue(reportRow?.nilai_capaian_hafalan_bulanan))}" placeholder="Contoh: Murojaah 1/2 juz atau 12 halaman">
                 </div>
               </td>
               <td style="padding:8px; border:1px solid #e2e8f0; color:#94a3b8;">-</td>
@@ -1807,12 +1957,7 @@ async function openMuhaffizLaporanDetail(santriId) {
             <tr>
               <td style="padding:8px; border:1px solid #e2e8f0;">Jumlah Hafalan</td>
               <td style="padding:8px; border:1px solid #e2e8f0;">
-                <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-                  <input id="m-lap-jumlah-hafalan-halaman" class="guru-field" type="number" min="0" step="0.01" value="${escapeHtml(toInputValue(reportRow?.nilai_jumlah_hafalan_halaman))}" style="max-width:120px;">
-                  <span style="font-size:12px; color:#64748b;">halaman</span>
-                  <input id="m-lap-jumlah-hafalan-juz" class="guru-field" type="number" min="0" step="0.01" value="${escapeHtml(toInputValue(reportRow?.nilai_jumlah_hafalan_juz))}" style="max-width:120px;">
-                  <span style="font-size:12px; color:#64748b;">juz</span>
-                </div>
+                <input id="m-lap-ket-jumlah-hafalan" class="guru-field" type="text" value="${escapeHtml(String(reportRow?.[MONTHLY_REPORT_JUMLAH_TEXT_COLUMN] || '').trim() || ((reportRow?.nilai_jumlah_hafalan_halaman !== null && reportRow?.nilai_jumlah_hafalan_halaman !== undefined) || (reportRow?.nilai_jumlah_hafalan_juz !== null && reportRow?.nilai_jumlah_hafalan_juz !== undefined) ? `${toInputValue(reportRow?.nilai_jumlah_hafalan_halaman)} halaman / ${toInputValue(reportRow?.nilai_jumlah_hafalan_juz)} juz` : ''))}" placeholder="Contoh: Murojaah juz 2, tambah 3 halaman">
               </td>
               <td style="padding:8px; border:1px solid #e2e8f0; color:#94a3b8;">-</td>
             </tr>
@@ -1856,19 +2001,16 @@ async function saveMuhaffizLaporanDetail() {
   const nilaiAkhlakHalaqah = nilaiAkhlakHalaqahRaw ? normalizeAkhlakGrade(nilaiAkhlakHalaqahRaw) : ''
   const nilaiUjianBulanan = toNullableNumber(document.getElementById('m-lap-nilai-ujian-bulanan')?.value)
   const nilaiTargetHafalan = toNullableNumber(document.getElementById('m-lap-nilai-target-hafalan')?.value)
-  const nilaiCapaianHafalan = toNullableNumber(document.getElementById('m-lap-nilai-capaian-hafalan')?.value)
-  const nilaiJumlahHafalanHalaman = toNullableNumber(document.getElementById('m-lap-jumlah-hafalan-halaman')?.value)
-  const nilaiJumlahHafalanJuz = toNullableNumber(document.getElementById('m-lap-jumlah-hafalan-juz')?.value)
+  const capaianHafalanTextRaw = String(document.getElementById('m-lap-ket-capaian-hafalan')?.value || '').trim()
+  const jumlahHafalanTextRaw = String(document.getElementById('m-lap-ket-jumlah-hafalan')?.value || '').trim()
+  const nilaiCapaianHafalan = toNullableNumber(capaianHafalanTextRaw)
 
   const numericChecks = [
     [nilaiKehadiranHalaqah, 'Nilai kehadiran halaqah harus angka.'],
     [sakitHalaqah, 'Jumlah sakit halaqah harus angka.'],
     [izinHalaqah, 'Jumlah izin halaqah harus angka.'],
     [nilaiUjianBulanan, 'Nilai ujian bulanan harus angka.'],
-    [nilaiTargetHafalan, 'Target hafalan harus angka.'],
-    [nilaiCapaianHafalan, 'Capaian hafalan bulanan harus angka.'],
-    [nilaiJumlahHafalanHalaman, 'Jumlah hafalan halaman harus angka.'],
-    [nilaiJumlahHafalanJuz, 'Jumlah hafalan juz harus angka.']
+    [nilaiTargetHafalan, 'Target hafalan harus angka.']
   ]
   for (const [num, message] of numericChecks) {
     if (Number.isNaN(num)) {
@@ -1884,12 +2026,19 @@ async function saveMuhaffizLaporanDetail() {
     alert('Nilai ujian bulanan harus 0-100.')
     return
   }
-  if (nilaiTargetHafalan !== null && (nilaiTargetHafalan < 0 || nilaiTargetHafalan > 100)) {
-    alert('Target hafalan harus 0-100%.')
+  if (nilaiTargetHafalan !== null && nilaiTargetHafalan < 0) {
+    alert('Target hafalan tidak boleh minus.')
     return
   }
   if (nilaiAkhlakHalaqahRaw && !nilaiAkhlakHalaqah) {
     alert('Nilai akhlak halaqah harus A, B, C, D, atau E.')
+    return
+  }
+
+  if (Number.isNaN(nilaiCapaianHafalan)) {
+    // Nilai capaian boleh teks bebas; saat bukan angka, kolom numeric diset null.
+  } else if (nilaiCapaianHafalan !== null && nilaiCapaianHafalan < 0) {
+    alert('Capaian hafalan tidak boleh minus.')
     return
   }
 
@@ -1909,15 +2058,31 @@ async function saveMuhaffizLaporanDetail() {
     keterangan_ujian_bulanan: String(document.getElementById('m-lap-ket-ujian-bulanan')?.value || '').trim() || null,
     nilai_target_hafalan: nilaiTargetHafalan === null ? null : nilaiTargetHafalan,
     keterangan_target_hafalan: String(document.getElementById('m-lap-ket-target-hafalan')?.value || '').trim() || null,
-    nilai_capaian_hafalan_bulanan: nilaiCapaianHafalan === null ? null : nilaiCapaianHafalan,
-    nilai_jumlah_hafalan_halaman: nilaiJumlahHafalanHalaman === null ? null : nilaiJumlahHafalanHalaman,
-    nilai_jumlah_hafalan_juz: nilaiJumlahHafalanJuz === null ? null : nilaiJumlahHafalanJuz,
+    nilai_capaian_hafalan_bulanan: Number.isNaN(nilaiCapaianHafalan) || nilaiCapaianHafalan === null ? null : nilaiCapaianHafalan,
+    [MONTHLY_REPORT_CAPAIAN_TEXT_COLUMN]: capaianHafalanTextRaw || null,
+    [MONTHLY_REPORT_JUMLAH_TEXT_COLUMN]: jumlahHafalanTextRaw || null,
+    nilai_jumlah_hafalan_halaman: null,
+    nilai_jumlah_hafalan_juz: null,
     catatan_muhaffiz: String(document.getElementById('m-lap-catatan-muhaffiz')?.value || '').trim() || null
   }
 
-  const { error } = await sb
+  let { error } = await sb
     .from(MONTHLY_REPORT_TABLE)
     .upsert(payload, { onConflict: 'periode,guru_id,kelas_id,santri_id' })
+  if (error && isMuhaffizMissingCapaianTextColumnError(error)) {
+    const fallbackPayload = { ...payload }
+    delete fallbackPayload[MONTHLY_REPORT_CAPAIAN_TEXT_COLUMN]
+    ;({ error } = await sb
+      .from(MONTHLY_REPORT_TABLE)
+      .upsert(fallbackPayload, { onConflict: 'periode,guru_id,kelas_id,santri_id' }))
+  }
+  if (error && isMuhaffizMissingJumlahTextColumnError(error)) {
+    const fallbackPayload = { ...payload }
+    delete fallbackPayload[MONTHLY_REPORT_JUMLAH_TEXT_COLUMN]
+    ;({ error } = await sb
+      .from(MONTHLY_REPORT_TABLE)
+      .upsert(fallbackPayload, { onConflict: 'periode,guru_id,kelas_id,santri_id' }))
+  }
   if (error) {
     console.error(error)
     alert(`Gagal simpan ketahfizan: ${error.message || 'Unknown error'}`)
@@ -1949,6 +2114,16 @@ async function renderMuhaffizProfil() {
 
   content.innerHTML = `
     <div style="max-width:580px;">
+      <div style="margin-bottom:12px;">
+        <label class="guru-label">Foto Profil</label>
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <div id="muhaffiz-profil-foto-preview"></div>
+          <input id="muhaffiz-profil-foto-url" type="hidden" value="${escapeHtml(String(profile.foto_url || '').trim())}">
+          <input id="muhaffiz-profil-foto-file" type="file" accept="image/*" style="display:none;" onchange="uploadMuhaffizProfilePhoto(event)">
+          <button type="button" class="modal-btn" onclick="document.getElementById('muhaffiz-profil-foto-file')?.click()">Upload Foto</button>
+        </div>
+        <div style="font-size:12px; color:#64748b; margin-top:6px;">Maksimal 300 KB.</div>
+      </div>
       <div style="margin-bottom:10px;">
         <label class="guru-label">ID Karyawan</label>
         <input id="muhaffiz-profil-id-karyawan" type="text" value="${escapeHtml(profile.id_karyawan || '')}" disabled class="guru-field" autocomplete="off" style="background:#f8fafc; color:#64748b;">
@@ -1975,6 +2150,14 @@ async function renderMuhaffizProfil() {
       <button type="button" class="modal-btn modal-btn-primary" onclick="saveMuhaffizProfil('${escapeHtml(profile.id)}')">Simpan Profil</button>
     </div>
   `
+  renderMuhaffizProfilFotoPreview(String(profile.foto_url || '').trim(), String(profile.nama || '').trim())
+  const namaInput = document.getElementById('muhaffiz-profil-nama')
+  if (namaInput) {
+    namaInput.addEventListener('input', () => {
+      const fotoUrl = String(document.getElementById('muhaffiz-profil-foto-url')?.value || '').trim()
+      renderMuhaffizProfilFotoPreview(fotoUrl, namaInput.value || '')
+    })
+  }
 }
 
 function toggleMuhaffizProfilePassword() {
@@ -1992,6 +2175,7 @@ async function saveMuhaffizProfil(muhaffizId) {
   const noHp = String(document.getElementById('muhaffiz-profil-no-hp')?.value || '').trim()
   const alamat = String(document.getElementById('muhaffiz-profil-alamat')?.value || '').trim()
   const password = String(document.getElementById('muhaffiz-profil-password')?.value || '').trim()
+  const fotoUrl = String(document.getElementById('muhaffiz-profil-foto-url')?.value || '').trim()
 
   if (!nama) {
     alert('Nama wajib diisi.')
@@ -2001,7 +2185,8 @@ async function saveMuhaffizProfil(muhaffizId) {
   const payload = {
     nama,
     no_hp: noHp || null,
-    alamat: alamat || null
+    alamat: alamat || null,
+    foto_url: fotoUrl || null
   }
   if (password) payload.password = password
 
@@ -2016,6 +2201,12 @@ async function saveMuhaffizProfil(muhaffizId) {
   }
 
   alert('Profil berhasil disimpan.')
+  localStorage.setItem('login_name', nama)
+  if (fotoUrl) localStorage.setItem('login_photo_url', fotoUrl)
+  else localStorage.removeItem('login_photo_url')
+  if (typeof window.setTopbarUserIdentity === 'function') {
+    window.setTopbarUserIdentity({ name: nama, foto_url: fotoUrl })
+  }
   await setMuhaffizWelcomeName()
   await renderMuhaffizProfil()
 }
@@ -2032,14 +2223,175 @@ function isMuhaffizEkskulMissingTableError(error) {
     msg.includes(EKSKUL_TABLE) ||
     msg.includes(EKSKUL_MEMBER_TABLE) ||
     msg.includes(EKSKUL_INDIKATOR_TABLE) ||
-    msg.includes(EKSKUL_PROGRES_TABLE)
+    msg.includes(EKSKUL_PROGRES_TABLE) ||
+    msg.includes(EKSKUL_MONTHLY_TABLE)
   )) return true
   return msg.includes('does not exist') && (
     msg.includes(EKSKUL_TABLE) ||
     msg.includes(EKSKUL_MEMBER_TABLE) ||
     msg.includes(EKSKUL_INDIKATOR_TABLE) ||
-    msg.includes(EKSKUL_PROGRES_TABLE)
+    msg.includes(EKSKUL_PROGRES_TABLE) ||
+    msg.includes(EKSKUL_MONTHLY_TABLE)
   )
+}
+
+function getMuhaffizMonthPeriodToday() {
+  return new Date().toISOString().slice(0, 7)
+}
+
+function getMuhaffizEkskulMemberRows() {
+  const selected = getMuhaffizSelectedEkskul()
+  if (!selected) return []
+  return (muhaffizEkskulState.memberRows || []).filter(item => String(item.ekskul_id || '') === String(selected.id || ''))
+}
+
+function getMuhaffizEkskulMonthlyPeriode() {
+  const fromInput = String(document.getElementById('muhaffiz-ekskul-monthly-periode')?.value || '').trim()
+  const stateValue = String(muhaffizEkskulState.monthlyPeriode || '').trim()
+  return fromInput || stateValue || getMuhaffizMonthPeriodToday()
+}
+
+function setMuhaffizEkskulTab(tabName = 'progres') {
+  const tab = String(tabName || '').trim().toLowerCase() === 'laporan' ? 'laporan' : 'progres'
+  muhaffizEkskulState.activeTab = tab
+  const btnProgres = document.getElementById('muhaffiz-ekskul-tab-btn-progres')
+  const btnLaporan = document.getElementById('muhaffiz-ekskul-tab-btn-laporan')
+  const panelProgres = document.getElementById('muhaffiz-ekskul-tab-progres')
+  const panelLaporan = document.getElementById('muhaffiz-ekskul-tab-laporan')
+  if (btnProgres) btnProgres.className = tab === 'progres' ? 'modal-btn modal-btn-primary' : 'modal-btn'
+  if (btnLaporan) btnLaporan.className = tab === 'laporan' ? 'modal-btn modal-btn-primary' : 'modal-btn'
+  if (panelProgres) panelProgres.style.display = tab === 'progres' ? '' : 'none'
+  if (panelLaporan) panelLaporan.style.display = tab === 'laporan' ? '' : 'none'
+}
+
+async function loadMuhaffizEkskulMonthlyRows() {
+  const selected = getMuhaffizSelectedEkskul()
+  const periode = getMuhaffizEkskulMonthlyPeriode()
+  muhaffizEkskulState.monthlyPeriode = periode
+  if (!selected?.id || !periode) {
+    muhaffizEkskulState.monthlyRows = []
+    return
+  }
+  const memberSantriIds = getMuhaffizEkskulMemberRows().map(item => String(item.santri_id || '').trim()).filter(Boolean)
+  if (!memberSantriIds.length) {
+    muhaffizEkskulState.monthlyRows = []
+    return
+  }
+  const { data, error } = await sb
+    .from(EKSKUL_MONTHLY_TABLE)
+    .select('id, periode, ekskul_id, santri_id, kehadiran_persen, catatan_pj, updated_at')
+    .eq('ekskul_id', String(selected.id))
+    .eq('periode', periode)
+    .in('santri_id', memberSantriIds)
+  if (error) throw error
+  muhaffizEkskulState.monthlyRows = data || []
+}
+
+function renderMuhaffizEkskulMonthlyRows() {
+  const box = document.getElementById('muhaffiz-ekskul-monthly-list')
+  if (!box) return
+  const selected = getMuhaffizSelectedEkskul()
+  if (!selected) {
+    box.innerHTML = '<div style="color:#64748b; font-size:12px;">Pilih ekskul terlebih dahulu.</div>'
+    return
+  }
+  const members = getMuhaffizEkskulMemberRows()
+  if (!members.length) {
+    box.innerHTML = '<div style="color:#64748b; font-size:12px;">Belum ada anggota ekskul.</div>'
+    return
+  }
+  const santriMap = new Map((muhaffizEkskulState.santriRows || []).map(item => [String(item.id || ''), item]))
+  const monthlyMap = new Map((muhaffizEkskulState.monthlyRows || []).map(item => [String(item.santri_id || ''), item]))
+  box.innerHTML = `
+    <div style="overflow:auto;">
+      <table style="width:100%; min-width:860px; border-collapse:collapse; font-size:13px;">
+        <thead>
+          <tr style="background:#f8fafc;">
+            <th style="padding:8px; border:1px solid #e2e8f0; width:52px;">No</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Nama Santri</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; width:170px;">Kehadiran (%)</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Catatan PJ</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${members.map((item, idx) => {
+            const sid = String(item.santri_id || '')
+            const row = monthlyMap.get(sid)
+            const kehadiranValue = row?.kehadiran_persen === null || row?.kehadiran_persen === undefined ? '' : String(row.kehadiran_persen)
+            const catatanValue = String(row?.catatan_pj || '')
+            return `
+              <tr data-muhaffiz-ekskul-monthly-row="1" data-santri-id="${escapeHtml(sid)}">
+                <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${idx + 1}</td>
+                <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(String(santriMap.get(sid)?.nama || '-'))}</td>
+                <td style="padding:8px; border:1px solid #e2e8f0;"><input class="guru-field" type="number" min="0" max="100" step="0.01" data-muhaffiz-ekskul-monthly-kehadiran="1" value="${escapeHtml(kehadiranValue)}" placeholder="0-100"></td>
+                <td style="padding:8px; border:1px solid #e2e8f0;"><input class="guru-field" type="text" data-muhaffiz-ekskul-monthly-catatan="1" value="${escapeHtml(catatanValue)}" placeholder="Catatan PJ ekskul"></td>
+              </tr>
+            `
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `
+}
+
+async function onMuhaffizEkskulMonthlyPeriodeChange() {
+  try {
+    await loadMuhaffizEkskulMonthlyRows()
+    renderMuhaffizEkskulMonthlyRows()
+  } catch (error) {
+    console.error(error)
+    alert(`Gagal memuat laporan bulanan ekskul: ${error?.message || 'Unknown error'}`)
+  }
+}
+
+async function saveMuhaffizEkskulMonthlyReport() {
+  const selected = getMuhaffizSelectedEkskul()
+  const periode = getMuhaffizEkskulMonthlyPeriode()
+  const updatedBy = String(muhaffizState?.profile?.id || '').trim() || null
+  if (!selected?.id || !periode) {
+    alert('Pilih ekskul dan periode terlebih dahulu.')
+    return
+  }
+  const rowEls = Array.from(document.querySelectorAll('[data-muhaffiz-ekskul-monthly-row="1"]'))
+  if (!rowEls.length) {
+    alert('Belum ada anggota ekskul untuk diinput.')
+    return
+  }
+  const payload = []
+  rowEls.forEach(rowEl => {
+    const sid = String(rowEl.getAttribute('data-santri-id') || '').trim()
+    if (!sid) return
+    const kehadiranRaw = String(rowEl.querySelector('[data-muhaffiz-ekskul-monthly-kehadiran="1"]')?.value || '').trim()
+    const catatanRaw = String(rowEl.querySelector('[data-muhaffiz-ekskul-monthly-catatan="1"]')?.value || '').trim()
+    const parsed = kehadiranRaw === '' ? null : Number(kehadiranRaw)
+    const kehadiran = Number.isFinite(parsed) ? Math.max(0, Math.min(100, Number(parsed.toFixed(2)))) : null
+    const catatan = catatanRaw || null
+    if (kehadiran === null && !catatan) return
+    payload.push({
+      periode,
+      ekskul_id: String(selected.id),
+      santri_id: sid,
+      kehadiran_persen: kehadiran,
+      catatan_pj: catatan,
+      updated_by: updatedBy,
+      updated_at: new Date().toISOString()
+    })
+  })
+  if (!payload.length) {
+    alert('Isi minimal satu data kehadiran atau catatan.')
+    return
+  }
+  const { error } = await sb
+    .from(EKSKUL_MONTHLY_TABLE)
+    .upsert(payload, { onConflict: 'periode,ekskul_id,santri_id' })
+  if (error) {
+    console.error(error)
+    alert(`Gagal menyimpan laporan bulanan ekskul: ${error?.message || 'Unknown error'}`)
+    return
+  }
+  await loadMuhaffizEkskulMonthlyRows()
+  renderMuhaffizEkskulMonthlyRows()
+  alert('Laporan bulanan ekskul berhasil disimpan.')
 }
 
 function isMuhaffizEkskulMissingPj2ColumnError(error) {
@@ -2574,6 +2926,12 @@ async function selectMuhaffizEkskul(id) {
   renderMuhaffizEkskulSelects()
   renderMuhaffizEkskulProgressInputRows()
   renderMuhaffizEkskulProgressList()
+  try {
+    await loadMuhaffizEkskulMonthlyRows()
+    renderMuhaffizEkskulMonthlyRows()
+  } catch (error) {
+    console.error(error)
+  }
 }
 
 function selectMuhaffizEkskulSantri(sid) {
@@ -2710,6 +3068,8 @@ async function renderMuhaffizEkskulPage(_forceReload = false) {
       .order('created_at', { ascending: false })
     if (progressError) throw progressError
     muhaffizEkskulState.progressRows = progressRows || []
+    if (!muhaffizEkskulState.monthlyPeriode) muhaffizEkskulState.monthlyPeriode = getMuhaffizMonthPeriodToday()
+    await loadMuhaffizEkskulMonthlyRows()
 
     content.innerHTML = `
       <div style="display:grid; gap:12px;">
@@ -2719,31 +3079,55 @@ async function renderMuhaffizEkskulPage(_forceReload = false) {
             ${(muhaffizEkskulState.ekskulRows || []).map(item => `<button type="button" class="modal-btn" onclick="selectMuhaffizEkskul('${escapeHtml(String(item.id || ''))}')" style="${String(muhaffizEkskulState.selectedEkskulId || '') === String(item.id || '') ? 'border-color:#d4d456; background:#fefce8;' : ''}">${escapeHtml(String(item.nama || '-'))}</button>`).join('')}
           </div>
         </div>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-          <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
-            <div style="font-weight:700; margin-bottom:8px;">Anggota Ekskul</div>
-            <div style="display:grid; grid-template-columns:1fr auto; gap:8px; margin-bottom:8px;">
-              <select id="muhaffiz-ekskul-santri" class="guru-field"></select>
-              <button type="button" class="modal-btn modal-btn-primary" onclick="addMuhaffizEkskulMember()">Tambah</button>
+
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="muhaffiz-ekskul-tab-btn-progres" type="button" class="modal-btn modal-btn-primary" onclick="setMuhaffizEkskulTab('progres')">Input Progres</button>
+          <button id="muhaffiz-ekskul-tab-btn-laporan" type="button" class="modal-btn" onclick="setMuhaffizEkskulTab('laporan')">Laporan Bulanan Ekskul</button>
+        </div>
+
+        <div id="muhaffiz-ekskul-tab-progres" style="display:grid; gap:12px;">
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:12px;">
+            <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+              <div style="font-weight:700; margin-bottom:8px;">Anggota Ekskul</div>
+              <div style="display:grid; grid-template-columns:1fr auto; gap:8px; margin-bottom:8px;">
+                <select id="muhaffiz-ekskul-santri" class="guru-field"></select>
+                <button type="button" class="modal-btn modal-btn-primary" onclick="addMuhaffizEkskulMember()">Tambah</button>
+              </div>
+              <div id="muhaffiz-ekskul-member-list">Loading...</div>
             </div>
-            <div id="muhaffiz-ekskul-member-list">Loading...</div>
+
+            <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+              <div style="font-weight:700; margin-bottom:8px;">Indikator Penilaian</div>
+              <input id="muhaffiz-ekskul-indikator-nama" class="guru-field" type="text" placeholder="Nama indikator">
+              <input id="muhaffiz-ekskul-indikator-deskripsi" class="guru-field" type="text" placeholder="Deskripsi indikator" style="margin-top:6px;">
+              <button type="button" class="modal-btn modal-btn-primary" onclick="addMuhaffizEkskulIndikator()" style="margin-top:8px;">Tambah Indikator</button>
+              <div id="muhaffiz-ekskul-indikator-list" style="margin-top:8px;">Loading...</div>
+            </div>
           </div>
+
           <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
-            <div style="font-weight:700; margin-bottom:8px;">Indikator Penilaian</div>
-            <input id="muhaffiz-ekskul-indikator-nama" class="guru-field" type="text" placeholder="Nama indikator">
-            <input id="muhaffiz-ekskul-indikator-deskripsi" class="guru-field" type="text" placeholder="Deskripsi indikator" style="margin-top:6px;">
-            <button type="button" class="modal-btn modal-btn-primary" onclick="addMuhaffizEkskulIndikator()" style="margin-top:8px;">Tambah Indikator</button>
-            <div id="muhaffiz-ekskul-indikator-list" style="margin-top:8px;">Loading...</div>
+            <div style="font-weight:700; margin-bottom:8px;">Progres Santri</div>
+            <div style="display:grid; grid-template-columns:160px 1fr auto; gap:8px; margin-bottom:8px;">
+              <input id="muhaffiz-ekskul-progres-tanggal" class="guru-field" type="date" value="${escapeHtml(getMuhaffizTodayDate())}">
+              <button type="button" class="modal-btn modal-btn-primary" onclick="saveMuhaffizEkskulProgress()">Simpan</button>
+            </div>
+            <div id="muhaffiz-ekskul-progres-input-list" style="margin-bottom:10px;">Loading...</div>
+            <div id="muhaffiz-ekskul-progres-list" style="margin-top:10px;">Loading...</div>
           </div>
         </div>
-        <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
-          <div style="font-weight:700; margin-bottom:8px;">Progres Santri</div>
-          <div style="display:grid; grid-template-columns:160px 1fr auto; gap:8px; margin-bottom:8px;">
-            <input id="muhaffiz-ekskul-progres-tanggal" class="guru-field" type="date" value="${escapeHtml(getMuhaffizTodayDate())}">
-            <button type="button" class="modal-btn modal-btn-primary" onclick="saveMuhaffizEkskulProgress()">Simpan</button>
+
+        <div id="muhaffiz-ekskul-tab-laporan" style="display:none; border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+          <div style="font-weight:700; margin-bottom:8px;">Input Laporan Bulanan Ekskul</div>
+          <div style="font-size:12px; color:#64748b; margin-bottom:8px;">Data ini akan dipakai di Detail Laporan Bulanan pada page guru (bagian D. Ekstrakulikuler).</div>
+          <div style="display:grid; grid-template-columns:180px 1fr auto; gap:8px; margin-bottom:8px; align-items:end;">
+            <div>
+              <label class="guru-label">Periode Bulan</label>
+              <input id="muhaffiz-ekskul-monthly-periode" class="guru-field" type="month" value="${escapeHtml(String(muhaffizEkskulState.monthlyPeriode || getMuhaffizMonthPeriodToday()))}" onchange="onMuhaffizEkskulMonthlyPeriodeChange()">
+            </div>
+            <div></div>
+            <div><button type="button" class="modal-btn modal-btn-primary" onclick="saveMuhaffizEkskulMonthlyReport()">Simpan Laporan Bulanan</button></div>
           </div>
-          <div id="muhaffiz-ekskul-progres-input-list" style="margin-bottom:10px;">Loading...</div>
-          <div id="muhaffiz-ekskul-progres-list" style="margin-top:10px;">Loading...</div>
+          <div id="muhaffiz-ekskul-monthly-list">Loading...</div>
         </div>
       </div>
       <div id="muhaffiz-ekskul-santri-detail-overlay" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.45); z-index:2000; padding:20px;">
@@ -2760,6 +3144,8 @@ async function renderMuhaffizEkskulPage(_forceReload = false) {
     renderMuhaffizEkskulSelects()
     renderMuhaffizEkskulProgressInputRows()
     renderMuhaffizEkskulProgressList()
+    renderMuhaffizEkskulMonthlyRows()
+    setMuhaffizEkskulTab(muhaffizEkskulState.activeTab || 'progres')
   } catch (error) {
     console.error(error)
     if (isMuhaffizEkskulMissingTableError(error)) {
@@ -2770,8 +3156,277 @@ async function renderMuhaffizEkskulPage(_forceReload = false) {
   }
 }
 
+function getMuhaffizManageSelectedHalaqah() {
+  const sid = String(muhaffizManageHalaqahState.selectedHalaqahId || '')
+  return (muhaffizManageHalaqahState.halaqahRows || []).find(item => String(item?.id || '') === sid) || null
+}
+
+function sortMuhaffizManageSantriRows(rows = []) {
+  return [...rows].sort((a, b) => {
+    const kelasA = String(muhaffizManageHalaqahState.kelasMap.get(String(a?.kelas_id || ''))?.nama_kelas || '')
+    const kelasB = String(muhaffizManageHalaqahState.kelasMap.get(String(b?.kelas_id || ''))?.nama_kelas || '')
+    const byKelas = kelasA.localeCompare(kelasB, 'id')
+    if (byKelas !== 0) return byKelas
+    return String(a?.nama || '').localeCompare(String(b?.nama || ''), 'id')
+  })
+}
+
+function renderMuhaffizManageSelectedRowsHtml(rows = []) {
+  return rows.map(item => {
+    const sid = String(item?.id || '')
+    const kelasNama = muhaffizManageHalaqahState.kelasMap.get(String(item?.kelas_id || ''))?.nama_kelas || '-'
+    return `
+      <div class="ekskul-card-item" style="display:grid; grid-template-columns:1fr auto; gap:8px; align-items:flex-start; margin-bottom:8px; font-size:13px;">
+        <span>
+          <span style="font-weight:600;">${escapeHtml(item?.nama || '-')}</span>
+          <span style="display:block; font-size:11px; color:#64748b;">${escapeHtml(kelasNama)}</span>
+        </span>
+        <button type="button" class="modal-btn modal-btn-danger" style="padding:2px 8px; min-width:auto; line-height:1; border-radius:999px;" onclick="removeMuhaffizManageHalaqahSantri('${escapeHtml(sid)}')" title="Keluarkan dari halaqah ini">x</button>
+      </div>
+    `
+  }).join('')
+}
+
+function renderMuhaffizManageAvailableRowsHtml(rows = []) {
+  return rows.map(item => {
+    const sid = String(item?.id || '')
+    const kelasNama = muhaffizManageHalaqahState.kelasMap.get(String(item?.kelas_id || ''))?.nama_kelas || '-'
+    return `
+      <label class="ekskul-card-item" style="display:block; margin-bottom:8px; font-size:13px;">
+        <input type="checkbox" onchange="toggleMuhaffizManageHalaqahSantri('${escapeHtml(sid)}', this.checked)">
+        <span style="margin-left:6px; font-weight:600;">${escapeHtml(item?.nama || '-')}</span>
+        <span style="display:block; margin-left:22px; font-size:11px; color:#64748b;">${escapeHtml(kelasNama)}</span>
+      </label>
+    `
+  }).join('')
+}
+
+function renderMuhaffizManageHalaqahPanels() {
+  const selectedWrap = document.getElementById('muhaffiz-halaqah-selected-list')
+  const availableWrap = document.getElementById('muhaffiz-halaqah-available-list')
+  if (!selectedWrap || !availableWrap) return
+
+  const selectedSet = muhaffizManageHalaqahState.selectedSet || new Set()
+  const blockedSet = muhaffizManageHalaqahState.blockedSet || new Set()
+  const search = String(muhaffizManageHalaqahState.search || '').trim().toLowerCase()
+
+  const selectedRows = sortMuhaffizManageSantriRows(
+    (muhaffizManageHalaqahState.santriRows || []).filter(item => selectedSet.has(String(item?.id || '')))
+  )
+  selectedWrap.innerHTML = renderMuhaffizManageSelectedRowsHtml(selectedRows) || '<div style="font-size:12px; color:#64748b;">Belum ada santri di halaqah ini.</div>'
+
+  const availableRows = sortMuhaffizManageSantriRows(
+    (muhaffizManageHalaqahState.santriRows || []).filter(item => {
+      const sid = String(item?.id || '')
+      if (!sid) return false
+      if (selectedSet.has(sid)) return false
+      if (blockedSet.has(sid)) return false
+      if (!search) return true
+      return String(item?.nama || '').toLowerCase().includes(search)
+    })
+  )
+  availableWrap.innerHTML = renderMuhaffizManageAvailableRowsHtml(availableRows) || '<div style="font-size:12px; color:#64748b;">Tidak ada santri tersedia.</div>'
+}
+
+function selectMuhaffizManageHalaqah(halaqahId) {
+  const sid = String(halaqahId || '')
+  if (!sid) return
+  const memberRows = muhaffizManageHalaqahState.memberRows || []
+  muhaffizManageHalaqahState.selectedHalaqahId = sid
+  muhaffizManageHalaqahState.selectedSet = new Set(
+    memberRows
+      .filter(item => String(item?.halaqah_id || '') === sid)
+      .map(item => String(item?.santri_id || ''))
+      .filter(Boolean)
+  )
+  muhaffizManageHalaqahState.blockedSet = new Set(
+    memberRows
+      .filter(item => String(item?.halaqah_id || '') !== sid)
+      .map(item => String(item?.santri_id || ''))
+      .filter(Boolean)
+  )
+  muhaffizManageHalaqahState.search = ''
+  renderMuhaffizManageHalaqahPage()
+}
+
+function searchMuhaffizManageHalaqahSantri(keyword) {
+  muhaffizManageHalaqahState.search = String(keyword || '')
+  renderMuhaffizManageHalaqahPanels()
+}
+
+function toggleMuhaffizManageHalaqahSantri(santriId, checked) {
+  const sid = String(santriId || '').trim()
+  if (!sid) return
+  if (!(muhaffizManageHalaqahState.selectedSet instanceof Set)) muhaffizManageHalaqahState.selectedSet = new Set()
+  if (checked) muhaffizManageHalaqahState.selectedSet.add(sid)
+  else muhaffizManageHalaqahState.selectedSet.delete(sid)
+  renderMuhaffizManageHalaqahPanels()
+}
+
+function removeMuhaffizManageHalaqahSantri(santriId) {
+  const sid = String(santriId || '').trim()
+  if (!sid) return
+  if (!(muhaffizManageHalaqahState.selectedSet instanceof Set)) muhaffizManageHalaqahState.selectedSet = new Set()
+  muhaffizManageHalaqahState.selectedSet.delete(sid)
+  renderMuhaffizManageHalaqahPanels()
+}
+
+async function saveMuhaffizManageHalaqahName() {
+  const selected = getMuhaffizManageSelectedHalaqah()
+  const profileId = String(muhaffizState?.profile?.id || '').trim()
+  if (!selected || !profileId) return
+  const nama = String(document.getElementById('muhaffiz-halaqah-name-input')?.value || '').trim()
+  if (!nama) {
+    alert('Nama halaqah wajib diisi.')
+    return
+  }
+  const { error } = await sb
+    .from(HALAQAH_TABLE)
+    .update({ nama })
+    .eq('id', String(selected.id))
+    .eq('muhaffiz_id', profileId)
+  if (error) {
+    console.error(error)
+    alert(`Gagal menyimpan nama halaqah: ${error?.message || 'Unknown error'}`)
+    return
+  }
+  await renderMuhaffizManageHalaqahPage()
+}
+
+async function saveMuhaffizManageHalaqahMembers() {
+  const selected = getMuhaffizManageSelectedHalaqah()
+  if (!selected) return
+  const halaqahId = String(selected.id || '')
+  const selectedSantriIds = [...(muhaffizManageHalaqahState.selectedSet || new Set())]
+    .map(item => String(item || '').trim())
+    .filter(Boolean)
+
+  const { error: deleteError } = await sb
+    .from(HALAQAH_SANTRI_TABLE)
+    .delete()
+    .eq('halaqah_id', halaqahId)
+  if (deleteError) {
+    console.error(deleteError)
+    alert(`Gagal reset anggota halaqah: ${deleteError?.message || 'Unknown error'}`)
+    return
+  }
+
+  if (selectedSantriIds.length) {
+    const payload = selectedSantriIds.map(santriId => ({ halaqah_id: halaqahId, santri_id: santriId }))
+    const { error: insertError } = await sb.from(HALAQAH_SANTRI_TABLE).insert(payload)
+    if (insertError) {
+      console.error(insertError)
+      alert(`Gagal menyimpan anggota halaqah: ${insertError?.message || 'Unknown error'}`)
+      return
+    }
+  }
+
+  await renderMuhaffizManageHalaqahPage()
+}
+
+async function renderMuhaffizManageHalaqahPage() {
+  const content = document.getElementById('muhaffiz-content')
+  if (!content) return
+  const profileId = String(muhaffizState?.profile?.id || '').trim()
+  if (!profileId) {
+    content.innerHTML = '<div class="placeholder-card">Profil muhaffiz tidak ditemukan.</div>'
+    return
+  }
+
+  content.innerHTML = '<div class="placeholder-card">Memuat data halaqah...</div>'
+  try {
+    const [halaqahRes, memberRes, santriRes, kelasRes] = await Promise.all([
+      sb.from(HALAQAH_TABLE).select('id, nama, muhaffiz_id').eq('muhaffiz_id', profileId).order('nama'),
+      sb.from(HALAQAH_SANTRI_TABLE).select('halaqah_id, santri_id'),
+      sb.from('santri').select('id, nama, kelas_id, aktif').eq('aktif', true).order('nama'),
+      sb.from('kelas').select('id, nama_kelas').order('nama_kelas')
+    ])
+    if (halaqahRes.error) throw halaqahRes.error
+    if (memberRes.error) throw memberRes.error
+    if (santriRes.error) throw santriRes.error
+    if (kelasRes.error) throw kelasRes.error
+
+    const halaqahRows = halaqahRes.data || []
+    const memberRows = memberRes.data || []
+    const santriRows = santriRes.data || []
+    const kelasMap = new Map((kelasRes.data || []).map(item => [String(item?.id || ''), item]))
+
+    muhaffizManageHalaqahState.halaqahRows = halaqahRows
+    muhaffizManageHalaqahState.memberRows = memberRows
+    muhaffizManageHalaqahState.santriRows = santriRows
+    muhaffizManageHalaqahState.kelasMap = kelasMap
+
+    const halaqahIds = halaqahRows.map(item => String(item?.id || ''))
+    if (!halaqahIds.length) {
+      muhaffizManageHalaqahState.selectedHalaqahId = ''
+      muhaffizManageHalaqahState.selectedSet = new Set()
+      muhaffizManageHalaqahState.blockedSet = new Set()
+      content.innerHTML = '<div class="placeholder-card">Belum ada halaqah yang ditugaskan untuk Anda.</div>'
+      return
+    }
+
+    const selectedId = halaqahIds.includes(String(muhaffizManageHalaqahState.selectedHalaqahId || ''))
+      ? String(muhaffizManageHalaqahState.selectedHalaqahId || '')
+      : halaqahIds[0]
+    muhaffizManageHalaqahState.selectedHalaqahId = selectedId
+    muhaffizManageHalaqahState.selectedSet = new Set(
+      memberRows
+        .filter(item => String(item?.halaqah_id || '') === selectedId)
+        .map(item => String(item?.santri_id || ''))
+        .filter(Boolean)
+    )
+    muhaffizManageHalaqahState.blockedSet = new Set(
+      memberRows
+        .filter(item => String(item?.halaqah_id || '') !== selectedId)
+        .map(item => String(item?.santri_id || ''))
+        .filter(Boolean)
+    )
+
+    const selected = getMuhaffizManageSelectedHalaqah()
+    content.innerHTML = `
+      <div style="display:grid; gap:12px;">
+        <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+          <div style="font-weight:700; margin-bottom:8px;">Halaqah Binaan</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            ${(halaqahRows || []).map(item => `<button type="button" class="modal-btn" onclick="selectMuhaffizManageHalaqah('${escapeHtml(String(item?.id || ''))}')" style="${String(item?.id || '') === selectedId ? 'border-color:#d4d456; background:#fefce8;' : ''}">${escapeHtml(item?.nama || '-')}</button>`).join('')}
+          </div>
+        </div>
+        <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+          <div style="display:grid; grid-template-columns:1fr auto; gap:8px;">
+            <input id="muhaffiz-halaqah-name-input" class="guru-field" type="text" value="${escapeHtml(String(selected?.nama || ''))}" placeholder="Nama halaqah">
+            <button type="button" class="modal-btn modal-btn-primary" onclick="saveMuhaffizManageHalaqahName()">Simpan Nama</button>
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:12px;">
+          <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+            <div style="font-weight:700; margin-bottom:8px;">Santri di Halaqah Ini</div>
+            <div id="muhaffiz-halaqah-selected-list"></div>
+          </div>
+          <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+            <div style="display:grid; grid-template-columns:1fr auto; gap:8px; margin-bottom:8px;">
+              <input id="muhaffiz-halaqah-search-input" class="guru-field" type="text" value="${escapeHtml(muhaffizManageHalaqahState.search || '')}" placeholder="Cari nama santri..." oninput="searchMuhaffizManageHalaqahSantri(this.value)">
+              <button type="button" class="modal-btn modal-btn-secondary" onclick="renderMuhaffizManageHalaqahPanels()">Sort Per Kelas</button>
+            </div>
+            <div id="muhaffiz-halaqah-available-list" style="max-height:340px; overflow:auto;"></div>
+          </div>
+        </div>
+        <div style="display:flex; justify-content:flex-end;">
+          <button type="button" class="modal-btn modal-btn-primary" onclick="saveMuhaffizManageHalaqahMembers()">Simpan Anggota</button>
+        </div>
+      </div>
+    `
+    renderMuhaffizManageHalaqahPanels()
+  } catch (error) {
+    console.error(error)
+    content.innerHTML = `<div class="placeholder-card">Gagal load data halaqah: ${escapeHtml(error?.message || 'Unknown error')}</div>`
+  }
+}
+
 async function loadMuhaffizPage(page) {
   const targetPage = PAGE_TITLES[page] ? page : 'dashboard'
+  if (targetPage !== 'chat' && window.ChatModule && typeof window.ChatModule.stop === 'function') {
+    window.ChatModule.stop()
+  }
   const isEkskulPj = await setupMuhaffizEkskulAccess()
   const isWakasekPrestasi = await setupMuhaffizPrestasiPelanggaranAccess()
   setTopbarTitle(targetPage)
@@ -2784,6 +3439,14 @@ async function loadMuhaffizPage(page) {
   }
   if (targetPage === 'laporan-bulanan') {
     await renderLaporanBulananPage()
+    return
+  }
+  if (targetPage === 'data-halaqah') {
+    await renderMuhaffizManageHalaqahPage()
+    return
+  }
+  if (targetPage === 'chat') {
+    await renderMuhaffizChatPage()
     return
   }
   if (targetPage === 'ekskul') {
@@ -2805,6 +3468,31 @@ async function loadMuhaffizPage(page) {
     return
   }
   await renderDashboard()
+}
+
+async function renderMuhaffizChatPage() {
+  const content = document.getElementById('muhaffiz-content')
+  if (!content) return
+  content.innerHTML = 'Loading chat...'
+  try {
+    const profile = await getCurrentMuhaffiz()
+    if (!profile?.id) {
+      content.innerHTML = '<div class="placeholder-card">Data profil muhaffiz tidak ditemukan.</div>'
+      return
+    }
+    if (!window.ChatModule || typeof window.ChatModule.render !== 'function') {
+      content.innerHTML = '<div class="placeholder-card">Modul chat belum termuat. Refresh halaman.</div>'
+      return
+    }
+    await window.ChatModule.render({
+      sb,
+      containerId: 'muhaffiz-content',
+      currentUser: { id: String(profile.id), nama: String(profile.nama || profile.id_karyawan || '-') }
+    })
+  } catch (error) {
+    console.error(error)
+    content.innerHTML = `<div class="placeholder-card">Gagal load chat: ${escapeHtml(error?.message || 'Unknown error')}</div>`
+  }
 }
 
 function logout() {
@@ -2841,6 +3529,14 @@ window.closeMuhaffizDashboardAgendaPopup = closeMuhaffizDashboardAgendaPopup
 window.openMuhaffizProfile = () => loadMuhaffizPage('profil')
 window.saveMuhaffizProfil = saveMuhaffizProfil
 window.toggleMuhaffizProfilePassword = toggleMuhaffizProfilePassword
+window.uploadMuhaffizProfilePhoto = uploadMuhaffizProfilePhoto
+window.selectMuhaffizManageHalaqah = selectMuhaffizManageHalaqah
+window.searchMuhaffizManageHalaqahSantri = searchMuhaffizManageHalaqahSantri
+window.toggleMuhaffizManageHalaqahSantri = toggleMuhaffizManageHalaqahSantri
+window.removeMuhaffizManageHalaqahSantri = removeMuhaffizManageHalaqahSantri
+window.saveMuhaffizManageHalaqahName = saveMuhaffizManageHalaqahName
+window.saveMuhaffizManageHalaqahMembers = saveMuhaffizManageHalaqahMembers
+window.renderMuhaffizManageHalaqahPanels = renderMuhaffizManageHalaqahPanels
 window.selectMuhaffizEkskul = selectMuhaffizEkskul
 window.selectMuhaffizEkskulSantri = selectMuhaffizEkskulSantri
 window.openMuhaffizEkskulSantriDetail = openMuhaffizEkskulSantriDetail
@@ -2849,6 +3545,9 @@ window.muhaffizEkskulUpdateIndicatorStars = muhaffizEkskulUpdateIndicatorStars
 window.addMuhaffizEkskulMember = addMuhaffizEkskulMember
 window.addMuhaffizEkskulIndikator = addMuhaffizEkskulIndikator
 window.saveMuhaffizEkskulProgress = saveMuhaffizEkskulProgress
+window.setMuhaffizEkskulTab = setMuhaffizEkskulTab
+window.onMuhaffizEkskulMonthlyPeriodeChange = onMuhaffizEkskulMonthlyPeriodeChange
+window.saveMuhaffizEkskulMonthlyReport = saveMuhaffizEkskulMonthlyReport
 window.setMuhaffizPrestasiTab = setMuhaffizPrestasiTab
 window.onMuhaffizPrestasiClassFilterChange = onMuhaffizPrestasiClassFilterChange
 window.saveMuhaffizPrestasiEntry = saveMuhaffizPrestasiEntry
@@ -2894,11 +3593,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   refreshMuhaffizTopbarNotifications().catch(error => console.error(error))
 
   document.addEventListener('click', event => {
-    const wrap = document.querySelector('.topbar-user-menu-wrap')
-    if (!wrap) return
-    if (!wrap.contains(event.target)) {
-      closeTopbarUserMenu()
-      closeTopbarNotifMenu()
-    }
+    const topWrap = document.querySelector('.topbar-user-menu-wrap')
+    const sideWrap = document.querySelector('.sidebar-user-menu-wrap')
+    if ((topWrap && topWrap.contains(event.target)) || (sideWrap && sideWrap.contains(event.target))) return
+    closeTopbarUserMenu()
+    closeTopbarNotifMenu()
   })
 })

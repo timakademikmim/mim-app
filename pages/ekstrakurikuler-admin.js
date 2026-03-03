@@ -154,6 +154,7 @@ function buildEkskulAdminMemberListHtml(eid) {
 function renderEkskulAdminList() {
   const box = document.getElementById('ekskul-admin-list')
   if (!box) return
+  renderEkskulAdminSelectors()
   const karyawanMap = new Map((ekskulAdminState.karyawanRows || []).map(item => [String(item.id || ''), item]))
   const memberRows = ekskulAdminState.memberRows || []
   const rows = ekskulAdminState.rows || []
@@ -250,8 +251,13 @@ async function loadEkskulAdminPage(_forceRefresh = false) {
       throw error
     }
 
-    const [kRes, sRes, mRes] = await Promise.all([
-      sb.from('karyawan').select('id, nama, aktif').eq('aktif', true).order('nama'),
+    let kPromise = sb.from('karyawan').select('id, nama, aktif').eq('aktif', true).order('nama')
+    let kRes = await kPromise
+    if (kRes.error && isEkskulAdminMissingColumnError(kRes.error, 'aktif')) {
+      kRes = await sb.from('karyawan').select('id, nama').order('nama')
+    }
+
+    const [sRes, mRes] = await Promise.all([
       sb.from('santri').select('id, nama, aktif').eq('aktif', true).order('nama'),
       sb.from(EKSKUL_MEMBER_TABLE).select('id, ekskul_id, santri_id').order('created_at', { ascending: false })
     ])

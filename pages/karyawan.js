@@ -9,6 +9,34 @@ const karyawanSelectFilters = {
 }
 const KARYAWAN_CACHE_KEY = 'karyawan:list:all'
 const KARYAWAN_CACHE_TTL_MS = 2 * 60 * 1000
+const KARYAWAN_FOTO_BUCKET = 'karyawan-foto'
+const KARYAWAN_FOTO_MAX_SIZE_BYTES = 500 * 1024
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+}
+
+function getNamaInitial(nama) {
+  const words = String(nama || '').trim().split(/\s+/).filter(Boolean)
+  if (!words.length) return 'U'
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase()
+  return `${words[0][0] || ''}${words[1][0] || ''}`.toUpperCase()
+}
+
+function getKaryawanAvatarHtml(karyawan) {
+  const nama = String(karyawan?.nama || '').trim()
+  const fotoUrl = String(karyawan?.foto_url || '').trim()
+  const initials = getNamaInitial(nama)
+  if (fotoUrl) {
+    return `<img src="${escapeHtml(fotoUrl)}" alt="${escapeHtml(nama || 'Avatar')}" style="width:28px; height:28px; border-radius:999px; object-fit:cover; border:1px solid #cbd5e1;">`
+  }
+  return `<span style="width:28px; height:28px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; background:#e2e8f0; color:#0f172a; font-size:11px; font-weight:700; border:1px solid #cbd5e1;">${escapeHtml(initials)}</span>`
+}
 
 function parseRoleList(rawRole) {
   if (Array.isArray(rawRole)) {
@@ -41,6 +69,7 @@ function filterKaryawanByMode(data) {
 
 function getSupabaseErrorMessage(error) {
   if (!error) return 'Unknown error'
+  if (typeof error?.message === 'string' && error.message.trim()) return error.message.trim()
   const parts = [error.message, error.details, error.hint].filter(Boolean)
   return parts.length > 0 ? parts.join(' | ') : JSON.stringify(error)
 }
@@ -76,6 +105,89 @@ function isNumericIdTypeError(error) {
     || text.includes('invalid input syntax for type bigint')
     || text.includes('type bigint')
     || text.includes('type integer')
+}
+
+function isMissingFotoColumnError(error) {
+  const text = getSupabaseErrorMessage(error).toLowerCase()
+  return text.includes('foto_url') && text.includes('column')
+}
+
+function isBucketNotFoundError(error) {
+  const text = getSupabaseErrorMessage(error).toLowerCase()
+  const code = String(error?.code || '').toLowerCase()
+  return text.includes('bucket not found') || text.includes('bucket') && text.includes('not found') || code === '404'
+}
+
+function getFotoFileExt(fileName = '') {
+  const raw = String(fileName || '').trim().toLowerCase()
+  const parts = raw.split('.')
+  const ext = parts.length > 1 ? parts.pop() : ''
+  if (!ext) return 'jpg'
+  if (ext === 'jpeg') return 'jpg'
+  if (ext === 'png' || ext === 'jpg' || ext === 'webp') return ext
+  return 'jpg'
+}
+
+async function uploadKaryawanFotoFile(file, idHint = '') {
+  if (!file) return ''
+  if (!String(file.type || '').toLowerCase().startsWith('image/')) {
+    throw new Error('File harus berupa gambar (JPG, PNG, WEBP).')
+  }
+  if (Number(file.size || 0) > KARYAWAN_FOTO_MAX_SIZE_BYTES) {
+    throw new Error('Ukuran gambar maksimal 500 KB. Silakan kompres gambar terlebih dahulu.')
+  }
+  const ext = getFotoFileExt(file.name)
+  const keyBase = String(idHint || '').trim().replaceAll(' ', '_') || `karyawan_${Date.now()}`
+  const filePath = `${keyBase}_${Date.now()}.${ext}`
+  const uploadRes = await sb
+    .storage
+    .from(KARYAWAN_FOTO_BUCKET)
+    .upload(filePath, file, { upsert: true })
+
+  if (uploadRes.error) {
+    if (isBucketNotFoundError(uploadRes.error)) {
+      throw new Error(`Bucket '${KARYAWAN_FOTO_BUCKET}' belum ada. Buat bucket tersebut di Supabase Storage atau isi foto via URL manual.`)
+    }
+    throw uploadRes.error
+  }
+  const publicRes = sb.storage.from(KARYAWAN_FOTO_BUCKET).getPublicUrl(filePath)
+  return String(publicRes?.data?.publicUrl || '').trim()
+}
+
+function updateKaryawanFotoPreview(previewId, fotoUrl, nama) {
+  const box = document.getElementById(previewId)
+  if (!box) return
+  const url = String(fotoUrl || '').trim()
+  if (url) {
+    box.innerHTML = `<img src="${escapeHtml(url)}" alt="Foto Karyawan" style="width:52px; height:52px; border-radius:999px; object-fit:cover; border:1px solid #cbd5e1;">`
+    return
+  }
+  box.innerHTML = `<span style="width:52px; height:52px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; background:#e2e8f0; color:#0f172a; font-weight:700; border:1px solid #cbd5e1;">${escapeHtml(getNamaInitial(nama))}</span>`
+}
+
+function getFotoUrlFromInput(inputId, fallback = '') {
+  const input = document.getElementById(inputId)
+  if (!input) return String(fallback || '').trim()
+  const manual = String(input.value || '').trim()
+  if (manual) return manual
+  const uploaded = String(input.dataset.uploadedUrl || '').trim()
+  if (uploaded) return uploaded
+  const current = String(input.dataset.currentUrl || '').trim()
+  if (current) return current
+  return String(fallback || '').trim()
+}
+
+function syncTopbarIdentityIfCurrentUser(idKaryawan, payload = {}) {
+  const loginId = String(localStorage.getItem('login_id') || '').trim()
+  if (!loginId || String(idKaryawan || '').trim() !== loginId) return
+  const name = String(payload.nama || localStorage.getItem('login_name') || loginId).trim()
+  const fotoUrl = String(payload.foto_url || '').trim()
+  localStorage.setItem('login_name', name)
+  if (fotoUrl) localStorage.setItem('login_photo_url', fotoUrl)
+  else localStorage.removeItem('login_photo_url')
+  if (typeof window.setTopbarUserIdentity === 'function') {
+    window.setTopbarUserIdentity({ name, foto_url: fotoUrl })
+  }
 }
 
 async function insertKaryawanWithFallback(payload) {
@@ -232,11 +344,25 @@ function createAddKaryawanModal() {
   modal.innerHTML = `
     <div style="background:#fff; margin:60px auto; padding:24px; border-radius:8px; width:360px; box-shadow:0 2px 12px #0002; position:relative;">
       <h3>Tambah Karyawan</h3>
+      <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">Foto</div>
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+        <div id="modal-add-karyawan-foto-preview"></div>
+        <div style="flex:1;">
+          <input class="karyawan-field" type="text" id="modal-add-karyawan-foto-url" placeholder="URL Foto (opsional)" style="${getInsetFieldStyle('margin-bottom:6px;')}">
+          <input type="file" id="modal-add-karyawan-foto-file" accept="image/*" style="font-size:12px;">
+        </div>
+      </div>
+      <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">ID Karyawan</div>
       <input class="karyawan-field" type="text" id="modal-add-karyawan-id-karyawan" placeholder="ID Karyawan" style="${getInsetFieldStyle('margin-bottom:8px;')}">
+      <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">Password</div>
       <input class="karyawan-field" type="password" id="modal-add-karyawan-password" placeholder="Password" style="${getInsetFieldStyle('margin-bottom:8px;')}">
+      <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">Nama Karyawan</div>
       <input class="karyawan-field" type="text" id="modal-add-karyawan-nama" placeholder="Nama Karyawan" style="${getInsetFieldStyle('margin-bottom:8px;')}">
+      <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">Role</div>
       <input class="karyawan-field" type="text" id="modal-add-karyawan-role" placeholder="Role (contoh: admin,guru)" style="${getInsetFieldStyle('margin-bottom:8px;')}">
+      <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">No HP</div>
       <input class="karyawan-field" type="text" id="modal-add-karyawan-no-hp" placeholder="No HP" style="${getInsetFieldStyle('margin-bottom:8px;')}">
+      <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">Alamat</div>
       <input class="karyawan-field" type="text" id="modal-add-karyawan-alamat" placeholder="Alamat" style="${getInsetFieldStyle('margin-bottom:10px;')}">
       <label style="display:flex; gap:8px; align-items:center; margin-bottom:12px;">
         <input type="checkbox" id="modal-add-karyawan-aktif" checked>
@@ -248,6 +374,39 @@ function createAddKaryawanModal() {
     </div>
   `
   document.body.appendChild(modal)
+  updateKaryawanFotoPreview('modal-add-karyawan-foto-preview', '', '')
+  const namaInput = document.getElementById('modal-add-karyawan-nama')
+  const urlInput = document.getElementById('modal-add-karyawan-foto-url')
+  const fileInput = document.getElementById('modal-add-karyawan-foto-file')
+  if (urlInput) {
+    urlInput.value = ''
+    urlInput.dataset.currentUrl = ''
+    urlInput.dataset.uploadedUrl = ''
+  }
+  if (namaInput && !namaInput.dataset.photoBound) {
+    namaInput.addEventListener('input', () => updateKaryawanFotoPreview('modal-add-karyawan-foto-preview', getFotoUrlFromInput('modal-add-karyawan-foto-url'), namaInput.value || ''))
+    namaInput.dataset.photoBound = '1'
+  }
+  if (urlInput && !urlInput.dataset.photoBound) {
+    urlInput.addEventListener('input', () => updateKaryawanFotoPreview('modal-add-karyawan-foto-preview', urlInput.value || '', namaInput?.value || ''))
+    urlInput.dataset.photoBound = '1'
+  }
+  if (fileInput && !fileInput.dataset.photoBound) {
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files?.[0]
+      if (!file) return
+      try {
+        const idHint = (document.getElementById('modal-add-karyawan-id-karyawan')?.value || '').trim() || 'new'
+        const fotoUrl = await uploadKaryawanFotoFile(file, idHint)
+        if (urlInput) urlInput.dataset.uploadedUrl = fotoUrl
+        updateKaryawanFotoPreview('modal-add-karyawan-foto-preview', fotoUrl, namaInput?.value || '')
+      } catch (error) {
+        console.error(error)
+        alert(`Gagal upload foto: ${getSupabaseErrorMessage(error)}`)
+      }
+    })
+    fileInput.dataset.photoBound = '1'
+  }
   return modal
 }
 
@@ -279,11 +438,25 @@ function createEditKaryawanModal() {
   modal.innerHTML = `
     <div style="background:#fff; margin:60px auto; padding:24px; border-radius:8px; width:360px; box-shadow:0 2px 12px #0002; position:relative;">
       <h3>Edit Karyawan</h3>
+      <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">Foto</div>
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+        <div id="modal-edit-karyawan-foto-preview"></div>
+        <div style="flex:1;">
+          <input class="karyawan-field" type="text" id="modal-edit-karyawan-foto-url" placeholder="URL Foto (opsional)" style="${getInsetFieldStyle('margin-bottom:6px;')}">
+          <input type="file" id="modal-edit-karyawan-foto-file" accept="image/*" style="font-size:12px;">
+        </div>
+      </div>
+      <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">ID Karyawan</div>
       <input class="karyawan-field" type="text" id="modal-edit-karyawan-id-karyawan" placeholder="ID Karyawan" style="${getInsetFieldStyle('margin-bottom:8px;')}">
+      <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">Password Baru (Opsional)</div>
       <input class="karyawan-field" type="password" id="modal-edit-karyawan-password" placeholder="Password baru (opsional)" style="${getInsetFieldStyle('margin-bottom:8px;')}">
+      <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">Nama Karyawan</div>
       <input class="karyawan-field" type="text" id="modal-edit-karyawan-nama" placeholder="Nama Karyawan" style="${getInsetFieldStyle('margin-bottom:8px;')}">
+      <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">Role</div>
       <input class="karyawan-field" type="text" id="modal-edit-karyawan-role" placeholder="Role (contoh: admin,guru)" style="${getInsetFieldStyle('margin-bottom:8px;')}">
+      <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">No HP</div>
       <input class="karyawan-field" type="text" id="modal-edit-karyawan-no-hp" placeholder="No HP" style="${getInsetFieldStyle('margin-bottom:8px;')}">
+      <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">Alamat</div>
       <input class="karyawan-field" type="text" id="modal-edit-karyawan-alamat" placeholder="Alamat" style="${getInsetFieldStyle('margin-bottom:10px;')}">
       <label style="display:flex; gap:8px; align-items:center; margin-bottom:12px;">
         <input type="checkbox" id="modal-edit-karyawan-aktif">
@@ -295,6 +468,39 @@ function createEditKaryawanModal() {
     </div>
   `
   document.body.appendChild(modal)
+  updateKaryawanFotoPreview('modal-edit-karyawan-foto-preview', '', '')
+  const namaInput = document.getElementById('modal-edit-karyawan-nama')
+  const urlInput = document.getElementById('modal-edit-karyawan-foto-url')
+  const fileInput = document.getElementById('modal-edit-karyawan-foto-file')
+  if (urlInput) {
+    urlInput.value = ''
+    urlInput.dataset.currentUrl = ''
+    urlInput.dataset.uploadedUrl = ''
+  }
+  if (namaInput && !namaInput.dataset.photoBound) {
+    namaInput.addEventListener('input', () => updateKaryawanFotoPreview('modal-edit-karyawan-foto-preview', getFotoUrlFromInput('modal-edit-karyawan-foto-url'), namaInput.value || ''))
+    namaInput.dataset.photoBound = '1'
+  }
+  if (urlInput && !urlInput.dataset.photoBound) {
+    urlInput.addEventListener('input', () => updateKaryawanFotoPreview('modal-edit-karyawan-foto-preview', urlInput.value || '', namaInput?.value || ''))
+    urlInput.dataset.photoBound = '1'
+  }
+  if (fileInput && !fileInput.dataset.photoBound) {
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files?.[0]
+      if (!file) return
+      try {
+        const idHint = (document.getElementById('modal-edit-karyawan-id-karyawan')?.value || '').trim() || 'edit'
+        const fotoUrl = await uploadKaryawanFotoFile(file, idHint)
+        if (urlInput) urlInput.dataset.uploadedUrl = fotoUrl
+        updateKaryawanFotoPreview('modal-edit-karyawan-foto-preview', fotoUrl, namaInput?.value || '')
+      } catch (error) {
+        console.error(error)
+        alert(`Gagal upload foto: ${getSupabaseErrorMessage(error)}`)
+      }
+    })
+    fileInput.dataset.photoBound = '1'
+  }
   return modal
 }
 
@@ -309,6 +515,7 @@ async function tambahKaryawan() {
   const idKaryawan = (document.getElementById('modal-add-karyawan-id-karyawan')?.value || '').trim()
   const password = (document.getElementById('modal-add-karyawan-password')?.value || '').trim()
   const nama = (document.getElementById('modal-add-karyawan-nama')?.value || '').trim()
+  const fotoUrl = getFotoUrlFromInput('modal-add-karyawan-foto-url')
   const roleInput = (document.getElementById('modal-add-karyawan-role')?.value || '').trim()
   const noHp = (document.getElementById('modal-add-karyawan-no-hp')?.value || '').trim()
   const alamat = (document.getElementById('modal-add-karyawan-alamat')?.value || '').trim()
@@ -335,13 +542,18 @@ async function tambahKaryawan() {
     id_karyawan: idKaryawan,
     password,
     nama,
+    foto_url: fotoUrl || null,
     role: normalizedRole,
     no_hp: noHp || null,
     alamat: alamat || null,
     aktif
   }
 
-  const { error } = await insertKaryawanWithFallback(payload)
+  let { error } = await insertKaryawanWithFallback(payload)
+  if (error && isMissingFotoColumnError(error)) {
+    delete payload.foto_url
+    ;({ error } = await insertKaryawanWithFallback(payload))
+  }
 
   if (error) {
     console.error(error)
@@ -370,10 +582,17 @@ async function showEditKaryawanForm(id) {
   document.getElementById('modal-edit-karyawan-id-karyawan').value = karyawan.id_karyawan ?? ''
   document.getElementById('modal-edit-karyawan-password').value = ''
   document.getElementById('modal-edit-karyawan-nama').value = karyawan.nama ?? ''
+  const editFotoInput = document.getElementById('modal-edit-karyawan-foto-url')
+  if (editFotoInput) {
+    editFotoInput.value = ''
+    editFotoInput.dataset.currentUrl = String(karyawan.foto_url || '').trim()
+    editFotoInput.dataset.uploadedUrl = ''
+  }
   document.getElementById('modal-edit-karyawan-role').value = formatRoleDisplay(karyawan.role) === '-' ? '' : formatRoleDisplay(karyawan.role)
   document.getElementById('modal-edit-karyawan-no-hp').value = karyawan.no_hp ?? ''
   document.getElementById('modal-edit-karyawan-alamat').value = karyawan.alamat ?? ''
   document.getElementById('modal-edit-karyawan-aktif').checked = karyawan.aktif ?? true
+  updateKaryawanFotoPreview('modal-edit-karyawan-foto-preview', karyawan.foto_url || '', karyawan.nama || '')
 
   document.getElementById('edit-karyawan-modal').style.display = 'block'
 }
@@ -384,6 +603,7 @@ async function modalEditKaryawan() {
   const idKaryawan = (document.getElementById('modal-edit-karyawan-id-karyawan')?.value || '').trim()
   const password = (document.getElementById('modal-edit-karyawan-password')?.value || '').trim()
   const nama = (document.getElementById('modal-edit-karyawan-nama')?.value || '').trim()
+  const fotoUrl = getFotoUrlFromInput('modal-edit-karyawan-foto-url')
   const roleInput = (document.getElementById('modal-edit-karyawan-role')?.value || '').trim()
   const noHp = (document.getElementById('modal-edit-karyawan-no-hp')?.value || '').trim()
   const alamat = (document.getElementById('modal-edit-karyawan-alamat')?.value || '').trim()
@@ -409,6 +629,7 @@ async function modalEditKaryawan() {
   const payload = {
     id_karyawan: idKaryawan,
     nama,
+    foto_url: fotoUrl || null,
     role: normalizedRole,
     no_hp: noHp || null,
     alamat: alamat || null,
@@ -417,10 +638,17 @@ async function modalEditKaryawan() {
 
   if (password) payload.password = password
 
-  const { error } = await sb
+  let { error } = await sb
     .from('karyawan')
     .update(payload)
     .eq('id', currentEditKaryawanId)
+  if (error && isMissingFotoColumnError(error)) {
+    delete payload.foto_url
+    ;({ error } = await sb
+      .from('karyawan')
+      .update(payload)
+      .eq('id', currentEditKaryawanId))
+  }
 
   if (error) {
     console.error(error)
@@ -432,6 +660,7 @@ async function modalEditKaryawan() {
     return
   }
 
+  syncTopbarIdentityIfCurrentUser(idKaryawan, payload)
   closeEditKaryawanModal()
   if (typeof clearCachedData === 'function') clearCachedData(KARYAWAN_CACHE_KEY)
   loadKaryawan(true)
@@ -562,7 +791,10 @@ function renderKaryawanSearchTable() {
     <tr>
       <td style="padding:8px 8px 8px 14px; border:1px solid #ddd; position:relative; white-space:nowrap; min-width:220px;">
         <span style="position:absolute; left:0; top:0; bottom:0; width:4px; background:${k.aktif ? '#16a34a' : '#dc2626'};"></span>
-        <span>${k.nama ?? '-'}</span>
+        <span style="display:inline-flex; align-items:center; gap:8px;">
+          ${getKaryawanAvatarHtml(k)}
+          <span>${escapeHtml(k.nama ?? '-')}</span>
+        </span>
       </td>
       <td style="padding:8px; border:1px solid #ddd;">${k.id_karyawan ?? '-'}</td>
       <td style="padding:8px; border:1px solid #ddd;">${formatRoleDisplay(k.role)}</td>
@@ -684,11 +916,27 @@ async function loadKaryawan(forceRefresh = false) {
 
   container.innerHTML = 'Loading...'
 
-  const { data, error } = await sb
-    .from('karyawan')
-    .select('id, id_karyawan, password, nama, role, no_hp, alamat, aktif')
-    .order('aktif', { ascending: false })
-    .order('nama')
+  let data = null
+  let error = null
+  const variants = [
+    'id, id_karyawan, password, nama, role, no_hp, alamat, aktif, foto_url',
+    'id, id_karyawan, password, nama, role, no_hp, alamat, aktif'
+  ]
+  for (const selectCols of variants) {
+    const result = await sb
+      .from('karyawan')
+      .select(selectCols)
+      .order('aktif', { ascending: false })
+      .order('nama')
+    if (!result.error) {
+      data = result.data || []
+      error = null
+      break
+    }
+    error = result.error
+    const msg = String(result.error?.message || '').toLowerCase()
+    if (!(msg.includes('column') && msg.includes('foto_url'))) break
+  }
 
   if (error) {
     console.error(error)

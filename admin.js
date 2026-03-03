@@ -164,15 +164,31 @@ function renderAdminTopbarName() {
   const welcomeEl = document.getElementById('welcome')
   if (!welcomeEl) return
   welcomeEl.textContent = loginDisplayName || String(loginId || '').trim()
+  if (typeof window.setTopbarUserIdentity === 'function') {
+    window.setTopbarUserIdentity({ name: welcomeEl.textContent, foto_url: localStorage.getItem('login_photo_url') || '' })
+  }
 }
 
 async function hydrateAdminLoginDisplayName() {
   if (!loginId) return
-  const { data, error } = await sb
-    .from('karyawan')
-    .select('nama')
-    .eq('id_karyawan', loginId)
-    .maybeSingle()
+  let data = null
+  let error = null
+  const variants = ['nama, foto_url', 'nama']
+  for (const selectCols of variants) {
+    const result = await sb
+      .from('karyawan')
+      .select(selectCols)
+      .eq('id_karyawan', loginId)
+      .maybeSingle()
+    if (!result.error) {
+      data = result.data || null
+      error = null
+      break
+    }
+    error = result.error
+    const msg = String(result.error?.message || '').toLowerCase()
+    if (!(msg.includes('column') && msg.includes('foto_url'))) break
+  }
 
   if (error) {
     console.error(error)
@@ -184,6 +200,9 @@ async function hydrateAdminLoginDisplayName() {
 
   loginDisplayName = name
   localStorage.setItem('login_name', name)
+  const fotoUrl = String(data?.foto_url || '').trim()
+  if (fotoUrl) localStorage.setItem('login_photo_url', fotoUrl)
+  else localStorage.removeItem('login_photo_url')
   renderAdminTopbarName()
 }
 
@@ -203,9 +222,9 @@ function setupTopbarUserMenuHandlers() {
   if (document.body.dataset.topbarMenuBound === 'true') return
 
   document.addEventListener('click', event => {
-    const wrap = document.querySelector('.topbar-user-menu-wrap')
-    if (!wrap) return
-    if (wrap.contains(event.target)) return
+    const topWrap = document.querySelector('.topbar-user-menu-wrap')
+    const sideWrap = document.querySelector('.sidebar-user-menu-wrap')
+    if ((topWrap && topWrap.contains(event.target)) || (sideWrap && sideWrap.contains(event.target))) return
     closeTopbarUserMenu()
   })
 

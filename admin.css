@@ -141,22 +141,14 @@ body {
 }
 
 .role-switcher {
-  margin-top: auto;
-  padding-top: 8px;
-  color: #93c5fd;
+  margin-top: -6px;
+  padding-top: 0;
+  color: #4fa8c4;
   position: relative;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  text-align: center;
-}
-
-.role-switcher-label {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  text-transform: uppercase;
-  color: #93c5fd;
+  align-items: flex-start;
+  text-align: left;
 }
 
 .role-switcher-toggle {
@@ -164,16 +156,16 @@ body {
   padding: 0;
   border: none;
   background: transparent;
-  color: #93c5fd;
-  width: auto;
+  color: #50b2cb !important;
+  width: 100%;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 6px;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 700 !important;
   cursor: pointer;
-  text-align: center;
+  text-align: left;
 }
 
 .role-switcher-toggle:hover,
@@ -181,13 +173,13 @@ body {
 .role-switcher-item:hover,
 .role-switcher-item:focus-visible {
   background: transparent !important;
-  color: #93c5fd;
+  color: #2d90b1;
   outline: none;
 }
 
 .role-switcher-arrow {
   font-size: 11px;
-  color: #93c5fd;
+  color: #64748b;
   transition: transform 0.2s ease;
 }
 
@@ -204,10 +196,10 @@ body {
   min-width: 120px;
   padding: 8px 10px;
   border-radius: 10px;
-  background: rgba(59, 130, 246, 0.12);
+  background: #ffffff;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  box-shadow: 0 8px 20px rgba(30, 64, 175, 0.12);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
   z-index: 200000;
   text-align: center;
 }
@@ -221,18 +213,22 @@ body {
   padding: 5px 0;
   border: none;
   background: transparent;
-  color: #93c5fd;
+  color: #50b2cb !important;
   width: 100%;
-  text-align: center;
-  font-size: 13px;
-  font-weight: 500;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700 !important;
   cursor: pointer;
   display: block;
 }
 
 .sidebar .role-switcher-toggle,
 .sidebar .role-switcher-item {
-  text-align: center;
+  text-align: left;
+}
+
+.sidebar .role-switcher-toggle {
+  margin-bottom: 0 !important;
 }
 
 .role-switcher.single-role .role-switcher-arrow {
@@ -557,6 +553,94 @@ body {
   position: relative;
 }
 
+.sidebar-user-menu-wrap {
+  margin-top: auto;
+  width: 100%;
+  display: grid;
+  gap: 0;
+  padding-top: 10px;
+  padding-left: 6px;
+  border-top: 1px solid #e2e8f0;
+  justify-items: stretch;
+  text-align: left;
+}
+
+.sidebar-user-menu-wrap .topbar-user-trigger {
+  width: 100%;
+  justify-content: flex-start;
+  gap: 6px;
+  margin-top: 18px !important;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #0f172a;
+  border-radius: 0;
+  margin-bottom: 0 !important;
+  display: inline-flex !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+.sidebar-user-menu-wrap .topbar-user-menu {
+  top: 0;
+  right: auto;
+  left: 0;
+  bottom: auto;
+  position: fixed;
+  min-width: 140px;
+  border: none;
+  background: #ffffff;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+  border-radius: 10px;
+  padding: 8px 10px;
+  z-index: 200000;
+}
+
+.sidebar-user-menu-wrap .topbar-user-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.2;
+}
+
+.role-switcher-current {
+  color: #50b2cb !important;
+  font-weight: 700 !important;
+}
+
+.sidebar-user-menu-wrap .topbar-user-arrow {
+  display: none;
+}
+
+.sidebar-user-menu-wrap .topbar-user-trigger:hover,
+.sidebar-user-menu-wrap .topbar-user-trigger:focus-visible {
+  background: transparent !important;
+  color: #334155;
+  outline: none;
+}
+
+.sidebar-user-menu-wrap .topbar-user-menu button {
+  padding: 5px 0;
+  border-radius: 0;
+  background: transparent;
+  color: #0f172a;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.sidebar-user-menu-wrap .topbar-user-menu button:hover,
+.sidebar-user-menu-wrap .topbar-user-menu button:focus-visible {
+  background: transparent !important;
+  color: #334155;
+  outline: none;
+}
+
+.role-switcher-arrow {
+  display: none;
+}
+
 .topbar-user-trigger {
   display: inline-flex;
   align-items: center;
@@ -571,6 +655,43 @@ body {
 
 .topbar-user-trigger:hover {
   background: #f8fafc;
+}
+
+.topbar-avatar-trigger {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  padding: 0;
+  justify-content: center;
+}
+
+.topbar-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #0f172a;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  overflow: hidden;
+}
+
+.topbar-avatar-initials {
+  width: 100%;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.topbar-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .topbar-user-name {
@@ -600,6 +721,72 @@ body {
 
 .topbar-user-menu.open {
   display: block;
+}
+
+.topbar-account-name {
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 4px;
+}
+
+.topbar-role-switch-wrap {
+  padding: 4px 6px 8px;
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 4px;
+}
+
+.topbar-role-switch-btn {
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  color: #0f172a;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.topbar-role-switch-btn:hover {
+  background: #f1f5f9;
+}
+
+.topbar-role-switch-menu {
+  display: none;
+  margin-top: 4px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.topbar-role-switch-menu.open {
+  display: block;
+}
+
+.topbar-role-option {
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 6px 8px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #0f172a;
+}
+
+.topbar-role-option:hover {
+  background: #f1f5f9;
+}
+
+.topbar-role-empty {
+  padding: 6px 8px;
+  font-size: 11px;
+  color: #64748b;
 }
 
 .topbar-user-menu button {
