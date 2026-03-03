@@ -51,6 +51,46 @@ function pickCurrentSantriRows(rows) {
   return result
 }
 
+function pickSantriRowsBySelectedYear(rows, selectedTahunId = '') {
+  const tahunId = String(selectedTahunId || '')
+  if (!tahunId) return pickCurrentSantriRows(rows)
+
+  const groupMap = new Map()
+  ;(rows || []).forEach(row => {
+    const key = buildSantriIdentityKey(row)
+    if (!key) return
+    if (!groupMap.has(key)) groupMap.set(key, [])
+    groupMap.get(key).push(row)
+  })
+
+  const result = []
+  groupMap.forEach(groupRows => {
+    const rowsInYear = groupRows.filter(item => String(item?.kelas?.tahun_ajaran_id || '') === tahunId)
+    const targetGroup = rowsInYear.length > 0 ? rowsInYear : groupRows
+    const sorted = [...targetGroup].sort((a, b) => {
+      if (Boolean(b?.aktif) !== Boolean(a?.aktif)) return Number(Boolean(b?.aktif)) - Number(Boolean(a?.aktif))
+      const aCreated = new Date(a?.created_at || 0).getTime()
+      const bCreated = new Date(b?.created_at || 0).getTime()
+      return bCreated - aCreated
+    })
+    const current = sorted[0]
+    if (!current) return
+
+    const picked = rowsInYear.length > 0
+      ? { ...current }
+      : {
+          ...current,
+          kelas: null,
+          kelas_id: null
+        }
+    picked.__santri_key = buildSantriIdentityKey(current)
+    picked.__history_ids = groupRows.map(item => String(item.id))
+    result.push(picked)
+  })
+
+  return result
+}
+
 async function getTahunAktif() {
   const { data, error } = await sb
     .from('tahun_ajaran')
@@ -309,6 +349,7 @@ async function clearSantriCacheByTahun() {
   const tahunList = await getTahunAjaranList()
   ;(tahunList || []).forEach(item => {
     clearCachedData(`${SANTRI_CACHE_KEY}:${item.id}`)
+    clearCachedData(`${SANTRI_ALL_CACHE_KEY}:${item.id}`)
   })
 }
 
@@ -1249,7 +1290,7 @@ async function loadSantri(forceRefresh = false) {
     santriSelectedTahunId = String(tahunAktif?.id || '')
   }
 
-  const cacheKey = SANTRI_ALL_CACHE_KEY
+  const cacheKey = `${SANTRI_ALL_CACHE_KEY}:${String(santriSelectedTahunId || 'all')}`
 
   if (!forceRefresh && typeof getCachedData === 'function') {
     const cached = getCachedData(cacheKey, SANTRI_CACHE_TTL_MS)
@@ -1292,7 +1333,7 @@ async function loadSantri(forceRefresh = false) {
   }
 
   const allRows = data || []
-  const currentRows = pickCurrentSantriRows(allRows)
+  const currentRows = pickSantriRowsBySelectedYear(allRows, santriSelectedTahunId)
   if (typeof setCachedData === 'function') setCachedData(cacheKey, { allRows, currentRows })
   window.santriAllRows = allRows
   window.santriList = currentRows

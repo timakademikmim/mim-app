@@ -165,7 +165,8 @@ async function login() {
   localStorage.setItem('login_id', data.id_karyawan)
   localStorage.setItem('login_name', String(data.nama || '').trim())
   localStorage.setItem('login_role', selectedRole)
-  localStorage.setItem('login_roles', JSON.stringify(knownRoles))
+  // Simpan seluruh role dari DB agar fitur akses tambahan (mis. wakasek bidang) tetap terbaca.
+  localStorage.setItem('login_roles', JSON.stringify(roles))
   localStorage.setItem('admin_force_dashboard_once', '1')
 
   // redirect sesuai role pilihan

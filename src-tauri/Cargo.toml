@@ -1,0 +1,21 @@
+[package]
+name = "mim-desktop"
+version = "0.1.0"
+description = "Desktop wrapper for MIM web app"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+
+[package.metadata]
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+strip = true

@@ -9,12 +9,22 @@ const TOPBAR_KALENDER_DEFAULT_COLOR = '#2563eb'
 const HALAQAH_TABLE = 'halaqah'
 const HALAQAH_SANTRI_TABLE = 'halaqah_santri'
 const HALAQAH_SCHEDULE_TABLE = 'jadwal_halaqah'
+const EKSKUL_TABLE = 'ekstrakurikuler'
+const EKSKUL_MEMBER_TABLE = 'ekstrakurikuler_anggota'
+const EKSKUL_INDIKATOR_TABLE = 'ekstrakurikuler_indikator'
+const EKSKUL_PROGRES_TABLE = 'ekstrakurikuler_progres'
+const SANTRI_PRESTASI_TABLE = 'santri_prestasi'
+const SANTRI_PELANGGARAN_TABLE = 'santri_pelanggaran'
+const SANTRI_SURAT_BUCKET = 'surat-pemberitahuan'
+const SCHOOL_PROFILE_TABLE = 'struktur_sekolah'
 const TOPBAR_NOTIF_READ_KEY = 'muhaffiz_topbar_notif_read'
 const TOPBAR_NOTIF_RANGE_KEY = 'muhaffiz_topbar_notif_range_days'
 
 const PAGE_TITLES = {
   dashboard: 'Dashboard',
   'laporan-bulanan': 'Laporan Bulanan',
+  'prestasi-pelanggaran': 'Prestasi & Pelanggaran',
+  ekskul: 'Ekskul',
   profil: 'Profil'
 }
 
@@ -40,6 +50,48 @@ let topbarNotifState = {
   readMap: {}
 }
 let muhaffizDashboardAgendaRows = []
+let muhaffizEkskulState = {
+  hasAccess: false,
+  ekskulRows: [],
+  memberRows: [],
+  indikatorRows: [],
+  santriRows: [],
+  progressRows: [],
+  selectedEkskulId: '',
+  selectedSantriId: ''
+}
+let muhaffizPrestasiPelanggaranState = {
+  tab: 'prestasi',
+  santriRows: [],
+  kelasMap: new Map(),
+  prestasiRows: [],
+  pelanggaranRows: [],
+  editingPrestasiId: '',
+  editingPelanggaranId: ''
+}
+let muhaffizBulkImportState = {
+  parsedRows: [],
+  matchedRows: [],
+  errors: [],
+  fileName: ''
+}
+let wakasekKetahfizanAccessCache = null
+
+const MUHAFFIZ_BULK_EXCEL_HEADERS = [
+  'Nama Santri',
+  'Kelas',
+  'Kehadiran Halaqah (%)',
+  'Sakit',
+  'Izin',
+  'Akhlak',
+  'Ujian Bulanan',
+  'Target Hafalan (%)',
+  'Ket. Target',
+  'Capaian (halaman)',
+  'Jumlah (halaman)',
+  'Jumlah (juz)',
+  'Catatan Muhaffiz'
+]
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -72,6 +124,152 @@ function toTimeLabel(value) {
   const text = String(value || '').trim()
   if (!text) return '-'
   return text.length >= 5 ? text.slice(0, 5) : text
+}
+
+function normalizeRoleValue(role) {
+  return String(role || '').trim().toLowerCase().replaceAll('_', ' ')
+}
+
+function parseRoleList() {
+  let roles = []
+  try {
+    roles = JSON.parse(localStorage.getItem('login_roles') || '[]')
+  } catch (_error) {
+    roles = []
+  }
+  if (!Array.isArray(roles) || roles.length === 0) {
+    const singleRole = localStorage.getItem('login_role')
+    roles = singleRole ? [singleRole] : []
+  }
+  return roles.map(normalizeRoleValue).filter(Boolean)
+}
+
+function hasBaseRole(roleName) {
+  const target = String(roleName || '').trim().toLowerCase()
+  if (!target) return false
+  return parseRoleList().some(role => normalizeRoleValue(role).replaceAll(' ', '') === target.replaceAll(' ', ''))
+}
+
+function isWakasekKetahfizanRole(role) {
+  const clean = normalizeRoleValue(role).replaceAll(' ', '')
+  if (!clean) return false
+  return clean.includes('wakasek') && (
+    clean.includes('ketahfizan') ||
+    clean.includes('ketahfidz') ||
+    clean.includes('tahfiz') ||
+    clean.includes('tahfidz')
+  )
+}
+
+function normalizePersonName(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+function normalizePersonNameLoose(value) {
+  return normalizePersonName(value)
+    .replace(/[.,/#!$%^&*;:{}=_`~()\-+[\]\\|'"<>?]/g, ' ')
+    .replace(/\b(ust|ustadz|ustad|ustaz|ust\.)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function isMissingSchoolProfileTableError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  const code = String(error?.code || '').toUpperCase()
+  if (code === '42P01') return true
+  if (msg.includes('schema cache') && msg.includes(SCHOOL_PROFILE_TABLE)) return true
+  return (msg.includes('relation') && msg.includes(SCHOOL_PROFILE_TABLE) && msg.includes('does not exist')) || (msg.includes('table') && msg.includes('not found') && msg.includes(SCHOOL_PROFILE_TABLE))
+}
+
+function isMissingSchoolProfileColumnError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  return msg.includes('column') && msg.includes(SCHOOL_PROFILE_TABLE)
+}
+
+async function getIsWakasekKetahfizan(forceReload = false) {
+  const loginId = String(localStorage.getItem('login_id') || '').trim()
+  if (!forceReload && wakasekKetahfizanAccessCache && wakasekKetahfizanAccessCache.loginId === loginId) {
+    return !!wakasekKetahfizanAccessCache.allowed
+  }
+
+  try {
+    const profile = muhaffizState.profile || await getCurrentMuhaffiz()
+    const profileName = normalizePersonName(profile?.nama)
+    const profileId = String(profile?.id || '').trim().toLowerCase()
+    const profileIdKaryawan = String(profile?.id_karyawan || '').trim().toLowerCase()
+
+    if (!profileName) {
+      wakasekKetahfizanAccessCache = { loginId, allowed: false }
+      return false
+    }
+
+    const selectAttempts = [
+      'wakasek_bidang_ketahfizan, wakasek_ketahfizan, wakasek_bidang_tahfiz, wakasek_tahfiz',
+      'wakasek_bidang_ketahfizan, wakasek_ketahfizan',
+      'wakasek_bidang_ketahfizan',
+      'wakasek_ketahfizan',
+      'wakasek_bidang_tahfiz',
+      'wakasek_tahfiz'
+    ]
+
+    let row = null
+    for (const selectText of selectAttempts) {
+      const attempts = [
+        () => sb.from(SCHOOL_PROFILE_TABLE).select(selectText).order('updated_at', { ascending: false }).order('created_at', { ascending: false }).limit(1),
+        () => sb.from(SCHOOL_PROFILE_TABLE).select(selectText).order('created_at', { ascending: false }).limit(1),
+        () => sb.from(SCHOOL_PROFILE_TABLE).select(selectText).limit(1)
+      ]
+      let data = null
+      let handled = false
+      for (const run of attempts) {
+        const { data: rows, error } = await run()
+        if (error) {
+          if (isMissingSchoolProfileTableError(error) || isMissingSchoolProfileColumnError(error)) continue
+          throw error
+        }
+        data = rows || []
+        handled = true
+        break
+      }
+      if (!handled) continue
+      row = data?.[0] || null
+      break
+    }
+
+    const wakasekRaw = String(
+      row?.wakasek_bidang_ketahfizan ||
+      row?.wakasek_ketahfizan ||
+      row?.wakasek_bidang_tahfiz ||
+      row?.wakasek_tahfiz ||
+      ''
+    ).trim()
+    const wakasekName = normalizePersonName(wakasekRaw)
+    const wakasekNameLoose = normalizePersonNameLoose(wakasekRaw)
+    const wakasekToken = wakasekRaw.toLowerCase()
+    const profileNameLoose = normalizePersonNameLoose(profileName)
+    let allowed = !!(
+      (wakasekName && wakasekName === profileName) ||
+      (wakasekNameLoose && profileNameLoose && (
+        wakasekNameLoose === profileNameLoose ||
+        wakasekNameLoose.includes(profileNameLoose) ||
+        profileNameLoose.includes(wakasekNameLoose)
+      )) ||
+      (profileId && wakasekToken === profileId) ||
+      (profileIdKaryawan && wakasekToken === profileIdKaryawan)
+    )
+
+    // Fallback backward compatibility: gunakan role login jika struktur sekolah belum terisi.
+    if (!allowed && !wakasekRaw) {
+      allowed = parseRoleList().some(isWakasekKetahfizanRole)
+    }
+
+    wakasekKetahfizanAccessCache = { loginId, allowed }
+    return !!allowed
+  } catch (error) {
+    console.error(error)
+    wakasekKetahfizanAccessCache = { loginId, allowed: false }
+    return false
+  }
 }
 
 function getMonthInputToday() {
@@ -178,7 +376,7 @@ async function getCurrentMuhaffiz() {
   if (!loginId) return null
   const { data, error } = await sb
     .from('karyawan')
-    .select('id, id_karyawan, nama, no_hp, alamat, aktif')
+    .select('id, id_karyawan, nama, no_hp, alamat, password, aktif')
     .eq('id_karyawan', loginId)
     .maybeSingle()
   if (error) throw error
@@ -899,6 +1097,235 @@ function validateMuhaffizBulkRow(row) {
   return errors
 }
 
+function normalizeMuhaffizImportHeader(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[%().]/g, '')
+    .replace(/\s+/g, ' ')
+}
+
+function getMuhaffizImportCellByAliases(row, aliases) {
+  const entries = Object.entries(row || {})
+  const normalizedMap = new Map(entries.map(([key, val]) => [normalizeMuhaffizImportHeader(key), val]))
+  for (const alias of aliases) {
+    const value = normalizedMap.get(normalizeMuhaffizImportHeader(alias))
+    if (value !== undefined) return value
+  }
+  return ''
+}
+
+function getMuhaffizBulkDomRowMaps() {
+  const rows = Array.from(document.querySelectorAll('#muhaffiz-bulk-body tr[data-m-bulk-row="1"]'))
+  const bySantriId = new Map()
+  const byNameClass = new Map()
+  rows.forEach(row => {
+    const sid = String(row.getAttribute('data-santri-id') || '').trim()
+    const nama = String(row.children?.[1]?.textContent || '').trim().toLowerCase()
+    const kelas = String(row.children?.[2]?.textContent || '').trim().toLowerCase()
+    if (sid) bySantriId.set(sid, row)
+    const key = `${nama}|${kelas}`
+    if (!byNameClass.has(key)) byNameClass.set(key, [])
+    byNameClass.get(key).push(row)
+  })
+  return { rows, bySantriId, byNameClass }
+}
+
+function setMuhaffizBulkDomRowValues(rowEl, rowData) {
+  const setVal = (field, value) => {
+    const input = rowEl.querySelector(`[data-bulk-field="${field}"]`)
+    if (!input) return
+    input.value = value === null || value === undefined ? '' : String(value)
+  }
+  setVal('kehadiran', rowData.nilaiKehadiran)
+  setVal('sakit', rowData.sakit)
+  setVal('izin', rowData.izin)
+  setVal('akhlak', normalizeAkhlakGrade(rowData.akhlak) || '')
+  setVal('ujian', rowData.nilaiUjian)
+  setVal('target', rowData.nilaiTarget)
+  setVal('ket-target', rowData.ketTarget)
+  setVal('capaian', rowData.nilaiCapaian)
+  setVal('jumlah-halaman', rowData.jumlahHalaman)
+  setVal('jumlah-juz', rowData.jumlahJuz)
+  setVal('catatan', rowData.catatan)
+}
+
+function collectMuhaffizBulkRowsForTemplate() {
+  const { rows } = getMuhaffizBulkDomRowMaps()
+  return rows.map(row => ({
+    nama: String(row.children?.[1]?.textContent || '').trim(),
+    kelas: String(row.children?.[2]?.textContent || '').trim(),
+    nilaiKehadiran: String(row.querySelector('[data-bulk-field="kehadiran"]')?.value || '').trim(),
+    sakit: String(row.querySelector('[data-bulk-field="sakit"]')?.value || '').trim(),
+    izin: String(row.querySelector('[data-bulk-field="izin"]')?.value || '').trim(),
+    akhlak: String(row.querySelector('[data-bulk-field="akhlak"]')?.value || '').trim(),
+    nilaiUjian: String(row.querySelector('[data-bulk-field="ujian"]')?.value || '').trim(),
+    nilaiTarget: String(row.querySelector('[data-bulk-field="target"]')?.value || '').trim(),
+    ketTarget: String(row.querySelector('[data-bulk-field="ket-target"]')?.value || '').trim(),
+    nilaiCapaian: String(row.querySelector('[data-bulk-field="capaian"]')?.value || '').trim(),
+    jumlahHalaman: String(row.querySelector('[data-bulk-field="jumlah-halaman"]')?.value || '').trim(),
+    jumlahJuz: String(row.querySelector('[data-bulk-field="jumlah-juz"]')?.value || '').trim(),
+    catatan: String(row.querySelector('[data-bulk-field="catatan"]')?.value || '').trim()
+  }))
+}
+
+function renderMuhaffizBulkImportPreview() {
+  const box = document.getElementById('muhaffiz-bulk-import-preview')
+  if (!box) return
+  const matchedRows = muhaffizBulkImportState.matchedRows || []
+  const errors = muhaffizBulkImportState.errors || []
+  const fileName = String(muhaffizBulkImportState.fileName || '').trim()
+
+  if (!fileName) {
+    box.style.display = 'none'
+    box.innerHTML = ''
+    return
+  }
+
+  box.style.display = 'block'
+  box.innerHTML = `
+    <div style="border:1px solid #e2e8f0; border-radius:10px; padding:10px; background:#f8fafc;">
+      <div style="display:flex; justify-content:space-between; gap:10px; align-items:center; flex-wrap:wrap;">
+        <div style="font-size:13px; color:#0f172a;">
+          File: <strong>${escapeHtml(fileName)}</strong> |
+          Data cocok: <strong>${matchedRows.length}</strong> |
+          Error: <strong style="color:${errors.length ? '#b91c1c' : '#16a34a'};">${errors.length}</strong>
+        </div>
+        <button type="button" class="modal-btn modal-btn-primary" onclick="applyMuhaffizBulkExcelToTable()" ${matchedRows.length ? '' : 'disabled'}>Gunakan Data Excel</button>
+      </div>
+      ${errors.length ? `
+        <div style="margin-top:8px; max-height:130px; overflow:auto; font-size:12px; color:#b91c1c; background:#fff; border:1px solid #fecaca; border-radius:8px; padding:8px;">
+          ${errors.slice(0, 40).map(item => `<div>- ${escapeHtml(item)}</div>`).join('')}
+          ${errors.length > 40 ? '<div>... dan lainnya</div>' : ''}
+        </div>
+      ` : ''}
+    </div>
+  `
+}
+
+function downloadMuhaffizBulkTemplate() {
+  const rows = collectMuhaffizBulkRowsForTemplate()
+  if (!window.XLSX) {
+    alert('Library Excel belum termuat. Refresh halaman lalu coba lagi.')
+    return
+  }
+  const exportRows = (rows.length ? rows : (muhaffizState.santriList || []).map(item => {
+    const kelas = muhaffizState.kelasMap.get(String(item.kelas_id || ''))
+    return { nama: item.nama || '-', kelas: kelas?.nama_kelas || '-' }
+  })).map(item => ({
+    'Nama Santri': item.nama || '',
+    'Kelas': item.kelas || '',
+    'Kehadiran Halaqah (%)': item.nilaiKehadiran || '',
+    'Sakit': item.sakit || '',
+    'Izin': item.izin || '',
+    'Akhlak': item.akhlak || '',
+    'Ujian Bulanan': item.nilaiUjian || '',
+    'Target Hafalan (%)': item.nilaiTarget || '',
+    'Ket. Target': item.ketTarget || '',
+    'Capaian (halaman)': item.nilaiCapaian || '',
+    'Jumlah (halaman)': item.jumlahHalaman || '',
+    'Jumlah (juz)': item.jumlahJuz || '',
+    'Catatan Muhaffiz': item.catatan || ''
+  }))
+  const wb = window.XLSX.utils.book_new()
+  const ws = window.XLSX.utils.json_to_sheet(exportRows, { header: MUHAFFIZ_BULK_EXCEL_HEADERS })
+  window.XLSX.utils.book_append_sheet(wb, ws, 'InputMassalKetahfizan')
+  const periode = muhaffizState.periode || getMonthInputToday()
+  window.XLSX.writeFile(wb, `Template-Input-Massal-Ketahfizan-${periode}.xlsx`)
+}
+
+async function onMuhaffizBulkExcelFileChange(event) {
+  const file = event?.target?.files?.[0]
+  if (!file) return
+  if (!window.XLSX) {
+    alert('Library Excel belum termuat. Refresh halaman lalu coba lagi.')
+    event.target.value = ''
+    return
+  }
+  try {
+    const buffer = await file.arrayBuffer()
+    const wb = window.XLSX.read(buffer, { type: 'array' })
+    const firstSheet = wb.SheetNames?.[0]
+    if (!firstSheet) {
+      alert('File Excel kosong.')
+      event.target.value = ''
+      return
+    }
+    const ws = wb.Sheets[firstSheet]
+    const rawRows = window.XLSX.utils.sheet_to_json(ws, { defval: '' })
+    const { byNameClass } = getMuhaffizBulkDomRowMaps()
+    const keyUsedCount = new Map()
+    const parsedRows = []
+    const matchedRows = []
+    const errors = []
+
+    rawRows.forEach((raw, idx) => {
+      const nama = String(getMuhaffizImportCellByAliases(raw, ['Nama Santri', 'Nama'])) .trim()
+      const kelas = String(getMuhaffizImportCellByAliases(raw, ['Kelas'])) .trim()
+      if (!nama && !kelas) return
+
+      const rowData = {
+        nama,
+        kelas,
+        nilaiKehadiran: String(getMuhaffizImportCellByAliases(raw, ['Kehadiran Halaqah (%)', 'Kehadiran Halaqah', 'Kehadiran'])).trim(),
+        sakit: String(getMuhaffizImportCellByAliases(raw, ['Sakit'])).trim(),
+        izin: String(getMuhaffizImportCellByAliases(raw, ['Izin'])).trim(),
+        akhlak: String(getMuhaffizImportCellByAliases(raw, ['Akhlak'])).trim(),
+        nilaiUjian: String(getMuhaffizImportCellByAliases(raw, ['Ujian Bulanan', 'Ujian'])).trim(),
+        nilaiTarget: String(getMuhaffizImportCellByAliases(raw, ['Target Hafalan (%)', 'Target Hafalan', 'Target'])).trim(),
+        ketTarget: String(getMuhaffizImportCellByAliases(raw, ['Ket. Target', 'Ket Target', 'Keterangan Target'])).trim(),
+        nilaiCapaian: String(getMuhaffizImportCellByAliases(raw, ['Capaian (halaman)', 'Capaian'])).trim(),
+        jumlahHalaman: String(getMuhaffizImportCellByAliases(raw, ['Jumlah (halaman)', 'Jumlah Halaman'])).trim(),
+        jumlahJuz: String(getMuhaffizImportCellByAliases(raw, ['Jumlah (juz)', 'Jumlah Juz'])).trim(),
+        catatan: String(getMuhaffizImportCellByAliases(raw, ['Catatan Muhaffiz', 'Catatan'])).trim()
+      }
+      parsedRows.push(rowData)
+
+      const normKey = `${nama.toLowerCase()}|${kelas.toLowerCase()}`
+      const candidates = byNameClass.get(normKey) || []
+      const used = keyUsedCount.get(normKey) || 0
+      const targetRow = candidates[used] || null
+      if (!targetRow) {
+        errors.push(`Baris ${idx + 2}: Santri "${nama}" kelas "${kelas}" tidak ditemukan di tabel.`)
+        return
+      }
+      keyUsedCount.set(normKey, used + 1)
+      const validationErrors = validateMuhaffizBulkRow({ ...rowData, nama: `${nama} (${kelas})` })
+      if (validationErrors.length) {
+        errors.push(...validationErrors)
+        return
+      }
+      matchedRows.push({ targetRow, rowData })
+    })
+
+    muhaffizBulkImportState = {
+      parsedRows,
+      matchedRows,
+      errors,
+      fileName: String(file.name || '')
+    }
+    renderMuhaffizBulkImportPreview()
+  } catch (error) {
+    console.error(error)
+    alert(`Gagal membaca file Excel: ${error?.message || 'Unknown error'}`)
+  } finally {
+    event.target.value = ''
+  }
+}
+
+function applyMuhaffizBulkExcelToTable() {
+  const matchedRows = muhaffizBulkImportState.matchedRows || []
+  const errors = muhaffizBulkImportState.errors || []
+  if (!matchedRows.length) {
+    alert('Tidak ada data valid dari Excel yang bisa diterapkan.')
+    return
+  }
+  matchedRows.forEach(item => {
+    setMuhaffizBulkDomRowValues(item.targetRow, item.rowData)
+  })
+  alert(`Data Excel diterapkan ke tabel: ${matchedRows.length} baris.${errors.length ? `\nError: ${errors.length} baris.` : ''}`)
+}
+
 async function openMuhaffizBulkInputModal() {
   if (!Array.isArray(muhaffizState.santriList) || !muhaffizState.santriList.length) {
     alert('Belum ada data santri untuk input massal.')
@@ -933,6 +1360,7 @@ async function openMuhaffizBulkInputModal() {
 
   const currentMuhaffizNama = String(muhaffizState?.profile?.nama || '').trim()
   const currentMuhaffizNoHp = String(muhaffizState?.profile?.no_hp || '').trim()
+  muhaffizBulkImportState = { parsedRows: [], matchedRows: [], errors: [], fileName: '' }
   const gradeOptions = grade => `
     <option value="" ${!grade ? 'selected' : ''}>-</option>
     <option value="A" ${grade === 'A' ? 'selected' : ''}>A</option>
@@ -977,8 +1405,14 @@ async function openMuhaffizBulkInputModal() {
         <div style="font-size:13px; color:#334155;">
           Periode: <strong>${escapeHtml(getPeriodeLabel(periode))}</strong> | Muhaffiz: <strong>${escapeHtml(currentMuhaffizNama || '-')}</strong> | No HP: <strong>${escapeHtml(currentMuhaffizNoHp || '-')}</strong>
         </div>
-        <button type="button" class="modal-btn modal-btn-primary" onclick="saveMuhaffizBulkInput()">Simpan Semua</button>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <input id="muhaffiz-bulk-excel-input" type="file" accept=".xlsx,.xls" style="display:none;" onchange="onMuhaffizBulkExcelFileChange(event)">
+          <button type="button" class="modal-btn" onclick="downloadMuhaffizBulkTemplate()">Download Template Excel</button>
+          <button type="button" class="modal-btn" onclick="document.getElementById('muhaffiz-bulk-excel-input')?.click()">Upload Excel</button>
+          <button type="button" class="modal-btn modal-btn-primary" onclick="saveMuhaffizBulkInput()">Simpan Semua</button>
+        </div>
       </div>
+      <div id="muhaffiz-bulk-import-preview" style="display:none;"></div>
       <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px;">
         <table style="width:100%; min-width:2200px; border-collapse:collapse; font-size:12px;">
           <thead>
@@ -1532,10 +1966,10 @@ async function renderMuhaffizProfil() {
         <input id="muhaffiz-profil-alamat" type="text" value="${escapeHtml(profile.alamat || '')}" class="guru-field" autocomplete="off">
       </div>
       <div style="margin-bottom:12px;">
-        <label class="guru-label">Password Baru (opsional)</label>
-        <div style="display:flex; gap:8px; align-items:center;">
-          <input id="muhaffiz-profil-password" type="password" placeholder="Isi jika ingin ganti password" class="guru-field" autocomplete="new-password" style="flex:1;">
-          <button id="muhaffiz-profil-password-toggle" type="button" class="modal-btn" onclick="toggleMuhaffizProfilePassword()">Lihat</button>
+        <label class="guru-label">Password</label>
+        <div style="position:relative;">
+          <input id="muhaffiz-profil-password" type="password" value="${escapeHtml(profile.password || '')}" placeholder="Password" class="guru-field" autocomplete="off" style="padding-right:46px;">
+          <button id="muhaffiz-profil-password-toggle" type="button" onclick="toggleMuhaffizProfilePassword()" aria-label="Tampilkan password" title="Tampilkan/Sembunyikan password" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); border:none; background:transparent; cursor:pointer; font-size:16px; line-height:1;">👁</button>
         </div>
       </div>
       <button type="button" class="modal-btn modal-btn-primary" onclick="saveMuhaffizProfil('${escapeHtml(profile.id)}')">Simpan Profil</button>
@@ -1547,9 +1981,10 @@ function toggleMuhaffizProfilePassword() {
   const input = document.getElementById('muhaffiz-profil-password')
   const btn = document.getElementById('muhaffiz-profil-password-toggle')
   if (!input || !btn) return
-  const isHidden = input.type === 'password'
-  input.type = isHidden ? 'text' : 'password'
-  btn.textContent = isHidden ? 'Sembunyikan' : 'Lihat'
+  const willShow = input.type === 'password'
+  input.type = willShow ? 'text' : 'password'
+  btn.textContent = willShow ? '👁̶' : '👁'
+  btn.setAttribute('aria-label', willShow ? 'Sembunyikan password' : 'Tampilkan password')
 }
 
 async function saveMuhaffizProfil(muhaffizId) {
@@ -1585,8 +2020,760 @@ async function saveMuhaffizProfil(muhaffizId) {
   await renderMuhaffizProfil()
 }
 
+function getMuhaffizTodayDate() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function isMuhaffizEkskulMissingTableError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  const code = String(error?.code || '').toUpperCase()
+  if (code === '42P01') return true
+  if (msg.includes('schema cache') && (
+    msg.includes(EKSKUL_TABLE) ||
+    msg.includes(EKSKUL_MEMBER_TABLE) ||
+    msg.includes(EKSKUL_INDIKATOR_TABLE) ||
+    msg.includes(EKSKUL_PROGRES_TABLE)
+  )) return true
+  return msg.includes('does not exist') && (
+    msg.includes(EKSKUL_TABLE) ||
+    msg.includes(EKSKUL_MEMBER_TABLE) ||
+    msg.includes(EKSKUL_INDIKATOR_TABLE) ||
+    msg.includes(EKSKUL_PROGRES_TABLE)
+  )
+}
+
+function isMuhaffizEkskulMissingPj2ColumnError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  return msg.includes('pj_karyawan_id_2')
+}
+
+async function setupMuhaffizEkskulAccess(forceReload = false) {
+  const btn = document.getElementById('muhaffiz-nav-ekskul')
+  const blockedByHigherPriorityRole = hasBaseRole('guru') || hasBaseRole('musyrif')
+  if (blockedByHigherPriorityRole) {
+    muhaffizEkskulState.hasAccess = false
+    if (btn) btn.style.display = 'none'
+    return false
+  }
+  const profile = muhaffizState.profile || await getCurrentMuhaffiz()
+  if (!profile?.id) {
+    muhaffizEkskulState.hasAccess = false
+    if (btn) btn.style.display = 'none'
+    return false
+  }
+  if (!forceReload && muhaffizEkskulState.hasAccess) {
+    if (btn) btn.style.display = ''
+    return true
+  }
+  let accessRes = await sb
+    .from(EKSKUL_TABLE)
+    .select('id')
+    .or(`pj_karyawan_id.eq.${String(profile.id)},pj_karyawan_id_2.eq.${String(profile.id)}`)
+    .eq('aktif', true)
+    .limit(1)
+  if (accessRes.error && isMuhaffizEkskulMissingPj2ColumnError(accessRes.error)) {
+    accessRes = await sb
+      .from(EKSKUL_TABLE)
+      .select('id')
+      .eq('pj_karyawan_id', String(profile.id))
+      .eq('aktif', true)
+      .limit(1)
+  }
+  const { data, error } = accessRes
+  if (error) {
+    console.error(error)
+    if (btn) btn.style.display = 'none'
+    muhaffizEkskulState.hasAccess = false
+    return false
+  }
+  const hasAccess = (data || []).length > 0
+  muhaffizEkskulState.hasAccess = hasAccess
+  if (btn) btn.style.display = hasAccess ? '' : 'none'
+  return hasAccess
+}
+
+async function setupMuhaffizPrestasiPelanggaranAccess(_forceReload = false) {
+  const btn = document.getElementById('muhaffiz-nav-prestasi-pelanggaran')
+  const isAllowed = parseRoleList().some(isWakasekKetahfizanRole)
+  if (btn) btn.style.display = isAllowed ? '' : 'none'
+  return isAllowed
+}
+
+function getMuhaffizPrestasiSantriLabel(item) {
+  const kelas = muhaffizPrestasiPelanggaranState.kelasMap.get(String(item?.kelas_id || ''))
+  return `${String(item?.nama || '-')} (${String(kelas?.nama_kelas || '-')})`
+}
+
+function formatMuhaffizPrestasiDate(value) {
+  const text = String(value || '').slice(0, 10)
+  if (!text) return '-'
+  const date = new Date(`${text}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return text
+  return date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+function resetMuhaffizPrestasiForm() {
+  muhaffizPrestasiPelanggaranState.editingPrestasiId = ''
+  const fields = [
+    ['mpp-prestasi-kelas-filter', ''],
+    ['mpp-prestasi-santri-search', ''],
+    ['mpp-prestasi-waktu', getMuhaffizTodayDate()],
+    ['mpp-prestasi-judul', ''],
+    ['mpp-prestasi-sertifikat', '']
+  ]
+  fields.forEach(([id, value]) => {
+    const el = document.getElementById(id)
+    if (el) el.value = value
+  })
+  renderMuhaffizPrestasiSantriSearchList('prestasi')
+}
+
+function resetMuhaffizPelanggaranForm() {
+  muhaffizPrestasiPelanggaranState.editingPelanggaranId = ''
+  const fields = [
+    ['mpp-pelanggaran-kelas-filter', ''],
+    ['mpp-pelanggaran-santri-search', ''],
+    ['mpp-pelanggaran-waktu', getMuhaffizTodayDate()],
+    ['mpp-pelanggaran-judul', ''],
+    ['mpp-pelanggaran-hukuman', ''],
+    ['mpp-pelanggaran-surat-jenis', ''],
+    ['mpp-pelanggaran-surat-url', '']
+  ]
+  fields.forEach(([id, value]) => {
+    const el = document.getElementById(id)
+    if (el) el.value = value
+  })
+  renderMuhaffizPrestasiSantriSearchList('pelanggaran')
+}
+
+function setMuhaffizPrestasiTab(tab) {
+  const mode = tab === 'pelanggaran' ? 'pelanggaran' : 'prestasi'
+  muhaffizPrestasiPelanggaranState.tab = mode
+  const prestasiPanel = document.getElementById('mpp-panel-prestasi')
+  const pelanggaranPanel = document.getElementById('mpp-panel-pelanggaran')
+  const prestasiList = document.getElementById('mpp-list-prestasi')
+  const pelanggaranList = document.getElementById('mpp-list-pelanggaran')
+  const btnPrestasi = document.getElementById('mpp-tab-prestasi')
+  const btnPelanggaran = document.getElementById('mpp-tab-pelanggaran')
+  if (prestasiPanel) prestasiPanel.style.display = mode === 'prestasi' ? 'block' : 'none'
+  if (pelanggaranPanel) pelanggaranPanel.style.display = mode === 'pelanggaran' ? 'block' : 'none'
+  if (prestasiList) prestasiList.style.display = mode === 'prestasi' ? 'block' : 'none'
+  if (pelanggaranList) pelanggaranList.style.display = mode === 'pelanggaran' ? 'block' : 'none'
+  if (btnPrestasi) btnPrestasi.classList.toggle('modal-btn-primary', mode === 'prestasi')
+  if (btnPelanggaran) btnPelanggaran.classList.toggle('modal-btn-primary', mode === 'pelanggaran')
+}
+
+function renderMuhaffizPrestasiSantriSearchList(mode) {
+  const isPrestasi = mode === 'prestasi'
+  const filterEl = document.getElementById(isPrestasi ? 'mpp-prestasi-kelas-filter' : 'mpp-pelanggaran-kelas-filter')
+  const listEl = document.getElementById(isPrestasi ? 'mpp-prestasi-santri-list' : 'mpp-pelanggaran-santri-list')
+  if (!filterEl || !listEl) return
+  const kelasId = String(filterEl.value || '').trim()
+  const rows = (muhaffizPrestasiPelanggaranState.santriRows || []).filter(item => !kelasId || String(item.kelas_id || '') === kelasId)
+  listEl.innerHTML = rows.map(item => `<option value="${escapeHtml(getMuhaffizPrestasiSantriLabel(item))}"></option>`).join('')
+}
+
+function onMuhaffizPrestasiClassFilterChange(mode) {
+  renderMuhaffizPrestasiSantriSearchList(mode)
+}
+
+function resolveMuhaffizPrestasiSantriId(mode) {
+  const isPrestasi = mode === 'prestasi'
+  const searchEl = document.getElementById(isPrestasi ? 'mpp-prestasi-santri-search' : 'mpp-pelanggaran-santri-search')
+  const filterEl = document.getElementById(isPrestasi ? 'mpp-prestasi-kelas-filter' : 'mpp-pelanggaran-kelas-filter')
+  const text = String(searchEl?.value || '').trim().toLowerCase()
+  const kelasId = String(filterEl?.value || '').trim()
+  if (!text) return ''
+  const rows = (muhaffizPrestasiPelanggaranState.santriRows || []).filter(item => !kelasId || String(item.kelas_id || '') === kelasId)
+  const exactLabel = rows.find(item => getMuhaffizPrestasiSantriLabel(item).toLowerCase() === text)
+  if (exactLabel?.id) return String(exactLabel.id)
+  const exactName = rows.filter(item => String(item.nama || '').trim().toLowerCase() === text)
+  if (exactName.length === 1) return String(exactName[0].id || '')
+  return ''
+}
+
+function openMuhaffizPrestasiDoc(url) {
+  const link = String(url || '').trim()
+  if (!link) {
+    alert('Dokumen belum tersedia.')
+    return
+  }
+  const overlay = document.getElementById('mpp-doc-overlay')
+  const frame = document.getElementById('mpp-doc-frame')
+  const dl = document.getElementById('mpp-doc-download')
+  if (!overlay || !frame || !dl) return
+  frame.src = link
+  dl.href = link
+  overlay.style.display = 'block'
+}
+
+function closeMuhaffizPrestasiDoc() {
+  const overlay = document.getElementById('mpp-doc-overlay')
+  const frame = document.getElementById('mpp-doc-frame')
+  if (!overlay || !frame) return
+  frame.src = 'about:blank'
+  overlay.style.display = 'none'
+}
+
+async function uploadMuhaffizPelanggaranSuratFile(event) {
+  const file = event?.target?.files?.[0]
+  if (!file) return
+  try {
+    const ext = String(file.name || '').split('.').pop() || 'bin'
+    const filePath = `surat/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+    const { error: uploadError } = await sb.storage.from(SANTRI_SURAT_BUCKET).upload(filePath, file, { upsert: true, cacheControl: '3600' })
+    if (uploadError) throw uploadError
+    const { data } = sb.storage.from(SANTRI_SURAT_BUCKET).getPublicUrl(filePath)
+    const input = document.getElementById('mpp-pelanggaran-surat-url')
+    if (input) input.value = String(data?.publicUrl || '')
+    alert('Upload surat berhasil.')
+  } catch (error) {
+    console.error(error)
+    alert(`Gagal upload surat: ${error?.message || 'Unknown error'}`)
+  } finally {
+    event.target.value = ''
+  }
+}
+
+function renderMuhaffizPrestasiLists() {
+  const santriMap = new Map((muhaffizPrestasiPelanggaranState.santriRows || []).map(item => [String(item.id || ''), item]))
+  const prestasiBox = document.getElementById('mpp-list-prestasi')
+  const pelanggaranBox = document.getElementById('mpp-list-pelanggaran')
+  if (prestasiBox) {
+    const rows = muhaffizPrestasiPelanggaranState.prestasiRows || []
+    prestasiBox.innerHTML = rows.length ? `
+      <div style="overflow:auto;"><table style="width:100%; min-width:980px; border-collapse:collapse; font-size:12px;"><thead><tr style="background:#f8fafc;"><th style="padding:7px; border:1px solid #e2e8f0;">No</th><th style="padding:7px; border:1px solid #e2e8f0;">Santri</th><th style="padding:7px; border:1px solid #e2e8f0;">Waktu</th><th style="padding:7px; border:1px solid #e2e8f0;">Kategori</th><th style="padding:7px; border:1px solid #e2e8f0;">Prestasi</th><th style="padding:7px; border:1px solid #e2e8f0;">Sertifikat</th><th style="padding:7px; border:1px solid #e2e8f0;">Aksi</th></tr></thead><tbody>
+      ${rows.map((row, idx) => `<tr><td style="padding:7px; border:1px solid #e2e8f0; text-align:center;">${idx + 1}</td><td style="padding:7px; border:1px solid #e2e8f0;">${escapeHtml(String(santriMap.get(String(row.santri_id || ''))?.nama || '-'))}</td><td style="padding:7px; border:1px solid #e2e8f0;">${escapeHtml(formatMuhaffizPrestasiDate(row.waktu))}</td><td style="padding:7px; border:1px solid #e2e8f0;">Ketahfizan</td><td style="padding:7px; border:1px solid #e2e8f0;">${escapeHtml(String(row.judul || '-'))}</td><td style="padding:7px; border:1px solid #e2e8f0;"><button type="button" class="modal-btn" onclick="openMuhaffizPrestasiDoc('${escapeHtml(String(row.sertifikat_url || ''))}')">Lihat</button></td><td style="padding:7px; border:1px solid #e2e8f0;"><button type="button" class="modal-btn" onclick="editMuhaffizPrestasiEntry('${escapeHtml(String(row.id || ''))}')">Edit</button><button type="button" class="modal-btn" style="margin-left:6px;" onclick="deleteMuhaffizPrestasiEntry('${escapeHtml(String(row.id || ''))}')">Hapus</button></td></tr>`).join('')}
+      </tbody></table></div>
+    ` : '<div style="color:#64748b;">Belum ada data prestasi ketahfizan.</div>'
+  }
+  if (pelanggaranBox) {
+    const rows = muhaffizPrestasiPelanggaranState.pelanggaranRows || []
+    pelanggaranBox.innerHTML = rows.length ? `
+      <div style="overflow:auto;"><table style="width:100%; min-width:1160px; border-collapse:collapse; font-size:12px;"><thead><tr style="background:#f8fafc;"><th style="padding:7px; border:1px solid #e2e8f0;">No</th><th style="padding:7px; border:1px solid #e2e8f0;">Santri</th><th style="padding:7px; border:1px solid #e2e8f0;">Waktu</th><th style="padding:7px; border:1px solid #e2e8f0;">Kategori</th><th style="padding:7px; border:1px solid #e2e8f0;">Pelanggaran</th><th style="padding:7px; border:1px solid #e2e8f0;">Hukuman</th><th style="padding:7px; border:1px solid #e2e8f0;">Surat</th><th style="padding:7px; border:1px solid #e2e8f0;">Dokumen</th><th style="padding:7px; border:1px solid #e2e8f0;">Aksi</th></tr></thead><tbody>
+      ${rows.map((row, idx) => `<tr><td style="padding:7px; border:1px solid #e2e8f0; text-align:center;">${idx + 1}</td><td style="padding:7px; border:1px solid #e2e8f0;">${escapeHtml(String(santriMap.get(String(row.santri_id || ''))?.nama || '-'))}</td><td style="padding:7px; border:1px solid #e2e8f0;">${escapeHtml(formatMuhaffizPrestasiDate(row.waktu))}</td><td style="padding:7px; border:1px solid #e2e8f0;">Ketahfizan</td><td style="padding:7px; border:1px solid #e2e8f0;">${escapeHtml(String(row.judul || '-'))}</td><td style="padding:7px; border:1px solid #e2e8f0;">${escapeHtml(String(row.hukuman || '-'))}</td><td style="padding:7px; border:1px solid #e2e8f0;">${escapeHtml(String(row.surat_jenis || '-'))}</td><td style="padding:7px; border:1px solid #e2e8f0;"><button type="button" class="modal-btn" onclick="openMuhaffizPrestasiDoc('${escapeHtml(String(row.surat_url || ''))}')">Lihat</button></td><td style="padding:7px; border:1px solid #e2e8f0;"><button type="button" class="modal-btn" onclick="editMuhaffizPelanggaranEntry('${escapeHtml(String(row.id || ''))}')">Edit</button><button type="button" class="modal-btn" style="margin-left:6px;" onclick="deleteMuhaffizPelanggaranEntry('${escapeHtml(String(row.id || ''))}')">Hapus</button></td></tr>`).join('')}
+      </tbody></table></div>
+    ` : '<div style="color:#64748b;">Belum ada data pelanggaran ketahfizan.</div>'
+  }
+}
+
+async function loadMuhaffizPrestasiPelanggaranData() {
+  const [santriRes, kelasRes, prestasiRes, pelanggaranRes] = await Promise.all([
+    sb.from('santri').select('id, nama, kelas_id, aktif').eq('aktif', true).order('nama'),
+    sb.from('kelas').select('id, nama_kelas').order('nama_kelas'),
+    sb.from(SANTRI_PRESTASI_TABLE).select('id, santri_id, waktu, kategori, judul, sertifikat_url, created_at').eq('kategori', 'ketahfizan').order('waktu', { ascending: false }).order('created_at', { ascending: false }),
+    sb.from(SANTRI_PELANGGARAN_TABLE).select('id, santri_id, waktu, kategori, judul, hukuman, surat_jenis, surat_url, created_at').eq('kategori', 'ketahfizan').order('waktu', { ascending: false }).order('created_at', { ascending: false })
+  ])
+  const err = santriRes.error || kelasRes.error || prestasiRes.error || pelanggaranRes.error
+  if (err) throw err
+  muhaffizPrestasiPelanggaranState.santriRows = santriRes.data || []
+  muhaffizPrestasiPelanggaranState.kelasMap = new Map((kelasRes.data || []).map(item => [String(item.id || ''), item]))
+  muhaffizPrestasiPelanggaranState.prestasiRows = prestasiRes.data || []
+  muhaffizPrestasiPelanggaranState.pelanggaranRows = pelanggaranRes.data || []
+}
+
+async function saveMuhaffizPrestasiEntry() {
+  const santriId = resolveMuhaffizPrestasiSantriId('prestasi')
+  const waktu = String(document.getElementById('mpp-prestasi-waktu')?.value || '').trim()
+  const judul = String(document.getElementById('mpp-prestasi-judul')?.value || '').trim()
+  const sertifikatUrl = String(document.getElementById('mpp-prestasi-sertifikat')?.value || '').trim()
+  if (!santriId || !waktu || !judul) {
+    alert('Nama santri, waktu, dan prestasi wajib diisi.')
+    return
+  }
+  const payload = { santri_id: santriId, waktu, kategori: 'ketahfizan', judul, sertifikat_url: sertifikatUrl || null }
+  const res = muhaffizPrestasiPelanggaranState.editingPrestasiId
+    ? await sb.from(SANTRI_PRESTASI_TABLE).update(payload).eq('id', muhaffizPrestasiPelanggaranState.editingPrestasiId)
+    : await sb.from(SANTRI_PRESTASI_TABLE).insert([payload])
+  if (res.error) {
+    alert(`Gagal simpan prestasi: ${res.error.message || 'Unknown error'}`)
+    return
+  }
+  resetMuhaffizPrestasiForm()
+  await loadMuhaffizPrestasiPelanggaranData()
+  renderMuhaffizPrestasiLists()
+}
+
+async function saveMuhaffizPelanggaranEntry() {
+  const santriId = resolveMuhaffizPrestasiSantriId('pelanggaran')
+  const waktu = String(document.getElementById('mpp-pelanggaran-waktu')?.value || '').trim()
+  const judul = String(document.getElementById('mpp-pelanggaran-judul')?.value || '').trim()
+  const hukuman = String(document.getElementById('mpp-pelanggaran-hukuman')?.value || '').trim()
+  const suratJenis = String(document.getElementById('mpp-pelanggaran-surat-jenis')?.value || '').trim()
+  const suratUrl = String(document.getElementById('mpp-pelanggaran-surat-url')?.value || '').trim()
+  if (!santriId || !waktu || !judul) {
+    alert('Nama santri, waktu, dan pelanggaran wajib diisi.')
+    return
+  }
+  const payload = { santri_id: santriId, waktu, kategori: 'ketahfizan', judul, hukuman: hukuman || null, surat_jenis: suratJenis || null, surat_url: suratUrl || null }
+  const res = muhaffizPrestasiPelanggaranState.editingPelanggaranId
+    ? await sb.from(SANTRI_PELANGGARAN_TABLE).update(payload).eq('id', muhaffizPrestasiPelanggaranState.editingPelanggaranId)
+    : await sb.from(SANTRI_PELANGGARAN_TABLE).insert([payload])
+  if (res.error) {
+    alert(`Gagal simpan pelanggaran: ${res.error.message || 'Unknown error'}`)
+    return
+  }
+  resetMuhaffizPelanggaranForm()
+  await loadMuhaffizPrestasiPelanggaranData()
+  renderMuhaffizPrestasiLists()
+}
+
+function editMuhaffizPrestasiEntry(id) {
+  const row = (muhaffizPrestasiPelanggaranState.prestasiRows || []).find(item => String(item.id || '') === String(id || ''))
+  if (!row) return
+  const santri = (muhaffizPrestasiPelanggaranState.santriRows || []).find(item => String(item.id || '') === String(row.santri_id || ''))
+  muhaffizPrestasiPelanggaranState.editingPrestasiId = String(row.id || '')
+  const kelasFilter = document.getElementById('mpp-prestasi-kelas-filter')
+  if (kelasFilter) kelasFilter.value = String(santri?.kelas_id || '')
+  renderMuhaffizPrestasiSantriSearchList('prestasi')
+  const search = document.getElementById('mpp-prestasi-santri-search')
+  if (search) search.value = getMuhaffizPrestasiSantriLabel(santri || {})
+  document.getElementById('mpp-prestasi-waktu').value = String(row.waktu || '').slice(0, 10)
+  document.getElementById('mpp-prestasi-judul').value = String(row.judul || '')
+  document.getElementById('mpp-prestasi-sertifikat').value = String(row.sertifikat_url || '')
+}
+
+function editMuhaffizPelanggaranEntry(id) {
+  const row = (muhaffizPrestasiPelanggaranState.pelanggaranRows || []).find(item => String(item.id || '') === String(id || ''))
+  if (!row) return
+  const santri = (muhaffizPrestasiPelanggaranState.santriRows || []).find(item => String(item.id || '') === String(row.santri_id || ''))
+  muhaffizPrestasiPelanggaranState.editingPelanggaranId = String(row.id || '')
+  const kelasFilter = document.getElementById('mpp-pelanggaran-kelas-filter')
+  if (kelasFilter) kelasFilter.value = String(santri?.kelas_id || '')
+  renderMuhaffizPrestasiSantriSearchList('pelanggaran')
+  const search = document.getElementById('mpp-pelanggaran-santri-search')
+  if (search) search.value = getMuhaffizPrestasiSantriLabel(santri || {})
+  document.getElementById('mpp-pelanggaran-waktu').value = String(row.waktu || '').slice(0, 10)
+  document.getElementById('mpp-pelanggaran-judul').value = String(row.judul || '')
+  document.getElementById('mpp-pelanggaran-hukuman').value = String(row.hukuman || '')
+  document.getElementById('mpp-pelanggaran-surat-jenis').value = String(row.surat_jenis || '')
+  document.getElementById('mpp-pelanggaran-surat-url').value = String(row.surat_url || '')
+}
+
+async function deleteMuhaffizPrestasiEntry(id) {
+  if (!confirm('Hapus data prestasi ini?')) return
+  const { error } = await sb.from(SANTRI_PRESTASI_TABLE).delete().eq('id', String(id || ''))
+  if (error) {
+    alert(`Gagal hapus prestasi: ${error.message || 'Unknown error'}`)
+    return
+  }
+  await loadMuhaffizPrestasiPelanggaranData()
+  renderMuhaffizPrestasiLists()
+}
+
+async function deleteMuhaffizPelanggaranEntry(id) {
+  if (!confirm('Hapus data pelanggaran ini?')) return
+  const { error } = await sb.from(SANTRI_PELANGGARAN_TABLE).delete().eq('id', String(id || ''))
+  if (error) {
+    alert(`Gagal hapus pelanggaran: ${error.message || 'Unknown error'}`)
+    return
+  }
+  await loadMuhaffizPrestasiPelanggaranData()
+  renderMuhaffizPrestasiLists()
+}
+
+async function renderMuhaffizPrestasiPelanggaranPage() {
+  const content = document.getElementById('muhaffiz-content')
+  if (!content) return
+  content.innerHTML = '<div class="placeholder-card">Loading prestasi & pelanggaran...</div>'
+  try {
+    await loadMuhaffizPrestasiPelanggaranData()
+    content.innerHTML = `
+      <div style="display:grid; gap:12px;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="mpp-tab-prestasi" type="button" class="modal-btn modal-btn-primary" onclick="setMuhaffizPrestasiTab('prestasi')">Prestasi</button>
+          <button id="mpp-tab-pelanggaran" type="button" class="modal-btn" onclick="setMuhaffizPrestasiTab('pelanggaran')">Pelanggaran</button>
+        </div>
+        <div id="mpp-panel-prestasi" style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+          <div style="font-weight:700; margin-bottom:8px;">Input Prestasi Ketahfizan</div>
+          <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px;">
+            <div><label class="guru-label">Filter Kelas</label><select id="mpp-prestasi-kelas-filter" class="guru-field" onchange="onMuhaffizPrestasiClassFilterChange('prestasi')"></select></div>
+            <div><label class="guru-label">Nama Santri (Ketik / Cari)</label><input id="mpp-prestasi-santri-search" class="guru-field" type="text" list="mpp-prestasi-santri-list" placeholder="Ketik nama santri..."><datalist id="mpp-prestasi-santri-list"></datalist></div>
+            <div><label class="guru-label">Waktu</label><input id="mpp-prestasi-waktu" class="guru-field" type="date" value="${escapeHtml(getMuhaffizTodayDate())}"></div>
+            <div><label class="guru-label">Kategori</label><input class="guru-field" type="text" value="Ketahfizan" readonly style="background:#f8fafc;color:#475569;"></div>
+            <div style="grid-column:1/-1;"><label class="guru-label">Prestasi</label><input id="mpp-prestasi-judul" class="guru-field" type="text" placeholder="Contoh: Juara Hifdz"></div>
+            <div style="grid-column:1/-1;"><label class="guru-label">Sertifikat (URL File)</label><input id="mpp-prestasi-sertifikat" class="guru-field" type="text" placeholder="https://..."></div>
+          </div>
+          <div style="display:flex; gap:8px; margin-top:10px;"><button type="button" class="modal-btn modal-btn-primary" onclick="saveMuhaffizPrestasiEntry()">Simpan</button><button type="button" class="modal-btn" onclick="resetMuhaffizPrestasiForm()">Reset</button></div>
+        </div>
+        <div id="mpp-panel-pelanggaran" style="display:none; border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+          <div style="font-weight:700; margin-bottom:8px;">Input Pelanggaran Ketahfizan</div>
+          <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px;">
+            <div><label class="guru-label">Filter Kelas</label><select id="mpp-pelanggaran-kelas-filter" class="guru-field" onchange="onMuhaffizPrestasiClassFilterChange('pelanggaran')"></select></div>
+            <div><label class="guru-label">Nama Santri (Ketik / Cari)</label><input id="mpp-pelanggaran-santri-search" class="guru-field" type="text" list="mpp-pelanggaran-santri-list" placeholder="Ketik nama santri..."><datalist id="mpp-pelanggaran-santri-list"></datalist></div>
+            <div><label class="guru-label">Waktu</label><input id="mpp-pelanggaran-waktu" class="guru-field" type="date" value="${escapeHtml(getMuhaffizTodayDate())}"></div>
+            <div><label class="guru-label">Kategori</label><input class="guru-field" type="text" value="Ketahfizan" readonly style="background:#f8fafc;color:#475569;"></div>
+            <div><label class="guru-label">Pelanggaran</label><input id="mpp-pelanggaran-judul" class="guru-field" type="text" placeholder="Deskripsi pelanggaran"></div>
+            <div><label class="guru-label">Jenis Hukuman</label><input id="mpp-pelanggaran-hukuman" class="guru-field" type="text" placeholder="Jenis hukuman"></div>
+            <div><label class="guru-label">Surat Peringatan</label><select id="mpp-pelanggaran-surat-jenis" class="guru-field"><option value="">- Pilih -</option><option value="Sanksi dan Teguran">Sanksi dan Teguran</option><option value="ST1">ST1</option><option value="ST2">ST2</option><option value="ST3">ST3</option><option value="SP1">SP1</option><option value="SP2">SP2</option><option value="SP3">SP3</option><option value="DO">DO</option></select></div>
+            <div style="grid-column:1/-1;"><label class="guru-label">Surat Pemberitahuan (URL File)</label><input id="mpp-pelanggaran-surat-url" class="guru-field" type="text" placeholder="https://..."><div style="margin-top:8px;"><input id="mpp-pelanggaran-surat-file" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" style="display:none;" onchange="uploadMuhaffizPelanggaranSuratFile(event)"><button type="button" class="modal-btn" onclick="document.getElementById('mpp-pelanggaran-surat-file')?.click()">Upload File</button></div></div>
+          </div>
+          <div style="display:flex; gap:8px; margin-top:10px;"><button type="button" class="modal-btn modal-btn-primary" onclick="saveMuhaffizPelanggaranEntry()">Simpan</button><button type="button" class="modal-btn" onclick="resetMuhaffizPelanggaranForm()">Reset</button></div>
+        </div>
+        <div id="mpp-list-prestasi" style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">Loading...</div>
+        <div id="mpp-list-pelanggaran" style="display:none; border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">Loading...</div>
+      </div>
+      <div id="mpp-doc-overlay" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.45); z-index:3000; padding:20px;">
+        <div style="max-width:960px; margin:0 auto; background:#fff; border:1px solid #e2e8f0; border-radius:12px; overflow:hidden;">
+          <div style="display:flex; justify-content:space-between; padding:12px; border-bottom:1px solid #e2e8f0;"><div style="font-weight:700;">Dokumen</div><div style="display:flex; gap:8px;"><a id="mpp-doc-download" href="#" target="_blank" rel="noopener" class="modal-btn">Download</a><button type="button" class="modal-btn" onclick="closeMuhaffizPrestasiDoc()">Tutup</button></div></div>
+          <div style="padding:12px;"><iframe id="mpp-doc-frame" title="Dokumen" style="width:100%; height:70vh; border:1px solid #e2e8f0; border-radius:8px;"></iframe></div>
+        </div>
+      </div>
+    `
+    const kelasOptions = ['<option value="">Semua Kelas</option>', ...Array.from(muhaffizPrestasiPelanggaranState.kelasMap.values()).map(item => `<option value="${escapeHtml(String(item.id || ''))}">${escapeHtml(String(item.nama_kelas || '-'))}</option>`)]
+    const prestasiFilter = document.getElementById('mpp-prestasi-kelas-filter')
+    const pelanggaranFilter = document.getElementById('mpp-pelanggaran-kelas-filter')
+    if (prestasiFilter) prestasiFilter.innerHTML = kelasOptions.join('')
+    if (pelanggaranFilter) pelanggaranFilter.innerHTML = kelasOptions.join('')
+    renderMuhaffizPrestasiSantriSearchList('prestasi')
+    renderMuhaffizPrestasiSantriSearchList('pelanggaran')
+    renderMuhaffizPrestasiLists()
+    setMuhaffizPrestasiTab('prestasi')
+  } catch (error) {
+    console.error(error)
+    content.innerHTML = `<div class="placeholder-card">Gagal load prestasi & pelanggaran: ${escapeHtml(error?.message || 'Unknown error')}</div>`
+  }
+}
+
+function getMuhaffizSelectedEkskul() {
+  const eid = String(muhaffizEkskulState.selectedEkskulId || '')
+  return (muhaffizEkskulState.ekskulRows || []).find(item => String(item.id || '') === eid) || null
+}
+
+function renderMuhaffizEkskulMemberList() {
+  const box = document.getElementById('muhaffiz-ekskul-member-list')
+  if (!box) return
+  const selected = getMuhaffizSelectedEkskul()
+  if (!selected) {
+    box.innerHTML = '<div style="color:#64748b; font-size:12px;">Pilih ekskul terlebih dahulu.</div>'
+    return
+  }
+  const santriMap = new Map((muhaffizEkskulState.santriRows || []).map(item => [String(item.id || ''), item]))
+  const rows = (muhaffizEkskulState.memberRows || []).filter(item => String(item.ekskul_id || '') === String(selected.id || ''))
+  if (!rows.length) {
+    box.innerHTML = '<div style="color:#64748b; font-size:12px;">Belum ada anggota.</div>'
+    return
+  }
+  box.innerHTML = rows.map((item, idx) => {
+    const sid = String(item.santri_id || '')
+    const isActive = String(muhaffizEkskulState.selectedSantriId || '') === sid
+    return `<div style="display:grid; grid-template-columns:1fr auto; gap:6px; align-items:center; padding:8px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px; background:#fff;"><button type="button" class="modal-btn" onclick="selectMuhaffizEkskulSantri('${escapeHtml(sid)}')" style="display:block; width:100%; text-align:left; font-size:13px; ${isActive ? 'border-color:#d4d456; background:#fefce8; font-weight:700;' : 'font-weight:500;'}">${idx + 1}. ${escapeHtml(String(santriMap.get(sid)?.nama || '-'))}</button><button type="button" class="modal-btn" onclick="openMuhaffizEkskulSantriDetail('${escapeHtml(sid)}')">Detail</button></div>`
+  }).join('')
+}
+
+function renderMuhaffizEkskulSelects() {
+  const selected = getMuhaffizSelectedEkskul()
+  const santriSel = document.getElementById('muhaffiz-ekskul-santri')
+  if (santriSel) {
+    if (!selected) {
+      santriSel.innerHTML = '<option value="">Pilih ekskul dulu</option>'
+    } else {
+      const joined = new Set((muhaffizEkskulState.memberRows || []).filter(item => String(item.ekskul_id || '') === String(selected.id || '')).map(item => String(item.santri_id || '')))
+      const options = ['<option value="">Pilih siswa...</option>']
+      ;(muhaffizEkskulState.santriRows || []).forEach(item => {
+        const sid = String(item.id || '')
+        if (!sid || joined.has(sid)) return
+        options.push(`<option value="${escapeHtml(sid)}">${escapeHtml(String(item.nama || '-'))}</option>`)
+      })
+      santriSel.innerHTML = options.join('')
+    }
+  }
+  const indikatorRows = (muhaffizEkskulState.indikatorRows || []).filter(item => String(item.ekskul_id || '') === String(selected?.id || ''))
+  const indikatorBox = document.getElementById('muhaffiz-ekskul-indikator-list')
+  if (indikatorBox) {
+    indikatorBox.innerHTML = indikatorRows.length
+      ? indikatorRows.map(item => `<div style="padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px;"><div style="font-weight:600; font-size:13px;">${escapeHtml(String(item.nama || '-'))}</div><div style="font-size:12px; color:#64748b;">${escapeHtml(String(item.deskripsi || '-'))}</div></div>`).join('')
+      : '<div style="color:#64748b; font-size:12px;">Belum ada indikator.</div>'
+  }
+}
+
+function renderMuhaffizEkskulProgressList() {
+  const box = document.getElementById('muhaffiz-ekskul-progres-list')
+  if (!box) return
+  const eid = String(muhaffizEkskulState.selectedEkskulId || '')
+  const sid = String(muhaffizEkskulState.selectedSantriId || '')
+  if (!eid || !sid) {
+    box.innerHTML = '<div style="color:#64748b; font-size:12px;">Pilih anggota untuk melihat progres.</div>'
+    return
+  }
+  const indikatorMap = new Map((muhaffizEkskulState.indikatorRows || []).map(item => [String(item.id || ''), item]))
+  const rows = (muhaffizEkskulState.progressRows || []).filter(item => String(item.ekskul_id || '') === eid && String(item.santri_id || '') === sid)
+  if (!rows.length) {
+    box.innerHTML = '<div style="color:#64748b; font-size:12px;">Belum ada catatan progres.</div>'
+    return
+  }
+  box.innerHTML = rows.map(item => `<div style="padding:8px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px;"><div style="font-size:12px; color:#64748b;">${escapeHtml(String(item.tanggal || '-'))} | ${escapeHtml(String(indikatorMap.get(String(item.indikator_id || ''))?.nama || 'Umum'))}</div><div style="margin-top:4px;">${escapeHtml(String(item.catatan || '-'))}</div><div style="font-size:12px; color:#64748b;">Nilai: ${escapeHtml(String(item.nilai ?? '-'))}</div></div>`).join('')
+}
+
+function muhaffizEkskulUpdateIndicatorStars(inputEl) {
+  if (!inputEl) return
+  const wrap = inputEl.closest('[data-muhaffiz-ekskul-indikator-row="1"]')
+  const starEl = wrap?.querySelector('[data-muhaffiz-ekskul-star-view="1"]')
+  if (!starEl) return
+  const parsed = Number(String(inputEl.value || '').trim())
+  const score = Number.isFinite(parsed) ? Math.max(1, Math.min(100, parsed)) : 0
+  const rating = score > 0 ? Math.round((score / 20) * 2) / 2 : 0
+  const full = Math.floor(rating)
+  const half = rating - full >= 0.5
+  let html = ''
+  for (let i = 0; i < 5; i += 1) {
+    if (i < full) html += '<span style="color:#f59e0b; font-size:17px; line-height:1;">&#9733;</span>'
+    else if (i === full && half) html += '<span style="background:linear-gradient(90deg,#f59e0b 50%,#cbd5e1 50%); -webkit-background-clip:text; background-clip:text; color:transparent; -webkit-text-fill-color:transparent; font-size:17px; line-height:1;">&#9733;</span>'
+    else html += '<span style="color:#cbd5e1; font-size:17px; line-height:1;">&#9733;</span>'
+  }
+  starEl.innerHTML = html
+}
+
+function renderMuhaffizEkskulProgressInputRows() {
+  const box = document.getElementById('muhaffiz-ekskul-progres-input-list')
+  if (!box) return
+  const selected = getMuhaffizSelectedEkskul()
+  const sid = String(muhaffizEkskulState.selectedSantriId || '').trim()
+  if (!selected || !sid) {
+    box.innerHTML = '<div style="color:#64748b; font-size:12px;">Pilih santri terlebih dahulu.</div>'
+    return
+  }
+  const santriMap = new Map((muhaffizEkskulState.santriRows || []).map(item => [String(item.id || ''), item]))
+  const indikatorRows = (muhaffizEkskulState.indikatorRows || []).filter(item => String(item.ekskul_id || '') === String(selected.id || ''))
+  if (!indikatorRows.length) {
+    box.innerHTML = '<div style="color:#64748b; font-size:12px;">Belum ada indikator.</div>'
+    return
+  }
+  box.innerHTML = `
+    <div style="margin-bottom:8px;"><strong>Santri:</strong> ${escapeHtml(String(santriMap.get(sid)?.nama || '-'))}</div>
+    <div style="overflow:auto;">
+      <table style="width:100%; min-width:900px; border-collapse:collapse; font-size:13px;">
+        <thead><tr style="background:#f8fafc;"><th style="padding:8px; border:1px solid #e2e8f0; width:52px;">No</th><th style="padding:8px; border:1px solid #e2e8f0;">Indikator</th><th style="padding:8px; border:1px solid #e2e8f0; width:220px;">Nilai</th><th style="padding:8px; border:1px solid #e2e8f0;">Catatan</th></tr></thead>
+        <tbody>
+          ${indikatorRows.map((indikator, idx) => `<tr data-muhaffiz-ekskul-indikator-row="1" data-indikator-id="${escapeHtml(String(indikator.id || ''))}"><td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${idx + 1}</td><td style="padding:8px; border:1px solid #e2e8f0;"><div style="font-weight:600;">${escapeHtml(String(indikator.nama || '-'))}</div><div style="font-size:11px; color:#64748b;">${escapeHtml(String(indikator.deskripsi || '-'))}</div></td><td style="padding:8px; border:1px solid #e2e8f0;"><div style="display:grid; grid-template-columns:86px 1fr; gap:8px; align-items:center;"><input class="guru-field" type="number" min="1" max="100" step="1" placeholder="1-100" data-muhaffiz-ekskul-indikator-nilai="1" oninput="muhaffizEkskulUpdateIndicatorStars(this)"><div data-muhaffiz-ekskul-star-view="1">${Array.from({ length: 5 }).map(() => '<span style="color:#cbd5e1; font-size:17px; line-height:1;">&#9733;</span>').join('')}</div></div></td><td style="padding:8px; border:1px solid #e2e8f0;"><input class="guru-field" type="text" placeholder="Catatan indikator" data-muhaffiz-ekskul-indikator-catatan="1"></td></tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `
+}
+
+function openMuhaffizEkskulSantriDetail(sid) {
+  selectMuhaffizEkskulSantri(sid)
+  const overlay = document.getElementById('muhaffiz-ekskul-santri-detail-overlay')
+  const body = document.getElementById('muhaffiz-ekskul-santri-detail-body')
+  if (!overlay || !body) return
+  renderMuhaffizEkskulProgressList()
+  body.innerHTML = document.getElementById('muhaffiz-ekskul-progres-list')?.innerHTML || '-'
+  overlay.style.display = 'block'
+}
+
+function closeMuhaffizEkskulSantriDetail() {
+  const overlay = document.getElementById('muhaffiz-ekskul-santri-detail-overlay')
+  if (overlay) overlay.style.display = 'none'
+}
+
+async function selectMuhaffizEkskul(id) {
+  muhaffizEkskulState.selectedEkskulId = String(id || '')
+  muhaffizEkskulState.selectedSantriId = ''
+  renderMuhaffizEkskulMemberList()
+  renderMuhaffizEkskulSelects()
+  renderMuhaffizEkskulProgressInputRows()
+  renderMuhaffizEkskulProgressList()
+}
+
+function selectMuhaffizEkskulSantri(sid) {
+  muhaffizEkskulState.selectedSantriId = String(sid || '')
+  renderMuhaffizEkskulMemberList()
+  renderMuhaffizEkskulProgressInputRows()
+  renderMuhaffizEkskulProgressList()
+}
+
+async function addMuhaffizEkskulMember() {
+  const eid = String(muhaffizEkskulState.selectedEkskulId || '')
+  const sid = String(document.getElementById('muhaffiz-ekskul-santri')?.value || '').trim()
+  if (!eid || !sid) {
+    alert('Pilih ekskul dan siswa terlebih dahulu.')
+    return
+  }
+  const { error } = await sb.from(EKSKUL_MEMBER_TABLE).insert([{ ekskul_id: eid, santri_id: sid }])
+  if (error) {
+    alert(`Gagal tambah anggota: ${error.message || 'Unknown error'}`)
+    return
+  }
+  await renderMuhaffizEkskulPage(true)
+}
+
+async function addMuhaffizEkskulIndikator() {
+  const eid = String(muhaffizEkskulState.selectedEkskulId || '')
+  const nama = String(document.getElementById('muhaffiz-ekskul-indikator-nama')?.value || '').trim()
+  const deskripsi = String(document.getElementById('muhaffiz-ekskul-indikator-deskripsi')?.value || '').trim()
+  if (!eid || !nama) {
+    alert('Pilih ekskul dan isi indikator.')
+    return
+  }
+  const urutan = ((muhaffizEkskulState.indikatorRows || []).filter(item => String(item.ekskul_id || '') === eid).length || 0) + 1
+  const { error } = await sb.from(EKSKUL_INDIKATOR_TABLE).insert([{ ekskul_id: eid, nama, deskripsi: deskripsi || null, urutan }])
+  if (error) {
+    alert(`Gagal tambah indikator: ${error.message || 'Unknown error'}`)
+    return
+  }
+  document.getElementById('muhaffiz-ekskul-indikator-nama').value = ''
+  document.getElementById('muhaffiz-ekskul-indikator-deskripsi').value = ''
+  await renderMuhaffizEkskulPage(true)
+}
+
+async function saveMuhaffizEkskulProgress() {
+  const eid = String(muhaffizEkskulState.selectedEkskulId || '')
+  const sid = String(muhaffizEkskulState.selectedSantriId || '')
+  const tanggal = String(document.getElementById('muhaffiz-ekskul-progres-tanggal')?.value || '').trim()
+  if (!eid || !sid || !tanggal) {
+    alert('Lengkapi data progres.')
+    return
+  }
+  const rowEls = Array.from(document.querySelectorAll('[data-muhaffiz-ekskul-indikator-row="1"]'))
+  if (!rowEls.length) {
+    alert('Belum ada indikator untuk diinput.')
+    return
+  }
+  const payload = []
+  rowEls.forEach(rowEl => {
+    const indikatorId = String(rowEl.getAttribute('data-indikator-id') || '').trim() || null
+    const nilaiRaw = String(rowEl.querySelector('[data-muhaffiz-ekskul-indikator-nilai="1"]')?.value || '').trim()
+    const nilaiParsed = nilaiRaw ? Number(nilaiRaw) : null
+    const nilai = Number.isFinite(nilaiParsed) ? Math.max(1, Math.min(100, Math.round(nilaiParsed))) : null
+    const catatan = String(rowEl.querySelector('[data-muhaffiz-ekskul-indikator-catatan="1"]')?.value || '').trim()
+    if (!catatan && !Number.isFinite(nilai)) return
+    payload.push({
+      ekskul_id: eid,
+      santri_id: sid,
+      indikator_id: indikatorId,
+      tanggal,
+      nilai: Number.isFinite(nilai) ? nilai : null,
+      catatan: catatan || null,
+      updated_by: String(muhaffizState.profile?.id || '').trim() || null
+    })
+  })
+  if (!payload.length) {
+    alert('Isi minimal satu indikator.')
+    return
+  }
+  const { error } = await sb.from(EKSKUL_PROGRES_TABLE).insert(payload)
+  if (error) {
+    alert(`Gagal simpan progres: ${error.message || 'Unknown error'}`)
+    return
+  }
+  await renderMuhaffizEkskulPage(true)
+}
+
+async function renderMuhaffizEkskulPage(_forceReload = false) {
+  const content = document.getElementById('muhaffiz-content')
+  if (!content) return
+  content.innerHTML = '<div class="placeholder-card">Loading ekskul...</div>'
+  try {
+    const profile = muhaffizState.profile || await getCurrentMuhaffiz()
+    let exRes = await sb.from(EKSKUL_TABLE)
+      .select('id, nama, deskripsi')
+      .or(`pj_karyawan_id.eq.${String(profile?.id || '')},pj_karyawan_id_2.eq.${String(profile?.id || '')}`)
+      .eq('aktif', true)
+      .order('nama')
+    if (exRes.error && isMuhaffizEkskulMissingPj2ColumnError(exRes.error)) {
+      exRes = await sb.from(EKSKUL_TABLE)
+        .select('id, nama, deskripsi')
+        .eq('pj_karyawan_id', String(profile?.id || ''))
+        .eq('aktif', true)
+        .order('nama')
+    }
+    const [memberRes, indikatorRes, santriRes] = await Promise.all([
+      sb.from(EKSKUL_MEMBER_TABLE).select('id, ekskul_id, santri_id').order('created_at', { ascending: false }),
+      sb.from(EKSKUL_INDIKATOR_TABLE).select('id, ekskul_id, nama, deskripsi, urutan').order('urutan', { ascending: true }),
+      sb.from('santri').select('id, nama, aktif').eq('aktif', true).order('nama')
+    ])
+    if (exRes.error) throw exRes.error
+    if (memberRes.error) throw memberRes.error
+    if (indikatorRes.error) throw indikatorRes.error
+    if (santriRes.error) throw santriRes.error
+
+    muhaffizEkskulState.ekskulRows = exRes.data || []
+    const ekskulIds = muhaffizEkskulState.ekskulRows.map(item => String(item.id || ''))
+    muhaffizEkskulState.memberRows = (memberRes.data || []).filter(item => ekskulIds.includes(String(item.ekskul_id || '')))
+    muhaffizEkskulState.indikatorRows = (indikatorRes.data || []).filter(item => ekskulIds.includes(String(item.ekskul_id || '')))
+    muhaffizEkskulState.santriRows = santriRes.data || []
+    if (!muhaffizEkskulState.ekskulRows.length) {
+      content.innerHTML = '<div class="placeholder-card">Anda belum ditetapkan sebagai PJ ekskul.</div>'
+      return
+    }
+    if (!muhaffizEkskulState.selectedEkskulId || !ekskulIds.includes(String(muhaffizEkskulState.selectedEkskulId || ''))) {
+      muhaffizEkskulState.selectedEkskulId = String(muhaffizEkskulState.ekskulRows[0]?.id || '')
+      muhaffizEkskulState.selectedSantriId = ''
+    }
+    const selected = getMuhaffizSelectedEkskul()
+    const { data: progressRows, error: progressError } = await sb
+      .from(EKSKUL_PROGRES_TABLE)
+      .select('id, ekskul_id, santri_id, indikator_id, tanggal, nilai, catatan, created_at')
+      .eq('ekskul_id', String(selected?.id || ''))
+      .order('tanggal', { ascending: false })
+      .order('created_at', { ascending: false })
+    if (progressError) throw progressError
+    muhaffizEkskulState.progressRows = progressRows || []
+
+    content.innerHTML = `
+      <div style="display:grid; gap:12px;">
+        <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+          <div style="font-weight:700; margin-bottom:8px;">Ekskul Binaan</div>
+          <div style="display:flex; flex-wrap:wrap; gap:8px;">
+            ${(muhaffizEkskulState.ekskulRows || []).map(item => `<button type="button" class="modal-btn" onclick="selectMuhaffizEkskul('${escapeHtml(String(item.id || ''))}')" style="${String(muhaffizEkskulState.selectedEkskulId || '') === String(item.id || '') ? 'border-color:#d4d456; background:#fefce8;' : ''}">${escapeHtml(String(item.nama || '-'))}</button>`).join('')}
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+            <div style="font-weight:700; margin-bottom:8px;">Anggota Ekskul</div>
+            <div style="display:grid; grid-template-columns:1fr auto; gap:8px; margin-bottom:8px;">
+              <select id="muhaffiz-ekskul-santri" class="guru-field"></select>
+              <button type="button" class="modal-btn modal-btn-primary" onclick="addMuhaffizEkskulMember()">Tambah</button>
+            </div>
+            <div id="muhaffiz-ekskul-member-list">Loading...</div>
+          </div>
+          <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+            <div style="font-weight:700; margin-bottom:8px;">Indikator Penilaian</div>
+            <input id="muhaffiz-ekskul-indikator-nama" class="guru-field" type="text" placeholder="Nama indikator">
+            <input id="muhaffiz-ekskul-indikator-deskripsi" class="guru-field" type="text" placeholder="Deskripsi indikator" style="margin-top:6px;">
+            <button type="button" class="modal-btn modal-btn-primary" onclick="addMuhaffizEkskulIndikator()" style="margin-top:8px;">Tambah Indikator</button>
+            <div id="muhaffiz-ekskul-indikator-list" style="margin-top:8px;">Loading...</div>
+          </div>
+        </div>
+        <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+          <div style="font-weight:700; margin-bottom:8px;">Progres Santri</div>
+          <div style="display:grid; grid-template-columns:160px 1fr auto; gap:8px; margin-bottom:8px;">
+            <input id="muhaffiz-ekskul-progres-tanggal" class="guru-field" type="date" value="${escapeHtml(getMuhaffizTodayDate())}">
+            <button type="button" class="modal-btn modal-btn-primary" onclick="saveMuhaffizEkskulProgress()">Simpan</button>
+          </div>
+          <div id="muhaffiz-ekskul-progres-input-list" style="margin-bottom:10px;">Loading...</div>
+          <div id="muhaffiz-ekskul-progres-list" style="margin-top:10px;">Loading...</div>
+        </div>
+      </div>
+      <div id="muhaffiz-ekskul-santri-detail-overlay" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.45); z-index:2000; padding:20px;">
+        <div style="max-width:900px; margin:0 auto; background:#fff; border-radius:12px; border:1px solid #e2e8f0; overflow:hidden;">
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid #e2e8f0;">
+            <div style="font-weight:700; color:#0f172a;">Detail Progres Santri</div>
+            <button type="button" class="modal-btn" onclick="closeMuhaffizEkskulSantriDetail()">Tutup</button>
+          </div>
+          <div id="muhaffiz-ekskul-santri-detail-body" style="padding:12px; max-height:70vh; overflow:auto;">Loading...</div>
+        </div>
+      </div>
+    `
+    renderMuhaffizEkskulMemberList()
+    renderMuhaffizEkskulSelects()
+    renderMuhaffizEkskulProgressInputRows()
+    renderMuhaffizEkskulProgressList()
+  } catch (error) {
+    console.error(error)
+    if (isMuhaffizEkskulMissingTableError(error)) {
+      content.innerHTML = '<div class="placeholder-card" style="white-space:pre-wrap;">Tabel ekskul belum ada. Hubungi admin untuk setup tabel ekskul.</div>'
+      return
+    }
+    content.innerHTML = `<div class="placeholder-card">Gagal load ekskul: ${escapeHtml(error?.message || 'Unknown error')}</div>`
+  }
+}
+
 async function loadMuhaffizPage(page) {
   const targetPage = PAGE_TITLES[page] ? page : 'dashboard'
+  const isEkskulPj = await setupMuhaffizEkskulAccess()
+  const isWakasekPrestasi = await setupMuhaffizPrestasiPelanggaranAccess()
   setTopbarTitle(targetPage)
   setNavActive(targetPage === 'profil' ? '' : targetPage)
   if (targetPage !== 'profil') localStorage.setItem(MUHAFFIZ_LAST_PAGE_KEY, targetPage)
@@ -1597,6 +2784,24 @@ async function loadMuhaffizPage(page) {
   }
   if (targetPage === 'laporan-bulanan') {
     await renderLaporanBulananPage()
+    return
+  }
+  if (targetPage === 'ekskul') {
+    if (!isEkskulPj) {
+      const content = document.getElementById('muhaffiz-content')
+      if (content) content.innerHTML = '<div class="placeholder-card">Menu ekskul hanya untuk PJ ekskul.</div>'
+      return
+    }
+    await renderMuhaffizEkskulPage()
+    return
+  }
+  if (targetPage === 'prestasi-pelanggaran') {
+    if (!isWakasekPrestasi) {
+      const content = document.getElementById('muhaffiz-content')
+      if (content) content.innerHTML = '<div class="placeholder-card">Menu ini hanya dapat diakses oleh wakasek ketahfizan.</div>'
+      return
+    }
+    await renderMuhaffizPrestasiPelanggaranPage()
     return
   }
   await renderDashboard()
@@ -1615,6 +2820,9 @@ window.loadMuhaffizPage = loadMuhaffizPage
 window.onMuhaffizPeriodeChange = onMuhaffizPeriodeChange
 window.openMuhaffizBulkInputModal = openMuhaffizBulkInputModal
 window.saveMuhaffizBulkInput = saveMuhaffizBulkInput
+window.downloadMuhaffizBulkTemplate = downloadMuhaffizBulkTemplate
+window.onMuhaffizBulkExcelFileChange = onMuhaffizBulkExcelFileChange
+window.applyMuhaffizBulkExcelToTable = applyMuhaffizBulkExcelToTable
 window.closeMuhaffizBulkInputModal = closeMuhaffizBulkInputModal
 window.openMuhaffizLaporanDetail = openMuhaffizLaporanDetail
 window.saveMuhaffizLaporanDetail = saveMuhaffizLaporanDetail
@@ -1633,6 +2841,27 @@ window.closeMuhaffizDashboardAgendaPopup = closeMuhaffizDashboardAgendaPopup
 window.openMuhaffizProfile = () => loadMuhaffizPage('profil')
 window.saveMuhaffizProfil = saveMuhaffizProfil
 window.toggleMuhaffizProfilePassword = toggleMuhaffizProfilePassword
+window.selectMuhaffizEkskul = selectMuhaffizEkskul
+window.selectMuhaffizEkskulSantri = selectMuhaffizEkskulSantri
+window.openMuhaffizEkskulSantriDetail = openMuhaffizEkskulSantriDetail
+window.closeMuhaffizEkskulSantriDetail = closeMuhaffizEkskulSantriDetail
+window.muhaffizEkskulUpdateIndicatorStars = muhaffizEkskulUpdateIndicatorStars
+window.addMuhaffizEkskulMember = addMuhaffizEkskulMember
+window.addMuhaffizEkskulIndikator = addMuhaffizEkskulIndikator
+window.saveMuhaffizEkskulProgress = saveMuhaffizEkskulProgress
+window.setMuhaffizPrestasiTab = setMuhaffizPrestasiTab
+window.onMuhaffizPrestasiClassFilterChange = onMuhaffizPrestasiClassFilterChange
+window.saveMuhaffizPrestasiEntry = saveMuhaffizPrestasiEntry
+window.saveMuhaffizPelanggaranEntry = saveMuhaffizPelanggaranEntry
+window.resetMuhaffizPrestasiForm = resetMuhaffizPrestasiForm
+window.resetMuhaffizPelanggaranForm = resetMuhaffizPelanggaranForm
+window.editMuhaffizPrestasiEntry = editMuhaffizPrestasiEntry
+window.editMuhaffizPelanggaranEntry = editMuhaffizPelanggaranEntry
+window.deleteMuhaffizPrestasiEntry = deleteMuhaffizPrestasiEntry
+window.deleteMuhaffizPelanggaranEntry = deleteMuhaffizPelanggaranEntry
+window.openMuhaffizPrestasiDoc = openMuhaffizPrestasiDoc
+window.closeMuhaffizPrestasiDoc = closeMuhaffizPrestasiDoc
+window.uploadMuhaffizPelanggaranSuratFile = uploadMuhaffizPelanggaranSuratFile
 window.logout = logout
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -1648,6 +2877,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   try {
     await setMuhaffizWelcomeName()
+    await setupMuhaffizEkskulAccess(true)
+    await setupMuhaffizPrestasiPelanggaranAccess(true)
     if (!muhaffizState.profile) {
       location.href = 'index.html'
       return

@@ -1,0 +1,15 @@
+{
+  "name": "login-supabase",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MIM web app with Tauri desktop wrapper",
+  "scripts": {
+    "build:desktop-assets": "powershell -ExecutionPolicy Bypass -File scripts/build-desktop-assets.ps1",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}

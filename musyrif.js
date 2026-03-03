@@ -9,12 +9,24 @@ const TOPBAR_KALENDER_DEFAULT_COLOR = '#2563eb'
 const HALAQAH_TABLE = 'kamar'
 const HALAQAH_SANTRI_TABLE = 'kamar_santri'
 const HALAQAH_SCHEDULE_TABLE = 'jadwal_halaqah'
+const SANTRI_PERIZINAN_TABLE = 'izin_santri'
+const EKSKUL_TABLE = 'ekstrakurikuler'
+const EKSKUL_MEMBER_TABLE = 'ekstrakurikuler_anggota'
+const EKSKUL_INDIKATOR_TABLE = 'ekstrakurikuler_indikator'
+const EKSKUL_PROGRES_TABLE = 'ekstrakurikuler_progres'
+const SANTRI_PRESTASI_TABLE = 'santri_prestasi'
+const SANTRI_PELANGGARAN_TABLE = 'santri_pelanggaran'
+const SANTRI_SURAT_BUCKET = 'surat-pemberitahuan'
+const SCHOOL_PROFILE_TABLE = 'struktur_sekolah'
 const TOPBAR_NOTIF_READ_KEY = 'musyrif_topbar_notif_read'
 const TOPBAR_NOTIF_RANGE_KEY = 'musyrif_topbar_notif_range_days'
 
 const PAGE_TITLES = {
   dashboard: 'Dashboard',
   'laporan-bulanan': 'Laporan Bulanan',
+  'perizinan-santri': 'Perizinan Santri',
+  'prestasi-pelanggaran': 'Prestasi & Pelanggaran',
+  ekskul: 'Ekskul',
   profil: 'Profil'
 }
 
@@ -40,6 +52,52 @@ let topbarNotifState = {
   readMap: {}
 }
 let musyrifDashboardAgendaRows = []
+let musyrifPerizinanState = {
+  musyrifId: '',
+  santriRows: [],
+  ownRows: [],
+  reviewRows: [],
+  reviewTargets: []
+}
+let musyrifEkskulState = {
+  hasAccess: false,
+  ekskulRows: [],
+  memberRows: [],
+  indikatorRows: [],
+  santriRows: [],
+  progressRows: [],
+  selectedEkskulId: '',
+  selectedSantriId: ''
+}
+let musyrifPrestasiPelanggaranState = {
+  tab: 'prestasi',
+  santriRows: [],
+  kelasMap: new Map(),
+  prestasiRows: [],
+  pelanggaranRows: [],
+  editingPrestasiId: '',
+  editingPelanggaranId: ''
+}
+let musyrifBulkImportState = {
+  parsedRows: [],
+  matchedRows: [],
+  errors: [],
+  fileName: ''
+}
+let wakasekKesantrianAccessCache = null
+
+const MUSYRIF_BULK_EXCEL_HEADERS = [
+  'Nama Santri',
+  'Kelas',
+  "Kehadiran Liqa' Muhasabah (%)",
+  'Sakit',
+  'Izin',
+  'Ibadah',
+  'Kedisiplinan',
+  'Kebersihan',
+  'Adab',
+  'Catatan Musyrif'
+]
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -72,6 +130,189 @@ function toTimeLabel(value) {
   const text = String(value || '').trim()
   if (!text) return '-'
   return text.length >= 5 ? text.slice(0, 5) : text
+}
+
+function normalizeRoleValue(role) {
+  return String(role || '').trim().toLowerCase().replaceAll('_', ' ')
+}
+
+function parseRoleList() {
+  let roles = []
+  try {
+    roles = JSON.parse(localStorage.getItem('login_roles') || '[]')
+  } catch (_error) {
+    roles = []
+  }
+  if (!Array.isArray(roles) || roles.length === 0) {
+    const singleRole = localStorage.getItem('login_role')
+    roles = singleRole ? [singleRole] : []
+  }
+  return roles.map(normalizeRoleValue).filter(Boolean)
+}
+
+function hasBaseRole(roleName) {
+  const target = String(roleName || '').trim().toLowerCase()
+  if (!target) return false
+  return parseRoleList().some(role => normalizeRoleValue(role).replaceAll(' ', '') === target.replaceAll(' ', ''))
+}
+
+function isWakasekKurikulumRole(role) {
+  const clean = normalizeRoleValue(role).replaceAll(' ', '')
+  if (!clean) return false
+  return clean.includes('wakasek') && (clean.includes('kurikulum') || clean.includes('akademik'))
+}
+
+function isWakasekKesantrianRole(role) {
+  const clean = normalizeRoleValue(role).replaceAll(' ', '')
+  if (!clean) return false
+  return clean.includes('wakasek') && clean.includes('kesantrian')
+}
+
+function isWakasekKetahfizanRole(role) {
+  const clean = normalizeRoleValue(role).replaceAll(' ', '')
+  if (!clean) return false
+  return clean.includes('wakasek') && (
+    clean.includes('ketahfizan') ||
+    clean.includes('ketahfidz') ||
+    clean.includes('tahfiz') ||
+    clean.includes('tahfidz')
+  )
+}
+
+function isAnyWakasekRole(role) {
+  const clean = normalizeRoleValue(role).replaceAll(' ', '')
+  return !!clean && clean.includes('wakasek')
+}
+
+function normalizePersonName(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+function normalizePersonNameLoose(value) {
+  return normalizePersonName(value)
+    .replace(/[.,/#!$%^&*;:{}=_`~()\-+[\]\\|'"<>?]/g, ' ')
+    .replace(/\b(ust|ustadz|ustad|ustaz|ust\.)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function isMissingSchoolProfileTableError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  const code = String(error?.code || '').toUpperCase()
+  if (code === '42P01') return true
+  if (msg.includes('schema cache') && msg.includes(SCHOOL_PROFILE_TABLE)) return true
+  return (msg.includes('relation') && msg.includes(SCHOOL_PROFILE_TABLE) && msg.includes('does not exist')) || (msg.includes('table') && msg.includes('not found') && msg.includes(SCHOOL_PROFILE_TABLE))
+}
+
+function isMissingSchoolProfileColumnError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  return msg.includes('column') && msg.includes(SCHOOL_PROFILE_TABLE)
+}
+
+async function getIsWakasekKesantrian(forceReload = false) {
+  const loginId = String(localStorage.getItem('login_id') || '').trim()
+  if (!forceReload && wakasekKesantrianAccessCache && wakasekKesantrianAccessCache.loginId === loginId) {
+    return !!wakasekKesantrianAccessCache.allowed
+  }
+
+  try {
+    const profile = musyrifState.profile || await getCurrentMusyrif()
+    const profileName = normalizePersonName(profile?.nama)
+    const profileId = String(profile?.id || '').trim().toLowerCase()
+    const profileIdKaryawan = String(profile?.id_karyawan || '').trim().toLowerCase()
+
+    if (!profileName) {
+      wakasekKesantrianAccessCache = { loginId, allowed: false }
+      return false
+    }
+
+    const selectAttempts = [
+      'wakasek_bidang_kesantrian, wakasek_kesantrian, wakasek_bidang_kemusyrifan, wakasek_kemusyrifan',
+      'wakasek_bidang_kemusyrifan, wakasek_kemusyrifan',
+      'wakasek_bidang_kesantrian',
+      'wakasek_kesantrian',
+      'wakasek_bidang_kemusyrifan',
+      'wakasek_kemusyrifan'
+    ]
+
+    let row = null
+    for (const selectText of selectAttempts) {
+      const attempts = [
+        () => sb.from(SCHOOL_PROFILE_TABLE).select(selectText).order('updated_at', { ascending: false }).order('created_at', { ascending: false }).limit(1),
+        () => sb.from(SCHOOL_PROFILE_TABLE).select(selectText).order('created_at', { ascending: false }).limit(1),
+        () => sb.from(SCHOOL_PROFILE_TABLE).select(selectText).limit(1)
+      ]
+      let data = null
+      let handled = false
+      for (const run of attempts) {
+        const { data: rows, error } = await run()
+        if (error) {
+          if (isMissingSchoolProfileTableError(error) || isMissingSchoolProfileColumnError(error)) continue
+          throw error
+        }
+        data = rows || []
+        handled = true
+        break
+      }
+      if (!handled) continue
+      row = data?.[0] || null
+      break
+    }
+
+    const wakasekRaw = String(
+      row?.wakasek_bidang_kesantrian ||
+      row?.wakasek_kesantrian ||
+      row?.wakasek_bidang_kemusyrifan ||
+      row?.wakasek_kemusyrifan ||
+      ''
+    ).trim()
+    const wakasekName = normalizePersonName(wakasekRaw)
+    const wakasekNameLoose = normalizePersonNameLoose(wakasekRaw)
+    const wakasekToken = wakasekRaw.toLowerCase()
+    const profileNameLoose = normalizePersonNameLoose(profileName)
+    let allowed = !!(
+      (wakasekName && wakasekName === profileName) ||
+      (wakasekNameLoose && profileNameLoose && (
+        wakasekNameLoose === profileNameLoose ||
+        wakasekNameLoose.includes(profileNameLoose) ||
+        profileNameLoose.includes(wakasekNameLoose)
+      )) ||
+      (profileId && wakasekToken === profileId) ||
+      (profileIdKaryawan && wakasekToken === profileIdKaryawan)
+    )
+
+    // Fallback backward compatibility: gunakan role login jika struktur sekolah belum terisi.
+    if (!allowed && !wakasekRaw) {
+      allowed = parseRoleList().some(isWakasekKesantrianRole)
+    }
+
+    wakasekKesantrianAccessCache = { loginId, allowed }
+    return !!allowed
+  } catch (error) {
+    console.error(error)
+    wakasekKesantrianAccessCache = { loginId, allowed: false }
+    return false
+  }
+}
+
+function getSantriPerizinanReviewTargets() {
+  const roles = parseRoleList()
+  const targets = []
+  const hasAnyWakasek = roles.some(isAnyWakasekRole)
+  const hasKurikulum = roles.some(isWakasekKurikulumRole)
+  const hasKesantrian = roles.some(isWakasekKesantrianRole)
+  const hasKetahfizan = roles.some(isWakasekKetahfizanRole)
+
+  if (hasKurikulum) targets.push('wakasek_kurikulum')
+  if (hasKesantrian) targets.push('wakasek_kesantrian')
+  if (hasKetahfizan) targets.push('wakasek_ketahfizan')
+
+  // Fallback: jika role tertulis "wakasek" tapi tanpa bidang yang jelas,
+  // tampilkan semua pengajuan agar panel review tetap berfungsi.
+  if (hasAnyWakasek && targets.length === 0) {
+    targets.push('wakasek_kurikulum', 'wakasek_kesantrian', 'wakasek_ketahfizan')
+  }
+  return [...new Set(targets)]
 }
 
 function getMonthInputToday() {
@@ -178,7 +419,7 @@ async function getCurrentMusyrif() {
   if (!loginId) return null
   const { data, error } = await sb
     .from('karyawan')
-    .select('id, id_karyawan, nama, no_hp, alamat, aktif')
+    .select('id, id_karyawan, nama, no_hp, alamat, password, aktif')
     .eq('id_karyawan', loginId)
     .maybeSingle()
   if (error) throw error
@@ -479,6 +720,407 @@ async function toggleTopbarNotifMenu() {
   menu.classList.add('open')
   menu.innerHTML = '<div class="topbar-notif-head">Aktivitas</div><div class="topbar-notif-empty">Memuat notifikasi...</div>'
   await refreshMusyrifTopbarNotifications(true)
+}
+
+function normalizeSantriPerizinanStatus(value) {
+  const raw = String(value || '').trim().toLowerCase()
+  if (raw === 'diterima') return 'diterima'
+  if (raw === 'ditolak') return 'ditolak'
+  return 'menunggu'
+}
+
+function getSantriPerizinanStatusLabel(value) {
+  const status = normalizeSantriPerizinanStatus(value)
+  if (status === 'diterima') return 'Diterima'
+  if (status === 'ditolak') return 'Ditolak'
+  return 'Menunggu'
+}
+
+function normalizeSantriPerizinanTarget(value) {
+  const raw = String(value || '').trim().toLowerCase().replaceAll('-', '_')
+  if (raw === 'wakasek_kesantrian') return 'wakasek_kesantrian'
+  if (raw === 'wakasek_ketahfizan') return 'wakasek_ketahfizan'
+  return 'wakasek_kurikulum'
+}
+
+function getSantriPerizinanTargetLabel(value) {
+  const target = normalizeSantriPerizinanTarget(value)
+  if (target === 'wakasek_kesantrian') return 'Wakasek Kesantrian'
+  if (target === 'wakasek_ketahfizan') return 'Wakasek Ketahfizan'
+  return 'Wakasek Kurikulum'
+}
+
+function formatSantriPerizinanDate(value) {
+  const text = String(value || '').slice(0, 10)
+  if (!text) return '-'
+  const date = new Date(`${text}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return text
+  return date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+function isSantriPerizinanMissingTableError(error) {
+  const code = String(error?.code || '').toUpperCase()
+  const msg = String(error?.message || '').toLowerCase()
+  return code === '42P01' || (msg.includes(SANTRI_PERIZINAN_TABLE) && (msg.includes('does not exist') || msg.includes('schema cache')))
+}
+
+function getSantriPerizinanMissingTableMessage() {
+  return `Tabel '${SANTRI_PERIZINAN_TABLE}' belum ada.\n\nJalankan SQL:\ncreate table if not exists public.${SANTRI_PERIZINAN_TABLE} (\n  id uuid primary key default gen_random_uuid(),\n  santri_id uuid not null,\n  pengaju_id uuid not null,\n  tujuan_wakasek text not null,\n  keperluan text not null,\n  status text not null default 'menunggu',\n  catatan_wakasek text null,\n  reviewed_by uuid null,\n  reviewed_at timestamptz null,\n  created_at timestamptz not null default now(),\n  updated_at timestamptz not null default now()\n);\n\ncreate index if not exists izin_santri_pengaju_idx on public.${SANTRI_PERIZINAN_TABLE}(pengaju_id);\ncreate index if not exists izin_santri_tujuan_idx on public.${SANTRI_PERIZINAN_TABLE}(tujuan_wakasek);\ncreate index if not exists izin_santri_status_idx on public.${SANTRI_PERIZINAN_TABLE}(status);\ncreate index if not exists izin_santri_created_idx on public.${SANTRI_PERIZINAN_TABLE}(created_at desc);`
+}
+
+async function getMusyrifAssignedSantriRows(musyrifId) {
+  const sid = String(musyrifId || '').trim()
+  if (!sid) return []
+
+  const kamarRes = await sb
+    .from(HALAQAH_TABLE)
+    .select('id')
+    .eq('musyrif_id', sid)
+
+  if (kamarRes.error) throw kamarRes.error
+  const kamarIds = [...new Set((kamarRes.data || []).map(item => String(item.id || '')).filter(Boolean))]
+  if (!kamarIds.length) return []
+
+  const kamarSantriRes = await sb
+    .from(HALAQAH_SANTRI_TABLE)
+    .select('santri_id')
+    .in('kamar_id', kamarIds)
+  if (kamarSantriRes.error) throw kamarSantriRes.error
+
+  const santriIds = [...new Set((kamarSantriRes.data || []).map(item => String(item.santri_id || '')).filter(Boolean))]
+  if (!santriIds.length) return []
+
+  const santriRes = await sb
+    .from('santri')
+    .select('id, nama, kelas_id, aktif')
+    .in('id', santriIds)
+    .eq('aktif', true)
+    .order('nama')
+
+  if (santriRes.error) throw santriRes.error
+  return santriRes.data || []
+}
+
+async function loadMusyrifPerizinanData() {
+  const musyrifId = String(musyrifState?.profile?.id || '').trim()
+  if (!musyrifId) return { musyrifId: '', santriRows: [], ownRows: [], reviewRows: [], reviewTargets: [] }
+
+  const reviewTargets = getSantriPerizinanReviewTargets()
+  const [santriRows, ownRes, reviewRes, karyawanRes] = await Promise.all([
+    getMusyrifAssignedSantriRows(musyrifId),
+    sb
+      .from(SANTRI_PERIZINAN_TABLE)
+      .select('id, santri_id, pengaju_id, tujuan_wakasek, keperluan, status, catatan_wakasek, reviewed_by, reviewed_at, created_at, updated_at')
+      .eq('pengaju_id', musyrifId)
+      .order('created_at', { ascending: false }),
+    reviewTargets.length
+      ? sb
+        .from(SANTRI_PERIZINAN_TABLE)
+        .select('id, santri_id, pengaju_id, tujuan_wakasek, keperluan, status, catatan_wakasek, reviewed_by, reviewed_at, created_at, updated_at')
+        .order('created_at', { ascending: false })
+      : Promise.resolve({ data: [], error: null }),
+    sb.from('karyawan').select('id, nama, id_karyawan')
+  ])
+
+  const firstError = ownRes.error || reviewRes.error || karyawanRes.error
+  if (firstError) throw firstError
+
+  const linkedSantriIds = [...new Set([
+    ...(santriRows || []).map(item => String(item.id || '')),
+    ...(ownRes.data || []).map(item => String(item.santri_id || '')),
+    ...(reviewRes.data || []).map(item => String(item.santri_id || ''))
+  ].filter(Boolean))]
+
+  let santriMap = new Map((santriRows || []).map(item => [String(item.id || ''), item]))
+  if (linkedSantriIds.length) {
+    const extraSantriRes = await sb
+      .from('santri')
+      .select('id, nama, kelas_id')
+      .in('id', linkedSantriIds)
+    if (!extraSantriRes.error) {
+      santriMap = new Map((extraSantriRes.data || []).map(item => [String(item.id || ''), item]))
+    }
+  }
+
+  const kelasIds = [...new Set(
+    Array.from(santriMap.values())
+      .map(item => String(item?.kelas_id || ''))
+      .filter(Boolean)
+  )]
+  let kelasMap = new Map()
+  if (kelasIds.length) {
+    const kelasRes = await sb
+      .from('kelas')
+      .select('id, nama_kelas')
+      .in('id', kelasIds)
+    if (!kelasRes.error) {
+      kelasMap = new Map((kelasRes.data || []).map(item => [String(item.id || ''), item]))
+    }
+  }
+
+  const karyawanMap = new Map((karyawanRes.data || []).map(item => [String(item.id || ''), item]))
+  const enrich = row => {
+    const santri = santriMap.get(String(row?.santri_id || ''))
+    const kelas = kelasMap.get(String(santri?.kelas_id || ''))
+    return {
+      ...row,
+      status: normalizeSantriPerizinanStatus(row?.status),
+      tujuan_wakasek: normalizeSantriPerizinanTarget(row?.tujuan_wakasek),
+      santri_nama: String(santri?.nama || '-'),
+      kelas_nama: String(kelas?.nama_kelas || '-'),
+      pengaju_nama: String(karyawanMap.get(String(row?.pengaju_id || ''))?.nama || '-'),
+      reviewer_nama: String(karyawanMap.get(String(row?.reviewed_by || ''))?.nama || '-')
+    }
+  }
+
+  return {
+    musyrifId,
+    santriRows: santriRows || [],
+    ownRows: (ownRes.data || []).map(enrich),
+    reviewRows: (reviewRes.data || [])
+      .map(enrich)
+      .filter(item => reviewTargets.includes(normalizeSantriPerizinanTarget(item?.tujuan_wakasek))),
+    reviewTargets
+  }
+}
+
+function renderMusyrifPerizinanOwnRows() {
+  const box = document.getElementById('musyrif-perizinan-own-list')
+  if (!box) return
+  const rows = musyrifPerizinanState.ownRows || []
+  if (!rows.length) {
+    box.innerHTML = '<div style="color:#64748b;">Belum ada pengajuan izin santri.</div>'
+    return
+  }
+
+  const htmlRows = rows.map((item, index) => `
+    <tr>
+      <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${index + 1}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(formatSantriPerizinanDate(item.created_at))}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.santri_nama || '-')}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.kelas_nama || '-')}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(getSantriPerizinanTargetLabel(item.tujuan_wakasek))}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(String(item.keperluan || '-'))}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(getSantriPerizinanStatusLabel(item.status))}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(String(item.catatan_wakasek || '-'))}</td>
+    </tr>
+  `).join('')
+
+  box.innerHTML = `
+    <div style="overflow:auto;">
+      <table style="width:100%; min-width:1080px; border-collapse:collapse; font-size:13px;">
+        <thead>
+          <tr style="background:#f8fafc;">
+            <th style="padding:8px; border:1px solid #e2e8f0; width:52px;">No</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Tanggal Ajukan</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Nama Santri</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Kelas</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Tujuan Izin</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Keperluan</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Status</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Catatan Wakasek</th>
+          </tr>
+        </thead>
+        <tbody>${htmlRows}</tbody>
+      </table>
+    </div>
+  `
+}
+
+function renderMusyrifPerizinanReviewRows() {
+  const panel = document.getElementById('musyrif-perizinan-review-panel')
+  const box = document.getElementById('musyrif-perizinan-review-list')
+  if (!panel || !box) return
+  const rows = musyrifPerizinanState.reviewRows || []
+  const hasAccess = (musyrifPerizinanState.reviewTargets || []).length > 0
+  if (!hasAccess) {
+    panel.style.display = 'none'
+    box.innerHTML = ''
+    return
+  }
+  panel.style.display = 'block'
+  if (!rows.length) {
+    box.innerHTML = '<div style="color:#64748b;">Belum ada pengajuan izin untuk Anda.</div>'
+    return
+  }
+
+  const htmlRows = rows.map((item, index) => `
+    <tr>
+      <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${index + 1}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(formatSantriPerizinanDate(item.created_at))}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.santri_nama || '-')}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.kelas_nama || '-')}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.pengaju_nama || '-')}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(getSantriPerizinanTargetLabel(item.tujuan_wakasek))}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(String(item.keperluan || '-'))}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">
+        <select id="musyrif-perizinan-status-${escapeHtml(String(item.id || ''))}" class="guru-field" style="min-width:130px; padding:6px 8px; font-size:12px;">
+          <option value="menunggu" ${item.status === 'menunggu' ? 'selected' : ''}>Menunggu</option>
+          <option value="diterima" ${item.status === 'diterima' ? 'selected' : ''}>Diterima</option>
+          <option value="ditolak" ${item.status === 'ditolak' ? 'selected' : ''}>Ditolak</option>
+        </select>
+      </td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">
+        <input id="musyrif-perizinan-note-${escapeHtml(String(item.id || ''))}" class="guru-field" type="text" value="${escapeHtml(String(item.catatan_wakasek || ''))}" placeholder="Catatan wakasek" style="padding:6px 8px; font-size:12px;">
+      </td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">
+        <button type="button" class="modal-btn modal-btn-primary" onclick="saveSantriPerizinanReview('${escapeHtml(String(item.id || ''))}')">Simpan</button>
+      </td>
+    </tr>
+  `).join('')
+
+  box.innerHTML = `
+    <div style="overflow:auto;">
+      <table style="width:100%; min-width:1260px; border-collapse:collapse; font-size:13px;">
+        <thead>
+          <tr style="background:#f8fafc;">
+            <th style="padding:8px; border:1px solid #e2e8f0; width:52px;">No</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Tanggal</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Santri</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Kelas</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Pengaju</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Tujuan</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Keperluan</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Status</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Catatan</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Aksi</th>
+          </tr>
+        </thead>
+        <tbody>${htmlRows}</tbody>
+      </table>
+    </div>
+  `
+}
+
+async function submitSantriPerizinanForm() {
+  const musyrifId = String(musyrifPerizinanState.musyrifId || '').trim()
+  const santriId = String(document.getElementById('musyrif-perizinan-santri')?.value || '').trim()
+  const tujuan = normalizeSantriPerizinanTarget(document.getElementById('musyrif-perizinan-tujuan')?.value || '')
+  const keperluan = String(document.getElementById('musyrif-perizinan-keperluan')?.value || '').trim()
+  if (!musyrifId) {
+    alert('Data musyrif tidak ditemukan.')
+    return
+  }
+  if (!santriId || !keperluan) {
+    alert('Nama santri dan keperluan izin wajib diisi.')
+    return
+  }
+
+  const payload = {
+    santri_id: santriId,
+    pengaju_id: musyrifId,
+    tujuan_wakasek: tujuan,
+    keperluan,
+    status: 'menunggu',
+    catatan_wakasek: null,
+    reviewed_by: null,
+    reviewed_at: null
+  }
+  const { error } = await sb.from(SANTRI_PERIZINAN_TABLE).insert([payload])
+  if (error) {
+    if (isSantriPerizinanMissingTableError(error)) {
+      alert(getSantriPerizinanMissingTableMessage())
+      return
+    }
+    alert(`Gagal mengajukan izin santri: ${error.message || 'Unknown error'}`)
+    return
+  }
+
+  alert('Pengajuan izin santri berhasil dikirim.')
+  await renderMusyrifPerizinanPage(true)
+}
+
+async function saveSantriPerizinanReview(id) {
+  const sid = String(id || '').trim()
+  if (!sid) return
+  if (!(musyrifPerizinanState.reviewTargets || []).length) return
+  const status = normalizeSantriPerizinanStatus(document.getElementById(`musyrif-perizinan-status-${sid}`)?.value || '')
+  const catatan = String(document.getElementById(`musyrif-perizinan-note-${sid}`)?.value || '').trim()
+  const reviewerId = String(musyrifState?.profile?.id || '').trim() || null
+  const payload = {
+    status,
+    catatan_wakasek: catatan || null,
+    reviewed_by: reviewerId,
+    reviewed_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  }
+  const { error } = await sb.from(SANTRI_PERIZINAN_TABLE).update(payload).eq('id', sid)
+  if (error) {
+    if (isSantriPerizinanMissingTableError(error)) {
+      alert(getSantriPerizinanMissingTableMessage())
+      return
+    }
+    alert(`Gagal menyimpan persetujuan: ${error.message || 'Unknown error'}`)
+    return
+  }
+  await renderMusyrifPerizinanPage(true)
+}
+
+async function renderMusyrifPerizinanPage(forceReload = false) {
+  const content = document.getElementById('musyrif-content')
+  if (!content) return
+  content.innerHTML = '<div class="placeholder-card">Loading perizinan santri...</div>'
+
+  try {
+    const payload = await loadMusyrifPerizinanData()
+    musyrifPerizinanState = payload
+    const santriOptions = (payload.santriRows || []).map(item => (
+      `<option value="${escapeHtml(String(item.id || ''))}">${escapeHtml(String(item.nama || '-'))}</option>`
+    )).join('')
+
+    content.innerHTML = `
+      <div style="display:grid; gap:12px;">
+        <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+          <div style="font-weight:700; margin-bottom:8px; color:#0f172a;">Form Pengajuan Izin Santri</div>
+          <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:8px;">
+            <div>
+              <div style="font-size:12px; color:#64748b; margin-bottom:4px;">Nama Santri (kamar Anda)</div>
+              <select id="musyrif-perizinan-santri" class="guru-field">
+                <option value="">-- Pilih Santri --</option>
+                ${santriOptions}
+              </select>
+            </div>
+            <div>
+              <div style="font-size:12px; color:#64748b; margin-bottom:4px;">Tujuan Izin</div>
+              <select id="musyrif-perizinan-tujuan" class="guru-field">
+                <option value="wakasek_kurikulum">Wakasek Kurikulum</option>
+                <option value="wakasek_kesantrian">Wakasek Kesantrian</option>
+                <option value="wakasek_ketahfizan">Wakasek Ketahfizan</option>
+              </select>
+            </div>
+          </div>
+          <div style="margin-top:8px;">
+            <div style="font-size:12px; color:#64748b; margin-bottom:4px;">Keperluan Izin</div>
+            <textarea id="musyrif-perizinan-keperluan" class="guru-field" rows="3" placeholder="Tuliskan keperluan izin santri..."></textarea>
+          </div>
+          <div style="margin-top:10px;">
+            <button type="button" class="modal-btn modal-btn-primary" onclick="submitSantriPerizinanForm()">Ajukan Izin</button>
+            <button type="button" class="modal-btn modal-btn-secondary" onclick="renderMusyrifPerizinanPage(true)" style="margin-left:8px;">Refresh</button>
+          </div>
+        </div>
+
+        <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+          <div style="font-weight:700; margin-bottom:8px; color:#0f172a;">Daftar Pengajuan Izin Santri</div>
+          <div id="musyrif-perizinan-own-list">Loading...</div>
+        </div>
+
+        <div id="musyrif-perizinan-review-panel" style="display:none; border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+          <div style="font-weight:700; margin-bottom:8px; color:#0f172a;">Persetujuan Izin Santri (Wakasek)</div>
+          <div id="musyrif-perizinan-review-list">Loading...</div>
+        </div>
+      </div>
+    `
+
+    renderMusyrifPerizinanOwnRows()
+    renderMusyrifPerizinanReviewRows()
+  } catch (error) {
+    console.error(error)
+    if (isSantriPerizinanMissingTableError(error)) {
+      content.innerHTML = `<div class="placeholder-card" style="white-space:pre-wrap;">${escapeHtml(getSantriPerizinanMissingTableMessage())}</div>`
+      return
+    }
+    content.innerHTML = `<div class="placeholder-card">Gagal load perizinan santri: ${escapeHtml(error?.message || 'Unknown error')}</div>`
+  }
 }
 
 async function renderDashboard() {
@@ -892,6 +1534,220 @@ function validateMusyrifBulkRow(row) {
   return errors
 }
 
+function normalizeMusyrifImportHeader(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[%().']/g, '')
+    .replace(/\s+/g, ' ')
+}
+
+function getMusyrifImportCellByAliases(row, aliases) {
+  const entries = Object.entries(row || {})
+  const normalizedMap = new Map(entries.map(([key, val]) => [normalizeMusyrifImportHeader(key), val]))
+  for (const alias of aliases) {
+    const value = normalizedMap.get(normalizeMusyrifImportHeader(alias))
+    if (value !== undefined) return value
+  }
+  return ''
+}
+
+function getMusyrifBulkDomRowMaps() {
+  const rows = Array.from(document.querySelectorAll('#musyrif-bulk-body tr[data-bulk-row="1"]'))
+  const byNameClass = new Map()
+  rows.forEach(row => {
+    const nama = String(row.children?.[1]?.textContent || '').trim().toLowerCase()
+    const kelas = String(row.children?.[2]?.textContent || '').trim().toLowerCase()
+    const key = `${nama}|${kelas}`
+    if (!byNameClass.has(key)) byNameClass.set(key, [])
+    byNameClass.get(key).push(row)
+  })
+  return { rows, byNameClass }
+}
+
+function setMusyrifBulkDomRowValues(rowEl, rowData) {
+  const setVal = (field, value) => {
+    const input = rowEl.querySelector(`[data-bulk-field="${field}"]`)
+    if (!input) return
+    input.value = value === null || value === undefined ? '' : String(value)
+  }
+  setVal('kehadiran', rowData.nilaiKehadiran)
+  setVal('sakit', rowData.sakit)
+  setVal('izin', rowData.izin)
+  setVal('ibadah', normalizeAkhlakGrade(rowData.ibadah) || '')
+  setVal('kedisiplinan', normalizeAkhlakGrade(rowData.kedisiplinan) || '')
+  setVal('kebersihan', normalizeAkhlakGrade(rowData.kebersihan) || '')
+  setVal('adab', normalizeAkhlakGrade(rowData.adab) || '')
+  setVal('catatan', rowData.catatan)
+}
+
+function collectMusyrifBulkRowsForTemplate() {
+  const { rows } = getMusyrifBulkDomRowMaps()
+  return rows.map(row => ({
+    nama: String(row.children?.[1]?.textContent || '').trim(),
+    kelas: String(row.children?.[2]?.textContent || '').trim(),
+    nilaiKehadiran: String(row.querySelector('[data-bulk-field="kehadiran"]')?.value || '').trim(),
+    sakit: String(row.querySelector('[data-bulk-field="sakit"]')?.value || '').trim(),
+    izin: String(row.querySelector('[data-bulk-field="izin"]')?.value || '').trim(),
+    ibadah: String(row.querySelector('[data-bulk-field="ibadah"]')?.value || '').trim(),
+    kedisiplinan: String(row.querySelector('[data-bulk-field="kedisiplinan"]')?.value || '').trim(),
+    kebersihan: String(row.querySelector('[data-bulk-field="kebersihan"]')?.value || '').trim(),
+    adab: String(row.querySelector('[data-bulk-field="adab"]')?.value || '').trim(),
+    catatan: String(row.querySelector('[data-bulk-field="catatan"]')?.value || '').trim()
+  }))
+}
+
+function renderMusyrifBulkImportPreview() {
+  const box = document.getElementById('musyrif-bulk-import-preview')
+  if (!box) return
+  const matchedRows = musyrifBulkImportState.matchedRows || []
+  const errors = musyrifBulkImportState.errors || []
+  const fileName = String(musyrifBulkImportState.fileName || '').trim()
+
+  if (!fileName) {
+    box.style.display = 'none'
+    box.innerHTML = ''
+    return
+  }
+
+  box.style.display = 'block'
+  box.innerHTML = `
+    <div style="border:1px solid #e2e8f0; border-radius:10px; padding:10px; background:#f8fafc;">
+      <div style="display:flex; justify-content:space-between; gap:10px; align-items:center; flex-wrap:wrap;">
+        <div style="font-size:13px; color:#0f172a;">
+          File: <strong>${escapeHtml(fileName)}</strong> |
+          Data cocok: <strong>${matchedRows.length}</strong> |
+          Error: <strong style="color:${errors.length ? '#b91c1c' : '#16a34a'};">${errors.length}</strong>
+        </div>
+        <button type="button" class="modal-btn modal-btn-primary" onclick="applyMusyrifBulkExcelToTable()" ${matchedRows.length ? '' : 'disabled'}>Gunakan Data Excel</button>
+      </div>
+      ${errors.length ? `
+        <div style="margin-top:8px; max-height:130px; overflow:auto; font-size:12px; color:#b91c1c; background:#fff; border:1px solid #fecaca; border-radius:8px; padding:8px;">
+          ${errors.slice(0, 40).map(item => `<div>- ${escapeHtml(item)}</div>`).join('')}
+          ${errors.length > 40 ? '<div>... dan lainnya</div>' : ''}
+        </div>
+      ` : ''}
+    </div>
+  `
+}
+
+function downloadMusyrifBulkTemplate() {
+  const rows = collectMusyrifBulkRowsForTemplate()
+  if (!window.XLSX) {
+    alert('Library Excel belum termuat. Refresh halaman lalu coba lagi.')
+    return
+  }
+  const exportRows = (rows.length ? rows : (musyrifState.santriList || []).map(item => {
+    const kelas = musyrifState.kelasMap.get(String(item.kelas_id || ''))
+    return { nama: item.nama || '-', kelas: kelas?.nama_kelas || '-' }
+  })).map(item => ({
+    'Nama Santri': item.nama || '',
+    'Kelas': item.kelas || '',
+    "Kehadiran Liqa' Muhasabah (%)": item.nilaiKehadiran || '',
+    'Sakit': item.sakit || '',
+    'Izin': item.izin || '',
+    'Ibadah': item.ibadah || '',
+    'Kedisiplinan': item.kedisiplinan || '',
+    'Kebersihan': item.kebersihan || '',
+    'Adab': item.adab || '',
+    'Catatan Musyrif': item.catatan || ''
+  }))
+  const wb = window.XLSX.utils.book_new()
+  const ws = window.XLSX.utils.json_to_sheet(exportRows, { header: MUSYRIF_BULK_EXCEL_HEADERS })
+  window.XLSX.utils.book_append_sheet(wb, ws, 'InputMassalKesantrian')
+  const periode = musyrifState.periode || getMonthInputToday()
+  window.XLSX.writeFile(wb, `Template-Input-Massal-Kesantrian-${periode}.xlsx`)
+}
+
+async function onMusyrifBulkExcelFileChange(event) {
+  const file = event?.target?.files?.[0]
+  if (!file) return
+  if (!window.XLSX) {
+    alert('Library Excel belum termuat. Refresh halaman lalu coba lagi.')
+    event.target.value = ''
+    return
+  }
+  try {
+    const buffer = await file.arrayBuffer()
+    const wb = window.XLSX.read(buffer, { type: 'array' })
+    const firstSheet = wb.SheetNames?.[0]
+    if (!firstSheet) {
+      alert('File Excel kosong.')
+      event.target.value = ''
+      return
+    }
+    const ws = wb.Sheets[firstSheet]
+    const rawRows = window.XLSX.utils.sheet_to_json(ws, { defval: '' })
+    const { byNameClass } = getMusyrifBulkDomRowMaps()
+    const keyUsedCount = new Map()
+    const parsedRows = []
+    const matchedRows = []
+    const errors = []
+
+    rawRows.forEach((raw, idx) => {
+      const nama = String(getMusyrifImportCellByAliases(raw, ['Nama Santri', 'Nama'])).trim()
+      const kelas = String(getMusyrifImportCellByAliases(raw, ['Kelas'])).trim()
+      if (!nama && !kelas) return
+
+      const rowData = {
+        nama,
+        kelas,
+        nilaiKehadiran: String(getMusyrifImportCellByAliases(raw, ["Kehadiran Liqa' Muhasabah (%)", 'Kehadiran Liqa Muhasabah (%)', "Kehadiran Liqa' Muhasabah", 'Kehadiran Liqa Muhasabah', 'Kehadiran Liqa (%)', 'Kehadiran Liqa', 'Kehadiran'])).trim(),
+        sakit: String(getMusyrifImportCellByAliases(raw, ['Sakit'])).trim(),
+        izin: String(getMusyrifImportCellByAliases(raw, ['Izin'])).trim(),
+        ibadah: String(getMusyrifImportCellByAliases(raw, ['Ibadah'])).trim(),
+        kedisiplinan: String(getMusyrifImportCellByAliases(raw, ['Kedisiplinan'])).trim(),
+        kebersihan: String(getMusyrifImportCellByAliases(raw, ['Kebersihan'])).trim(),
+        adab: String(getMusyrifImportCellByAliases(raw, ['Adab'])).trim(),
+        catatan: String(getMusyrifImportCellByAliases(raw, ['Catatan Musyrif', 'Catatan'])).trim()
+      }
+      parsedRows.push(rowData)
+
+      const normKey = `${nama.toLowerCase()}|${kelas.toLowerCase()}`
+      const candidates = byNameClass.get(normKey) || []
+      const used = keyUsedCount.get(normKey) || 0
+      const targetRow = candidates[used] || null
+      if (!targetRow) {
+        errors.push(`Baris ${idx + 2}: Santri "${nama}" kelas "${kelas}" tidak ditemukan di tabel.`)
+        return
+      }
+      keyUsedCount.set(normKey, used + 1)
+      const validationErrors = validateMusyrifBulkRow({ ...rowData, nama: `${nama} (${kelas})` })
+      if (validationErrors.length) {
+        errors.push(...validationErrors)
+        return
+      }
+      matchedRows.push({ targetRow, rowData })
+    })
+
+    musyrifBulkImportState = {
+      parsedRows,
+      matchedRows,
+      errors,
+      fileName: String(file.name || '')
+    }
+    renderMusyrifBulkImportPreview()
+  } catch (error) {
+    console.error(error)
+    alert(`Gagal membaca file Excel: ${error?.message || 'Unknown error'}`)
+  } finally {
+    event.target.value = ''
+  }
+}
+
+function applyMusyrifBulkExcelToTable() {
+  const matchedRows = musyrifBulkImportState.matchedRows || []
+  const errors = musyrifBulkImportState.errors || []
+  if (!matchedRows.length) {
+    alert('Tidak ada data valid dari Excel yang bisa diterapkan.')
+    return
+  }
+  matchedRows.forEach(item => {
+    setMusyrifBulkDomRowValues(item.targetRow, item.rowData)
+  })
+  alert(`Data Excel diterapkan ke tabel: ${matchedRows.length} baris.${errors.length ? `\nError: ${errors.length} baris.` : ''}`)
+}
+
 async function openMusyrifBulkInputModal() {
   const periode = String(musyrifState.periode || getMonthInputToday())
   const periodeRange = getPeriodeRange(periode)
@@ -926,7 +1782,7 @@ async function openMusyrifBulkInputModal() {
       .lte('tanggal', periodeRange.end),
     sb
       .from(MONTHLY_REPORT_TABLE)
-      .select('santri_id, kelas_id, guru_id, musyrif, no_hp_musyrif, nilai_kehadiran_liqa_muhasabah, sakit_liqa_muhasabah, izin_liqa_muhasabah, nilai_ibadah, nilai_kedisiplinan, nilai_kebersihan, nilai_adab, prestasi_kesantrian, pelanggaran_kesantrian, catatan_musyrif')
+      .select('santri_id, kelas_id, guru_id, musyrif, no_hp_musyrif, nilai_kehadiran_liqa_muhasabah, sakit_liqa_muhasabah, izin_liqa_muhasabah, nilai_ibadah, nilai_kedisiplinan, nilai_kebersihan, nilai_adab, catatan_musyrif')
       .eq('periode', periode)
       .in('santri_id', santriIds)
   ])
@@ -958,6 +1814,7 @@ async function openMusyrifBulkInputModal() {
 
   const currentMusyrifNama = String(musyrifState?.profile?.nama || '').trim()
   const currentMusyrifNoHp = String(musyrifState?.profile?.no_hp || '').trim()
+  musyrifBulkImportState = { parsedRows: [], matchedRows: [], errors: [], fileName: '' }
   const gradeOptions = grade => `
     <option value="" ${!grade ? 'selected' : ''}>-</option>
     <option value="A" ${grade === 'A' ? 'selected' : ''}>A</option>
@@ -1015,12 +1872,6 @@ async function openMusyrifBulkInputModal() {
         <td style="padding:6px; border:1px solid #e2e8f0; min-width:90px;">
           <select data-bulk-field="adab" class="guru-field">${gradeOptions(nilaiAdab)}</select>
         </td>
-        <td style="padding:6px; border:1px solid #e2e8f0; min-width:170px;">
-          <input data-bulk-field="prestasi" class="guru-field" type="text" value="${escapeHtml(String(report?.prestasi_kesantrian || '').trim())}">
-        </td>
-        <td style="padding:6px; border:1px solid #e2e8f0; min-width:210px;">
-          <input data-bulk-field="pelanggaran" class="guru-field" type="text" value="${escapeHtml(String(report?.pelanggaran_kesantrian || '').trim())}">
-        </td>
         <td style="padding:6px; border:1px solid #e2e8f0; min-width:260px;">
           <input data-bulk-field="catatan" class="guru-field" type="text" value="${escapeHtml(String(report?.catatan_musyrif || '').trim())}">
         </td>
@@ -1034,10 +1885,16 @@ async function openMusyrifBulkInputModal() {
         <div style="font-size:13px; color:#334155;">
           Periode: <strong>${escapeHtml(getPeriodeLabel(periode))}</strong> | Musyrif: <strong>${escapeHtml(currentMusyrifNama || '-')}</strong> | No HP: <strong>${escapeHtml(currentMusyrifNoHp || '-')}</strong>
         </div>
-        <button type="button" class="modal-btn modal-btn-primary" onclick="saveMusyrifBulkInput()">Simpan Semua</button>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <input id="musyrif-bulk-excel-input" type="file" accept=".xlsx,.xls" style="display:none;" onchange="onMusyrifBulkExcelFileChange(event)">
+          <button type="button" class="modal-btn" onclick="downloadMusyrifBulkTemplate()">Download Template Excel</button>
+          <button type="button" class="modal-btn" onclick="document.getElementById('musyrif-bulk-excel-input')?.click()">Upload Excel</button>
+          <button type="button" class="modal-btn modal-btn-primary" onclick="saveMusyrifBulkInput()">Simpan Semua</button>
+        </div>
       </div>
+      <div id="musyrif-bulk-import-preview" style="display:none;"></div>
       <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px;">
-        <table style="width:100%; min-width:1850px; border-collapse:collapse; font-size:12px;">
+        <table style="width:100%; min-width:1460px; border-collapse:collapse; font-size:12px;">
           <thead>
             <tr style="background:#f8fafc;">
               <th style="padding:6px; border:1px solid #e2e8f0; width:44px;">No</th>
@@ -1050,8 +1907,6 @@ async function openMusyrifBulkInputModal() {
               <th style="padding:6px; border:1px solid #e2e8f0;">Kedisiplinan</th>
               <th style="padding:6px; border:1px solid #e2e8f0;">Kebersihan</th>
               <th style="padding:6px; border:1px solid #e2e8f0;">Adab</th>
-              <th style="padding:6px; border:1px solid #e2e8f0;">Prestasi</th>
-              <th style="padding:6px; border:1px solid #e2e8f0;">Pelanggaran (auto)</th>
               <th style="padding:6px; border:1px solid #e2e8f0;">Catatan Musyrif</th>
             </tr>
           </thead>
@@ -1089,8 +1944,6 @@ async function saveMusyrifBulkInput() {
     const kedisiplinan = String(row.querySelector('[data-bulk-field="kedisiplinan"]')?.value || '').trim().toUpperCase()
     const kebersihan = String(row.querySelector('[data-bulk-field="kebersihan"]')?.value || '').trim().toUpperCase()
     const adab = String(row.querySelector('[data-bulk-field="adab"]')?.value || '').trim().toUpperCase()
-    const prestasi = String(row.querySelector('[data-bulk-field="prestasi"]')?.value || '').trim()
-    const pelanggaran = String(row.querySelector('[data-bulk-field="pelanggaran"]')?.value || '').trim()
     const catatan = String(row.querySelector('[data-bulk-field="catatan"]')?.value || '').trim()
 
     const rowData = { nama, nilaiKehadiran, sakit, izin, ibadah, kedisiplinan, kebersihan, adab }
@@ -1124,8 +1977,6 @@ async function saveMusyrifBulkInput() {
       keterangan_kebersihan: gradeKebersihan ? getAkhlakKeteranganByGrade(gradeKebersihan) : null,
       nilai_adab: gradeAdab || null,
       keterangan_adab: gradeAdab ? getAkhlakKeteranganByGrade(gradeAdab) : null,
-      prestasi_kesantrian: prestasi || null,
-      pelanggaran_kesantrian: pelanggaran || null,
       catatan_musyrif: catatan || null
     })
   })
@@ -1319,7 +2170,7 @@ async function openMusyrifLaporanDetail(santriId) {
 
   const { data: reportRow, error } = await sb
     .from(MONTHLY_REPORT_TABLE)
-    .select('id, musyrif, no_hp_musyrif, nilai_kehadiran_liqa_muhasabah, sakit_liqa_muhasabah, izin_liqa_muhasabah, nilai_ibadah, keterangan_ibadah, nilai_kedisiplinan, keterangan_kedisiplinan, nilai_kebersihan, keterangan_kebersihan, nilai_adab, keterangan_adab, prestasi_kesantrian, pelanggaran_kesantrian, catatan_musyrif')
+    .select('id, musyrif, no_hp_musyrif, nilai_kehadiran_liqa_muhasabah, sakit_liqa_muhasabah, izin_liqa_muhasabah, nilai_ibadah, keterangan_ibadah, nilai_kedisiplinan, keterangan_kedisiplinan, nilai_kebersihan, keterangan_kebersihan, nilai_adab, keterangan_adab, catatan_musyrif')
     .eq('periode', periode)
     .eq('guru_id', waliGuruId)
     .eq('kelas_id', String(santri.kelas_id))
@@ -1354,8 +2205,47 @@ async function openMusyrifLaporanDetail(santriId) {
   const nilaiKehadiranLiqa = toNullableNumber(reportRow?.nilai_kehadiran_liqa_muhasabah)
   const sakitLiqa = toNullableNumber(reportRow?.sakit_liqa_muhasabah)
   const izinLiqa = toNullableNumber(reportRow?.izin_liqa_muhasabah)
-  const prestasi = String(reportRow?.prestasi_kesantrian || '').trim()
-  const pelanggaran = String(reportRow?.pelanggaran_kesantrian || '').trim()
+  let prestasi = ''
+  let pelanggaran = ''
+  try {
+    const [prestasiRes, pelanggaranRes] = await Promise.all([
+      sb
+        .from(SANTRI_PRESTASI_TABLE)
+        .select('judul, waktu, created_at')
+        .eq('santri_id', sid)
+        .gte('waktu', periodeRange.start)
+        .lte('waktu', periodeRange.end)
+        .order('waktu', { ascending: true })
+        .order('created_at', { ascending: true }),
+      sb
+        .from(SANTRI_PELANGGARAN_TABLE)
+        .select('judul, hukuman, surat_jenis, waktu, created_at')
+        .eq('santri_id', sid)
+        .gte('waktu', periodeRange.start)
+        .lte('waktu', periodeRange.end)
+        .order('waktu', { ascending: true })
+        .order('created_at', { ascending: true })
+    ])
+    if (prestasiRes.error) throw prestasiRes.error
+    if (pelanggaranRes.error) throw pelanggaranRes.error
+    prestasi = (prestasiRes.data || [])
+      .map(item => String(item?.judul || '').trim())
+      .filter(Boolean)
+      .join(' | ')
+    pelanggaran = (pelanggaranRes.data || [])
+      .map(item => {
+        const judul = String(item?.judul || '').trim()
+        const hukuman = String(item?.hukuman || '').trim()
+        const surat = String(item?.surat_jenis || '').trim()
+        if (!judul) return ''
+        const sanksi = surat || hukuman
+        return sanksi ? `${judul} (${sanksi})` : judul
+      })
+      .filter(Boolean)
+      .join(' | ')
+  } catch (err) {
+    console.error('Gagal memuat prestasi/pelanggaran otomatis kesantrian:', err)
+  }
 
   content.innerHTML = `
     <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
@@ -1477,13 +2367,13 @@ async function openMusyrifLaporanDetail(santriId) {
             <tr>
               <td style="padding:8px; border:1px solid #e2e8f0;">Prestasi</td>
               <td colspan="2" style="padding:8px; border:1px solid #e2e8f0;">
-                <input id="m-lap-prestasi-kesantrian" class="guru-field" type="text" value="${escapeHtml(prestasi)}" placeholder="Isi prestasi santri (manual)">
+                <input id="m-lap-prestasi-kesantrian" class="guru-field" type="text" value="${escapeHtml(prestasi)}" readonly style="background:#f8fafc; color:#475569;">
               </td>
             </tr>
             <tr>
               <td style="padding:8px; border:1px solid #e2e8f0;">Pelanggaran</td>
               <td colspan="2" style="padding:8px; border:1px solid #e2e8f0;">
-                <input id="m-lap-pelanggaran-kesantrian" class="guru-field" type="text" value="${escapeHtml(pelanggaran)}" placeholder="Isi pelanggaran (manual)">
+                <input id="m-lap-pelanggaran-kesantrian" class="guru-field" type="text" value="${escapeHtml(pelanggaran)}" readonly style="background:#f8fafc; color:#475569;">
               </td>
             </tr>
           </tbody>
@@ -1562,7 +2452,6 @@ async function saveMusyrifLaporanDetail() {
     return
   }
 
-  const pelanggaranManual = String(document.getElementById('m-lap-pelanggaran-kesantrian')?.value || '').trim()
   const payload = {
     periode: musyrifState.periode || getMonthInputToday(),
     guru_id: detail.waliGuruId,
@@ -1581,8 +2470,6 @@ async function saveMusyrifLaporanDetail() {
     keterangan_kebersihan: String(document.getElementById('m-lap-ket-kebersihan')?.value || '').trim() || null,
     nilai_adab: nilaiAdab || null,
     keterangan_adab: String(document.getElementById('m-lap-ket-adab')?.value || '').trim() || null,
-    prestasi_kesantrian: String(document.getElementById('m-lap-prestasi-kesantrian')?.value || '').trim() || null,
-    pelanggaran_kesantrian: pelanggaranManual || null,
     catatan_musyrif: String(document.getElementById('m-lap-catatan-musyrif')?.value || '').trim() || null
   }
 
@@ -1637,10 +2524,10 @@ async function renderMusyrifProfil() {
         <input id="musyrif-profil-alamat" type="text" value="${escapeHtml(profile.alamat || '')}" class="guru-field" autocomplete="off">
       </div>
       <div style="margin-bottom:12px;">
-        <label class="guru-label">Password Baru (opsional)</label>
-        <div style="display:flex; gap:8px; align-items:center;">
-          <input id="musyrif-profil-password" type="password" placeholder="Isi jika ingin ganti password" class="guru-field" autocomplete="new-password" style="flex:1;">
-          <button id="musyrif-profil-password-toggle" type="button" class="modal-btn" onclick="toggleMusyrifProfilePassword()">Lihat</button>
+        <label class="guru-label">Password</label>
+        <div style="position:relative;">
+          <input id="musyrif-profil-password" type="password" value="${escapeHtml(profile.password || '')}" placeholder="Password" class="guru-field" autocomplete="off" style="padding-right:46px;">
+          <button id="musyrif-profil-password-toggle" type="button" onclick="toggleMusyrifProfilePassword()" aria-label="Tampilkan password" title="Tampilkan/Sembunyikan password" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); border:none; background:transparent; cursor:pointer; font-size:16px; line-height:1;">👁</button>
         </div>
       </div>
       <button type="button" class="modal-btn modal-btn-primary" onclick="saveMusyrifProfil('${escapeHtml(profile.id)}')">Simpan Profil</button>
@@ -1652,9 +2539,10 @@ function toggleMusyrifProfilePassword() {
   const input = document.getElementById('musyrif-profil-password')
   const btn = document.getElementById('musyrif-profil-password-toggle')
   if (!input || !btn) return
-  const isHidden = input.type === 'password'
-  input.type = isHidden ? 'text' : 'password'
-  btn.textContent = isHidden ? 'Sembunyikan' : 'Lihat'
+  const willShow = input.type === 'password'
+  input.type = willShow ? 'text' : 'password'
+  btn.textContent = willShow ? '👁̶' : '👁'
+  btn.setAttribute('aria-label', willShow ? 'Sembunyikan password' : 'Tampilkan password')
 }
 
 async function saveMusyrifProfil(musyrifId) {
@@ -1690,8 +2578,760 @@ async function saveMusyrifProfil(musyrifId) {
   await renderMusyrifProfil()
 }
 
+function getMusyrifTodayDate() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function isMusyrifEkskulMissingTableError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  const code = String(error?.code || '').toUpperCase()
+  if (code === '42P01') return true
+  if (msg.includes('schema cache') && (
+    msg.includes(EKSKUL_TABLE) ||
+    msg.includes(EKSKUL_MEMBER_TABLE) ||
+    msg.includes(EKSKUL_INDIKATOR_TABLE) ||
+    msg.includes(EKSKUL_PROGRES_TABLE)
+  )) return true
+  return msg.includes('does not exist') && (
+    msg.includes(EKSKUL_TABLE) ||
+    msg.includes(EKSKUL_MEMBER_TABLE) ||
+    msg.includes(EKSKUL_INDIKATOR_TABLE) ||
+    msg.includes(EKSKUL_PROGRES_TABLE)
+  )
+}
+
+function isMusyrifEkskulMissingPj2ColumnError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  return msg.includes('pj_karyawan_id_2')
+}
+
+async function setupMusyrifEkskulAccess(forceReload = false) {
+  const btn = document.getElementById('musyrif-nav-ekskul')
+  const blockedByHigherPriorityRole = hasBaseRole('guru')
+  if (blockedByHigherPriorityRole) {
+    musyrifEkskulState.hasAccess = false
+    if (btn) btn.style.display = 'none'
+    return false
+  }
+  const profile = musyrifState.profile || await getCurrentMusyrif()
+  if (!profile?.id) {
+    musyrifEkskulState.hasAccess = false
+    if (btn) btn.style.display = 'none'
+    return false
+  }
+  if (!forceReload && musyrifEkskulState.hasAccess) {
+    if (btn) btn.style.display = ''
+    return true
+  }
+  let accessRes = await sb
+    .from(EKSKUL_TABLE)
+    .select('id')
+    .or(`pj_karyawan_id.eq.${String(profile.id)},pj_karyawan_id_2.eq.${String(profile.id)}`)
+    .eq('aktif', true)
+    .limit(1)
+  if (accessRes.error && isMusyrifEkskulMissingPj2ColumnError(accessRes.error)) {
+    accessRes = await sb
+      .from(EKSKUL_TABLE)
+      .select('id')
+      .eq('pj_karyawan_id', String(profile.id))
+      .eq('aktif', true)
+      .limit(1)
+  }
+  const { data, error } = accessRes
+  if (error) {
+    console.error(error)
+    if (btn) btn.style.display = 'none'
+    musyrifEkskulState.hasAccess = false
+    return false
+  }
+  const hasAccess = (data || []).length > 0
+  musyrifEkskulState.hasAccess = hasAccess
+  if (btn) btn.style.display = hasAccess ? '' : 'none'
+  return hasAccess
+}
+
+async function setupMusyrifPrestasiPelanggaranAccess(_forceReload = false) {
+  const btn = document.getElementById('musyrif-nav-prestasi-pelanggaran')
+  const isAllowed = parseRoleList().some(isWakasekKesantrianRole)
+  if (btn) btn.style.display = isAllowed ? '' : 'none'
+  return isAllowed
+}
+
+function getMusyrifPrestasiSantriLabel(item) {
+  const kelas = musyrifPrestasiPelanggaranState.kelasMap.get(String(item?.kelas_id || ''))
+  return `${String(item?.nama || '-')} (${String(kelas?.nama_kelas || '-')})`
+}
+
+function formatMusyrifPrestasiDate(value) {
+  const text = String(value || '').slice(0, 10)
+  if (!text) return '-'
+  const date = new Date(`${text}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return text
+  return date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+function resetMusyrifPrestasiForm() {
+  musyrifPrestasiPelanggaranState.editingPrestasiId = ''
+  const fields = [
+    ['spp-prestasi-kelas-filter', ''],
+    ['spp-prestasi-santri-search', ''],
+    ['spp-prestasi-waktu', getMusyrifTodayDate()],
+    ['spp-prestasi-judul', ''],
+    ['spp-prestasi-sertifikat', '']
+  ]
+  fields.forEach(([id, value]) => {
+    const el = document.getElementById(id)
+    if (el) el.value = value
+  })
+  renderMusyrifPrestasiSantriSearchList('prestasi')
+}
+
+function resetMusyrifPelanggaranForm() {
+  musyrifPrestasiPelanggaranState.editingPelanggaranId = ''
+  const fields = [
+    ['spp-pelanggaran-kelas-filter', ''],
+    ['spp-pelanggaran-santri-search', ''],
+    ['spp-pelanggaran-waktu', getMusyrifTodayDate()],
+    ['spp-pelanggaran-judul', ''],
+    ['spp-pelanggaran-hukuman', ''],
+    ['spp-pelanggaran-surat-jenis', ''],
+    ['spp-pelanggaran-surat-url', '']
+  ]
+  fields.forEach(([id, value]) => {
+    const el = document.getElementById(id)
+    if (el) el.value = value
+  })
+  renderMusyrifPrestasiSantriSearchList('pelanggaran')
+}
+
+function setMusyrifPrestasiTab(tab) {
+  const mode = tab === 'pelanggaran' ? 'pelanggaran' : 'prestasi'
+  musyrifPrestasiPelanggaranState.tab = mode
+  const prestasiPanel = document.getElementById('spp-panel-prestasi')
+  const pelanggaranPanel = document.getElementById('spp-panel-pelanggaran')
+  const prestasiList = document.getElementById('spp-list-prestasi')
+  const pelanggaranList = document.getElementById('spp-list-pelanggaran')
+  const btnPrestasi = document.getElementById('spp-tab-prestasi')
+  const btnPelanggaran = document.getElementById('spp-tab-pelanggaran')
+  if (prestasiPanel) prestasiPanel.style.display = mode === 'prestasi' ? 'block' : 'none'
+  if (pelanggaranPanel) pelanggaranPanel.style.display = mode === 'pelanggaran' ? 'block' : 'none'
+  if (prestasiList) prestasiList.style.display = mode === 'prestasi' ? 'block' : 'none'
+  if (pelanggaranList) pelanggaranList.style.display = mode === 'pelanggaran' ? 'block' : 'none'
+  if (btnPrestasi) btnPrestasi.classList.toggle('modal-btn-primary', mode === 'prestasi')
+  if (btnPelanggaran) btnPelanggaran.classList.toggle('modal-btn-primary', mode === 'pelanggaran')
+}
+
+function renderMusyrifPrestasiSantriSearchList(mode) {
+  const isPrestasi = mode === 'prestasi'
+  const filterEl = document.getElementById(isPrestasi ? 'spp-prestasi-kelas-filter' : 'spp-pelanggaran-kelas-filter')
+  const listEl = document.getElementById(isPrestasi ? 'spp-prestasi-santri-list' : 'spp-pelanggaran-santri-list')
+  if (!filterEl || !listEl) return
+  const kelasId = String(filterEl.value || '').trim()
+  const rows = (musyrifPrestasiPelanggaranState.santriRows || []).filter(item => !kelasId || String(item.kelas_id || '') === kelasId)
+  listEl.innerHTML = rows.map(item => `<option value="${escapeHtml(getMusyrifPrestasiSantriLabel(item))}"></option>`).join('')
+}
+
+function onMusyrifPrestasiClassFilterChange(mode) {
+  renderMusyrifPrestasiSantriSearchList(mode)
+}
+
+function resolveMusyrifPrestasiSantriId(mode) {
+  const isPrestasi = mode === 'prestasi'
+  const searchEl = document.getElementById(isPrestasi ? 'spp-prestasi-santri-search' : 'spp-pelanggaran-santri-search')
+  const filterEl = document.getElementById(isPrestasi ? 'spp-prestasi-kelas-filter' : 'spp-pelanggaran-kelas-filter')
+  const text = String(searchEl?.value || '').trim().toLowerCase()
+  const kelasId = String(filterEl?.value || '').trim()
+  if (!text) return ''
+  const rows = (musyrifPrestasiPelanggaranState.santriRows || []).filter(item => !kelasId || String(item.kelas_id || '') === kelasId)
+  const exactLabel = rows.find(item => getMusyrifPrestasiSantriLabel(item).toLowerCase() === text)
+  if (exactLabel?.id) return String(exactLabel.id)
+  const exactName = rows.filter(item => String(item.nama || '').trim().toLowerCase() === text)
+  if (exactName.length === 1) return String(exactName[0].id || '')
+  return ''
+}
+
+function openMusyrifPrestasiDoc(url) {
+  const link = String(url || '').trim()
+  if (!link) {
+    alert('Dokumen belum tersedia.')
+    return
+  }
+  const overlay = document.getElementById('spp-doc-overlay')
+  const frame = document.getElementById('spp-doc-frame')
+  const dl = document.getElementById('spp-doc-download')
+  if (!overlay || !frame || !dl) return
+  frame.src = link
+  dl.href = link
+  overlay.style.display = 'block'
+}
+
+function closeMusyrifPrestasiDoc() {
+  const overlay = document.getElementById('spp-doc-overlay')
+  const frame = document.getElementById('spp-doc-frame')
+  if (!overlay || !frame) return
+  frame.src = 'about:blank'
+  overlay.style.display = 'none'
+}
+
+async function uploadMusyrifPelanggaranSuratFile(event) {
+  const file = event?.target?.files?.[0]
+  if (!file) return
+  try {
+    const ext = String(file.name || '').split('.').pop() || 'bin'
+    const filePath = `surat/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+    const { error: uploadError } = await sb.storage.from(SANTRI_SURAT_BUCKET).upload(filePath, file, { upsert: true, cacheControl: '3600' })
+    if (uploadError) throw uploadError
+    const { data } = sb.storage.from(SANTRI_SURAT_BUCKET).getPublicUrl(filePath)
+    const input = document.getElementById('spp-pelanggaran-surat-url')
+    if (input) input.value = String(data?.publicUrl || '')
+    alert('Upload surat berhasil.')
+  } catch (error) {
+    console.error(error)
+    alert(`Gagal upload surat: ${error?.message || 'Unknown error'}`)
+  } finally {
+    event.target.value = ''
+  }
+}
+
+function renderMusyrifPrestasiLists() {
+  const santriMap = new Map((musyrifPrestasiPelanggaranState.santriRows || []).map(item => [String(item.id || ''), item]))
+  const prestasiBox = document.getElementById('spp-list-prestasi')
+  const pelanggaranBox = document.getElementById('spp-list-pelanggaran')
+  if (prestasiBox) {
+    const rows = musyrifPrestasiPelanggaranState.prestasiRows || []
+    prestasiBox.innerHTML = rows.length ? `
+      <div style="overflow:auto;"><table style="width:100%; min-width:980px; border-collapse:collapse; font-size:12px;"><thead><tr style="background:#f8fafc;"><th style="padding:7px; border:1px solid #e2e8f0;">No</th><th style="padding:7px; border:1px solid #e2e8f0;">Santri</th><th style="padding:7px; border:1px solid #e2e8f0;">Waktu</th><th style="padding:7px; border:1px solid #e2e8f0;">Kategori</th><th style="padding:7px; border:1px solid #e2e8f0;">Prestasi</th><th style="padding:7px; border:1px solid #e2e8f0;">Sertifikat</th><th style="padding:7px; border:1px solid #e2e8f0;">Aksi</th></tr></thead><tbody>
+      ${rows.map((row, idx) => `<tr><td style="padding:7px; border:1px solid #e2e8f0; text-align:center;">${idx + 1}</td><td style="padding:7px; border:1px solid #e2e8f0;">${escapeHtml(String(santriMap.get(String(row.santri_id || ''))?.nama || '-'))}</td><td style="padding:7px; border:1px solid #e2e8f0;">${escapeHtml(formatMusyrifPrestasiDate(row.waktu))}</td><td style="padding:7px; border:1px solid #e2e8f0;">Kesantrian</td><td style="padding:7px; border:1px solid #e2e8f0;">${escapeHtml(String(row.judul || '-'))}</td><td style="padding:7px; border:1px solid #e2e8f0;"><button type="button" class="modal-btn" onclick="openMusyrifPrestasiDoc('${escapeHtml(String(row.sertifikat_url || ''))}')">Lihat</button></td><td style="padding:7px; border:1px solid #e2e8f0;"><button type="button" class="modal-btn" onclick="editMusyrifPrestasiEntry('${escapeHtml(String(row.id || ''))}')">Edit</button><button type="button" class="modal-btn" style="margin-left:6px;" onclick="deleteMusyrifPrestasiEntry('${escapeHtml(String(row.id || ''))}')">Hapus</button></td></tr>`).join('')}
+      </tbody></table></div>
+    ` : '<div style="color:#64748b;">Belum ada data prestasi kesantrian.</div>'
+  }
+  if (pelanggaranBox) {
+    const rows = musyrifPrestasiPelanggaranState.pelanggaranRows || []
+    pelanggaranBox.innerHTML = rows.length ? `
+      <div style="overflow:auto;"><table style="width:100%; min-width:1160px; border-collapse:collapse; font-size:12px;"><thead><tr style="background:#f8fafc;"><th style="padding:7px; border:1px solid #e2e8f0;">No</th><th style="padding:7px; border:1px solid #e2e8f0;">Santri</th><th style="padding:7px; border:1px solid #e2e8f0;">Waktu</th><th style="padding:7px; border:1px solid #e2e8f0;">Kategori</th><th style="padding:7px; border:1px solid #e2e8f0;">Pelanggaran</th><th style="padding:7px; border:1px solid #e2e8f0;">Hukuman</th><th style="padding:7px; border:1px solid #e2e8f0;">Surat</th><th style="padding:7px; border:1px solid #e2e8f0;">Dokumen</th><th style="padding:7px; border:1px solid #e2e8f0;">Aksi</th></tr></thead><tbody>
+      ${rows.map((row, idx) => `<tr><td style="padding:7px; border:1px solid #e2e8f0; text-align:center;">${idx + 1}</td><td style="padding:7px; border:1px solid #e2e8f0;">${escapeHtml(String(santriMap.get(String(row.santri_id || ''))?.nama || '-'))}</td><td style="padding:7px; border:1px solid #e2e8f0;">${escapeHtml(formatMusyrifPrestasiDate(row.waktu))}</td><td style="padding:7px; border:1px solid #e2e8f0;">Kesantrian</td><td style="padding:7px; border:1px solid #e2e8f0;">${escapeHtml(String(row.judul || '-'))}</td><td style="padding:7px; border:1px solid #e2e8f0;">${escapeHtml(String(row.hukuman || '-'))}</td><td style="padding:7px; border:1px solid #e2e8f0;">${escapeHtml(String(row.surat_jenis || '-'))}</td><td style="padding:7px; border:1px solid #e2e8f0;"><button type="button" class="modal-btn" onclick="openMusyrifPrestasiDoc('${escapeHtml(String(row.surat_url || ''))}')">Lihat</button></td><td style="padding:7px; border:1px solid #e2e8f0;"><button type="button" class="modal-btn" onclick="editMusyrifPelanggaranEntry('${escapeHtml(String(row.id || ''))}')">Edit</button><button type="button" class="modal-btn" style="margin-left:6px;" onclick="deleteMusyrifPelanggaranEntry('${escapeHtml(String(row.id || ''))}')">Hapus</button></td></tr>`).join('')}
+      </tbody></table></div>
+    ` : '<div style="color:#64748b;">Belum ada data pelanggaran kesantrian.</div>'
+  }
+}
+
+async function loadMusyrifPrestasiPelanggaranData() {
+  const [santriRes, kelasRes, prestasiRes, pelanggaranRes] = await Promise.all([
+    sb.from('santri').select('id, nama, kelas_id, aktif').eq('aktif', true).order('nama'),
+    sb.from('kelas').select('id, nama_kelas').order('nama_kelas'),
+    sb.from(SANTRI_PRESTASI_TABLE).select('id, santri_id, waktu, kategori, judul, sertifikat_url, created_at').eq('kategori', 'kemusyrifan').order('waktu', { ascending: false }).order('created_at', { ascending: false }),
+    sb.from(SANTRI_PELANGGARAN_TABLE).select('id, santri_id, waktu, kategori, judul, hukuman, surat_jenis, surat_url, created_at').eq('kategori', 'kemusyrifan').order('waktu', { ascending: false }).order('created_at', { ascending: false })
+  ])
+  const err = santriRes.error || kelasRes.error || prestasiRes.error || pelanggaranRes.error
+  if (err) throw err
+  musyrifPrestasiPelanggaranState.santriRows = santriRes.data || []
+  musyrifPrestasiPelanggaranState.kelasMap = new Map((kelasRes.data || []).map(item => [String(item.id || ''), item]))
+  musyrifPrestasiPelanggaranState.prestasiRows = prestasiRes.data || []
+  musyrifPrestasiPelanggaranState.pelanggaranRows = pelanggaranRes.data || []
+}
+
+async function saveMusyrifPrestasiEntry() {
+  const santriId = resolveMusyrifPrestasiSantriId('prestasi')
+  const waktu = String(document.getElementById('spp-prestasi-waktu')?.value || '').trim()
+  const judul = String(document.getElementById('spp-prestasi-judul')?.value || '').trim()
+  const sertifikatUrl = String(document.getElementById('spp-prestasi-sertifikat')?.value || '').trim()
+  if (!santriId || !waktu || !judul) {
+    alert('Nama santri, waktu, dan prestasi wajib diisi.')
+    return
+  }
+  const payload = { santri_id: santriId, waktu, kategori: 'kemusyrifan', judul, sertifikat_url: sertifikatUrl || null }
+  const res = musyrifPrestasiPelanggaranState.editingPrestasiId
+    ? await sb.from(SANTRI_PRESTASI_TABLE).update(payload).eq('id', musyrifPrestasiPelanggaranState.editingPrestasiId)
+    : await sb.from(SANTRI_PRESTASI_TABLE).insert([payload])
+  if (res.error) {
+    alert(`Gagal simpan prestasi: ${res.error.message || 'Unknown error'}`)
+    return
+  }
+  resetMusyrifPrestasiForm()
+  await loadMusyrifPrestasiPelanggaranData()
+  renderMusyrifPrestasiLists()
+}
+
+async function saveMusyrifPelanggaranEntry() {
+  const santriId = resolveMusyrifPrestasiSantriId('pelanggaran')
+  const waktu = String(document.getElementById('spp-pelanggaran-waktu')?.value || '').trim()
+  const judul = String(document.getElementById('spp-pelanggaran-judul')?.value || '').trim()
+  const hukuman = String(document.getElementById('spp-pelanggaran-hukuman')?.value || '').trim()
+  const suratJenis = String(document.getElementById('spp-pelanggaran-surat-jenis')?.value || '').trim()
+  const suratUrl = String(document.getElementById('spp-pelanggaran-surat-url')?.value || '').trim()
+  if (!santriId || !waktu || !judul) {
+    alert('Nama santri, waktu, dan pelanggaran wajib diisi.')
+    return
+  }
+  const payload = { santri_id: santriId, waktu, kategori: 'kemusyrifan', judul, hukuman: hukuman || null, surat_jenis: suratJenis || null, surat_url: suratUrl || null }
+  const res = musyrifPrestasiPelanggaranState.editingPelanggaranId
+    ? await sb.from(SANTRI_PELANGGARAN_TABLE).update(payload).eq('id', musyrifPrestasiPelanggaranState.editingPelanggaranId)
+    : await sb.from(SANTRI_PELANGGARAN_TABLE).insert([payload])
+  if (res.error) {
+    alert(`Gagal simpan pelanggaran: ${res.error.message || 'Unknown error'}`)
+    return
+  }
+  resetMusyrifPelanggaranForm()
+  await loadMusyrifPrestasiPelanggaranData()
+  renderMusyrifPrestasiLists()
+}
+
+function editMusyrifPrestasiEntry(id) {
+  const row = (musyrifPrestasiPelanggaranState.prestasiRows || []).find(item => String(item.id || '') === String(id || ''))
+  if (!row) return
+  const santri = (musyrifPrestasiPelanggaranState.santriRows || []).find(item => String(item.id || '') === String(row.santri_id || ''))
+  musyrifPrestasiPelanggaranState.editingPrestasiId = String(row.id || '')
+  const kelasFilter = document.getElementById('spp-prestasi-kelas-filter')
+  if (kelasFilter) kelasFilter.value = String(santri?.kelas_id || '')
+  renderMusyrifPrestasiSantriSearchList('prestasi')
+  const search = document.getElementById('spp-prestasi-santri-search')
+  if (search) search.value = getMusyrifPrestasiSantriLabel(santri || {})
+  document.getElementById('spp-prestasi-waktu').value = String(row.waktu || '').slice(0, 10)
+  document.getElementById('spp-prestasi-judul').value = String(row.judul || '')
+  document.getElementById('spp-prestasi-sertifikat').value = String(row.sertifikat_url || '')
+}
+
+function editMusyrifPelanggaranEntry(id) {
+  const row = (musyrifPrestasiPelanggaranState.pelanggaranRows || []).find(item => String(item.id || '') === String(id || ''))
+  if (!row) return
+  const santri = (musyrifPrestasiPelanggaranState.santriRows || []).find(item => String(item.id || '') === String(row.santri_id || ''))
+  musyrifPrestasiPelanggaranState.editingPelanggaranId = String(row.id || '')
+  const kelasFilter = document.getElementById('spp-pelanggaran-kelas-filter')
+  if (kelasFilter) kelasFilter.value = String(santri?.kelas_id || '')
+  renderMusyrifPrestasiSantriSearchList('pelanggaran')
+  const search = document.getElementById('spp-pelanggaran-santri-search')
+  if (search) search.value = getMusyrifPrestasiSantriLabel(santri || {})
+  document.getElementById('spp-pelanggaran-waktu').value = String(row.waktu || '').slice(0, 10)
+  document.getElementById('spp-pelanggaran-judul').value = String(row.judul || '')
+  document.getElementById('spp-pelanggaran-hukuman').value = String(row.hukuman || '')
+  document.getElementById('spp-pelanggaran-surat-jenis').value = String(row.surat_jenis || '')
+  document.getElementById('spp-pelanggaran-surat-url').value = String(row.surat_url || '')
+}
+
+async function deleteMusyrifPrestasiEntry(id) {
+  if (!confirm('Hapus data prestasi ini?')) return
+  const { error } = await sb.from(SANTRI_PRESTASI_TABLE).delete().eq('id', String(id || ''))
+  if (error) {
+    alert(`Gagal hapus prestasi: ${error.message || 'Unknown error'}`)
+    return
+  }
+  await loadMusyrifPrestasiPelanggaranData()
+  renderMusyrifPrestasiLists()
+}
+
+async function deleteMusyrifPelanggaranEntry(id) {
+  if (!confirm('Hapus data pelanggaran ini?')) return
+  const { error } = await sb.from(SANTRI_PELANGGARAN_TABLE).delete().eq('id', String(id || ''))
+  if (error) {
+    alert(`Gagal hapus pelanggaran: ${error.message || 'Unknown error'}`)
+    return
+  }
+  await loadMusyrifPrestasiPelanggaranData()
+  renderMusyrifPrestasiLists()
+}
+
+async function renderMusyrifPrestasiPelanggaranPage() {
+  const content = document.getElementById('musyrif-content')
+  if (!content) return
+  content.innerHTML = '<div class="placeholder-card">Loading prestasi & pelanggaran...</div>'
+  try {
+    await loadMusyrifPrestasiPelanggaranData()
+    content.innerHTML = `
+      <div style="display:grid; gap:12px;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="spp-tab-prestasi" type="button" class="modal-btn modal-btn-primary" onclick="setMusyrifPrestasiTab('prestasi')">Prestasi</button>
+          <button id="spp-tab-pelanggaran" type="button" class="modal-btn" onclick="setMusyrifPrestasiTab('pelanggaran')">Pelanggaran</button>
+        </div>
+        <div id="spp-panel-prestasi" style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+          <div style="font-weight:700; margin-bottom:8px;">Input Prestasi Kesantrian</div>
+          <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px;">
+            <div><label class="guru-label">Filter Kelas</label><select id="spp-prestasi-kelas-filter" class="guru-field" onchange="onMusyrifPrestasiClassFilterChange('prestasi')"></select></div>
+            <div><label class="guru-label">Nama Santri (Ketik / Cari)</label><input id="spp-prestasi-santri-search" class="guru-field" type="text" list="spp-prestasi-santri-list" placeholder="Ketik nama santri..."><datalist id="spp-prestasi-santri-list"></datalist></div>
+            <div><label class="guru-label">Waktu</label><input id="spp-prestasi-waktu" class="guru-field" type="date" value="${escapeHtml(getMusyrifTodayDate())}"></div>
+            <div><label class="guru-label">Kategori</label><input class="guru-field" type="text" value="Kesantrian" readonly style="background:#f8fafc;color:#475569;"></div>
+            <div style="grid-column:1/-1;"><label class="guru-label">Prestasi</label><input id="spp-prestasi-judul" class="guru-field" type="text" placeholder="Contoh: Teladan Adab Asrama"></div>
+            <div style="grid-column:1/-1;"><label class="guru-label">Sertifikat (URL File)</label><input id="spp-prestasi-sertifikat" class="guru-field" type="text" placeholder="https://..."></div>
+          </div>
+          <div style="display:flex; gap:8px; margin-top:10px;"><button type="button" class="modal-btn modal-btn-primary" onclick="saveMusyrifPrestasiEntry()">Simpan</button><button type="button" class="modal-btn" onclick="resetMusyrifPrestasiForm()">Reset</button></div>
+        </div>
+        <div id="spp-panel-pelanggaran" style="display:none; border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+          <div style="font-weight:700; margin-bottom:8px;">Input Pelanggaran Kesantrian</div>
+          <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px;">
+            <div><label class="guru-label">Filter Kelas</label><select id="spp-pelanggaran-kelas-filter" class="guru-field" onchange="onMusyrifPrestasiClassFilterChange('pelanggaran')"></select></div>
+            <div><label class="guru-label">Nama Santri (Ketik / Cari)</label><input id="spp-pelanggaran-santri-search" class="guru-field" type="text" list="spp-pelanggaran-santri-list" placeholder="Ketik nama santri..."><datalist id="spp-pelanggaran-santri-list"></datalist></div>
+            <div><label class="guru-label">Waktu</label><input id="spp-pelanggaran-waktu" class="guru-field" type="date" value="${escapeHtml(getMusyrifTodayDate())}"></div>
+            <div><label class="guru-label">Kategori</label><input class="guru-field" type="text" value="Kesantrian" readonly style="background:#f8fafc;color:#475569;"></div>
+            <div><label class="guru-label">Pelanggaran</label><input id="spp-pelanggaran-judul" class="guru-field" type="text" placeholder="Deskripsi pelanggaran"></div>
+            <div><label class="guru-label">Jenis Hukuman</label><input id="spp-pelanggaran-hukuman" class="guru-field" type="text" placeholder="Jenis hukuman"></div>
+            <div><label class="guru-label">Surat Peringatan</label><select id="spp-pelanggaran-surat-jenis" class="guru-field"><option value="">- Pilih -</option><option value="Sanksi dan Teguran">Sanksi dan Teguran</option><option value="ST1">ST1</option><option value="ST2">ST2</option><option value="ST3">ST3</option><option value="SP1">SP1</option><option value="SP2">SP2</option><option value="SP3">SP3</option><option value="DO">DO</option></select></div>
+            <div style="grid-column:1/-1;"><label class="guru-label">Surat Pemberitahuan (URL File)</label><input id="spp-pelanggaran-surat-url" class="guru-field" type="text" placeholder="https://..."><div style="margin-top:8px;"><input id="spp-pelanggaran-surat-file" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" style="display:none;" onchange="uploadMusyrifPelanggaranSuratFile(event)"><button type="button" class="modal-btn" onclick="document.getElementById('spp-pelanggaran-surat-file')?.click()">Upload File</button></div></div>
+          </div>
+          <div style="display:flex; gap:8px; margin-top:10px;"><button type="button" class="modal-btn modal-btn-primary" onclick="saveMusyrifPelanggaranEntry()">Simpan</button><button type="button" class="modal-btn" onclick="resetMusyrifPelanggaranForm()">Reset</button></div>
+        </div>
+        <div id="spp-list-prestasi" style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">Loading...</div>
+        <div id="spp-list-pelanggaran" style="display:none; border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">Loading...</div>
+      </div>
+      <div id="spp-doc-overlay" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.45); z-index:3000; padding:20px;">
+        <div style="max-width:960px; margin:0 auto; background:#fff; border:1px solid #e2e8f0; border-radius:12px; overflow:hidden;">
+          <div style="display:flex; justify-content:space-between; padding:12px; border-bottom:1px solid #e2e8f0;"><div style="font-weight:700;">Dokumen</div><div style="display:flex; gap:8px;"><a id="spp-doc-download" href="#" target="_blank" rel="noopener" class="modal-btn">Download</a><button type="button" class="modal-btn" onclick="closeMusyrifPrestasiDoc()">Tutup</button></div></div>
+          <div style="padding:12px;"><iframe id="spp-doc-frame" title="Dokumen" style="width:100%; height:70vh; border:1px solid #e2e8f0; border-radius:8px;"></iframe></div>
+        </div>
+      </div>
+    `
+    const kelasOptions = ['<option value="">Semua Kelas</option>', ...Array.from(musyrifPrestasiPelanggaranState.kelasMap.values()).map(item => `<option value="${escapeHtml(String(item.id || ''))}">${escapeHtml(String(item.nama_kelas || '-'))}</option>`)]
+    const prestasiFilter = document.getElementById('spp-prestasi-kelas-filter')
+    const pelanggaranFilter = document.getElementById('spp-pelanggaran-kelas-filter')
+    if (prestasiFilter) prestasiFilter.innerHTML = kelasOptions.join('')
+    if (pelanggaranFilter) pelanggaranFilter.innerHTML = kelasOptions.join('')
+    renderMusyrifPrestasiSantriSearchList('prestasi')
+    renderMusyrifPrestasiSantriSearchList('pelanggaran')
+    renderMusyrifPrestasiLists()
+    setMusyrifPrestasiTab('prestasi')
+  } catch (error) {
+    console.error(error)
+    content.innerHTML = `<div class="placeholder-card">Gagal load prestasi & pelanggaran: ${escapeHtml(error?.message || 'Unknown error')}</div>`
+  }
+}
+
+function getMusyrifSelectedEkskul() {
+  const eid = String(musyrifEkskulState.selectedEkskulId || '')
+  return (musyrifEkskulState.ekskulRows || []).find(item => String(item.id || '') === eid) || null
+}
+
+function renderMusyrifEkskulMemberList() {
+  const box = document.getElementById('musyrif-ekskul-member-list')
+  if (!box) return
+  const selected = getMusyrifSelectedEkskul()
+  if (!selected) {
+    box.innerHTML = '<div style="color:#64748b; font-size:12px;">Pilih ekskul terlebih dahulu.</div>'
+    return
+  }
+  const santriMap = new Map((musyrifEkskulState.santriRows || []).map(item => [String(item.id || ''), item]))
+  const rows = (musyrifEkskulState.memberRows || []).filter(item => String(item.ekskul_id || '') === String(selected.id || ''))
+  if (!rows.length) {
+    box.innerHTML = '<div style="color:#64748b; font-size:12px;">Belum ada anggota.</div>'
+    return
+  }
+  box.innerHTML = rows.map((item, idx) => {
+    const sid = String(item.santri_id || '')
+    const isActive = String(musyrifEkskulState.selectedSantriId || '') === sid
+    return `<div style=\"display:grid; grid-template-columns:1fr auto; gap:6px; align-items:center; padding:8px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px; background:#fff;\"><button type=\"button\" class=\"modal-btn\" onclick=\"selectMusyrifEkskulSantri('${escapeHtml(sid)}')\" style=\"display:block; width:100%; text-align:left; font-size:13px; ${isActive ? 'border-color:#d4d456; background:#fefce8; font-weight:700;' : 'font-weight:500;'}\">${idx + 1}. ${escapeHtml(String(santriMap.get(sid)?.nama || '-'))}</button><button type=\"button\" class=\"modal-btn\" onclick=\"openMusyrifEkskulSantriDetail('${escapeHtml(sid)}')\">Detail</button></div>`
+  }).join('')
+}
+
+function renderMusyrifEkskulSelects() {
+  const selected = getMusyrifSelectedEkskul()
+  const santriSel = document.getElementById('musyrif-ekskul-santri')
+  if (santriSel) {
+    if (!selected) {
+      santriSel.innerHTML = '<option value=\"\">Pilih ekskul dulu</option>'
+    } else {
+      const joined = new Set((musyrifEkskulState.memberRows || []).filter(item => String(item.ekskul_id || '') === String(selected.id || '')).map(item => String(item.santri_id || '')))
+      const options = ['<option value=\"\">Pilih siswa...</option>']
+      ;(musyrifEkskulState.santriRows || []).forEach(item => {
+        const sid = String(item.id || '')
+        if (!sid || joined.has(sid)) return
+        options.push(`<option value=\"${escapeHtml(sid)}\">${escapeHtml(String(item.nama || '-'))}</option>`)
+      })
+      santriSel.innerHTML = options.join('')
+    }
+  }
+  const indikatorRows = (musyrifEkskulState.indikatorRows || []).filter(item => String(item.ekskul_id || '') === String(selected?.id || ''))
+  const indikatorBox = document.getElementById('musyrif-ekskul-indikator-list')
+  if (indikatorBox) {
+    indikatorBox.innerHTML = indikatorRows.length
+      ? indikatorRows.map(item => `<div style=\"padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px;\"><div style=\"font-weight:600; font-size:13px;\">${escapeHtml(String(item.nama || '-'))}</div><div style=\"font-size:12px; color:#64748b;\">${escapeHtml(String(item.deskripsi || '-'))}</div></div>`).join('')
+      : '<div style=\"color:#64748b; font-size:12px;\">Belum ada indikator.</div>'
+  }
+}
+
+function renderMusyrifEkskulProgressList() {
+  const box = document.getElementById('musyrif-ekskul-progres-list')
+  if (!box) return
+  const eid = String(musyrifEkskulState.selectedEkskulId || '')
+  const sid = String(musyrifEkskulState.selectedSantriId || '')
+  if (!eid || !sid) {
+    box.innerHTML = '<div style=\"color:#64748b; font-size:12px;\">Pilih anggota untuk melihat progres.</div>'
+    return
+  }
+  const indikatorMap = new Map((musyrifEkskulState.indikatorRows || []).map(item => [String(item.id || ''), item]))
+  const rows = (musyrifEkskulState.progressRows || []).filter(item => String(item.ekskul_id || '') === eid && String(item.santri_id || '') === sid)
+  if (!rows.length) {
+    box.innerHTML = '<div style=\"color:#64748b; font-size:12px;\">Belum ada catatan progres.</div>'
+    return
+  }
+  box.innerHTML = rows.map(item => `<div style=\"padding:8px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px;\"><div style=\"font-size:12px; color:#64748b;\">${escapeHtml(String(item.tanggal || '-'))} | ${escapeHtml(String(indikatorMap.get(String(item.indikator_id || ''))?.nama || 'Umum'))}</div><div style=\"margin-top:4px;\">${escapeHtml(String(item.catatan || '-'))}</div><div style=\"font-size:12px; color:#64748b;\">Nilai: ${escapeHtml(String(item.nilai ?? '-'))}</div></div>`).join('')
+}
+
+function musyrifEkskulUpdateIndicatorStars(inputEl) {
+  if (!inputEl) return
+  const wrap = inputEl.closest('[data-musyrif-ekskul-indikator-row="1"]')
+  const starEl = wrap?.querySelector('[data-musyrif-ekskul-star-view="1"]')
+  if (!starEl) return
+  const parsed = Number(String(inputEl.value || '').trim())
+  const score = Number.isFinite(parsed) ? Math.max(1, Math.min(100, parsed)) : 0
+  const rating = score > 0 ? Math.round((score / 20) * 2) / 2 : 0
+  const full = Math.floor(rating)
+  const half = rating - full >= 0.5
+  let html = ''
+  for (let i = 0; i < 5; i += 1) {
+    if (i < full) html += '<span style="color:#f59e0b; font-size:17px; line-height:1;">&#9733;</span>'
+    else if (i === full && half) html += '<span style="background:linear-gradient(90deg,#f59e0b 50%,#cbd5e1 50%); -webkit-background-clip:text; background-clip:text; color:transparent; -webkit-text-fill-color:transparent; font-size:17px; line-height:1;">&#9733;</span>'
+    else html += '<span style="color:#cbd5e1; font-size:17px; line-height:1;">&#9733;</span>'
+  }
+  starEl.innerHTML = html
+}
+
+function renderMusyrifEkskulProgressInputRows() {
+  const box = document.getElementById('musyrif-ekskul-progres-input-list')
+  if (!box) return
+  const selected = getMusyrifSelectedEkskul()
+  const sid = String(musyrifEkskulState.selectedSantriId || '').trim()
+  if (!selected || !sid) {
+    box.innerHTML = '<div style=\"color:#64748b; font-size:12px;\">Pilih santri terlebih dahulu.</div>'
+    return
+  }
+  const santriMap = new Map((musyrifEkskulState.santriRows || []).map(item => [String(item.id || ''), item]))
+  const indikatorRows = (musyrifEkskulState.indikatorRows || []).filter(item => String(item.ekskul_id || '') === String(selected.id || ''))
+  if (!indikatorRows.length) {
+    box.innerHTML = '<div style=\"color:#64748b; font-size:12px;\">Belum ada indikator.</div>'
+    return
+  }
+  box.innerHTML = `
+    <div style="margin-bottom:8px;"><strong>Santri:</strong> ${escapeHtml(String(santriMap.get(sid)?.nama || '-'))}</div>
+    <div style="overflow:auto;">
+      <table style="width:100%; min-width:900px; border-collapse:collapse; font-size:13px;">
+        <thead><tr style="background:#f8fafc;"><th style="padding:8px; border:1px solid #e2e8f0; width:52px;">No</th><th style="padding:8px; border:1px solid #e2e8f0;">Indikator</th><th style="padding:8px; border:1px solid #e2e8f0; width:220px;">Nilai</th><th style="padding:8px; border:1px solid #e2e8f0;">Catatan</th></tr></thead>
+        <tbody>
+          ${indikatorRows.map((indikator, idx) => `<tr data-musyrif-ekskul-indikator-row="1" data-indikator-id="${escapeHtml(String(indikator.id || ''))}"><td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${idx + 1}</td><td style="padding:8px; border:1px solid #e2e8f0;"><div style="font-weight:600;">${escapeHtml(String(indikator.nama || '-'))}</div><div style="font-size:11px; color:#64748b;">${escapeHtml(String(indikator.deskripsi || '-'))}</div></td><td style="padding:8px; border:1px solid #e2e8f0;"><div style="display:grid; grid-template-columns:86px 1fr; gap:8px; align-items:center;"><input class="guru-field" type="number" min="1" max="100" step="1" placeholder="1-100" data-musyrif-ekskul-indikator-nilai="1" oninput="musyrifEkskulUpdateIndicatorStars(this)"><div data-musyrif-ekskul-star-view="1">${Array.from({ length: 5 }).map(() => '<span style="color:#cbd5e1; font-size:17px; line-height:1;">&#9733;</span>').join('')}</div></div></td><td style="padding:8px; border:1px solid #e2e8f0;"><input class="guru-field" type="text" placeholder="Catatan indikator" data-musyrif-ekskul-indikator-catatan="1"></td></tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `
+}
+
+function openMusyrifEkskulSantriDetail(sid) {
+  selectMusyrifEkskulSantri(sid)
+  const overlay = document.getElementById('musyrif-ekskul-santri-detail-overlay')
+  const body = document.getElementById('musyrif-ekskul-santri-detail-body')
+  if (!overlay || !body) return
+  renderMusyrifEkskulProgressList()
+  body.innerHTML = document.getElementById('musyrif-ekskul-progres-list')?.innerHTML || '-'
+  overlay.style.display = 'block'
+}
+
+function closeMusyrifEkskulSantriDetail() {
+  const overlay = document.getElementById('musyrif-ekskul-santri-detail-overlay')
+  if (overlay) overlay.style.display = 'none'
+}
+
+async function selectMusyrifEkskul(id) {
+  musyrifEkskulState.selectedEkskulId = String(id || '')
+  musyrifEkskulState.selectedSantriId = ''
+  renderMusyrifEkskulMemberList()
+  renderMusyrifEkskulSelects()
+  renderMusyrifEkskulProgressInputRows()
+  renderMusyrifEkskulProgressList()
+}
+
+function selectMusyrifEkskulSantri(sid) {
+  musyrifEkskulState.selectedSantriId = String(sid || '')
+  renderMusyrifEkskulMemberList()
+  renderMusyrifEkskulProgressInputRows()
+  renderMusyrifEkskulProgressList()
+}
+
+async function addMusyrifEkskulMember() {
+  const eid = String(musyrifEkskulState.selectedEkskulId || '')
+  const sid = String(document.getElementById('musyrif-ekskul-santri')?.value || '').trim()
+  if (!eid || !sid) {
+    alert('Pilih ekskul dan siswa terlebih dahulu.')
+    return
+  }
+  const { error } = await sb.from(EKSKUL_MEMBER_TABLE).insert([{ ekskul_id: eid, santri_id: sid }])
+  if (error) {
+    alert(`Gagal tambah anggota: ${error.message || 'Unknown error'}`)
+    return
+  }
+  await renderMusyrifEkskulPage(true)
+}
+
+async function addMusyrifEkskulIndikator() {
+  const eid = String(musyrifEkskulState.selectedEkskulId || '')
+  const nama = String(document.getElementById('musyrif-ekskul-indikator-nama')?.value || '').trim()
+  const deskripsi = String(document.getElementById('musyrif-ekskul-indikator-deskripsi')?.value || '').trim()
+  if (!eid || !nama) {
+    alert('Pilih ekskul dan isi indikator.')
+    return
+  }
+  const urutan = ((musyrifEkskulState.indikatorRows || []).filter(item => String(item.ekskul_id || '') === eid).length || 0) + 1
+  const { error } = await sb.from(EKSKUL_INDIKATOR_TABLE).insert([{ ekskul_id: eid, nama, deskripsi: deskripsi || null, urutan }])
+  if (error) {
+    alert(`Gagal tambah indikator: ${error.message || 'Unknown error'}`)
+    return
+  }
+  document.getElementById('musyrif-ekskul-indikator-nama').value = ''
+  document.getElementById('musyrif-ekskul-indikator-deskripsi').value = ''
+  await renderMusyrifEkskulPage(true)
+}
+
+async function saveMusyrifEkskulProgress() {
+  const eid = String(musyrifEkskulState.selectedEkskulId || '')
+  const sid = String(musyrifEkskulState.selectedSantriId || '')
+  const tanggal = String(document.getElementById('musyrif-ekskul-progres-tanggal')?.value || '').trim()
+  if (!eid || !sid || !tanggal) {
+    alert('Lengkapi data progres.')
+    return
+  }
+  const rowEls = Array.from(document.querySelectorAll('[data-musyrif-ekskul-indikator-row="1"]'))
+  if (!rowEls.length) {
+    alert('Belum ada indikator untuk diinput.')
+    return
+  }
+  const payload = []
+  rowEls.forEach(rowEl => {
+    const indikatorId = String(rowEl.getAttribute('data-indikator-id') || '').trim() || null
+    const nilaiRaw = String(rowEl.querySelector('[data-musyrif-ekskul-indikator-nilai="1"]')?.value || '').trim()
+    const nilaiParsed = nilaiRaw ? Number(nilaiRaw) : null
+    const nilai = Number.isFinite(nilaiParsed) ? Math.max(1, Math.min(100, Math.round(nilaiParsed))) : null
+    const catatan = String(rowEl.querySelector('[data-musyrif-ekskul-indikator-catatan="1"]')?.value || '').trim()
+    if (!catatan && !Number.isFinite(nilai)) return
+    payload.push({
+      ekskul_id: eid,
+      santri_id: sid,
+      indikator_id: indikatorId,
+      tanggal,
+      nilai: Number.isFinite(nilai) ? nilai : null,
+      catatan: catatan || null,
+      updated_by: String(musyrifState.profile?.id || '').trim() || null
+    })
+  })
+  if (!payload.length) {
+    alert('Isi minimal satu indikator.')
+    return
+  }
+  const { error } = await sb.from(EKSKUL_PROGRES_TABLE).insert(payload)
+  if (error) {
+    alert(`Gagal simpan progres: ${error.message || 'Unknown error'}`)
+    return
+  }
+  await renderMusyrifEkskulPage(true)
+}
+
+async function renderMusyrifEkskulPage(_forceReload = false) {
+  const content = document.getElementById('musyrif-content')
+  if (!content) return
+  content.innerHTML = '<div class=\"placeholder-card\">Loading ekskul...</div>'
+  try {
+    const profile = musyrifState.profile || await getCurrentMusyrif()
+    let exRes = await sb.from(EKSKUL_TABLE)
+      .select('id, nama, deskripsi')
+      .or(`pj_karyawan_id.eq.${String(profile?.id || '')},pj_karyawan_id_2.eq.${String(profile?.id || '')}`)
+      .eq('aktif', true)
+      .order('nama')
+    if (exRes.error && isMusyrifEkskulMissingPj2ColumnError(exRes.error)) {
+      exRes = await sb.from(EKSKUL_TABLE)
+        .select('id, nama, deskripsi')
+        .eq('pj_karyawan_id', String(profile?.id || ''))
+        .eq('aktif', true)
+        .order('nama')
+    }
+    const [memberRes, indikatorRes, santriRes] = await Promise.all([
+      sb.from(EKSKUL_MEMBER_TABLE).select('id, ekskul_id, santri_id').order('created_at', { ascending: false }),
+      sb.from(EKSKUL_INDIKATOR_TABLE).select('id, ekskul_id, nama, deskripsi, urutan').order('urutan', { ascending: true }),
+      sb.from('santri').select('id, nama, aktif').eq('aktif', true).order('nama')
+    ])
+    if (exRes.error) throw exRes.error
+    if (memberRes.error) throw memberRes.error
+    if (indikatorRes.error) throw indikatorRes.error
+    if (santriRes.error) throw santriRes.error
+
+    musyrifEkskulState.ekskulRows = exRes.data || []
+    const ekskulIds = musyrifEkskulState.ekskulRows.map(item => String(item.id || ''))
+    musyrifEkskulState.memberRows = (memberRes.data || []).filter(item => ekskulIds.includes(String(item.ekskul_id || '')))
+    musyrifEkskulState.indikatorRows = (indikatorRes.data || []).filter(item => ekskulIds.includes(String(item.ekskul_id || '')))
+    musyrifEkskulState.santriRows = santriRes.data || []
+    if (!musyrifEkskulState.ekskulRows.length) {
+      content.innerHTML = '<div class=\"placeholder-card\">Anda belum ditetapkan sebagai PJ ekskul.</div>'
+      return
+    }
+    if (!musyrifEkskulState.selectedEkskulId || !ekskulIds.includes(String(musyrifEkskulState.selectedEkskulId || ''))) {
+      musyrifEkskulState.selectedEkskulId = String(musyrifEkskulState.ekskulRows[0]?.id || '')
+      musyrifEkskulState.selectedSantriId = ''
+    }
+    const selected = getMusyrifSelectedEkskul()
+    const { data: progressRows, error: progressError } = await sb
+      .from(EKSKUL_PROGRES_TABLE)
+      .select('id, ekskul_id, santri_id, indikator_id, tanggal, nilai, catatan, created_at')
+      .eq('ekskul_id', String(selected?.id || ''))
+      .order('tanggal', { ascending: false })
+      .order('created_at', { ascending: false })
+    if (progressError) throw progressError
+    musyrifEkskulState.progressRows = progressRows || []
+
+    content.innerHTML = `
+      <div style=\"display:grid; gap:12px;\">
+        <div style=\"border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;\">
+          <div style=\"font-weight:700; margin-bottom:8px;\">Ekskul Binaan</div>
+          <div style=\"display:flex; flex-wrap:wrap; gap:8px;\">
+            ${(musyrifEkskulState.ekskulRows || []).map(item => `<button type=\"button\" class=\"modal-btn\" onclick=\"selectMusyrifEkskul('${escapeHtml(String(item.id || ''))}')\" style=\"${String(musyrifEkskulState.selectedEkskulId || '') === String(item.id || '') ? 'border-color:#d4d456; background:#fefce8;' : ''}\">${escapeHtml(String(item.nama || '-'))}</button>`).join('')}
+          </div>
+        </div>
+        <div style=\"display:grid; grid-template-columns:1fr 1fr; gap:12px;\">
+          <div style=\"border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;\">
+            <div style=\"font-weight:700; margin-bottom:8px;\">Anggota Ekskul</div>
+            <div style=\"display:grid; grid-template-columns:1fr auto; gap:8px; margin-bottom:8px;\">
+              <select id=\"musyrif-ekskul-santri\" class=\"guru-field\"></select>
+              <button type=\"button\" class=\"modal-btn modal-btn-primary\" onclick=\"addMusyrifEkskulMember()\">Tambah</button>
+            </div>
+            <div id=\"musyrif-ekskul-member-list\">Loading...</div>
+          </div>
+          <div style=\"border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;\">
+            <div style=\"font-weight:700; margin-bottom:8px;\">Indikator Penilaian</div>
+            <input id=\"musyrif-ekskul-indikator-nama\" class=\"guru-field\" type=\"text\" placeholder=\"Nama indikator\">
+            <input id=\"musyrif-ekskul-indikator-deskripsi\" class=\"guru-field\" type=\"text\" placeholder=\"Deskripsi indikator\" style=\"margin-top:6px;\">
+            <button type=\"button\" class=\"modal-btn modal-btn-primary\" onclick=\"addMusyrifEkskulIndikator()\" style=\"margin-top:8px;\">Tambah Indikator</button>
+            <div id=\"musyrif-ekskul-indikator-list\" style=\"margin-top:8px;\">Loading...</div>
+          </div>
+        </div>
+        <div style=\"border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;\">
+          <div style=\"font-weight:700; margin-bottom:8px;\">Progres Santri</div>
+          <div style=\"display:grid; grid-template-columns:160px 1fr auto; gap:8px; margin-bottom:8px;\">
+            <input id=\"musyrif-ekskul-progres-tanggal\" class=\"guru-field\" type=\"date\" value=\"${escapeHtml(getMusyrifTodayDate())}\">
+            <button type=\"button\" class=\"modal-btn modal-btn-primary\" onclick=\"saveMusyrifEkskulProgress()\">Simpan</button>
+          </div>
+          <div id=\"musyrif-ekskul-progres-input-list\" style=\"margin-bottom:10px;\">Loading...</div>
+          <div id=\"musyrif-ekskul-progres-list\" style=\"margin-top:10px;\">Loading...</div>
+        </div>
+      </div>
+      <div id=\"musyrif-ekskul-santri-detail-overlay\" style=\"display:none; position:fixed; inset:0; background:rgba(15,23,42,0.45); z-index:2000; padding:20px;\">
+        <div style=\"max-width:900px; margin:0 auto; background:#fff; border-radius:12px; border:1px solid #e2e8f0; overflow:hidden;\">
+          <div style=\"display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid #e2e8f0;\">
+            <div style=\"font-weight:700; color:#0f172a;\">Detail Progres Santri</div>
+            <button type=\"button\" class=\"modal-btn\" onclick=\"closeMusyrifEkskulSantriDetail()\">Tutup</button>
+          </div>
+          <div id=\"musyrif-ekskul-santri-detail-body\" style=\"padding:12px; max-height:70vh; overflow:auto;\">Loading...</div>
+        </div>
+      </div>
+    `
+    renderMusyrifEkskulMemberList()
+    renderMusyrifEkskulSelects()
+    renderMusyrifEkskulProgressInputRows()
+    renderMusyrifEkskulProgressList()
+  } catch (error) {
+    console.error(error)
+    if (isMusyrifEkskulMissingTableError(error)) {
+      content.innerHTML = '<div class=\"placeholder-card\" style=\"white-space:pre-wrap;\">Tabel ekskul belum ada. Hubungi admin untuk setup tabel ekskul.</div>'
+      return
+    }
+    content.innerHTML = `<div class=\"placeholder-card\">Gagal load ekskul: ${escapeHtml(error?.message || 'Unknown error')}</div>`
+  }
+}
+
 async function loadMusyrifPage(page) {
   const targetPage = PAGE_TITLES[page] ? page : 'dashboard'
+  const isEkskulPj = await setupMusyrifEkskulAccess()
+  const isWakasekPrestasi = await setupMusyrifPrestasiPelanggaranAccess()
   setTopbarTitle(targetPage)
   setNavActive(targetPage === 'profil' ? '' : targetPage)
   if (targetPage !== 'profil') localStorage.setItem(MUHAFFIZ_LAST_PAGE_KEY, targetPage)
@@ -1702,6 +3342,28 @@ async function loadMusyrifPage(page) {
   }
   if (targetPage === 'laporan-bulanan') {
     await renderLaporanBulananPage()
+    return
+  }
+  if (targetPage === 'perizinan-santri') {
+    await renderMusyrifPerizinanPage()
+    return
+  }
+  if (targetPage === 'ekskul') {
+    if (!isEkskulPj) {
+      const content = document.getElementById('musyrif-content')
+      if (content) content.innerHTML = '<div class="placeholder-card">Menu ekskul hanya untuk PJ ekskul.</div>'
+      return
+    }
+    await renderMusyrifEkskulPage()
+    return
+  }
+  if (targetPage === 'prestasi-pelanggaran') {
+    if (!isWakasekPrestasi) {
+      const content = document.getElementById('musyrif-content')
+      if (content) content.innerHTML = '<div class="placeholder-card">Menu ini hanya dapat diakses oleh wakasek kesantrian.</div>'
+      return
+    }
+    await renderMusyrifPrestasiPelanggaranPage()
     return
   }
   await renderDashboard()
@@ -1720,9 +3382,15 @@ window.loadMusyrifPage = loadMusyrifPage
 window.onMusyrifPeriodeChange = onMusyrifPeriodeChange
 window.openMusyrifBulkInputModal = openMusyrifBulkInputModal
 window.saveMusyrifBulkInput = saveMusyrifBulkInput
+window.downloadMusyrifBulkTemplate = downloadMusyrifBulkTemplate
+window.onMusyrifBulkExcelFileChange = onMusyrifBulkExcelFileChange
+window.applyMusyrifBulkExcelToTable = applyMusyrifBulkExcelToTable
 window.closeMusyrifBulkInputModal = closeMusyrifBulkInputModal
 window.openMusyrifLaporanDetail = openMusyrifLaporanDetail
 window.saveMusyrifLaporanDetail = saveMusyrifLaporanDetail
+window.renderMusyrifPerizinanPage = renderMusyrifPerizinanPage
+window.submitSantriPerizinanForm = submitSantriPerizinanForm
+window.saveSantriPerizinanReview = saveSantriPerizinanReview
 window.onMusyrifKesantrianGradeChange = onMusyrifKesantrianGradeChange
 window.toggleTopbarUserMenu = toggleTopbarUserMenu
 window.setMusyrifNotifRangeFilter = setMusyrifNotifRangeFilter
@@ -1737,6 +3405,27 @@ window.closeMusyrifDashboardAgendaPopup = closeMusyrifDashboardAgendaPopup
 window.openMusyrifProfile = () => loadMusyrifPage('profil')
 window.saveMusyrifProfil = saveMusyrifProfil
 window.toggleMusyrifProfilePassword = toggleMusyrifProfilePassword
+window.selectMusyrifEkskul = selectMusyrifEkskul
+window.selectMusyrifEkskulSantri = selectMusyrifEkskulSantri
+window.openMusyrifEkskulSantriDetail = openMusyrifEkskulSantriDetail
+window.closeMusyrifEkskulSantriDetail = closeMusyrifEkskulSantriDetail
+window.musyrifEkskulUpdateIndicatorStars = musyrifEkskulUpdateIndicatorStars
+window.addMusyrifEkskulMember = addMusyrifEkskulMember
+window.addMusyrifEkskulIndikator = addMusyrifEkskulIndikator
+window.saveMusyrifEkskulProgress = saveMusyrifEkskulProgress
+window.setMusyrifPrestasiTab = setMusyrifPrestasiTab
+window.onMusyrifPrestasiClassFilterChange = onMusyrifPrestasiClassFilterChange
+window.saveMusyrifPrestasiEntry = saveMusyrifPrestasiEntry
+window.saveMusyrifPelanggaranEntry = saveMusyrifPelanggaranEntry
+window.resetMusyrifPrestasiForm = resetMusyrifPrestasiForm
+window.resetMusyrifPelanggaranForm = resetMusyrifPelanggaranForm
+window.editMusyrifPrestasiEntry = editMusyrifPrestasiEntry
+window.editMusyrifPelanggaranEntry = editMusyrifPelanggaranEntry
+window.deleteMusyrifPrestasiEntry = deleteMusyrifPrestasiEntry
+window.deleteMusyrifPelanggaranEntry = deleteMusyrifPelanggaranEntry
+window.openMusyrifPrestasiDoc = openMusyrifPrestasiDoc
+window.closeMusyrifPrestasiDoc = closeMusyrifPrestasiDoc
+window.uploadMusyrifPelanggaranSuratFile = uploadMusyrifPelanggaranSuratFile
 window.logout = logout
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -1752,6 +3441,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   try {
     await setMusyrifWelcomeName()
+    await setupMusyrifEkskulAccess(true)
+    await setupMusyrifPrestasiPelanggaranAccess(true)
     if (!musyrifState.profile) {
       location.href = 'index.html'
       return

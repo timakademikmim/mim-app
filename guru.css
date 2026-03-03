@@ -19,8 +19,8 @@ body {
 }
 
 .sidebar {
-  width: clamp(110px, 18vw, 220px);
-  min-width: 110px;
+  width: clamp(102px, 16.5vw, 205px);
+  min-width: 102px;
   background: #ffffff;
   color: #0f172a;
   font-family: "Poppins", Arial, sans-serif;
@@ -28,9 +28,8 @@ body {
   display: flex;
   flex-direction: column;
   border-right: 1px solid #e2e8f0;
-  overflow-y: auto;
+  overflow: hidden;
   overflow-x: hidden;
-  scrollbar-gutter: stable;
   padding-bottom: 28px;
 }
 
@@ -38,10 +37,21 @@ body {
   flex-shrink: 0;
 }
 
+.sidebar-nav-scroll {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  padding-right: 2px;
+}
+
 
 .sidebar-logo {
   width: 100%;
-  max-width: 130px;
+  max-width: 116px;
   height: auto;
   object-fit: contain;
   align-self: center;
@@ -142,8 +152,8 @@ body {
 }
 
 .role-switcher {
-  margin-top: auto;
-  padding-top: 14px;
+  margin-top: 12px;
+  padding-top: 8px;
   color: #93c5fd;
   position: relative;
   display: flex;
@@ -161,7 +171,7 @@ body {
 }
 
 .role-switcher-toggle {
-  margin: 4px 0 0;
+  margin: 2px 0 0;
   padding: 0;
   border: none;
   background: transparent;
@@ -1145,7 +1155,7 @@ body {
 
 @media (max-width: 1024px) {
   .sidebar-logo {
-    max-width: 110px;
+    max-width: 100px;
   }
 
   .sidebar button {

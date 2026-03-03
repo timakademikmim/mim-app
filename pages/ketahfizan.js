@@ -14,6 +14,12 @@ let ketahfizanState = {
   kelasMap: new Map(),
   jadwalRows: []
 }
+let ketahfizanDetailState = {
+  halaqahId: '',
+  selectedSet: new Set(),
+  blockedSet: new Set(),
+  search: ''
+}
 
 function ktEscapeHtml(value) {
   return String(value ?? '')
@@ -205,11 +211,12 @@ function ktSortSantriRows(rows, sortMode) {
 
 function ktRenderSantriChecklistHtml(rows, selectedSet) {
   return (rows || []).map(item => {
-    const checked = selectedSet.has(String(item.id)) ? 'checked' : ''
+    const sid = String(item.id || '')
+    const checked = selectedSet.has(sid) ? 'checked' : ''
     const kelasNama = ketahfizanState.kelasMap.get(String(item.kelas_id || ''))?.nama_kelas || '-'
     return `
       <label class="kt-check-item">
-        <input type="checkbox" data-kt-santri-id="${ktEscapeHtml(String(item.id))}" ${checked}>
+        <input type="checkbox" data-kt-santri-id="${ktEscapeHtml(sid)}" ${checked} onchange="toggleHalaqahSantri('${ktEscapeHtml(sid)}', this.checked)">
         <span style="margin-left:6px; font-weight:600;">${ktEscapeHtml(item.nama || '-')}</span>
         <span style="display:block; margin-left:22px; font-size:11px; color:#64748b;">${ktEscapeHtml(kelasNama)}</span>
       </label>
@@ -219,27 +226,72 @@ function ktRenderSantriChecklistHtml(rows, selectedSet) {
 
 function ktRenderSelectedSantriListHtml(rows) {
   return (rows || []).map(item => {
+    const sid = String(item.id || '')
     const kelasNama = ketahfizanState.kelasMap.get(String(item.kelas_id || ''))?.nama_kelas || '-'
     return `
-      <div class="kt-check-item" style="background:#f8fafc;">
-        <span style="font-weight:600;">${ktEscapeHtml(item.nama || '-')}</span>
-        <span style="display:block; font-size:11px; color:#64748b;">${ktEscapeHtml(kelasNama)}</span>
+      <div class="kt-check-item" style="background:#f8fafc; display:grid; grid-template-columns:1fr auto; gap:8px; align-items:flex-start;">
+        <span>
+          <span style="font-weight:600;">${ktEscapeHtml(item.nama || '-')}</span>
+          <span style="display:block; font-size:11px; color:#64748b;">${ktEscapeHtml(kelasNama)}</span>
+        </span>
+        <button type="button" class="modal-btn modal-btn-danger" style="padding:2px 8px; min-width:auto; line-height:1; border-radius:999px;" onclick="removeHalaqahSantri('${ktEscapeHtml(sid)}')" title="Keluarkan dari halaqah ini">x</button>
       </div>
     `
   }).join('')
 }
 
-function ktRefreshSantriChecklist() {
-  const grid = document.getElementById('kt-santri-check-grid')
-  if (!grid) return
-  const sortMode = 'kelas'
-  const selectedSet = new Set(
-    [...document.querySelectorAll('[data-kt-santri-id]:checked')]
-      .map(el => String(el.getAttribute('data-kt-santri-id') || ''))
-      .filter(Boolean)
+function ktRenderHalaqahSantriPanels() {
+  const checkGrid = document.getElementById('kt-santri-check-grid')
+  const selectedGrid = document.getElementById('kt-selected-santri-grid')
+  if (!checkGrid || !selectedGrid) return
+  const selectedSet = ketahfizanDetailState.selectedSet || new Set()
+  const blockedSet = ketahfizanDetailState.blockedSet || new Set()
+  const search = String(ketahfizanDetailState.search || '').trim().toLowerCase()
+
+  const selectedRows = ktSortSantriRows(
+    (ketahfizanState.santriRows || []).filter(item => selectedSet.has(String(item.id || ''))),
+    'kelas'
   )
-  const sortedRows = ktSortSantriRows(ketahfizanState.santriRows || [], sortMode)
-  grid.innerHTML = ktRenderSantriChecklistHtml(sortedRows, selectedSet) || '<div style="font-size:13px; color:#64748b;">Belum ada santri aktif.</div>'
+  selectedGrid.innerHTML = ktRenderSelectedSantriListHtml(selectedRows) || '<div style="font-size:12px; color:#64748b;">Belum ada santri di halaqah ini.</div>'
+
+  const availableRows = ktSortSantriRows(
+    (ketahfizanState.santriRows || []).filter(item => {
+      const sid = String(item.id || '')
+      if (!sid) return false
+      if (selectedSet.has(sid)) return false
+      if (blockedSet.has(sid)) return false
+      if (!search) return true
+      return String(item.nama || '').toLowerCase().includes(search)
+    }),
+    'kelas'
+  )
+  checkGrid.innerHTML = ktRenderSantriChecklistHtml(availableRows, selectedSet) || '<div style="font-size:12px; color:#64748b;">Tidak ada santri tersedia.</div>'
+}
+
+function ktRefreshSantriChecklist() {
+  ktRenderHalaqahSantriPanels()
+}
+
+function toggleHalaqahSantri(santriId, checked) {
+  const sid = String(santriId || '').trim()
+  if (!sid) return
+  if (!(ketahfizanDetailState.selectedSet instanceof Set)) ketahfizanDetailState.selectedSet = new Set()
+  if (checked) ketahfizanDetailState.selectedSet.add(sid)
+  else ketahfizanDetailState.selectedSet.delete(sid)
+  ktRenderHalaqahSantriPanels()
+}
+
+function removeHalaqahSantri(santriId) {
+  const sid = String(santriId || '').trim()
+  if (!sid) return
+  if (!(ketahfizanDetailState.selectedSet instanceof Set)) ketahfizanDetailState.selectedSet = new Set()
+  ketahfizanDetailState.selectedSet.delete(sid)
+  ktRenderHalaqahSantriPanels()
+}
+
+function searchHalaqahSantri(keyword) {
+  ketahfizanDetailState.search = String(keyword || '')
+  ktRenderHalaqahSantriPanels()
 }
 
 function ktRenderHalaqahTable() {
@@ -261,7 +313,10 @@ function ktRenderHalaqahTable() {
         <td style="padding:8px; border:1px solid #e2e8f0;">${ktEscapeHtml(muhaffiz?.nama || '-')}</td>
         <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${countMap.get(String(item.id)) || 0}</td>
         <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">
-          <button type="button" class="modal-btn modal-btn-primary" onclick="openHalaqahDetail('${ktEscapeHtml(String(item.id))}')">Detail</button>
+          <div style="display:flex; gap:6px; justify-content:center; flex-wrap:nowrap; white-space:nowrap;">
+            <button type="button" class="modal-btn modal-btn-primary" onclick="openHalaqahDetail('${ktEscapeHtml(String(item.id))}')">Detail</button>
+            <button type="button" class="modal-btn modal-btn-danger" onclick="deleteHalaqah('${ktEscapeHtml(String(item.id))}')">Hapus</button>
+          </div>
         </td>
       </tr>
     `
@@ -281,7 +336,7 @@ function ktRenderHalaqahTable() {
               <th style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Nama Halaqah</th>
               <th style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Muhaffiz</th>
               <th style="padding:8px; border:1px solid #e2e8f0; width:150px;">Jumlah Santri</th>
-              <th style="padding:8px; border:1px solid #e2e8f0; width:130px;">Aksi</th>
+              <th style="padding:8px; border:1px solid #e2e8f0; width:200px;">Aksi</th>
             </tr>
           </thead>
           <tbody>
@@ -508,13 +563,18 @@ function openHalaqahDetail(halaqahId) {
     .map(item => `<option value="${ktEscapeHtml(String(item.id))}" ${String(item.id) === String(halaqah.muhaffiz_id || '') ? 'selected' : ''}>${ktEscapeHtml(item.nama || '-')}</option>`)
     .join('')
 
-  const sortedRows = ktSortSantriRows(ketahfizanState.santriRows || [], 'kelas')
-  const santriRowsHtml = ktRenderSantriChecklistHtml(sortedRows, selectedSantri)
-  const selectedSantriRows = ktSortSantriRows(
-    (ketahfizanState.santriRows || []).filter(item => selectedSantri.has(String(item.id))),
-    'kelas'
+  const blockedSet = new Set(
+    (ketahfizanState.halaqahSantriRows || [])
+      .filter(item => String(item.halaqah_id || '') !== hid)
+      .map(item => String(item.santri_id || ''))
+      .filter(Boolean)
   )
-  const selectedSantriHtml = ktRenderSelectedSantriListHtml(selectedSantriRows)
+  ketahfizanDetailState = {
+    halaqahId: hid,
+    selectedSet: new Set(selectedSantri),
+    blockedSet,
+    search: ''
+  }
 
   ktOpenModal(`
     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px;">
@@ -522,6 +582,8 @@ function openHalaqahDetail(halaqahId) {
       <button type="button" class="modal-btn modal-btn-secondary" onclick="ktCloseModal()">Tutup</button>
     </div>
     <div style="display:grid; gap:8px; margin-bottom:10px;">
+      <label class="guru-label">Nama Halaqah</label>
+      <input id="kt-detail-halaqah-nama" class="kt-detail-field" type="text" value="${ktEscapeHtml(halaqah.nama || '')}" placeholder="Nama halaqah">
       <label class="guru-label">Muhaffiz</label>
       <select id="kt-detail-muhaffiz-id" class="kt-detail-field">
         <option value="">-- Pilih Muhaffiz --</option>
@@ -529,39 +591,46 @@ function openHalaqahDetail(halaqahId) {
       </select>
     </div>
     <div style="font-size:12px; color:#64748b; margin-bottom:6px;">Santri di halaqah ini:</div>
-    <div class="kt-check-grid" style="max-height:170px; overflow:auto; border:1px solid #e2e8f0; border-radius:10px; padding:8px; margin-bottom:10px;">
-      ${selectedSantriHtml || '<div style="font-size:13px; color:#64748b;">Belum ada santri di halaqah ini.</div>'}
-    </div>
+    <div id="kt-selected-santri-grid" class="kt-check-grid" style="max-height:170px; overflow:auto; border:1px solid #e2e8f0; border-radius:10px; padding:8px; margin-bottom:10px;"></div>
     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;">
       <div style="font-size:12px; color:#64748b;">Tambah/atur santri halaqah:</div>
-      <button type="button" class="modal-btn modal-btn-secondary" onclick="ktRefreshSantriChecklist()">Sort Per Kelas</button>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <input id="kt-santri-search" class="kt-detail-field" type="text" placeholder="Cari nama santri..." style="max-width:220px;" oninput="searchHalaqahSantri(this.value)">
+        <button type="button" class="modal-btn modal-btn-secondary" onclick="ktRefreshSantriChecklist()">Sort Per Kelas</button>
+      </div>
     </div>
     <div id="kt-santri-panel" class="kt-santri-panel">
       <div id="kt-santri-check-grid" class="kt-check-grid" style="max-height:300px; overflow:auto; border:1px solid #e2e8f0; border-radius:10px; padding:8px;">
-        ${santriRowsHtml || '<div style="font-size:13px; color:#64748b;">Belum ada santri aktif.</div>'}
+        -
       </div>
     </div>
     <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:10px;">
       <button type="button" class="modal-btn modal-btn-primary" onclick="saveHalaqahDetail('${ktEscapeHtml(hid)}')">Simpan Detail</button>
     </div>
   `)
+  ktRenderHalaqahSantriPanels()
 }
 
 async function saveHalaqahDetail(halaqahId) {
   const hid = String(halaqahId || '')
   if (!hid) return
+  const namaHalaqah = String(document.getElementById('kt-detail-halaqah-nama')?.value || '').trim()
   const muhaffizIdRaw = String(document.getElementById('kt-detail-muhaffiz-id')?.value || '').trim()
-  const selectedSantriIds = [...document.querySelectorAll('[data-kt-santri-id]:checked')]
-    .map(el => String(el.getAttribute('data-kt-santri-id') || '').trim())
+  if (!namaHalaqah) {
+    alert('Nama halaqah wajib diisi.')
+    return
+  }
+  const selectedSantriIds = [...(ketahfizanDetailState.selectedSet || new Set())]
+    .map(item => String(item || '').trim())
     .filter(Boolean)
 
   const { error: updateError } = await sb
     .from(KETAHFIZAN_TABLE_HALAQAH)
-    .update({ muhaffiz_id: muhaffizIdRaw || null })
+    .update({ nama: namaHalaqah, muhaffiz_id: muhaffizIdRaw || null })
     .eq('id', hid)
   if (updateError) {
     console.error(updateError)
-    alert(`Gagal menyimpan muhaffiz halaqah: ${updateError.message || 'Unknown error'}`)
+    alert(`Gagal menyimpan detail halaqah: ${updateError.message || 'Unknown error'}`)
     return
   }
 
@@ -589,6 +658,27 @@ async function saveHalaqahDetail(halaqahId) {
 
   ktInvalidateCache()
   ktCloseModal()
+  await renderKetahfizanPage(true)
+}
+
+async function deleteHalaqah(halaqahId) {
+  const hid = String(halaqahId || '').trim()
+  if (!hid) return
+  const ok = typeof showPopupConfirm === 'function'
+    ? await showPopupConfirm('Yakin ingin menghapus halaqah ini?')
+    : confirm('Yakin ingin menghapus halaqah ini?')
+  if (!ok) return
+
+  const { error } = await sb
+    .from(KETAHFIZAN_TABLE_HALAQAH)
+    .delete()
+    .eq('id', hid)
+  if (error) {
+    console.error(error)
+    alert(`Gagal menghapus halaqah: ${error.message || 'Unknown error'}`)
+    return
+  }
+  ktInvalidateCache()
   await renderKetahfizanPage(true)
 }
 
@@ -685,8 +775,12 @@ window.openCreateHalaqahModal = openCreateHalaqahModal
 window.createHalaqah = createHalaqah
 window.openHalaqahDetail = openHalaqahDetail
 window.saveHalaqahDetail = saveHalaqahDetail
+window.deleteHalaqah = deleteHalaqah
 window.ktCloseModal = ktCloseModal
 window.ktRefreshSantriChecklist = ktRefreshSantriChecklist
+window.searchHalaqahSantri = searchHalaqahSantri
+window.toggleHalaqahSantri = toggleHalaqahSantri
+window.removeHalaqahSantri = removeHalaqahSantri
 window.reloadKetahfizanHafalan = reloadKetahfizanHafalan
 window.openCreateJadwalModal = openCreateJadwalModal
 window.createJadwalHalaqah = createJadwalHalaqah

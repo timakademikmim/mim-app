@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="admin.css?v=20260220-9">
+  <link rel="stylesheet" href="admin.css?v=20260302-ekskul-danger-01">
 </head>
 
 <body data-role="admin">
@@ -16,44 +16,49 @@
 
     <aside class="sidebar">
       <img src="00 Logo MIM .png" alt="Logo Admin" class="sidebar-logo">
-
-      <button class="sidebar-nav-btn" data-page="dashboard" onclick="loadPage('dashboard')">Dashboard</button>
-      <button class="sidebar-nav-btn" data-page="struktur-sekolah" onclick="loadPage('struktur-sekolah')">Struktur Sekolah</button>
-      <button class="sidebar-nav-btn" data-page="kalender-akademik" onclick="loadPage('kalender-akademik')">Kalender Akademik</button>
-      <button class="sidebar-nav-btn" data-page="tahun-ajaran" onclick="loadPage('tahun-ajaran')">Tahun Ajaran</button>
-      <button class="sidebar-nav-btn sidebar-parent-btn" data-page="akademik" onclick="toggleAkademikSidebarMenu()">
-        Data Akademik
-      </button>
-      <div id="sidebar-akademik-submenu" class="sidebar-submenu">
-        <button class="sidebar-submenu-btn" data-page="kelas" onclick="loadAkademikFromSidebar('kelas')">Data Kelas</button>
-        <button class="sidebar-submenu-btn" data-page="santri" onclick="loadAkademikFromSidebar('santri')">Data Siswa</button>
-        <button class="sidebar-submenu-btn" data-page="alumni" onclick="loadAkademikFromSidebar('alumni')">Data Alumni</button>
-        <button class="sidebar-submenu-btn" data-page="kelas-guru-mapel" onclick="loadAkademikFromSidebar('guru-mapel')">Data Mapel</button>
-        <button class="sidebar-submenu-btn" data-page="jadwal" onclick="loadAkademikFromSidebar('jadwal')">Jadwal Pelajaran</button>
-        <button class="sidebar-submenu-btn" data-page="ujian" onclick="loadAkademikFromSidebar('ujian')">Ujian</button>
-        <button class="sidebar-submenu-btn" data-page="jadwal-ujian" onclick="loadAkademikFromSidebar('jadwal-ujian')">Jadwal Ujian</button>
-      </div>
-      <button class="sidebar-nav-btn sidebar-parent-btn" data-page="ketahfizan" onclick="toggleKetahfizanSidebarMenu()">
-        Data Ketahfizan
-      </button>
-      <div id="sidebar-ketahfizan-submenu" class="sidebar-submenu">
-        <button class="sidebar-submenu-btn" data-page="ketahfizan-halaqah" onclick="loadKetahfizanFromSidebar('halaqah')">Data Halaqah</button>
-        <button class="sidebar-submenu-btn" data-page="ketahfizan-hafalan" onclick="loadKetahfizanFromSidebar('hafalan')">Data Hafalan</button>
-        <button class="sidebar-submenu-btn" data-page="ketahfizan-jadwal" onclick="loadKetahfizanFromSidebar('jadwal-halaqah')">Jadwal Halaqah</button>
-      </div>
-      <button class="sidebar-nav-btn sidebar-parent-btn" data-page="kesantrian" onclick="toggleKesantrianSidebarMenu()">
-        Data Kesantrian
-      </button>
-      <div id="sidebar-kesantrian-submenu" class="sidebar-submenu">
-        <button class="sidebar-submenu-btn" data-page="kesantrian-kamar" onclick="loadKesantrianFromSidebar('kamar')">Data Kamar</button>
-      </div>
-      <button class="sidebar-nav-btn" data-page="mutabaah-karyawan" onclick="loadPage('set-tugas')">Mutabaah Karyawan</button>
-      <button class="sidebar-nav-btn sidebar-parent-btn" data-page="karyawan" onclick="toggleKaryawanSidebarMenu()">
-        Data Karyawan
-      </button>
-      <div id="sidebar-karyawan-submenu" class="sidebar-submenu">
-        <button class="sidebar-submenu-btn" data-page="karyawan" onclick="loadKaryawanFromSidebar('karyawan')">Data Semua Karyawan</button>
-        <button class="sidebar-submenu-btn" data-page="kehadiran-guru" onclick="loadKaryawanFromSidebar('kehadiran-guru')">Kehadiran Karyawan</button>
+      <div class="sidebar-nav-scroll">
+        <button class="sidebar-nav-btn" data-page="dashboard" onclick="loadPage('dashboard')">Dashboard</button>
+        <button class="sidebar-nav-btn" data-page="struktur-sekolah" onclick="loadPage('struktur-sekolah')">Struktur Sekolah</button>
+        <button class="sidebar-nav-btn" data-page="kalender-akademik" onclick="loadPage('kalender-akademik')">Kalender Akademik</button>
+        <button class="sidebar-nav-btn" data-page="tahun-ajaran" onclick="loadPage('tahun-ajaran')">Tahun Ajaran</button>
+        <button class="sidebar-nav-btn sidebar-parent-btn" data-page="akademik" onclick="toggleAkademikSidebarMenu()">
+          Data Akademik
+        </button>
+        <div id="sidebar-akademik-submenu" class="sidebar-submenu">
+          <button class="sidebar-submenu-btn" data-page="kelas" onclick="loadAkademikFromSidebar('kelas')">Data Kelas</button>
+          <button class="sidebar-submenu-btn" data-page="santri" onclick="loadAkademikFromSidebar('santri')">Data Siswa</button>
+          <button class="sidebar-submenu-btn" data-page="perizinan-santri" onclick="loadAkademikFromSidebar('perizinan-santri')">Perizinan Siswa</button>
+          <button class="sidebar-submenu-btn" data-page="prestasi-pelanggaran" onclick="loadAkademikFromSidebar('prestasi-pelanggaran')">Prestasi & Pelanggaran</button>
+          <button class="sidebar-submenu-btn" data-page="alumni" onclick="loadAkademikFromSidebar('alumni')">Data Alumni</button>
+          <button class="sidebar-submenu-btn" data-page="kelas-guru-mapel" onclick="loadAkademikFromSidebar('guru-mapel')">Data Mapel</button>
+          <button class="sidebar-submenu-btn" data-page="jadwal" onclick="loadAkademikFromSidebar('jadwal')">Jadwal Pelajaran</button>
+          <button class="sidebar-submenu-btn" data-page="ekstrakurikuler" onclick="loadAkademikFromSidebar('ekstrakurikuler')">Ekstrakulikuler</button>
+          <button class="sidebar-submenu-btn" data-page="ujian" onclick="loadAkademikFromSidebar('ujian')">Ujian</button>
+          <button class="sidebar-submenu-btn" data-page="jadwal-ujian" onclick="loadAkademikFromSidebar('jadwal-ujian')">Jadwal Ujian</button>
+        </div>
+        <button class="sidebar-nav-btn sidebar-parent-btn" data-page="ketahfizan" onclick="toggleKetahfizanSidebarMenu()">
+          Data Ketahfizan
+        </button>
+        <div id="sidebar-ketahfizan-submenu" class="sidebar-submenu">
+          <button class="sidebar-submenu-btn" data-page="ketahfizan-halaqah" onclick="loadKetahfizanFromSidebar('halaqah')">Data Halaqah</button>
+          <button class="sidebar-submenu-btn" data-page="ketahfizan-hafalan" onclick="loadKetahfizanFromSidebar('hafalan')">Data Hafalan</button>
+          <button class="sidebar-submenu-btn" data-page="ketahfizan-jadwal" onclick="loadKetahfizanFromSidebar('jadwal-halaqah')">Jadwal Halaqah</button>
+        </div>
+        <button class="sidebar-nav-btn sidebar-parent-btn" data-page="kesantrian" onclick="toggleKesantrianSidebarMenu()">
+          Data Kesantrian
+        </button>
+        <div id="sidebar-kesantrian-submenu" class="sidebar-submenu">
+          <button class="sidebar-submenu-btn" data-page="kesantrian-kamar" onclick="loadKesantrianFromSidebar('kamar')">Data Kamar</button>
+        </div>
+        <button class="sidebar-nav-btn" data-page="mutabaah-karyawan" onclick="loadPage('set-tugas')">Mutabaah Karyawan</button>
+        <button class="sidebar-nav-btn sidebar-parent-btn" data-page="karyawan" onclick="toggleKaryawanSidebarMenu()">
+          Data Karyawan
+        </button>
+        <div id="sidebar-karyawan-submenu" class="sidebar-submenu">
+          <button class="sidebar-submenu-btn" data-page="karyawan" onclick="loadKaryawanFromSidebar('karyawan')">Data Semua Karyawan</button>
+          <button class="sidebar-submenu-btn" data-page="kehadiran-guru" onclick="loadKaryawanFromSidebar('kehadiran-guru')">Kehadiran Karyawan</button>
+          <button class="sidebar-submenu-btn" data-page="perizinan-karyawan" onclick="loadKaryawanFromSidebar('perizinan-karyawan')">Perizinan Karyawan</button>
+        </div>
       </div>
     </aside>
 
@@ -82,7 +87,7 @@
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
   <script src="role-page.js?v=20260225-legacyfix-03"></script>
-  <script src="admin.js?v=20260225-legacyfix-03"></script>
+  <script src="admin.js?v=20260302-prestasi-pelanggaran-01"></script>
 
   <div id="app-popup-overlay" class="app-popup-overlay" aria-hidden="true">
     <div class="app-popup-card" role="dialog" aria-modal="true" aria-labelledby="app-popup-message">

@@ -7,6 +7,7 @@ const KG_ADMIN_STATE = {
   roleMode: 'guru'
 }
 const KG_KALENDER_TABLE = 'kalender_akademik'
+const KG_PERIZINAN_TABLE = 'izin_karyawan'
 const KG_LIBUR_SEMUA = 'libur_semua_kegiatan'
 const KG_LIBUR_AKADEMIK = 'libur_akademik'
 
@@ -268,6 +269,39 @@ function isKgMissingPenggantiColumnError(error) {
   return msg.includes('guru_pengganti_id') || msg.includes('keterangan_pengganti')
 }
 
+function isKgMissingPerizinanTableError(error) {
+  const code = String(error?.code || '').toUpperCase()
+  const msg = String(error?.message || '').toLowerCase()
+  return code === '42P01' || (msg.includes(KG_PERIZINAN_TABLE) && (msg.includes('does not exist') || msg.includes('schema cache')))
+}
+
+function buildKgIzinReasonText(item) {
+  const keperluan = String(item?.keperluan || '').trim()
+  const catatan = String(item?.catatan_wakasek || '').trim()
+  if (keperluan && catatan) return `${keperluan} | Catatan wakasek: ${catatan}`
+  if (keperluan) return keperluan
+  if (catatan) return `Catatan wakasek: ${catatan}`
+  return 'Izin disetujui wakasek'
+}
+
+function buildKgApprovedIzinLookup(rows, startDate, endDate) {
+  const map = new Map()
+  ;(rows || []).forEach(item => {
+    const guruId = String(item?.guru_id || '').trim()
+    if (!guruId) return
+    const keys = getKgDateRangeKeys(item?.tanggal_mulai, item?.tanggal_selesai || item?.tanggal_mulai)
+    keys.forEach(dateKey => {
+      if (dateKey < startDate || dateKey > endDate) return
+      const key = `${guruId}|${dateKey}`
+      if (map.has(key)) return
+      map.set(key, {
+        reason: buildKgIzinReasonText(item)
+      })
+    })
+  })
+  return map
+}
+
 async function getKgJadwalRows() {
   const withJamRef = await sb
     .from('jadwal_pelajaran')
@@ -447,6 +481,22 @@ async function loadKehadiranGuruAdminData(periode) {
   }
 
   const { semesterId } = await getKgActiveSemesterByTahunAktif()
+  let approvedIzinRows = []
+  try {
+    const izinRes = await sb
+      .from(KG_PERIZINAN_TABLE)
+      .select('id, guru_id, tanggal_mulai, tanggal_selesai, keperluan, catatan_wakasek, status, created_at')
+      .eq('status', 'diterima')
+      .lte('tanggal_mulai', range.end)
+      .gte('tanggal_selesai', range.start)
+      .order('created_at', { ascending: false })
+    if (izinRes.error) throw izinRes.error
+    approvedIzinRows = izinRes.data || []
+  } catch (error) {
+    if (!isKgMissingPerizinanTableError(error)) {
+      console.warn('Gagal memuat izin karyawan pada kehadiran admin.', error)
+    }
+  }
 
   const [distribusiRes, jadwalRes, absensiRes, kelasRes, mapelRes, karyawanRes, jamRes] = await Promise.all([
     sb.from('distribusi_mapel')
@@ -560,6 +610,7 @@ async function loadKehadiranGuruAdminData(periode) {
     guruJamSessionCount,
     guruDaySessionCount
   } = buildKgSessionAggMaps(absensiRows, jamMap, distribusiAllMap)
+  const approvedIzinLookup = buildKgApprovedIzinLookup(approvedIzinRows, range.start, range.end)
   const summaryByGuru = new Map()
   const detailByGuru = new Map()
   const penggantiCountMap = new Map()
@@ -568,10 +619,13 @@ async function loadKehadiranGuruAdminData(periode) {
   const guruDayRemainingCount = new Map(guruDaySessionCount)
 
   const sessionsByGeneric = new Map()
+  const expectedCountByGuruDay = new Map()
   expectedSessions.forEach(session => {
     const keyGeneric = `${session.tanggal}|${session.kelas_id}|${session.mapel_id}|${session.guru_id}`
     if (!sessionsByGeneric.has(keyGeneric)) sessionsByGeneric.set(keyGeneric, [])
     sessionsByGeneric.get(keyGeneric).push(session)
+    const keyGuruDay = `${session.tanggal}|${session.guru_id}`
+    expectedCountByGuruDay.set(keyGuruDay, Number(expectedCountByGuruDay.get(keyGuruDay) || 0) + 1)
   })
 
   sessionsByGeneric.forEach((sessionList, keyGeneric) => {
@@ -612,8 +666,9 @@ async function loadKehadiranGuruAdminData(periode) {
       }
       if (!agg) {
         const keyGuruDay = `${session.tanggal}|${session.guru_id}`
+        const expectedOnDay = Number(expectedCountByGuruDay.get(keyGuruDay) || 0)
         const guruDayRemaining = Number(guruDayRemainingCount.get(keyGuruDay) || 0)
-        if (guruDayRemaining > 0) {
+        if (expectedOnDay === 1 && guruDayRemaining > 0) {
           const guruDayAgg = guruDayMap.get(keyGuruDay) || null
           if (guruDayAgg) {
             agg = guruDayAgg
@@ -639,9 +694,10 @@ async function loadKehadiranGuruAdminData(periode) {
       const penggantiIds = agg ? Array.from(agg.penggantiIds) : []
       const notes = agg ? Array.from(agg.notes) : []
       const hasPenggantiSignal = penggantiIds.length > 0 || notes.length > 0
-      const status = !agg
-        ? 'Tidak Masuk'
-        : (hasPenggantiSignal ? 'Diganti' : 'Masuk')
+      const izinInfo = approvedIzinLookup.get(`${guruId}|${session.tanggal}`) || null
+      const status = izinInfo
+        ? 'Izin'
+        : (!agg ? 'Tidak Masuk' : (hasPenggantiSignal ? 'Diganti' : 'Masuk'))
 
       if (!summaryByGuru.has(guruId)) {
         summaryByGuru.set(guruId, {
@@ -650,6 +706,7 @@ async function loadKehadiranGuruAdminData(periode) {
           role: String(karyawanMap.get(guruId)?.role || ''),
           total_sesi: 0,
           masuk: 0,
+          izin: 0,
           diganti: 0,
           tidak_masuk: 0
         })
@@ -657,8 +714,9 @@ async function loadKehadiranGuruAdminData(periode) {
       const sum = summaryByGuru.get(guruId)
       sum.total_sesi += 1
       if (status === 'Masuk') sum.masuk += 1
-      else if (status === 'Diganti') sum.diganti += 1
+      else if (status === 'Izin') sum.izin += 1
       else sum.tidak_masuk += 1
+      if (hasPenggantiSignal) sum.diganti += 1
 
       if (!detailByGuru.has(guruId)) detailByGuru.set(guruId, [])
       const penggantiNamaList = penggantiIds
@@ -673,10 +731,12 @@ async function loadKehadiranGuruAdminData(periode) {
         jam: session.jam_label || '-',
         status,
         pengganti: penggantiNamaList.join(', ') || '-',
-        keterangan: notes.join(' | ') || '-'
+        keterangan: status === 'Izin'
+          ? String(izinInfo?.reason || 'Izin disetujui wakasek')
+          : (notes.join(' | ') || '-')
       })
 
-      if (status === 'Diganti') {
+      if (hasPenggantiSignal) {
         const sessionKey = `${session.tanggal}|${session.kelas_id}|${session.mapel_id}|${session.guru_id}|${session.jam_key}`
         penggantiIds.forEach(pid => {
           if (!penggantiCountMap.has(pid)) {
@@ -749,6 +809,7 @@ function renderKehadiranGuruSummary() {
             <th style="padding:8px; border:1px solid #e2e8f0;">Guru</th>
             <th style="padding:8px; border:1px solid #e2e8f0; width:90px;">Total</th>
             <th style="padding:8px; border:1px solid #e2e8f0; width:90px;">Masuk</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; width:90px;">Izin</th>
             <th style="padding:8px; border:1px solid #e2e8f0; width:90px;">Diganti</th>
             <th style="padding:8px; border:1px solid #e2e8f0; width:110px;">Tidak Masuk</th>
             <th style="padding:8px; border:1px solid #e2e8f0; width:110px;">Aksi</th>
@@ -763,6 +824,7 @@ function renderKehadiranGuruSummary() {
       <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(row.nama || '-')}</td>
       <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${row.total_sesi}</td>
       <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${row.masuk}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${row.izin || 0}</td>
       <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${row.diganti}</td>
       <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${row.tidak_masuk}</td>
       <td style="padding:8px; border:1px solid #e2e8f0;">

@@ -65,9 +65,13 @@ function setStrukturSekolahStatus(message, isError = false) {
 
 function parseRoles(roleRaw) {
   return String(roleRaw || '')
-    .split(/[;,]/)
+    .split(/[,\|;]+/)
     .map(part => part.trim().toLowerCase())
     .filter(Boolean)
+}
+
+function normalizeRolesForStore(roles) {
+  return [...new Set((roles || []).map(item => String(item || '').trim().toLowerCase()).filter(Boolean))].join(',')
 }
 
 function hasRole(item, roleName) {
@@ -333,9 +337,65 @@ async function saveStrukturSekolah() {
   }
 
   currentStrukturSekolahId = String(data?.id || currentStrukturSekolahId || '')
+  try {
+    await syncWakasekRoleByStructure(payload)
+  } catch (roleSyncError) {
+    console.error(roleSyncError)
+    alert(`Struktur sekolah tersimpan, tapi sinkron role wakasek gagal: ${roleSyncError?.message || 'Unknown error'}`)
+  }
   if (typeof clearCachedData === 'function') clearCachedData(STRUKTUR_SEKOLAH_CACHE_KEY)
   await loadStrukturSekolah(true)
   alert('Struktur sekolah berhasil disimpan.')
+}
+
+async function syncWakasekRoleByStructure(payload) {
+  const bidangConfig = [
+    { selectedName: String(payload?.wakasek_bidang_akademik || '').trim(), roleToken: 'wakasek akademik' },
+    { selectedName: String(payload?.wakasek_bidang_ketahfizan || '').trim(), roleToken: 'wakasek ketahfizan' },
+    { selectedName: String(payload?.wakasek_bidang_kesantrian || '').trim(), roleToken: 'wakasek kesantrian' }
+  ]
+
+  const roleTokens = bidangConfig.map(item => item.roleToken)
+  const selectedNames = [...new Set(bidangConfig.map(item => item.selectedName).filter(Boolean))]
+  const { data, error } = await sb
+    .from('karyawan')
+    .select('id, nama, role, aktif')
+    .order('nama', { ascending: true })
+
+  if (error) throw error
+
+  const rows = (data || []).filter(item => String(item?.aktif || '').toLowerCase() !== 'false')
+  const updates = []
+
+  for (const row of rows) {
+    const name = String(row?.nama || '').trim()
+    if (!name) continue
+
+    let nextRoles = parseRoles(row?.role)
+    const hadAnyRoleToken = roleTokens.some(token => nextRoles.includes(token))
+    const isSelected = selectedNames.includes(name)
+
+    // Hapus role wakasek bidang lama agar tidak bentrok antar bidang.
+    nextRoles = nextRoles.filter(role => !roleTokens.includes(role))
+
+    // Tambahkan role bidang yang dipilih untuk nama ini.
+    bidangConfig.forEach(item => {
+      if (item.selectedName && item.selectedName === name) nextRoles.push(item.roleToken)
+    })
+    nextRoles = [...new Set(nextRoles)]
+
+    const changed = normalizeRolesForStore(nextRoles) !== normalizeRolesForStore(parseRoles(row?.role))
+    if (!changed && !hadAnyRoleToken && !isSelected) continue
+    updates.push({ id: row.id, role: normalizeRolesForStore(nextRoles) })
+  }
+
+  for (const item of updates) {
+    const { error: updateError } = await sb
+      .from('karyawan')
+      .update({ role: item.role })
+      .eq('id', item.id)
+    if (updateError) throw updateError
+  }
 }
 
 function refreshStrukturSekolah() {

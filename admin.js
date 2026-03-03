@@ -6,7 +6,7 @@ const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 const sb = supabase.createClient(supabaseUrl, supabaseKey)
 const externalPageHtmlCache = {}
 const externalPageScriptLoaded = {}
-const EXTERNAL_PAGE_ASSET_VERSION = '20260225-legacyfix-02'
+const EXTERNAL_PAGE_ASSET_VERSION = '20260302-ketahfizan-halaqah-pickflow-02'
 const pageDataCache = window.__pageDataCache || {}
 window.__pageDataCache = pageDataCache
 
@@ -222,6 +222,8 @@ function setActiveSidebarTab(page) {
     page === 'jadwal-ujian' ||
     page === 'kalender-akademik' ||
     page === 'santri' ||
+    page === 'prestasi-pelanggaran' ||
+    page === 'perizinan-santri' ||
     page === 'alumni' ||
     page === 'santri-detail'
 
@@ -237,7 +239,8 @@ function setActiveSidebarTab(page) {
     page === 'karyawan' ||
     page === 'guru' ||
     page === 'guru-detail' ||
-    page === 'kehadiran-guru'
+    page === 'kehadiran-guru' ||
+    page === 'perizinan-karyawan'
 
   const navButtons = document.querySelectorAll('.sidebar-nav-btn')
   navButtons.forEach(button => {
@@ -292,6 +295,7 @@ function setTopbarTitle(page) {
     'kelas-distribusi-mapel': 'Distribusi Mapel',
     'kelas-guru-mapel': 'Data Mapel',
     jadwal: 'Jadwal Pelajaran',
+    ekstrakurikuler: 'Ekstrakulikuler',
     ujian: 'Ujian',
     'jadwal-ujian': 'Jadwal Ujian',
     'ketahfizan-halaqah': 'Data Halaqah',
@@ -300,6 +304,9 @@ function setTopbarTitle(page) {
     'kesantrian-kamar': 'Data Kamar',
     'kalender-akademik': 'Kalender Akademik',
     'kehadiran-guru': 'Kehadiran Karyawan',
+    'perizinan-karyawan': 'Perizinan Karyawan',
+    'perizinan-santri': 'Perizinan Siswa',
+    'prestasi-pelanggaran': 'Prestasi & Pelanggaran',
     santri: 'Data Siswa',
     alumni: 'Data Alumni',
     'santri-detail': 'Detail Santri',
@@ -924,10 +931,13 @@ function getAkademikPageFromSubtab(subtab) {
   if (subtab === 'kelas') return 'kelas'
   if (subtab === 'jadwal') return 'jadwal'
   if (subtab === 'ujian') return 'ujian'
+  if (subtab === 'ekstrakurikuler') return 'ekstrakurikuler'
   if (subtab === 'jadwal-ujian') return 'jadwal-ujian'
   if (subtab === 'kalender-akademik') return 'kalender-akademik'
   if (subtab === 'set-tugas') return 'set-tugas'
   if (subtab === 'santri') return 'santri'
+  if (subtab === 'perizinan-santri') return 'perizinan-santri'
+  if (subtab === 'prestasi-pelanggaran') return 'prestasi-pelanggaran'
   if (subtab === 'alumni') return 'alumni'
   if (subtab === 'distribusi-mapel') return 'kelas-distribusi-mapel'
   if (subtab === 'guru-mapel') return 'kelas-guru-mapel'
@@ -943,6 +953,7 @@ function getKaryawanPageFromSubtab(subtab) {
   if (subtab === 'karyawan') return 'karyawan'
   if (subtab === 'guru') return 'guru'
   if (subtab === 'kehadiran-guru') return 'kehadiran-guru'
+  if (subtab === 'perizinan-karyawan') return 'perizinan-karyawan'
   return 'karyawan'
 }
 
@@ -1015,6 +1026,9 @@ function loadPage(page, params = {}) {
     case 'kehadiran-guru':
       loadExternalPage('kehadiran-guru-admin')
       break
+    case 'perizinan-karyawan':
+      loadExternalPage('perizinan-karyawan-admin')
+      break
     case 'kelas':
       loadExternalPage('kelas', { subtab: 'data-kelas' })
       break
@@ -1027,11 +1041,20 @@ function loadPage(page, params = {}) {
     case 'santri':
       loadExternalPage('santri')
       break
+    case 'perizinan-santri':
+      loadExternalPage('perizinan-santri-admin')
+      break
+    case 'prestasi-pelanggaran':
+      loadExternalPage('prestasi-pelanggaran-admin')
+      break
     case 'alumni':
       loadExternalPage('alumni')
       break
     case 'jadwal':
       loadExternalPage('jadwal')
+      break
+    case 'ekstrakurikuler':
+      loadExternalPage('ekstrakurikuler-admin')
       break
     case 'ujian':
       loadExternalPage('ujian')
@@ -1094,6 +1117,18 @@ async function loadExternalPage(page, params = {}) {
       initKehadiranGuruAdminPage()
       return
     }
+    if (page === 'perizinan-karyawan-admin' && typeof initPerizinanKaryawanAdminPage === 'function') {
+      initPerizinanKaryawanAdminPage()
+      return
+    }
+    if (page === 'perizinan-santri-admin' && typeof initPerizinanSantriAdminPage === 'function') {
+      initPerizinanSantriAdminPage()
+      return
+    }
+    if (page === 'prestasi-pelanggaran-admin' && typeof initPrestasiPelanggaranAdminPage === 'function') {
+      initPrestasiPelanggaranAdminPage()
+      return
+    }
     if (page === 'kelas' && typeof initKelasPage === 'function') {
       initKelasPage(params)
       return
@@ -1116,6 +1151,10 @@ async function loadExternalPage(page, params = {}) {
     }
     if (page === 'jadwal' && typeof initJadwalPage === 'function') {
       initJadwalPage()
+      return
+    }
+    if (page === 'ekstrakurikuler-admin' && typeof initEkstrakurikulerAdminPage === 'function') {
+      initEkstrakurikulerAdminPage()
       return
     }
     if (page === 'ujian' && typeof initUjianPage === 'function') {

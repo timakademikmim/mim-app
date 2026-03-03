@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MIM App",
+  "version": "0.1.0",
+  "identifier": "com.mim.app",
+  "build": {
+    "beforeDevCommand": "powershell -ExecutionPolicy Bypass -File scripts/build-desktop-assets.ps1",
+    "beforeBuildCommand": "powershell -ExecutionPolicy Bypass -File scripts/build-desktop-assets.ps1",
+    "frontendDist": "../dist-tauri-web"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "MIM App",
+        "width": 1400,
+        "height": 900,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "../00 Logo MIM .png"
+    ]
+  }
+}
