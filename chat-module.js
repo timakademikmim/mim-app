@@ -101,6 +101,8 @@
       groupDraftName: '',
       groupDraftMembers: new Set(),
       groupMembersScrollTop: 0,
+      messageListAtBottom: true,
+      forceStickBottom: false,
       realtimeChannel: null,
       refreshTimer: null
     }
@@ -391,6 +393,7 @@
 
       if (textEl) textEl.value = ''
       state.draftByThread.set(threadId, '')
+      state.forceStickBottom = true
       await refresh(false, threadId)
     }
 
@@ -434,6 +437,10 @@
     function renderMessagesPanel() {
       const box = document.getElementById('chat-message-list')
       if (!box) return
+      const prevScrollTop = Number(box.scrollTop || 0)
+      const prevScrollHeight = Number(box.scrollHeight || 0)
+      const distanceFromBottom = prevScrollHeight - (prevScrollTop + Number(box.clientHeight || 0))
+      const wasNearBottom = state.forceStickBottom || distanceFromBottom <= 28
       const thread = getSelectedThread()
       if (!thread) {
         box.innerHTML = '<div style="color:#64748b;">Pilih thread untuk mulai chat.</div>'
@@ -481,7 +488,18 @@
           event.stopPropagation()
         })
       })
-      box.scrollTop = box.scrollHeight
+      box.addEventListener('scroll', () => {
+        const remain = Number(box.scrollHeight || 0) - (Number(box.scrollTop || 0) + Number(box.clientHeight || 0))
+        state.messageListAtBottom = remain <= 28
+      })
+      if (wasNearBottom) {
+        box.scrollTop = box.scrollHeight
+        state.messageListAtBottom = true
+      } else {
+        box.scrollTop = prevScrollTop
+        state.messageListAtBottom = false
+      }
+      state.forceStickBottom = false
     }
 
     function renderThreadList() {
@@ -507,6 +525,7 @@
         btn.addEventListener('click', () => {
           state.selectedThreadId = safeId(btn.getAttribute('data-chat-thread-id'))
           state.selectedMessageIds.clear()
+          state.forceStickBottom = true
           renderUI()
         })
       })
@@ -764,6 +783,8 @@
       const activeEl = document.activeElement
       const activeId = String(activeEl?.id || '')
       if (state.groupModalOpen) return true
+      if (state.emojiPickerOpen) return true
+      if (!state.messageListAtBottom) return true
       if (activeId === 'chat-message-input' || activeId === 'chat-group-name-modal' || activeId === 'chat-group-members-modal') return true
       return false
     }

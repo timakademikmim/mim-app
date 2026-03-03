@@ -31,6 +31,20 @@ if (requiredRole && !roles.includes(requiredRole)) {
   location.replace('index.html')
 }
 
+function rememberLastOpenPage() {
+  try {
+    const path = String(window.location.pathname || '')
+      .replace(/\\/g, '/')
+      .split('/')
+      .filter(Boolean)
+      .slice(-2)
+      .join('/')
+    if (!path || path === 'index.html') return
+    localStorage.setItem('last_open_page', path)
+  } catch (_error) {}
+}
+rememberLastOpenPage()
+
 function getActiveRole() {
   if (requiredRole && roles.includes(requiredRole)) return requiredRole
   return roles[0] || ''

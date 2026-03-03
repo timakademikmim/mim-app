@@ -42,6 +42,52 @@ function getLandingPageByRole(role) {
   return roleToPage[String(role || '').trim().toLowerCase()] || null
 }
 
+function getSavedLandingPage() {
+  const loginId = String(localStorage.getItem('login_id') || '').trim()
+  if (!loginId) return ''
+
+  let roles = []
+  try {
+    roles = JSON.parse(localStorage.getItem('login_roles') || '[]')
+  } catch (_error) {
+    roles = []
+  }
+  if (!Array.isArray(roles) || roles.length === 0) {
+    const single = String(localStorage.getItem('login_role') || '').trim()
+    if (single) roles = [single]
+  }
+  const normalized = roles
+    .map(item => String(item || '').trim().toLowerCase())
+    .filter(Boolean)
+  if (!normalized.length) return ''
+
+  const activeRole = String(localStorage.getItem('login_role') || '').trim().toLowerCase()
+  if (activeRole) {
+    const page = getLandingPageByRole(activeRole)
+    if (page) return page
+  }
+  return getLandingPageByRoles(normalized) || ''
+}
+
+function getSavedLastPage() {
+  const loginId = String(localStorage.getItem('login_id') || '').trim()
+  if (!loginId) return ''
+  const raw = String(localStorage.getItem('last_open_page') || '').trim()
+  if (!raw) return ''
+
+  // Only allow known internal pages to avoid broken redirects.
+  const allow = new Set([
+    'admin.html',
+    'guru.html',
+    'muhaffiz.html',
+    'musyrif.html',
+    'pages/guru-detail.html',
+    'pages/muhaffiz-detail.html',
+    'pages/musyrif-detail.html'
+  ])
+  return allow.has(raw) ? raw : ''
+}
+
 function getKnownRoles(roles) {
   const known = ['admin', 'guru', 'muhaffiz', 'musyrif']
   return (roles || []).filter(role => known.includes(role))
@@ -172,6 +218,17 @@ async function login() {
   // redirect sesuai role pilihan
   location.href = landingPage
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+  const lastPage = getSavedLastPage()
+  if (lastPage) {
+    location.replace(lastPage)
+    return
+  }
+  const target = getSavedLandingPage()
+  if (!target) return
+  location.replace(target)
+})
 
 
 
