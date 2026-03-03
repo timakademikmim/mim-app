@@ -760,11 +760,20 @@
       renderUI()
     }
 
+    function isUserInteracting() {
+      const activeEl = document.activeElement
+      const activeId = String(activeEl?.id || '')
+      if (state.groupModalOpen) return true
+      if (activeId === 'chat-message-input' || activeId === 'chat-group-name-modal' || activeId === 'chat-group-members-modal') return true
+      return false
+    }
+
     function startPolling() {
       stopPolling()
       state.pollHandle = window.setInterval(() => {
-        refresh(true).catch(error => console.error('Chat refresh error:', error))
-      }, 10000)
+        if (isUserInteracting()) return
+        refresh(true).catch(error => console.error('Chat sync refresh error:', error))
+      }, 3000)
       window.__chatModuleActiveState = state
     }
 
@@ -772,6 +781,7 @@
       await loadUsers()
       await refresh(false)
       startRealtime()
+      startPolling()
       window.__chatModuleActiveState = state
     } catch (error) {
       console.error('Chat init error:', error)
