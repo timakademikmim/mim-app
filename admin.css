@@ -551,6 +551,9 @@ body {
 
 .topbar-user-menu-wrap {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .sidebar-user-menu-wrap {
@@ -655,6 +658,49 @@ body {
 
 .topbar-user-trigger:hover {
   background: #f8fafc;
+}
+
+.topbar-notif-trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #0f172a;
+  cursor: pointer;
+  margin-right: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.topbar-notif-trigger:hover {
+  background: #f8fafc;
+}
+
+.topbar-notif-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.topbar-notif-badge.hidden {
+  display: none;
 }
 
 .topbar-avatar-trigger {
@@ -812,6 +858,42 @@ body {
   box-sizing: border-box;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+.karyawan-field,
+.guru-field,
+.admin-field,
+#content-area input[type="text"],
+#content-area input[type="password"],
+#content-area input[type="number"],
+#content-area input[type="date"],
+#content-area input[type="email"],
+#content-area select,
+#content-area textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #ffffff;
+  color: #0f172a;
+  outline: none;
+  box-shadow: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.karyawan-field:focus,
+.guru-field:focus,
+.admin-field:focus,
+#content-area input[type="text"]:focus,
+#content-area input[type="password"]:focus,
+#content-area input[type="number"]:focus,
+#content-area input[type="date"]:focus,
+#content-area input[type="email"]:focus,
+#content-area select:focus,
+#content-area textarea:focus {
+  border-color: #16a34a !important;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.2) !important;
 }
 
 .table-scroll-area {

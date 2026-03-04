@@ -35,9 +35,21 @@ fn emit_updater_status(
   }
 }
 
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+  let target = url.trim();
+  if target.is_empty() {
+    return Err("URL kosong.".to_string());
+  }
+  tauri::webbrowser::open(target)
+    .map(|_| ())
+    .map_err(|e| format!("Gagal membuka URL eksternal: {e}"))
+}
+
 fn main() {
   tauri::Builder::default()
     .plugin(tauri_plugin_updater::Builder::new().build())
+    .invoke_handler(tauri::generate_handler![open_external_url])
     .setup(|app| {
       #[cfg(not(debug_assertions))]
       {

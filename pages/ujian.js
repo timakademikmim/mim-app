@@ -744,6 +744,25 @@
     setTimeout(function () { URL.revokeObjectURL(url) }, 1200)
   }
 
+  async function savePdfDocForCurrentPlatform(doc, fileName) {
+    if (!doc || typeof doc.save !== 'function') return
+    var isDesktopApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
+    if (!isDesktopApp) {
+      doc.save(fileName)
+      return
+    }
+    try {
+      var blob = doc.output('blob')
+      var printed = typeof window.printPdfBlobInPlace === 'function'
+        ? await window.printPdfBlobInPlace(blob)
+        : false
+      if (printed) return
+    } catch (error) {
+      console.warn('Desktop print fallback gagal, lanjutkan download PDF.', error)
+    }
+    doc.save(fileName)
+  }
+
   function renderRows(jadwalRows, soalRows) {
     var infoEl = document.getElementById('ujian-placeholder-info')
     if (!infoEl) return
@@ -832,7 +851,7 @@
         return
       }
       var fileName = 'Soal ' + String(jadwal.nama || 'Ujian') + ' - ' + String(jadwal.kelas || '-') + '.pdf'
-      doc.save(fileName)
+      await savePdfDocForCurrentPlatform(doc, fileName)
     } catch (err) {
       console.error('printAdminExam error:', err)
       alert('Cetak gagal: ' + String(err && err.message || err || 'Unknown error'))
@@ -848,7 +867,7 @@
     }
   }
 
-  window.exportAdminExamWord = function exportAdminExamWord(jadwalId) {
+  window.exportAdminExamWord = async function exportAdminExamWord(jadwalId) {
     try {
       var sid = String(jadwalId || '')
       var jadwal = (window.__adminExamJadwalRows || []).find(function (item) { return String(item.id || '') === sid })

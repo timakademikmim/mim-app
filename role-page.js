@@ -168,7 +168,6 @@ function initDesktopUpdaterUi() {
   let sidebarPanel = null
   let versionBtn = null
   let statusLabel = null
-  let progressFill = null
   let onlineDot = null
   let onlineText = null
   let changelogOverlay = null
@@ -181,33 +180,36 @@ function initDesktopUpdaterUi() {
     style.id = 'desktop-updater-style'
     style.textContent = `
       .desktop-updater-sidebar {
-        margin-top: 10px;
+        margin-top: auto;
         padding: 10px;
         border-top: 1px solid #e2e8f0;
         display: grid;
         gap: 8px;
+        justify-items: center;
       }
       .desktop-version-btn {
-        width: 100%;
-        text-align: left;
-        border: 1px solid #e2e8f0;
-        border-radius: 10px;
-        background: #f8fafc;
-        color: #64748b;
+        width: auto;
+        text-align: center;
+        border: none;
+        background: transparent;
+        color: #cbd5e1;
         font-size: 11px;
         line-height: 1.2;
-        padding: 7px 9px;
+        padding: 4px 6px;
         cursor: pointer;
-        transition: border-color .2s ease, color .2s ease;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
       }
       .desktop-version-btn:hover {
-        color: #334155;
-        border-color: #cbd5e1;
+        color: #94a3b8;
       }
       .desktop-status-row {
         display: flex;
         align-items: center;
         gap: 8px;
+        width: 100%;
+        justify-content: center;
       }
       .desktop-online-indicator {
         display: inline-flex;
@@ -226,25 +228,12 @@ function initDesktopUpdaterUi() {
       .desktop-online-indicator.online i {
         background: #22c55e;
       }
-      .desktop-sidebar-progress {
-        flex: 1;
-        height: 5px;
-        border-radius: 999px;
-        background: #e2e8f0;
-        overflow: hidden;
-      }
-      .desktop-sidebar-progress > i {
-        display: block;
-        width: 0%;
-        height: 100%;
-        background: #22c55e;
-        transition: width 0.2s ease;
-      }
       .desktop-updater-status {
         font-size: 11px;
         color: #64748b;
         line-height: 1.25;
         min-height: 28px;
+        text-align: center;
       }
       .desktop-release-overlay {
         position: fixed;
@@ -341,16 +330,14 @@ function initDesktopUpdaterUi() {
       sidebarPanel = document.createElement('div')
       sidebarPanel.className = 'desktop-updater-sidebar'
       sidebarPanel.innerHTML = `
-        <button type="button" class="desktop-version-btn">versi -</button>
+        <button type="button" class="desktop-version-btn">versi - <span aria-hidden="true">›</span></button>
         <div class="desktop-status-row">
           <span class="desktop-online-indicator"><i></i><span>Offline</span></span>
-          <span class="desktop-sidebar-progress"><i></i></span>
         </div>
         <div class="desktop-updater-status">Siap.</div>
       `
       versionBtn = sidebarPanel.querySelector('.desktop-version-btn')
       statusLabel = sidebarPanel.querySelector('.desktop-updater-status')
-      progressFill = sidebarPanel.querySelector('.desktop-sidebar-progress > i')
       onlineDot = sidebarPanel.querySelector('.desktop-online-indicator')
       onlineText = sidebarPanel.querySelector('.desktop-online-indicator span')
       const sidebar = document.querySelector('.sidebar')
@@ -447,15 +434,11 @@ function initDesktopUpdaterUi() {
     renderVersionLabel()
 
     statusLabel.textContent = message
-    if (Number.isFinite(progress) && progressFill) {
-      progressFill.style.width = `${Math.max(0, Math.min(100, progress))}%`
-    }
 
     const isLock = stage === 'downloading' || stage === 'installing' || stage === 'ready_restart'
     updateLockOverlay.classList.toggle('active', isLock)
 
     if (stage === 'no_update') {
-      if (progressFill) progressFill.style.width = '100%'
       return
     }
 
@@ -477,6 +460,74 @@ function initDesktopUpdaterUi() {
   window.addEventListener('desktop-updater-status', event => {
     updateDesktopUpdaterUi(event?.detail || {})
   })
+}
+
+window.openExternalUrl = async function openExternalUrl(url) {
+  const target = String(url || '').trim()
+  if (!target) return false
+  const isDesktopApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
+  if (!isDesktopApp) {
+    const popup = window.open(target, '_blank', 'noopener,noreferrer')
+    return !!popup
+  }
+  try {
+    if (window.__TAURI__?.core?.invoke) {
+      await window.__TAURI__.core.invoke('open_external_url', { url: target })
+      return true
+    }
+  } catch (error) {
+    console.error('openExternalUrl invoke failed:', error)
+  }
+  try {
+    const popup = window.open(target, '_blank', 'noopener,noreferrer')
+    return !!popup
+  } catch (_error) {
+    return false
+  }
+}
+
+window.printPdfBlobInPlace = async function printPdfBlobInPlace(blob) {
+  if (!(blob instanceof Blob)) return false
+  try {
+    const url = URL.createObjectURL(blob)
+    const frame = document.createElement('iframe')
+    frame.style.position = 'fixed'
+    frame.style.width = '1px'
+    frame.style.height = '1px'
+    frame.style.opacity = '0'
+    frame.style.pointerEvents = 'none'
+    frame.style.bottom = '0'
+    frame.style.right = '0'
+    frame.src = url
+    document.body.appendChild(frame)
+
+    await new Promise(resolve => {
+      let done = false
+      const cleanup = () => {
+        if (done) return
+        done = true
+        setTimeout(() => {
+          try {
+            document.body.removeChild(frame)
+          } catch (_err) {}
+          URL.revokeObjectURL(url)
+        }, 2500)
+        resolve()
+      }
+      frame.onload = () => {
+        try {
+          frame.contentWindow?.focus?.()
+          frame.contentWindow?.print?.()
+        } catch (_err) {}
+        cleanup()
+      }
+      setTimeout(cleanup, 2200)
+    })
+    return true
+  } catch (error) {
+    console.error('printPdfBlobInPlace failed:', error)
+    return false
+  }
 }
 
 window.setTopbarUserIdentity = function setTopbarUserIdentity(nameOrObject, maybeFotoUrl) {

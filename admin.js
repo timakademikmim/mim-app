@@ -6,9 +6,16 @@ const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 const sb = supabase.createClient(supabaseUrl, supabaseKey)
 const externalPageHtmlCache = {}
 const externalPageScriptLoaded = {}
-const EXTERNAL_PAGE_ASSET_VERSION = '20260304-perizinan-admin-actions-01'
+const EXTERNAL_PAGE_ASSET_VERSION = '20260304-desktop-wa-print-fix-01'
+const CHAT_MEMBERS_TABLE = 'chat_thread_members'
+const CHAT_MESSAGES_TABLE = 'chat_messages'
 const pageDataCache = window.__pageDataCache || {}
 window.__pageDataCache = pageDataCache
+let adminTopbarChatBadgeState = {
+  userId: '',
+  intervalId: null,
+  refreshInFlight: false
+}
 
 window.getCachedData = function getCachedData(key, ttlMs) {
   const entry = pageDataCache[key]
@@ -126,6 +133,9 @@ document.addEventListener('DOMContentLoaded', () => {
   setupCustomPopupSystem()
   renderAdminTopbarName()
   hydrateAdminLoginDisplayName()
+  ensureAdminTopbarChatButton()
+  refreshAdminTopbarChatBadge().catch(error => console.error(error))
+  startAdminTopbarChatBadgeTicker()
 
   const forceDashboardOnce = localStorage.getItem('admin_force_dashboard_once') === '1'
 
@@ -302,6 +312,139 @@ function setActiveSidebarTab(page) {
   setKaryawanSidebarMenuExpanded(isKaryawanGroup)
 }
 
+function ensureAdminTopbarChatButton() {
+  const wrap = document.querySelector('.topbar-user-menu-wrap')
+  if (!wrap) return
+  if (document.getElementById('topbar-chat-trigger')) return
+
+  const chatBtn = document.createElement('button')
+  chatBtn.type = 'button'
+  chatBtn.id = 'topbar-chat-trigger'
+  chatBtn.className = 'topbar-notif-trigger'
+  chatBtn.title = 'Chat'
+  chatBtn.innerHTML = '<span aria-hidden="true">&#128172;</span><span id="topbar-chat-badge" class="topbar-notif-badge hidden">0</span>'
+  chatBtn.addEventListener('click', event => {
+    event.preventDefault()
+    event.stopPropagation()
+    loadPage('chat')
+  })
+  const userTrigger = wrap.querySelector('.topbar-user-trigger')
+  wrap.insertBefore(chatBtn, userTrigger || null)
+}
+
+function setAdminTopbarChatBadge(count) {
+  const badge = document.getElementById('topbar-chat-badge')
+  if (!badge) return
+  const total = Number.isFinite(Number(count)) ? Number(count) : 0
+  if (total <= 0) {
+    badge.textContent = '0'
+    badge.classList.add('hidden')
+    return
+  }
+  badge.textContent = total > 99 ? '99+' : String(total)
+  badge.classList.remove('hidden')
+}
+
+async function getAdminChatUserId() {
+  if (adminTopbarChatBadgeState.userId) return adminTopbarChatBadgeState.userId
+  if (!loginId) return ''
+  const { data, error } = await sb
+    .from('karyawan')
+    .select('id')
+    .eq('id_karyawan', String(loginId || '').trim())
+    .maybeSingle()
+  if (error) {
+    console.error(error)
+    return ''
+  }
+  const userId = String(data?.id || '').trim()
+  adminTopbarChatBadgeState.userId = userId
+  return userId
+}
+
+function toTimestampMs(value) {
+  const ms = Date.parse(String(value || '').trim())
+  return Number.isFinite(ms) ? ms : 0
+}
+
+async function fetchAdminUnreadChatThreadCount() {
+  const userId = await getAdminChatUserId()
+  if (!userId) return 0
+
+  let hasLastReadColumn = true
+  let membersRes = await sb
+    .from(CHAT_MEMBERS_TABLE)
+    .select('thread_id, last_read_at')
+    .eq('karyawan_id', userId)
+
+  if (membersRes.error && String(membersRes.error?.message || '').toLowerCase().includes('last_read_at')) {
+    hasLastReadColumn = false
+    membersRes = await sb
+      .from(CHAT_MEMBERS_TABLE)
+      .select('thread_id')
+      .eq('karyawan_id', userId)
+  }
+
+  if (membersRes.error) throw membersRes.error
+  const members = Array.isArray(membersRes.data) ? membersRes.data : []
+  const threadIds = [...new Set(members.map(item => String(item?.thread_id || '').trim()).filter(Boolean))]
+  if (!threadIds.length) return 0
+
+  const { data: msgRows, error: msgErr } = await sb
+    .from(CHAT_MESSAGES_TABLE)
+    .select('thread_id, sender_id, created_at')
+    .in('thread_id', threadIds)
+    .order('created_at', { ascending: false })
+    .limit(1000)
+  if (msgErr) throw msgErr
+
+  const latestIncomingMsByThread = new Map()
+  ;(msgRows || []).forEach(row => {
+    const threadId = String(row?.thread_id || '').trim()
+    if (!threadId) return
+    if (String(row?.sender_id || '').trim() === userId) return
+    const currentMs = latestIncomingMsByThread.get(threadId) || 0
+    const nextMs = toTimestampMs(row?.created_at)
+    if (nextMs > currentMs) latestIncomingMsByThread.set(threadId, nextMs)
+  })
+
+  let unread = 0
+  members.forEach(member => {
+    const threadId = String(member?.thread_id || '').trim()
+    if (!threadId) return
+    const incomingMs = latestIncomingMsByThread.get(threadId) || 0
+    if (!incomingMs) return
+    if (!hasLastReadColumn) {
+      unread += 1
+      return
+    }
+    const readMs = toTimestampMs(member?.last_read_at)
+    if (!readMs || incomingMs > readMs) unread += 1
+  })
+  return unread
+}
+
+async function refreshAdminTopbarChatBadge() {
+  ensureAdminTopbarChatButton()
+  if (adminTopbarChatBadgeState.refreshInFlight) return
+  adminTopbarChatBadgeState.refreshInFlight = true
+  try {
+    const unreadCount = await fetchAdminUnreadChatThreadCount()
+    setAdminTopbarChatBadge(unreadCount)
+  } catch (error) {
+    console.error(error)
+  } finally {
+    adminTopbarChatBadgeState.refreshInFlight = false
+  }
+}
+
+function startAdminTopbarChatBadgeTicker() {
+  if (adminTopbarChatBadgeState.intervalId) return
+  adminTopbarChatBadgeState.intervalId = window.setInterval(() => {
+    refreshAdminTopbarChatBadge().catch(error => console.error(error))
+  }, 10000)
+}
+
 function setTopbarTitle(page) {
   const titleMap = {
     dashboard: 'Dashboard',
@@ -331,7 +474,8 @@ function setTopbarTitle(page) {
     'santri-detail': 'Detail Santri',
     guru: 'Data Guru',
     'guru-detail': 'Detail Guru',
-    karyawan: 'Data Karyawan'
+    karyawan: 'Data Karyawan',
+    chat: 'Chat'
   }
   const titleEl = document.getElementById('topbar-title')
   if (!titleEl) return
@@ -1026,7 +1170,12 @@ function loadPage(page, params = {}) {
   setActiveSidebarTab(page)
   setTopbarTitle(page)
   setupTopbarUserMenuHandlers()
+  ensureAdminTopbarChatButton()
+  refreshAdminTopbarChatBadge().catch(error => console.error(error))
   closeTopbarUserMenu()
+  if (page !== 'chat' && window.ChatModule && typeof window.ChatModule.stop === 'function') {
+    window.ChatModule.stop()
+  }
 
   switch (page) {
     case 'dashboard':
@@ -1108,6 +1257,39 @@ function loadPage(page, params = {}) {
     case 'guru-detail':
       loadExternalPage('guru-detail', params)
       break
+    case 'chat':
+      renderAdminChatPage()
+      break
+  }
+}
+
+async function renderAdminChatPage() {
+  const area = document.getElementById('content-area')
+  if (!area) return
+  area.innerHTML = 'Loading chat...'
+  try {
+    const { data, error } = await sb
+      .from('karyawan')
+      .select('id, nama, id_karyawan')
+      .eq('id_karyawan', String(loginId || '').trim())
+      .maybeSingle()
+    if (error) throw error
+    if (!data?.id) {
+      area.innerHTML = '<div class="placeholder-card">Data admin tidak ditemukan.</div>'
+      return
+    }
+    if (!window.ChatModule || typeof window.ChatModule.render !== 'function') {
+      area.innerHTML = '<div class="placeholder-card">Modul chat belum termuat. Refresh halaman.</div>'
+      return
+    }
+    await window.ChatModule.render({
+      sb,
+      containerId: 'content-area',
+      currentUser: { id: String(data.id), nama: String(data.nama || data.id_karyawan || '-') }
+    })
+  } catch (error) {
+    console.error(error)
+    area.innerHTML = `<div class="placeholder-card">Gagal load chat: ${escapeHtml(error?.message || 'Unknown error')}</div>`
   }
 }
 

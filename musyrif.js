@@ -20,6 +20,8 @@ const SANTRI_PELANGGARAN_TABLE = 'santri_pelanggaran'
 const SANTRI_SURAT_BUCKET = 'surat-pemberitahuan'
 const KARYAWAN_FOTO_BUCKET = 'karyawan-foto'
 const KARYAWAN_FOTO_MAX_SIZE_BYTES = 300 * 1024
+const CHAT_MEMBERS_TABLE = 'chat_thread_members'
+const CHAT_MESSAGES_TABLE = 'chat_messages'
 const SCHOOL_PROFILE_TABLE = 'struktur_sekolah'
 const TOPBAR_NOTIF_READ_KEY = 'musyrif_topbar_notif_read'
 const TOPBAR_NOTIF_RANGE_KEY = 'musyrif_topbar_notif_range_days'
@@ -55,6 +57,10 @@ let topbarNotifState = {
   loaded: false,
   rangeDays: 3,
   readMap: {}
+}
+let topbarChatBadgeState = {
+  intervalId: null,
+  refreshInFlight: false
 }
 let musyrifDashboardAgendaRows = []
 let musyrifPerizinanState = {
@@ -611,30 +617,48 @@ function buildMusyrifNotifDateKeys() {
 function ensureTopbarNotification() {
   const wrap = document.querySelector('.topbar-user-menu-wrap')
   if (!wrap) return
-  if (document.getElementById('topbar-notif-trigger') && document.getElementById('topbar-notif-menu')) return
+  const hasNotif = document.getElementById('topbar-notif-trigger') && document.getElementById('topbar-notif-menu')
 
-  const notifBtn = document.createElement('button')
-  notifBtn.type = 'button'
-  notifBtn.id = 'topbar-notif-trigger'
-  notifBtn.className = 'topbar-notif-trigger'
-  notifBtn.title = 'Notifikasi Aktivitas'
-  notifBtn.innerHTML = '<span aria-hidden="true">&#128276;</span><span id="topbar-notif-badge" class="topbar-notif-badge hidden">0</span>'
-  notifBtn.addEventListener('click', async event => {
-    event.preventDefault()
-    event.stopPropagation()
-    await toggleTopbarNotifMenu()
-  })
+  if (!hasNotif) {
+    const notifBtn = document.createElement('button')
+    notifBtn.type = 'button'
+    notifBtn.id = 'topbar-notif-trigger'
+    notifBtn.className = 'topbar-notif-trigger'
+    notifBtn.title = 'Notifikasi Aktivitas'
+    notifBtn.innerHTML = '<span aria-hidden="true">&#128276;</span><span id="topbar-notif-badge" class="topbar-notif-badge hidden">0</span>'
+    notifBtn.addEventListener('click', async event => {
+      event.preventDefault()
+      event.stopPropagation()
+      await toggleTopbarNotifMenu()
+    })
 
-  const notifMenu = document.createElement('div')
-  notifMenu.id = 'topbar-notif-menu'
-  notifMenu.className = 'topbar-notif-menu'
-  notifMenu.innerHTML = '<div class="topbar-notif-head">Aktivitas</div><div class="topbar-notif-empty">Memuat notifikasi...</div>'
-  notifMenu.addEventListener('click', event => {
-    event.stopPropagation()
-  })
+    const notifMenu = document.createElement('div')
+    notifMenu.id = 'topbar-notif-menu'
+    notifMenu.className = 'topbar-notif-menu'
+    notifMenu.innerHTML = '<div class="topbar-notif-head">Aktivitas</div><div class="topbar-notif-empty">Memuat notifikasi...</div>'
+    notifMenu.addEventListener('click', event => {
+      event.stopPropagation()
+    })
 
-  wrap.insertBefore(notifBtn, wrap.firstChild)
-  wrap.insertBefore(notifMenu, notifBtn.nextSibling)
+    wrap.insertBefore(notifBtn, wrap.firstChild)
+    wrap.insertBefore(notifMenu, notifBtn.nextSibling)
+  }
+
+  if (!document.getElementById('topbar-chat-trigger')) {
+    const chatBtn = document.createElement('button')
+    chatBtn.type = 'button'
+    chatBtn.id = 'topbar-chat-trigger'
+    chatBtn.className = 'topbar-notif-trigger'
+    chatBtn.title = 'Chat'
+    chatBtn.innerHTML = '<span aria-hidden="true">&#128172;</span><span id="topbar-chat-badge" class="topbar-notif-badge hidden">0</span>'
+    chatBtn.addEventListener('click', event => {
+      event.preventDefault()
+      event.stopPropagation()
+      loadMusyrifPage('chat')
+    })
+    const userTrigger = wrap.querySelector('.topbar-user-trigger')
+    wrap.insertBefore(chatBtn, userTrigger || null)
+  }
 }
 
 function formatNotifDateLabel(dateKey) {
@@ -723,6 +747,102 @@ function setTopbarNotifBadge(count) {
   }
   badge.classList.remove('hidden')
   badge.textContent = total > 99 ? '99+' : String(total)
+}
+
+function setTopbarChatBadge(count) {
+  const badge = document.getElementById('topbar-chat-badge')
+  if (!badge) return
+  const total = Number.isFinite(Number(count)) ? Number(count) : 0
+  if (total <= 0) {
+    badge.textContent = '0'
+    badge.classList.add('hidden')
+    return
+  }
+  badge.classList.remove('hidden')
+  badge.textContent = total > 99 ? '99+' : String(total)
+}
+
+function getChatTimestampMs(value) {
+  const ms = Date.parse(String(value || '').trim())
+  return Number.isFinite(ms) ? ms : 0
+}
+
+async function fetchMusyrifUnreadChatThreadCount() {
+  const userId = String(musyrifState?.profile?.id || '').trim()
+  if (!userId) return 0
+
+  let hasLastReadColumn = true
+  let membersRes = await sb
+    .from(CHAT_MEMBERS_TABLE)
+    .select('thread_id, last_read_at')
+    .eq('karyawan_id', userId)
+
+  if (membersRes.error && String(membersRes.error?.message || '').toLowerCase().includes('last_read_at')) {
+    hasLastReadColumn = false
+    membersRes = await sb
+      .from(CHAT_MEMBERS_TABLE)
+      .select('thread_id')
+      .eq('karyawan_id', userId)
+  }
+  if (membersRes.error) throw membersRes.error
+
+  const members = Array.isArray(membersRes.data) ? membersRes.data : []
+  const threadIds = [...new Set(members.map(item => String(item?.thread_id || '').trim()).filter(Boolean))]
+  if (!threadIds.length) return 0
+
+  const { data: msgRows, error: msgErr } = await sb
+    .from(CHAT_MESSAGES_TABLE)
+    .select('thread_id, sender_id, created_at')
+    .in('thread_id', threadIds)
+    .order('created_at', { ascending: false })
+    .limit(1000)
+  if (msgErr) throw msgErr
+
+  const latestIncomingMsByThread = new Map()
+  ;(msgRows || []).forEach(row => {
+    const threadId = String(row?.thread_id || '').trim()
+    if (!threadId) return
+    if (String(row?.sender_id || '').trim() === userId) return
+    const currentMs = latestIncomingMsByThread.get(threadId) || 0
+    const nextMs = getChatTimestampMs(row?.created_at)
+    if (nextMs > currentMs) latestIncomingMsByThread.set(threadId, nextMs)
+  })
+
+  let unread = 0
+  members.forEach(member => {
+    const threadId = String(member?.thread_id || '').trim()
+    if (!threadId) return
+    const incomingMs = latestIncomingMsByThread.get(threadId) || 0
+    if (!incomingMs) return
+    if (!hasLastReadColumn) {
+      unread += 1
+      return
+    }
+    const readMs = getChatTimestampMs(member?.last_read_at)
+    if (!readMs || incomingMs > readMs) unread += 1
+  })
+  return unread
+}
+
+async function refreshMusyrifTopbarChatBadge() {
+  ensureTopbarNotification()
+  if (topbarChatBadgeState.refreshInFlight) return
+  topbarChatBadgeState.refreshInFlight = true
+  try {
+    const unreadCount = await fetchMusyrifUnreadChatThreadCount()
+    setTopbarChatBadge(unreadCount)
+  } catch (error) {
+    console.error(error)
+  } finally {
+    topbarChatBadgeState.refreshInFlight = false
+  }
+}
+
+function startMusyrifTopbarChatBadgeTicker() {
+  if (topbarChatBadgeState.intervalId) return
+  topbarChatBadgeState.intervalId = window.setInterval(() => {
+    refreshMusyrifTopbarChatBadge().catch(error => console.error(error))
+  }, 10000)
 }
 
 async function fetchMusyrifTopbarNotifications() {
@@ -4085,6 +4205,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const lastPage = localStorage.getItem(MUHAFFIZ_LAST_PAGE_KEY) || 'dashboard'
   await loadMusyrifPage(lastPage)
   refreshMusyrifTopbarNotifications().catch(error => console.error(error))
+  refreshMusyrifTopbarChatBadge().catch(error => console.error(error))
+  startMusyrifTopbarChatBadgeTicker()
 
   document.addEventListener('click', event => {
     const topWrap = document.querySelector('.topbar-user-menu-wrap')
