@@ -36,6 +36,41 @@
     })
   }
 
+  function getLocalDateKey(value) {
+    const date = new Date(String(value || '').trim())
+    if (Number.isNaN(date.getTime())) return ''
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  }
+
+  function getLocalMinuteKey(value) {
+    const date = new Date(String(value || '').trim())
+    if (Number.isNaN(date.getTime())) return ''
+    return `${getLocalDateKey(value)} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+  }
+
+  function formatDateLabel(value) {
+    const date = new Date(String(value || '').trim())
+    if (Number.isNaN(date.getTime())) return '-'
+    return date.toLocaleDateString('id-ID', {
+      weekday: 'long',
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric'
+    })
+  }
+
+  function formatTimeOnly(value) {
+    const date = new Date(String(value || '').trim())
+    if (Number.isNaN(date.getTime())) return '-'
+    return date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+  }
+
+  function getTimestampMs(value) {
+    const date = new Date(String(value || '').trim())
+    const ms = date.getTime()
+    return Number.isNaN(ms) ? null : ms
+  }
+
   function getEmojiOnlyCount(text) {
     const raw = String(text || '').trim()
     if (!raw) return 0
@@ -97,6 +132,9 @@
       draftByThread: new Map(),
       selectedMessageIds: new Set(),
       emojiPickerOpen: false,
+      dmModalOpen: false,
+      dmDraftUserId: '',
+      threadMenuOpenId: '',
       groupModalOpen: false,
       groupDraftName: '',
       groupDraftMembers: new Set(),
@@ -104,7 +142,122 @@
       messageListAtBottom: true,
       forceStickBottom: false,
       realtimeChannel: null,
-      refreshTimer: null
+      refreshTimer: null,
+      uiReady: false,
+      refreshInFlight: false,
+      pendingRefresh: null
+      ,
+      threadListRenderKey: '',
+      lastReadWriteByThread: new Map()
+    }
+
+    function ensureChatVisualStyle() {
+      if (document.getElementById('chat-thread-glass-style')) return
+      const style = document.createElement('style')
+      style.id = 'chat-thread-glass-style'
+      style.textContent = `
+        .chat-thread-wrap {
+          position: relative;
+          margin-bottom: 6px;
+        }
+        .chat-thread-btn {
+          width: 100%;
+          text-align: left;
+          border: 1px solid var(--chat-thread-border, #dbe6f5);
+          background:
+            linear-gradient(135deg, rgba(255,255,255,0.68) 0%, rgba(241,245,249,0.52) 100%);
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+          border-radius: 12px;
+          padding: 9px 38px 9px 10px;
+          cursor: pointer;
+          box-shadow: 0 10px 24px rgba(15,23,42,0.08);
+          transition: transform .18s ease, box-shadow .2s ease, border-color .2s ease;
+        }
+        .chat-thread-btn:hover {
+          transform: translateY(-1px) scale(1.01);
+          box-shadow: 0 14px 30px rgba(15,23,42,0.12);
+        }
+        .chat-thread-head {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .chat-thread-avatar {
+          width: 28px;
+          height: 28px;
+          border-radius: 999px;
+          border: 1px solid #d8e2ee;
+          background: #e2e8f0;
+          color: #0f172a;
+          overflow: hidden;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 11px;
+          font-weight: 700;
+          flex: 0 0 auto;
+        }
+        .chat-thread-avatar img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          display: block;
+        }
+        .chat-thread-text {
+          min-width: 0;
+          flex: 1;
+        }
+        .chat-thread-title {
+          font-size: 13px;
+          font-weight: 600;
+          color: #0f172a;
+        }
+        .chat-thread-preview {
+          font-size: 12px;
+          color: #64748b;
+          margin-top: 2px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .chat-thread-menu-trigger {
+          position: absolute;
+          top: 8px;
+          right: 7px;
+          width: 24px;
+          height: 24px;
+          border: 1px solid #dbe4ef;
+          border-radius: 8px;
+          background: rgba(255,255,255,0.78);
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
+          color: #475569;
+          cursor: pointer;
+          font-size: 14px;
+          line-height: 1;
+          transition: transform .15s ease, box-shadow .2s ease;
+        }
+        .chat-thread-menu-trigger:hover {
+          transform: scale(1.04);
+          box-shadow: 0 8px 20px rgba(15,23,42,0.12);
+        }
+        .chat-thread-menu {
+          position: absolute;
+          top: 36px;
+          right: 6px;
+          min-width: 126px;
+          background: rgba(255,255,255,0.92);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          border: 1px solid #e2e8f0;
+          border-radius: 10px;
+          box-shadow: 0 12px 28px rgba(15,23,42,0.14);
+          z-index: 25;
+          padding: 6px;
+        }
+      `
+      document.head.appendChild(style)
     }
 
     function getThreadMembers(threadId) {
@@ -125,6 +278,33 @@
       const list = state.messagesByThread.get(safeId(thread?.id)) || []
       const last = list[list.length - 1]
       return String(last?.message_text || '-').trim() || '-'
+    }
+
+    function getInitials(name) {
+      const parts = String(name || '').trim().split(/\s+/).filter(Boolean)
+      if (!parts.length) return '?'
+      if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+      return `${parts[0][0] || ''}${parts[1][0] || ''}`.toUpperCase()
+    }
+
+    function getThreadAvatarInfo(thread) {
+      const title = getThreadTitle(thread)
+      if (thread?.is_group) {
+        return {
+          fotoUrl: '',
+          initials: getInitials(title),
+          label: title
+        }
+      }
+      const members = getThreadMembers(thread?.id)
+      const other = members.find(user => safeId(user?.id) !== state.currentUser.id) || members[0] || null
+      const fotoUrl = String(other?.foto_url || '').trim()
+      const label = String(other?.nama || title || 'DM')
+      return {
+        fotoUrl,
+        initials: getInitials(label),
+        label
+      }
     }
 
     function stopPolling() {
@@ -193,10 +373,19 @@
       const cutoffIso = getCutoffIso()
       const myId = state.currentUser.id
 
-      const membersRes = await sb
+      let membersRes = await sb
         .from(CHAT_MEMBERS_TABLE)
-        .select('thread_id, karyawan_id, joined_at')
+        .select('thread_id, karyawan_id, joined_at, last_read_at')
         .eq('karyawan_id', myId)
+      if (membersRes.error && String(membersRes.error?.message || '').toLowerCase().includes('last_read_at')) {
+        membersRes = await sb
+          .from(CHAT_MEMBERS_TABLE)
+          .select('thread_id, karyawan_id, joined_at')
+          .eq('karyawan_id', myId)
+        if (!membersRes.error) {
+          membersRes.data = (membersRes.data || []).map(item => ({ ...item, last_read_at: null }))
+        }
+      }
       if (membersRes.error) throw membersRes.error
       const myThreadIds = [...new Set((membersRes.data || []).map(item => safeId(item.thread_id)).filter(Boolean))]
       if (!myThreadIds.length) {
@@ -206,16 +395,28 @@
         return
       }
 
-      const [threadsRes, allMembersRes, messagesRes] = await Promise.all([
+      const [threadsRes, allMembersResRaw, messagesRes] = await Promise.all([
         sb
           .from(CHAT_THREADS_TABLE)
           .select('id, title, is_group, created_by, created_at, last_message_at')
           .in('id', myThreadIds)
           .order('last_message_at', { ascending: false, nullsFirst: false }),
-        sb
-          .from(CHAT_MEMBERS_TABLE)
-          .select('thread_id, karyawan_id, joined_at')
-          .in('thread_id', myThreadIds),
+        (async () => {
+          let res = await sb
+            .from(CHAT_MEMBERS_TABLE)
+            .select('thread_id, karyawan_id, joined_at, last_read_at')
+            .in('thread_id', myThreadIds)
+          if (res.error && String(res.error?.message || '').toLowerCase().includes('last_read_at')) {
+            res = await sb
+              .from(CHAT_MEMBERS_TABLE)
+              .select('thread_id, karyawan_id, joined_at')
+              .in('thread_id', myThreadIds)
+            if (!res.error) {
+              res.data = (res.data || []).map(item => ({ ...item, last_read_at: null }))
+            }
+          }
+          return res
+        })(),
         sb
           .from(CHAT_MESSAGES_TABLE)
           .select('id, thread_id, sender_id, message_text, created_at')
@@ -225,11 +426,11 @@
       ])
 
       if (threadsRes.error) throw threadsRes.error
-      if (allMembersRes.error) throw allMembersRes.error
+      if (allMembersResRaw.error) throw allMembersResRaw.error
       if (messagesRes.error) throw messagesRes.error
 
       state.threads = threadsRes.data || []
-      state.members = allMembersRes.data || []
+      state.members = allMembersResRaw.data || []
       state.messagesByThread = new Map()
       ;(messagesRes.data || []).forEach(item => {
         const key = safeId(item.thread_id)
@@ -280,6 +481,30 @@
       }
 
       await refresh(true, threadId)
+    }
+
+    async function createDmFromModal() {
+      const userSelect = document.getElementById('chat-dm-user-modal')
+      const otherUserId = safeId(userSelect?.value)
+      if (!otherUserId) {
+        alert('Pilih karyawan terlebih dahulu.')
+        return
+      }
+      await createDm(otherUserId)
+      state.dmDraftUserId = ''
+      closeDmModal()
+    }
+
+    function openDmModal() {
+      const overlay = document.getElementById('chat-dm-overlay')
+      state.dmModalOpen = true
+      if (overlay) overlay.style.display = 'flex'
+    }
+
+    function closeDmModal() {
+      const overlay = document.getElementById('chat-dm-overlay')
+      state.dmModalOpen = false
+      if (overlay) overlay.style.display = 'none'
     }
 
     async function createGroupFromModal() {
@@ -397,6 +622,39 @@
       await refresh(false, threadId)
     }
 
+    async function markThreadAsRead(threadId) {
+      const tid = safeId(threadId)
+      if (!tid) return
+      const now = Date.now()
+      const lastWrite = Number(state.lastReadWriteByThread.get(tid) || 0)
+      if (now - lastWrite < 5000) return
+      state.lastReadWriteByThread.set(tid, now)
+
+      const nowIso = new Date().toISOString()
+      try {
+        const { error } = await sb
+          .from(CHAT_MEMBERS_TABLE)
+          .update({ last_read_at: nowIso })
+          .eq('thread_id', tid)
+          .eq('karyawan_id', state.currentUser.id)
+        if (error) {
+          const msg = String(error?.message || '').toLowerCase()
+          if (!msg.includes('last_read_at')) {
+            console.warn('Gagal update status baca chat:', error)
+          }
+          return
+        }
+
+        state.members = (state.members || []).map(item => {
+          if (safeId(item?.thread_id) !== tid) return item
+          if (safeId(item?.karyawan_id) !== state.currentUser.id) return item
+          return { ...item, last_read_at: nowIso }
+        })
+      } catch (error) {
+        console.warn('Gagal sinkron status baca chat:', error)
+      }
+    }
+
     function openDeleteConfirmModal() {
       const overlay = document.getElementById('chat-delete-confirm-overlay')
       const countEl = document.getElementById('chat-delete-selected-count')
@@ -407,6 +665,34 @@
     function closeDeleteConfirmModal() {
       const overlay = document.getElementById('chat-delete-confirm-overlay')
       if (overlay) overlay.style.display = 'none'
+    }
+
+    async function deleteThread(threadId) {
+      const tid = safeId(threadId)
+      if (!tid) return
+      const thread = state.threads.find(item => safeId(item.id) === tid)
+      const title = getThreadTitle(thread)
+      const yes = window.showPopupConfirm
+        ? await window.showPopupConfirm(`Hapus thread "${title}"?\nPercakapan di thread ini akan terhapus.`)
+        : confirm(`Hapus thread "${title}"?\nPercakapan di thread ini akan terhapus.`)
+      if (!yes) return
+
+      const { error } = await sb
+        .from(CHAT_THREADS_TABLE)
+        .delete()
+        .eq('id', tid)
+      if (error) {
+        alert(`Gagal hapus thread: ${error.message || 'Unknown error'}`)
+        return
+      }
+
+      state.draftByThread.delete(tid)
+      state.messagesByThread.delete(tid)
+      state.selectedMessageIds.clear()
+      if (safeId(state.selectedThreadId) === tid) {
+        state.selectedThreadId = ''
+      }
+      await refresh(true)
     }
 
     async function deleteSelectedMessagesConfirmed() {
@@ -434,6 +720,33 @@
       return state.threads.find(item => safeId(item.id) === safeId(state.selectedThreadId)) || null
     }
 
+    function getMyMessageReadStatus(message) {
+      if (safeId(message?.sender_id) !== state.currentUser.id) return ''
+      const threadId = safeId(message?.thread_id)
+      const recipients = (state.members || []).filter(item => (
+        safeId(item?.thread_id) === threadId &&
+        safeId(item?.karyawan_id) !== state.currentUser.id
+      ))
+      if (!recipients.length) return 'Terkirim'
+
+      const msgTime = getTimestampMs(message?.created_at)
+      if (msgTime === null) return 'Terkirim'
+
+      let readCount = 0
+      let hasReadSignal = false
+      recipients.forEach(member => {
+        const readMs = getTimestampMs(member?.last_read_at)
+        if (readMs !== null) {
+          hasReadSignal = true
+          if (readMs >= msgTime) readCount += 1
+        }
+      })
+
+      if (readCount === recipients.length && recipients.length > 0) return 'Sudah dibaca'
+      if (!hasReadSignal && (Date.now() - msgTime) < 15000) return 'Terkirim'
+      return 'Belum dibaca'
+    }
+
     function renderMessagesPanel() {
       const box = document.getElementById('chat-message-list')
       if (!box) return
@@ -446,6 +759,7 @@
         box.innerHTML = '<div style="color:#64748b;">Pilih thread untuk mulai chat.</div>'
         return
       }
+      markThreadAsRead(thread.id)
       const list = state.messagesByThread.get(safeId(thread.id)) || []
       const selectionBar = document.getElementById('chat-selection-bar')
       const selectionText = document.getElementById('chat-selection-text')
@@ -458,7 +772,12 @@
         box.innerHTML = '<div style="color:#64748b;">Belum ada pesan.</div>'
         return
       }
-      box.innerHTML = list.map(item => {
+      let prevDateKey = ''
+      let prevSenderId = ''
+      let prevMinuteStamp = null
+      const rowsHtml = []
+
+      list.forEach(item => {
         const senderId = safeId(item.sender_id)
         const mine = senderId === state.currentUser.id
         const sender = state.users.find(user => safeId(user.id) === senderId)
@@ -466,18 +785,40 @@
         const selected = state.selectedMessageIds.has(msgId)
         const emojiOnlyCount = getEmojiOnlyCount(item.message_text)
         const isStickerEmoji = emojiOnlyCount === 1
-        return `
+        const mineStatus = getMyMessageReadStatus(item)
+        const dateKey = getLocalDateKey(item.created_at)
+        const ts = getTimestampMs(item.created_at)
+        const minuteStamp = ts === null ? null : Math.floor(ts / 60000)
+        const showSender = !(senderId === prevSenderId && minuteStamp !== null && minuteStamp === prevMinuteStamp)
+
+        if (dateKey && dateKey !== prevDateKey) {
+          rowsHtml.push(`
+            <div style="display:flex; justify-content:center; margin:6px 0 10px;">
+              <span style="font-size:11px; color:#64748b; background:#f8fafc; border:1px solid #e2e8f0; border-radius:999px; padding:4px 10px;">${escapeHtml(formatDateLabel(item.created_at))}</span>
+            </div>
+          `)
+          prevDateKey = dateKey
+          prevSenderId = ''
+          prevMinuteStamp = null
+        }
+
+        rowsHtml.push(`
           <div style="display:flex; justify-content:${mine ? 'flex-end' : 'flex-start'}; margin-bottom:8px;" data-chat-row-id="${escapeHtml(msgId)}">
             <div data-chat-own-click="${mine ? '1' : '0'}" data-chat-message-id="${escapeHtml(msgId)}" style="max-width:75%; background:${mine ? (selected ? '#bbf7d0' : '#dcfce7') : '#f1f5f9'}; border:1px solid ${selected ? '#16a34a' : '#e2e8f0'}; border-radius:10px; padding:8px 10px; ${mine ? 'cursor:pointer;' : ''}">
-              <div style="font-size:11px; color:#64748b; margin-bottom:2px;">${escapeHtml(String(sender?.nama || 'User'))}</div>
+              ${showSender ? `<div style="font-size:11px; color:#64748b; margin-bottom:2px;">${escapeHtml(String(sender?.nama || 'User'))}</div>` : ''}
               <div style="${isStickerEmoji ? 'font-size:52px; line-height:1.05; text-align:center; padding:6px 0;' : 'font-size:13px; color:#0f172a; white-space:pre-wrap;'}">${escapeHtml(item.message_text || '')}</div>
               <div style="font-size:10px; color:#64748b; margin-top:4px; text-align:right;">
-                <span>${escapeHtml(formatDateTime(item.created_at))}</span>
+                <span>${escapeHtml(formatTimeOnly(item.created_at))}</span>
+                ${mine ? `<span style="margin-left:6px; color:${mineStatus === 'Sudah dibaca' ? '#16a34a' : '#64748b'};">${escapeHtml(mineStatus || 'Terkirim')}</span>` : ''}
               </div>
             </div>
           </div>
-        `
-      }).join('')
+        `)
+
+        prevSenderId = senderId
+        prevMinuteStamp = minuteStamp
+      })
+      box.innerHTML = rowsHtml.join('')
       Array.from(box.querySelectorAll('[data-chat-own-click="1"]')).forEach(el => {
         el.addEventListener('click', event => {
           const targetId = String(el.getAttribute('data-chat-message-id') || '')
@@ -488,10 +829,10 @@
           event.stopPropagation()
         })
       })
-      box.addEventListener('scroll', () => {
+      box.onscroll = () => {
         const remain = Number(box.scrollHeight || 0) - (Number(box.scrollTop || 0) + Number(box.clientHeight || 0))
         state.messageListAtBottom = remain <= 28
-      })
+      }
       if (wasNearBottom) {
         box.scrollTop = box.scrollHeight
         state.messageListAtBottom = true
@@ -505,30 +846,103 @@
     function renderThreadList() {
       const box = document.getElementById('chat-thread-list')
       if (!box) return
+      ensureChatVisualStyle()
+      const selectedId = safeId(state.selectedThreadId)
+      const renderKey = JSON.stringify({
+        selectedId,
+        menu: safeId(state.threadMenuOpenId),
+        threads: state.threads.map(thread => ({
+          id: safeId(thread.id),
+          title: getThreadTitle(thread),
+          preview: getThreadPreview(thread)
+        }))
+      })
+      if (renderKey === state.threadListRenderKey) return
+      state.threadListRenderKey = renderKey
       if (!state.threads.length) {
         box.innerHTML = '<div style="color:#64748b; font-size:13px;">Belum ada thread chat.</div>'
         return
       }
       box.innerHTML = state.threads.map(thread => {
         const tid = safeId(thread.id)
-        const active = tid === safeId(state.selectedThreadId)
+        const active = tid === selectedId
+        const menuOpen = tid === safeId(state.threadMenuOpenId)
         const preview = getThreadPreview(thread)
         const title = getThreadTitle(thread)
+        const avatar = getThreadAvatarInfo(thread)
         return `
-          <button type="button" data-chat-thread-id="${escapeHtml(tid)}" style="width:100%; text-align:left; border:1px solid ${active ? '#86efac' : '#e2e8f0'}; background:${active ? '#f0fdf4' : '#fff'}; border-radius:10px; padding:8px; cursor:pointer; margin-bottom:8px;">
-            <div style="font-size:13px; font-weight:600; color:#0f172a;">${escapeHtml(title)}</div>
-            <div style="font-size:12px; color:#64748b; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(preview)}</div>
-          </button>
+          <div class="chat-thread-wrap">
+            <button type="button" class="chat-thread-btn" data-chat-thread-id="${escapeHtml(tid)}" style="--chat-thread-border:${active ? '#86efac' : '#dbe4ef'};">
+              <div class="chat-thread-head">
+                <span class="chat-thread-avatar" title="${escapeHtml(avatar.label)}">
+                  ${avatar.fotoUrl ? `<img src="${escapeHtml(avatar.fotoUrl)}" alt="${escapeHtml(avatar.label)}">` : escapeHtml(avatar.initials)}
+                </span>
+                <div class="chat-thread-text">
+                  <div class="chat-thread-title">${escapeHtml(title)}</div>
+                  <div class="chat-thread-preview">${escapeHtml(preview)}</div>
+                </div>
+              </div>
+            </button>
+            <button type="button" class="chat-thread-menu-trigger" data-chat-thread-menu-trigger="${escapeHtml(tid)}" title="Aksi thread">&#8942;</button>
+            <div class="chat-thread-menu" data-chat-thread-menu="${escapeHtml(tid)}" style="display:${menuOpen ? 'block' : 'none'};">
+              <button type="button" data-chat-thread-delete="${escapeHtml(tid)}" style="width:100%; border:none; background:transparent; text-align:left; padding:7px 8px; border-radius:8px; color:#dc2626; cursor:pointer; font-size:12px; font-weight:600;">Hapus Chat</button>
+            </div>
+          </div>
         `
       }).join('')
       Array.from(box.querySelectorAll('[data-chat-thread-id]')).forEach(btn => {
-        btn.addEventListener('click', () => {
-          state.selectedThreadId = safeId(btn.getAttribute('data-chat-thread-id'))
+        btn.addEventListener('click', event => {
+          const tid = safeId(btn.getAttribute('data-chat-thread-id'))
+          state.threadMenuOpenId = ''
+          state.selectedThreadId = tid
           state.selectedMessageIds.clear()
           state.forceStickBottom = true
-          renderUI()
+          renderDynamicUI({ threadChanged: true })
         })
       })
+      Array.from(box.querySelectorAll('[data-chat-thread-menu-trigger]')).forEach(btn => {
+        btn.addEventListener('click', event => {
+          event.preventDefault()
+          event.stopPropagation()
+          const tid = safeId(btn.getAttribute('data-chat-thread-menu-trigger'))
+          state.threadMenuOpenId = state.threadMenuOpenId === tid ? '' : tid
+          renderThreadList()
+          setTimeout(() => {
+            document.addEventListener('click', () => {
+              if (!state.threadMenuOpenId) return
+              state.threadMenuOpenId = ''
+              renderThreadList()
+            }, { once: true })
+          }, 0)
+        })
+      })
+      Array.from(box.querySelectorAll('[data-chat-thread-delete]')).forEach(btn => {
+        btn.addEventListener('click', async event => {
+          event.preventDefault()
+          event.stopPropagation()
+          const tid = safeId(btn.getAttribute('data-chat-thread-delete'))
+          state.threadMenuOpenId = ''
+          await deleteThread(tid)
+        })
+      })
+    }
+
+    function syncComposerForSelectedThread(threadChanged = false) {
+      const input = document.getElementById('chat-message-input')
+      if (!input) return
+      const isTypingHere = document.activeElement === input
+      if (isTypingHere && !threadChanged) return
+      input.value = state.draftByThread.get(safeId(state.selectedThreadId)) || ''
+    }
+
+    function renderDynamicUI(options = {}) {
+      const threadChanged = Boolean(options?.threadChanged)
+      const titleEl = document.getElementById('chat-thread-title')
+      const selected = getSelectedThread()
+      if (titleEl) titleEl.textContent = getThreadTitle(selected)
+      renderThreadList()
+      renderMessagesPanel()
+      syncComposerForSelectedThread(threadChanged)
     }
 
     function renderUI() {
@@ -558,16 +972,15 @@
           <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:10px; min-height:0; display:flex; flex-direction:column; overflow:hidden;">
             <div style="display:grid; gap:8px; margin-bottom:10px;">
               <div style="display:flex; gap:8px;">
-                <select id="chat-dm-user" class="guru-field" style="flex:1;">${dmOptions.join('')}</select>
-                <button type="button" class="modal-btn" id="chat-btn-create-dm">DM</button>
+                <button type="button" class="modal-btn" id="chat-btn-open-dm-modal" title="Tambah DM" style="min-width:42px; padding:8px 12px; font-weight:700; font-size:18px; line-height:1;">+</button>
+                <button type="button" class="modal-btn" id="chat-btn-open-group-modal">Buat Grup</button>
               </div>
-              <button type="button" class="modal-btn" id="chat-btn-open-group-modal">Buat Grup</button>
             </div>
             <div style="font-size:12px; color:#64748b; margin-bottom:6px;">Thread</div>
             <div id="chat-thread-list" style="flex:1; min-height:0; overflow:auto; padding-right:2px;"></div>
           </div>
           <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; min-height:0; display:flex; flex-direction:column; overflow:hidden;">
-            <div style="padding:10px 12px; border-bottom:1px solid #e2e8f0; font-weight:700; color:#0f172a;">${escapeHtml(getThreadTitle(selected))}</div>
+            <div id="chat-thread-title" style="padding:10px 12px; border-bottom:1px solid #e2e8f0; font-weight:700; color:#0f172a;">${escapeHtml(getThreadTitle(selected))}</div>
             <div id="chat-selection-bar" style="display:${selectedCount > 0 ? 'flex' : 'none'}; align-items:center; justify-content:space-between; gap:8px; padding:8px 12px; border-bottom:1px solid #e2e8f0; background:#f8fafc;">
               <div id="chat-selection-text" style="font-size:12px; color:#334155;">${selectedCount} pesan dipilih</div>
               <div style="display:flex; gap:8px;">
@@ -587,6 +1000,20 @@
                     ${CHAT_EMOJIS.map(item => `<button type="button" data-chat-emoji="${escapeHtml(item)}" style="border:1px solid #e2e8f0; background:#fff; border-radius:8px; height:32px; cursor:pointer; font-size:18px;">${item}</button>`).join('')}
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="chat-dm-overlay" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.45); z-index:3450; align-items:center; justify-content:center; padding:16px;">
+          <div style="width:min(420px, 96vw); background:#fff; border:1px solid #e2e8f0; border-radius:12px; overflow:hidden;">
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:12px; border-bottom:1px solid #e2e8f0;">
+              <div style="font-weight:700;">Tambah DM</div>
+              <button type="button" class="modal-btn" id="chat-btn-close-dm-modal">Tutup</button>
+            </div>
+            <div style="padding:12px; display:grid; gap:8px;">
+              <select id="chat-dm-user-modal" class="guru-field">${dmOptions.join('')}</select>
+              <div style="display:flex; justify-content:flex-end;">
+                <button type="button" class="modal-btn modal-btn-primary" id="chat-btn-create-dm-modal">Mulai Chat</button>
               </div>
             </div>
           </div>
@@ -626,11 +1053,25 @@
       renderThreadList()
       renderMessagesPanel()
 
-      const dmBtn = document.getElementById('chat-btn-create-dm')
-      if (dmBtn) {
-        dmBtn.addEventListener('click', async () => {
-          const otherUserId = String(document.getElementById('chat-dm-user')?.value || '').trim()
-          await createDm(otherUserId)
+      const openDmBtn = document.getElementById('chat-btn-open-dm-modal')
+      const closeDmBtn = document.getElementById('chat-btn-close-dm-modal')
+      const createDmBtn = document.getElementById('chat-btn-create-dm-modal')
+      const dmOverlay = document.getElementById('chat-dm-overlay')
+      const dmUserSelect = document.getElementById('chat-dm-user-modal')
+      if (dmOverlay) dmOverlay.style.display = state.dmModalOpen ? 'flex' : 'none'
+      if (dmUserSelect) dmUserSelect.value = state.dmDraftUserId || ''
+      if (openDmBtn) openDmBtn.addEventListener('click', openDmModal)
+      if (closeDmBtn) closeDmBtn.addEventListener('click', closeDmModal)
+      if (createDmBtn) createDmBtn.addEventListener('click', createDmFromModal)
+      if (dmUserSelect) {
+        dmUserSelect.addEventListener('change', () => {
+          state.dmDraftUserId = safeId(dmUserSelect.value)
+        })
+      }
+      if (dmOverlay) {
+        dmOverlay.addEventListener('click', event => {
+          if (event.target !== dmOverlay) return
+          closeDmModal()
         })
       }
 
@@ -757,17 +1198,31 @@
         if (picker.contains(event.target) || trigger.contains(event.target)) return
         closeEmojiPicker()
       }, { once: true })
+
+      state.uiReady = true
     }
 
     async function refresh(keepSelection = true, nextThreadId = '') {
-      const prevSelected = safeId(state.selectedThreadId)
+      const requestedThreadId = safeId(nextThreadId)
+      if (state.refreshInFlight) {
+        const prevPending = state.pendingRefresh || { keepSelection: true, nextThreadId: '' }
+        state.pendingRefresh = {
+          keepSelection: prevPending.keepSelection || keepSelection,
+          nextThreadId: requestedThreadId || prevPending.nextThreadId || ''
+        }
+        return
+      }
+
+      state.refreshInFlight = true
+      try {
       await cleanupOldMessagesBestEffort()
       await loadThreadsAndMessages()
-      if (nextThreadId) {
-        state.selectedThreadId = safeId(nextThreadId)
+
+      // Prefer explicit target thread. If absent, keep latest user selection at decision time.
+      const desiredSelection = requestedThreadId || (keepSelection ? safeId(state.selectedThreadId) : '')
+      if (desiredSelection && state.threads.some(item => safeId(item.id) === desiredSelection)) {
+        state.selectedThreadId = desiredSelection
         state.selectedMessageIds.clear()
-      } else if (keepSelection && prevSelected && state.threads.some(item => safeId(item.id) === prevSelected)) {
-        state.selectedThreadId = prevSelected
       } else {
         state.selectedThreadId = safeId(state.threads[0]?.id)
         state.selectedMessageIds.clear()
@@ -776,16 +1231,28 @@
       ;[...state.selectedMessageIds].forEach(id => {
         if (!visibleIds.has(String(id))) state.selectedMessageIds.delete(id)
       })
-      renderUI()
+      if (!state.uiReady) renderUI()
+      else renderDynamicUI({ threadChanged: !!requestedThreadId })
+      } finally {
+        state.refreshInFlight = false
+      }
+
+      if (state.pendingRefresh) {
+        const pending = state.pendingRefresh
+        state.pendingRefresh = null
+        await refresh(pending.keepSelection, pending.nextThreadId)
+      }
     }
 
     function isUserInteracting() {
       const activeEl = document.activeElement
       const activeId = String(activeEl?.id || '')
+      if (state.selectedMessageIds.size > 0) return true
+      if (state.dmModalOpen) return true
       if (state.groupModalOpen) return true
       if (state.emojiPickerOpen) return true
       if (!state.messageListAtBottom) return true
-      if (activeId === 'chat-message-input' || activeId === 'chat-group-name-modal' || activeId === 'chat-group-members-modal') return true
+      if (activeId === 'chat-message-input' || activeId === 'chat-group-name-modal' || activeId === 'chat-group-members-modal' || activeId === 'chat-dm-user-modal') return true
       return false
     }
 
@@ -828,6 +1295,7 @@ create table if not exists public.chat_thread_members (
   id bigint generated always as identity primary key,
   thread_id uuid not null references public.chat_threads(id) on delete cascade,
   karyawan_id text not null,
+  last_read_at timestamptz null,
   joined_at timestamptz not null default now(),
   unique(thread_id, karyawan_id)
 );

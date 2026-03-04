@@ -214,7 +214,7 @@ async function insertKaryawanWithFallback(payload) {
 }
 
 function getInsetFieldStyle(extra = '') {
-  return `width:100%; padding:10px 12px; box-sizing:border-box; border:1px solid #cbd5e1; border-radius:999px; background:#f8fafc; box-shadow:none; outline:none; transition:border-color 0.2s, box-shadow 0.2s; ${extra}`
+  return `width:100%; padding:10px 12px; box-sizing:border-box; border:1px solid #cbd5e1; border-radius:8px; background:#ffffff; box-shadow:none; outline:none; transition:border-color 0.2s, box-shadow 0.2s; ${extra}`
 }
 
 function ensureKaryawanFieldFocusStyle() {
@@ -225,15 +225,16 @@ function ensureKaryawanFieldFocusStyle() {
   style.innerHTML = `
     .karyawan-field {
       border: 1px solid #cbd5e1;
-      border-radius: 999px;
-      padding: 9px 12px;
+      border-radius: 8px;
+      padding: 10px 12px;
       box-sizing: border-box;
-      background: #f8fafc;
+      background: #ffffff;
+      color: #0f172a;
       outline: none;
     }
     .karyawan-field:focus {
       border-color: #16a34a !important;
-      box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.25) !important;
+      box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.2) !important;
     }
   `
   document.head.appendChild(style)
