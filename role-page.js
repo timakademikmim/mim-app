@@ -530,6 +530,32 @@ window.printPdfBlobInPlace = async function printPdfBlobInPlace(blob) {
   }
 }
 
+window.savePdfDesktopAndOpen = async function savePdfDesktopAndOpen(blob, fileName) {
+  if (!(blob instanceof Blob)) return { ok: false, path: '', error: 'Blob tidak valid.' }
+  const isDesktopApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
+  if (!isDesktopApp || !window.__TAURI__?.core?.invoke) {
+    return { ok: false, path: '', error: 'Bukan mode desktop.' }
+  }
+  try {
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    let binary = ''
+    const chunk = 0x8000
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
+    }
+    const base64Data = btoa(binary)
+    const savedPath = await window.__TAURI__.core.invoke('save_pdf_base64', {
+      fileName: String(fileName || 'Dokumen.pdf'),
+      base64Data
+    })
+    await window.__TAURI__.core.invoke('open_file_path', { path: String(savedPath || '') })
+    return { ok: true, path: String(savedPath || '') }
+  } catch (error) {
+    console.error('savePdfDesktopAndOpen failed:', error)
+    return { ok: false, path: '', error: String(error?.message || error || 'Unknown error') }
+  }
+}
+
 window.setTopbarUserIdentity = function setTopbarUserIdentity(nameOrObject, maybeFotoUrl) {
   let name = ''
   let fotoUrl = ''

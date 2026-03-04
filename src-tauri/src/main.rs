@@ -1,5 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use base64::Engine;
+use std::path::PathBuf;
+
 #[cfg(not(debug_assertions))]
 use std::sync::{Arc, Mutex};
 #[cfg(not(debug_assertions))]
@@ -43,8 +46,13 @@ fn open_external_url(url: String) -> Result<(), String> {
   }
   #[cfg(target_os = "windows")]
   {
-    std::process::Command::new("cmd")
-      .args(["/C", "start", "", target])
+    let escaped = target.replace('\'', "''");
+    std::process::Command::new("powershell")
+      .args([
+        "-NoProfile",
+        "-Command",
+        &format!("Start-Process -FilePath '{}'", escaped),
+      ])
       .spawn()
       .map(|_| ())
       .map_err(|e| format!("Gagal membuka URL eksternal: {e}"))
@@ -67,10 +75,78 @@ fn open_external_url(url: String) -> Result<(), String> {
   }
 }
 
+fn get_desktop_export_dir() -> Result<PathBuf, String> {
+  let user = std::env::var("USERPROFILE").map_err(|e| format!("USERPROFILE tidak tersedia: {e}"))?;
+  let dir = PathBuf::from(user).join("Documents").join("MIM App").join("Cetak");
+  std::fs::create_dir_all(&dir).map_err(|e| format!("Gagal membuat folder export: {e}"))?;
+  Ok(dir)
+}
+
+#[tauri::command]
+fn save_pdf_base64(file_name: String, base64_data: String) -> Result<String, String> {
+  let clean_name = file_name
+    .chars()
+    .map(|c| match c {
+      '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+      _ => c,
+    })
+    .collect::<String>();
+  let final_name = if clean_name.to_lowercase().ends_with(".pdf") {
+    clean_name
+  } else {
+    format!("{clean_name}.pdf")
+  };
+
+  let dir = get_desktop_export_dir()?;
+  let path = dir.join(final_name);
+  let bytes = base64::engine::general_purpose::STANDARD
+    .decode(base64_data.trim())
+    .map_err(|e| format!("Gagal decode PDF base64: {e}"))?;
+  std::fs::write(&path, bytes).map_err(|e| format!("Gagal menyimpan PDF: {e}"))?;
+  Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn open_file_path(path: String) -> Result<(), String> {
+  let target = path.trim();
+  if target.is_empty() {
+    return Err("Path file kosong.".to_string());
+  }
+
+  #[cfg(target_os = "windows")]
+  {
+    std::process::Command::new("cmd")
+      .args(["/C", "start", "", target])
+      .spawn()
+      .map(|_| ())
+      .map_err(|e| format!("Gagal membuka file: {e}"))
+  }
+  #[cfg(target_os = "macos")]
+  {
+    std::process::Command::new("open")
+      .arg(target)
+      .spawn()
+      .map(|_| ())
+      .map_err(|e| format!("Gagal membuka file: {e}"))
+  }
+  #[cfg(all(unix, not(target_os = "macos")))]
+  {
+    std::process::Command::new("xdg-open")
+      .arg(target)
+      .spawn()
+      .map(|_| ())
+      .map_err(|e| format!("Gagal membuka file: {e}"))
+  }
+}
+
 fn main() {
   tauri::Builder::default()
     .plugin(tauri_plugin_updater::Builder::new().build())
-    .invoke_handler(tauri::generate_handler![open_external_url])
+    .invoke_handler(tauri::generate_handler![
+      open_external_url,
+      save_pdf_base64,
+      open_file_path
+    ])
     .setup(|app| {
       #[cfg(not(debug_assertions))]
       {

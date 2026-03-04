@@ -7027,6 +7027,13 @@ async function savePdfDocForCurrentPlatform(doc, fileName) {
   }
   try {
     const blob = doc.output('blob')
+    if (typeof window.savePdfDesktopAndOpen === 'function') {
+      const result = await window.savePdfDesktopAndOpen(blob, fileName)
+      if (result?.ok) {
+        alert(`File disimpan di:\n${result.path}`)
+        return
+      }
+    }
     const printed = typeof window.printPdfBlobInPlace === 'function'
       ? await window.printPdfBlobInPlace(blob)
       : false

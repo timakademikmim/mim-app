@@ -753,6 +753,13 @@
     }
     try {
       var blob = doc.output('blob')
+      if (typeof window.savePdfDesktopAndOpen === 'function') {
+        var result = await window.savePdfDesktopAndOpen(blob, fileName)
+        if (result && result.ok) {
+          alert('File disimpan di:\n' + String(result.path || ''))
+          return
+        }
+      }
       var printed = typeof window.printPdfBlobInPlace === 'function'
         ? await window.printPdfBlobInPlace(blob)
         : false
