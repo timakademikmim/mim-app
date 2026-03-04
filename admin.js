@@ -6,7 +6,7 @@ const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 const sb = supabase.createClient(supabaseUrl, supabaseKey)
 const externalPageHtmlCache = {}
 const externalPageScriptLoaded = {}
-const EXTERNAL_PAGE_ASSET_VERSION = '20260303-kesantrian-kamar-align-halaqah-01'
+const EXTERNAL_PAGE_ASSET_VERSION = '20260304-perizinan-admin-actions-01'
 const pageDataCache = window.__pageDataCache || {}
 window.__pageDataCache = pageDataCache
 

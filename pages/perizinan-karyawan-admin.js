@@ -94,12 +94,18 @@ function renderPerizinanKaryawanAdminRows() {
       <td style="padding:8px; border:1px solid #e2e8f0;">${escapePerizinanAdminHtml(getPerizinanKaryawanStatusLabel(item.status))}</td>
       <td style="padding:8px; border:1px solid #e2e8f0;">${escapePerizinanAdminHtml(String(item.catatan_wakasek || '-'))}</td>
       <td style="padding:8px; border:1px solid #e2e8f0;">${escapePerizinanAdminHtml(String(item.reviewer_nama || '-'))}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button type="button" class="modal-btn modal-btn-secondary" style="padding:5px 10px; font-size:12px;" onclick="editPerizinanKaryawanAdmin('${escapePerizinanAdminHtml(String(item.id || ''))}')">Edit</button>
+          <button type="button" class="modal-btn modal-btn-danger" style="padding:5px 10px; font-size:12px;" onclick="deletePerizinanKaryawanAdmin('${escapePerizinanAdminHtml(String(item.id || ''))}')">Hapus</button>
+        </div>
+      </td>
     </tr>
   `).join('')
 
   box.innerHTML = `
     <div style="overflow:auto;">
-      <table style="width:100%; min-width:1120px; border-collapse:collapse; font-size:13px;">
+      <table style="width:100%; min-width:1280px; border-collapse:collapse; font-size:13px;">
         <thead>
           <tr style="background:#f8fafc;">
             <th style="padding:8px; border:1px solid #e2e8f0; width:52px;">No</th>
@@ -112,12 +118,167 @@ function renderPerizinanKaryawanAdminRows() {
             <th style="padding:8px; border:1px solid #e2e8f0;">Status</th>
             <th style="padding:8px; border:1px solid #e2e8f0;">Catatan Wakasek</th>
             <th style="padding:8px; border:1px solid #e2e8f0;">Diproses Oleh</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; width:170px;">Action</th>
           </tr>
         </thead>
         <tbody>${htmlRows}</tbody>
       </table>
     </div>
   `
+}
+
+function getPerizinanKaryawanAdminRowById(id) {
+  const sid = String(id || '').trim()
+  if (!sid) return null
+  return (perizinanKaryawanAdminState.rows || []).find(item => String(item?.id || '') === sid) || null
+}
+
+function showPerizinanAdminMessage(message) {
+  if (typeof window.showPopupMessage === 'function') return window.showPopupMessage(message)
+  alert(message)
+  return Promise.resolve(true)
+}
+
+function showPerizinanAdminConfirm(message) {
+  if (typeof window.showPopupConfirm === 'function') return window.showPopupConfirm(message)
+  return Promise.resolve(confirm(message))
+}
+
+function ensurePerizinanKaryawanAdminEditModal() {
+  let overlay = document.getElementById('pk-admin-edit-overlay')
+  if (overlay) return overlay
+
+  overlay = document.createElement('div')
+  overlay.id = 'pk-admin-edit-overlay'
+  overlay.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.4); display:none; align-items:center; justify-content:center; z-index:12050; padding:16px; box-sizing:border-box;'
+  overlay.innerHTML = `
+    <div style="width:min(560px, 100%); max-height:90vh; overflow:auto; border:1px solid #e2e8f0; border-radius:14px; background:#fff; padding:14px;">
+      <div style="font-size:16px; font-weight:700; color:#0f172a; margin-bottom:10px;">Edit Izin Karyawan</div>
+      <div style="display:grid; gap:10px;">
+        <div>
+          <label style="display:block; font-size:12px; color:#64748b; margin-bottom:4px;">Tanggal Mulai</label>
+          <input id="pk-admin-edit-mulai" class="karyawan-field" type="date">
+        </div>
+        <div>
+          <label style="display:block; font-size:12px; color:#64748b; margin-bottom:4px;">Tanggal Selesai</label>
+          <input id="pk-admin-edit-selesai" class="karyawan-field" type="date">
+        </div>
+        <div>
+          <label style="display:block; font-size:12px; color:#64748b; margin-bottom:4px;">Status</label>
+          <select id="pk-admin-edit-status" class="karyawan-field">
+            <option value="menunggu">Menunggu</option>
+            <option value="diterima">Diterima</option>
+            <option value="ditolak">Ditolak</option>
+          </select>
+        </div>
+        <div>
+          <label style="display:block; font-size:12px; color:#64748b; margin-bottom:4px;">Keperluan</label>
+          <textarea id="pk-admin-edit-keperluan" class="karyawan-field" rows="3" placeholder="Keperluan izin"></textarea>
+        </div>
+        <div>
+          <label style="display:block; font-size:12px; color:#64748b; margin-bottom:4px;">Catatan Wakasek</label>
+          <input id="pk-admin-edit-catatan" class="karyawan-field" type="text" placeholder="Catatan (opsional)">
+        </div>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px;">
+        <button type="button" class="modal-btn modal-btn-secondary" id="pk-admin-edit-batal">Batal</button>
+        <button type="button" class="modal-btn modal-btn-primary" id="pk-admin-edit-simpan">Simpan</button>
+      </div>
+    </div>
+  `
+  overlay.addEventListener('click', event => {
+    if (event.target === overlay) overlay.style.display = 'none'
+  })
+  document.body.appendChild(overlay)
+  return overlay
+}
+
+async function editPerizinanKaryawanAdmin(id) {
+  const row = getPerizinanKaryawanAdminRowById(id)
+  if (!row) {
+    await showPerizinanAdminMessage('Data izin tidak ditemukan.')
+    return
+  }
+  const overlay = ensurePerizinanKaryawanAdminEditModal()
+  const mulaiEl = document.getElementById('pk-admin-edit-mulai')
+  const selesaiEl = document.getElementById('pk-admin-edit-selesai')
+  const statusEl = document.getElementById('pk-admin-edit-status')
+  const keperluanEl = document.getElementById('pk-admin-edit-keperluan')
+  const catatanEl = document.getElementById('pk-admin-edit-catatan')
+  const batalBtn = document.getElementById('pk-admin-edit-batal')
+  const simpanBtn = document.getElementById('pk-admin-edit-simpan')
+  if (!mulaiEl || !selesaiEl || !statusEl || !keperluanEl || !catatanEl || !batalBtn || !simpanBtn) return
+
+  mulaiEl.value = String(row.tanggal_mulai || '').slice(0, 10)
+  selesaiEl.value = String(row.tanggal_selesai || '').slice(0, 10)
+  statusEl.value = normalizePerizinanKaryawanStatus(row.status)
+  keperluanEl.value = String(row.keperluan || '')
+  catatanEl.value = String(row.catatan_wakasek || '')
+  overlay.style.display = 'flex'
+
+  batalBtn.onclick = () => {
+    overlay.style.display = 'none'
+  }
+  simpanBtn.onclick = async () => {
+    const tanggalMulai = String(mulaiEl.value || '').trim()
+    const tanggalSelesai = String(selesaiEl.value || '').trim()
+    const keperluan = String(keperluanEl.value || '').trim()
+    const status = normalizePerizinanKaryawanStatus(statusEl.value)
+    const catatan = String(catatanEl.value || '').trim()
+    if (!tanggalMulai || !tanggalSelesai || !keperluan) {
+      await showPerizinanAdminMessage('Tanggal mulai, tanggal selesai, dan keperluan wajib diisi.')
+      return
+    }
+    if (tanggalSelesai < tanggalMulai) {
+      await showPerizinanAdminMessage('Tanggal selesai tidak boleh sebelum tanggal mulai.')
+      return
+    }
+    const diff = Math.floor((new Date(`${tanggalSelesai}T00:00:00`) - new Date(`${tanggalMulai}T00:00:00`)) / 86400000) + 1
+    simpanBtn.disabled = true
+    try {
+      const { error } = await sb
+        .from(PERIZINAN_KARYAWAN_TABLE)
+        .update({
+          tanggal_mulai: tanggalMulai,
+          tanggal_selesai: tanggalSelesai,
+          durasi_hari: Math.max(1, diff),
+          keperluan,
+          status,
+          catatan_wakasek: catatan || null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', String(row.id || ''))
+      if (error) throw error
+      overlay.style.display = 'none'
+      await loadPerizinanKaryawanAdminPage(true)
+      await showPerizinanAdminMessage('Data izin berhasil diperbarui.')
+    } catch (error) {
+      await showPerizinanAdminMessage(`Gagal memperbarui izin: ${error?.message || 'Unknown error'}`)
+    } finally {
+      simpanBtn.disabled = false
+    }
+  }
+}
+
+async function deletePerizinanKaryawanAdmin(id) {
+  const row = getPerizinanKaryawanAdminRowById(id)
+  if (!row) {
+    await showPerizinanAdminMessage('Data izin tidak ditemukan.')
+    return
+  }
+  const ok = await showPerizinanAdminConfirm(`Hapus pengajuan izin ${String(row.guru_nama || '-')}\n${formatPerizinanAdminDate(row.tanggal_mulai)} s.d. ${formatPerizinanAdminDate(row.tanggal_selesai)}?`)
+  if (!ok) return
+  try {
+    const { error } = await sb
+      .from(PERIZINAN_KARYAWAN_TABLE)
+      .delete()
+      .eq('id', String(row.id || ''))
+    if (error) throw error
+    await loadPerizinanKaryawanAdminPage(true)
+    await showPerizinanAdminMessage('Data izin berhasil dihapus.')
+  } catch (error) {
+    await showPerizinanAdminMessage(`Gagal menghapus izin: ${error?.message || 'Unknown error'}`)
+  }
 }
 
 async function loadPerizinanKaryawanAdminPage(forceRefresh = false) {
@@ -153,3 +314,5 @@ function initPerizinanKaryawanAdminPage() {
 window.initPerizinanKaryawanAdminPage = initPerizinanKaryawanAdminPage
 window.loadPerizinanKaryawanAdminPage = loadPerizinanKaryawanAdminPage
 window.applyPerizinanKaryawanAdminFilter = applyPerizinanKaryawanAdminFilter
+window.editPerizinanKaryawanAdmin = editPerizinanKaryawanAdmin
+window.deletePerizinanKaryawanAdmin = deletePerizinanKaryawanAdmin

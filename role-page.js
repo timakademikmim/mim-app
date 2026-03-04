@@ -156,9 +156,23 @@ function initTopbarAccountMenu() {
 }
 
 function initDesktopUpdaterUi() {
-  let updaterBadge = null
-  let updaterLabel = null
-  let updaterProgress = null
+  const isDesktopApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
+  if (!isDesktopApp) return
+
+  const releaseInfoState = {
+    currentVersion: String(localStorage.getItem('desktop_app_version') || '').trim(),
+    latestVersion: '',
+    notes: ''
+  }
+
+  let sidebarPanel = null
+  let versionBtn = null
+  let statusLabel = null
+  let progressFill = null
+  let onlineDot = null
+  let onlineText = null
+  let changelogOverlay = null
+  let changelogBody = null
   let updateLockOverlay = null
 
   function ensureUpdaterStyle() {
@@ -166,42 +180,125 @@ function initDesktopUpdaterUi() {
     const style = document.createElement('style')
     style.id = 'desktop-updater-style'
     style.textContent = `
-      .desktop-updater-badge {
-        display: none;
+      .desktop-updater-sidebar {
+        margin-top: 10px;
+        padding: 10px;
+        border-top: 1px solid #e2e8f0;
+        display: grid;
+        gap: 8px;
+      }
+      .desktop-version-btn {
+        width: 100%;
+        text-align: left;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        background: #f8fafc;
+        color: #64748b;
+        font-size: 11px;
+        line-height: 1.2;
+        padding: 7px 9px;
+        cursor: pointer;
+        transition: border-color .2s ease, color .2s ease;
+      }
+      .desktop-version-btn:hover {
+        color: #334155;
+        border-color: #cbd5e1;
+      }
+      .desktop-status-row {
+        display: flex;
         align-items: center;
         gap: 8px;
-        height: 38px;
-        padding: 0 12px;
-        border-radius: 12px;
-        border: 1px solid #cbd5e1;
-        background: #ffffff;
-        color: #0f172a;
-        font-size: 12px;
-        font-weight: 700;
       }
-      .desktop-updater-badge.active {
+      .desktop-online-indicator {
         display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 11px;
+        color: #64748b;
+        min-width: 72px;
       }
-      .desktop-updater-dot {
-        width: 8px;
-        height: 8px;
+      .desktop-online-indicator i {
+        width: 7px;
+        height: 7px;
         border-radius: 999px;
-        background: #3b82f6;
-        animation: desktop-updater-pulse 1s ease-in-out infinite;
+        background: #ef4444;
       }
-      .desktop-updater-progress {
-        width: 64px;
+      .desktop-online-indicator.online i {
+        background: #22c55e;
+      }
+      .desktop-sidebar-progress {
+        flex: 1;
         height: 5px;
         border-radius: 999px;
         background: #e2e8f0;
         overflow: hidden;
       }
-      .desktop-updater-progress > i {
+      .desktop-sidebar-progress > i {
         display: block;
         width: 0%;
         height: 100%;
         background: #22c55e;
         transition: width 0.2s ease;
+      }
+      .desktop-updater-status {
+        font-size: 11px;
+        color: #64748b;
+        line-height: 1.25;
+        min-height: 28px;
+      }
+      .desktop-release-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 12100;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(15, 23, 42, 0.4);
+        padding: 16px;
+      }
+      .desktop-release-overlay.open {
+        display: flex;
+      }
+      .desktop-release-card {
+        width: min(520px, calc(100vw - 24px));
+        max-height: min(78vh, 620px);
+        overflow: auto;
+        background: #fff;
+        border: 1px solid #cbd5e1;
+        border-radius: 14px;
+        box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+        padding: 16px;
+      }
+      .desktop-release-card h3 {
+        margin: 0 0 8px;
+        font-size: 16px;
+        color: #0f172a;
+      }
+      .desktop-release-meta {
+        font-size: 12px;
+        color: #475569;
+        margin-bottom: 10px;
+      }
+      .desktop-release-body {
+        font-size: 12px;
+        color: #334155;
+        white-space: pre-wrap;
+        line-height: 1.45;
+      }
+      .desktop-release-actions {
+        margin-top: 12px;
+        display: flex;
+        justify-content: flex-end;
+      }
+      .desktop-release-actions button {
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        background: #fff;
+        color: #0f172a;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 6px 12px;
+        cursor: pointer;
       }
       .desktop-updater-lock {
         position: fixed;
@@ -234,28 +331,52 @@ function initDesktopUpdaterUi() {
         font-size: 13px;
         color: #334155;
       }
-      @keyframes desktop-updater-pulse {
-        0%, 100% { opacity: 1; transform: scale(1); }
-        50% { opacity: 0.45; transform: scale(1.2); }
-      }
     `
     document.head.appendChild(style)
   }
 
   function ensureUpdaterElements() {
     ensureUpdaterStyle()
-    if (!updaterBadge) {
-      updaterBadge = document.createElement('div')
-      updaterBadge.className = 'desktop-updater-badge'
-      updaterBadge.innerHTML = `
-        <span class="desktop-updater-dot"></span>
-        <span class="desktop-updater-label">Memeriksa update...</span>
-        <span class="desktop-updater-progress"><i></i></span>
+    if (!sidebarPanel) {
+      sidebarPanel = document.createElement('div')
+      sidebarPanel.className = 'desktop-updater-sidebar'
+      sidebarPanel.innerHTML = `
+        <button type="button" class="desktop-version-btn">versi -</button>
+        <div class="desktop-status-row">
+          <span class="desktop-online-indicator"><i></i><span>Offline</span></span>
+          <span class="desktop-sidebar-progress"><i></i></span>
+        </div>
+        <div class="desktop-updater-status">Siap.</div>
       `
-      updaterLabel = updaterBadge.querySelector('.desktop-updater-label')
-      updaterProgress = updaterBadge.querySelector('.desktop-updater-progress > i')
-      const topbarRight = document.querySelector('.topbar-right') || document.querySelector('.topbar') || document.body
-      topbarRight.appendChild(updaterBadge)
+      versionBtn = sidebarPanel.querySelector('.desktop-version-btn')
+      statusLabel = sidebarPanel.querySelector('.desktop-updater-status')
+      progressFill = sidebarPanel.querySelector('.desktop-sidebar-progress > i')
+      onlineDot = sidebarPanel.querySelector('.desktop-online-indicator')
+      onlineText = sidebarPanel.querySelector('.desktop-online-indicator span')
+      const sidebar = document.querySelector('.sidebar')
+      if (sidebar) sidebar.appendChild(sidebarPanel)
+      else document.body.appendChild(sidebarPanel)
+    }
+    if (!changelogOverlay) {
+      changelogOverlay = document.createElement('div')
+      changelogOverlay.className = 'desktop-release-overlay'
+      changelogOverlay.innerHTML = `
+        <div class="desktop-release-card">
+          <h3>Info Versi Aplikasi</h3>
+          <div class="desktop-release-meta" id="desktop-release-meta">Versi aplikasi</div>
+          <div class="desktop-release-body" id="desktop-release-body">Belum ada catatan perubahan.</div>
+          <div class="desktop-release-actions">
+            <button type="button" id="desktop-release-close">Tutup</button>
+          </div>
+        </div>
+      `
+      changelogBody = changelogOverlay.querySelector('#desktop-release-body')
+      const closeBtn = changelogOverlay.querySelector('#desktop-release-close')
+      closeBtn?.addEventListener('click', () => changelogOverlay.classList.remove('open'))
+      changelogOverlay.addEventListener('click', event => {
+        if (event.target === changelogOverlay) changelogOverlay.classList.remove('open')
+      })
+      document.body.appendChild(changelogOverlay)
     }
     if (!updateLockOverlay) {
       updateLockOverlay = document.createElement('div')
@@ -268,6 +389,47 @@ function initDesktopUpdaterUi() {
       `
       document.body.appendChild(updateLockOverlay)
     }
+    versionBtn?.addEventListener('click', () => {
+      const meta = changelogOverlay?.querySelector('#desktop-release-meta')
+      if (meta) {
+        const current = releaseInfoState.currentVersion || '-'
+        const latest = releaseInfoState.latestVersion || current
+        meta.textContent = `Versi saat ini: v${current} | Versi terbaru: v${latest}`
+      }
+      if (changelogBody) {
+        changelogBody.textContent = releaseInfoState.notes || 'Belum ada catatan perubahan pada versi ini.'
+      }
+      changelogOverlay?.classList.add('open')
+    }, { once: true })
+  }
+
+  function setOnlineIndicator() {
+    ensureUpdaterElements()
+    const isOnline = navigator.onLine
+    onlineDot?.classList.toggle('online', isOnline)
+    if (onlineText) onlineText.textContent = isOnline ? 'Online' : 'Offline'
+  }
+
+  async function hydrateLatestReleaseInfo() {
+    try {
+      const res = await fetch('https://github.com/timakademikmim/mim-app/releases/latest/download/latest.json', { cache: 'no-store' })
+      if (!res.ok) return
+      const info = await res.json()
+      if (info && typeof info === 'object') {
+        const latestVersion = String(info.version || '').trim()
+        const notes = String(info.notes || '').trim()
+        if (latestVersion) releaseInfoState.latestVersion = latestVersion
+        if (notes) releaseInfoState.notes = notes
+        if (!releaseInfoState.currentVersion && latestVersion) releaseInfoState.currentVersion = latestVersion
+        renderVersionLabel()
+      }
+    } catch (_error) {}
+  }
+
+  function renderVersionLabel() {
+    ensureUpdaterElements()
+    const current = releaseInfoState.currentVersion || '-'
+    if (versionBtn) versionBtn.textContent = `versi ${current}`
   }
 
   function updateDesktopUpdaterUi(detail) {
@@ -275,50 +437,43 @@ function initDesktopUpdaterUi() {
     const stage = String(detail?.stage || '').trim().toLowerCase()
     const message = String(detail?.message || '').trim() || 'Memproses pembaruan...'
     const progress = Number(detail?.progress)
-    const hasProgress = Number.isFinite(progress)
+    const currentVersion = String(detail?.currentVersion || '').trim()
+    const latestVersion = String(detail?.latestVersion || '').trim()
+    const notes = String(detail?.notes || '').trim()
+    if (currentVersion) releaseInfoState.currentVersion = currentVersion
+    if (latestVersion) releaseInfoState.latestVersion = latestVersion
+    if (notes) releaseInfoState.notes = notes
+    if (releaseInfoState.currentVersion) localStorage.setItem('desktop_app_version', releaseInfoState.currentVersion)
+    renderVersionLabel()
 
-    updaterLabel.textContent = message
-    if (hasProgress) {
-      updaterProgress.style.width = `${Math.max(0, Math.min(100, progress))}%`
+    statusLabel.textContent = message
+    if (Number.isFinite(progress) && progressFill) {
+      progressFill.style.width = `${Math.max(0, Math.min(100, progress))}%`
     }
 
     const isLock = stage === 'downloading' || stage === 'installing' || stage === 'ready_restart'
     updateLockOverlay.classList.toggle('active', isLock)
 
-    const shouldShowBadge =
-      stage === 'checking' ||
-      stage === 'available' ||
-      stage === 'downloading' ||
-      stage === 'installing' ||
-      stage === 'ready_restart' ||
-      stage === 'error'
-    updaterBadge.classList.toggle('active', shouldShowBadge)
-
     if (stage === 'no_update') {
-      updaterLabel.textContent = message
-      updaterProgress.style.width = '100%'
-      updaterBadge.classList.add('active')
-      setTimeout(() => {
-        if (!updateLockOverlay.classList.contains('active')) {
-          updaterBadge.classList.remove('active')
-        }
-      }, 1800)
+      if (progressFill) progressFill.style.width = '100%'
       return
     }
 
     if (stage === 'error') {
-      updaterBadge.style.borderColor = '#fecaca'
-      updaterBadge.style.color = '#b91c1c'
-      updaterProgress.style.background = '#fca5a5'
+      if (statusLabel) statusLabel.style.color = '#b91c1c'
       updateLockOverlay.classList.remove('active')
       return
     }
 
-    updaterBadge.style.borderColor = '#cbd5e1'
-    updaterBadge.style.color = '#0f172a'
-    updaterProgress.style.background = '#22c55e'
+    if (statusLabel) statusLabel.style.color = '#64748b'
   }
 
+  ensureUpdaterElements()
+  setOnlineIndicator()
+  renderVersionLabel()
+  hydrateLatestReleaseInfo()
+  window.addEventListener('online', setOnlineIndicator)
+  window.addEventListener('offline', setOnlineIndicator)
   window.addEventListener('desktop-updater-status', event => {
     updateDesktopUpdaterUi(event?.detail || {})
   })
