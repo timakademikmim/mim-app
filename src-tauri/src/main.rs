@@ -41,9 +41,30 @@ fn open_external_url(url: String) -> Result<(), String> {
   if target.is_empty() {
     return Err("URL kosong.".to_string());
   }
-  tauri::webbrowser::open(target)
-    .map(|_| ())
-    .map_err(|e| format!("Gagal membuka URL eksternal: {e}"))
+  #[cfg(target_os = "windows")]
+  {
+    std::process::Command::new("cmd")
+      .args(["/C", "start", "", target])
+      .spawn()
+      .map(|_| ())
+      .map_err(|e| format!("Gagal membuka URL eksternal: {e}"))
+  }
+  #[cfg(target_os = "macos")]
+  {
+    std::process::Command::new("open")
+      .arg(target)
+      .spawn()
+      .map(|_| ())
+      .map_err(|e| format!("Gagal membuka URL eksternal: {e}"))
+  }
+  #[cfg(all(unix, not(target_os = "macos")))]
+  {
+    std::process::Command::new("xdg-open")
+      .arg(target)
+      .spawn()
+      .map(|_| ())
+      .map_err(|e| format!("Gagal membuka URL eksternal: {e}"))
+  }
 }
 
 fn main() {
