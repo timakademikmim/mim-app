@@ -155,6 +155,175 @@ function initTopbarAccountMenu() {
   })
 }
 
+function initDesktopUpdaterUi() {
+  let updaterBadge = null
+  let updaterLabel = null
+  let updaterProgress = null
+  let updateLockOverlay = null
+
+  function ensureUpdaterStyle() {
+    if (document.getElementById('desktop-updater-style')) return
+    const style = document.createElement('style')
+    style.id = 'desktop-updater-style'
+    style.textContent = `
+      .desktop-updater-badge {
+        display: none;
+        align-items: center;
+        gap: 8px;
+        height: 38px;
+        padding: 0 12px;
+        border-radius: 12px;
+        border: 1px solid #cbd5e1;
+        background: #ffffff;
+        color: #0f172a;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .desktop-updater-badge.active {
+        display: inline-flex;
+      }
+      .desktop-updater-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: #3b82f6;
+        animation: desktop-updater-pulse 1s ease-in-out infinite;
+      }
+      .desktop-updater-progress {
+        width: 64px;
+        height: 5px;
+        border-radius: 999px;
+        background: #e2e8f0;
+        overflow: hidden;
+      }
+      .desktop-updater-progress > i {
+        display: block;
+        width: 0%;
+        height: 100%;
+        background: #22c55e;
+        transition: width 0.2s ease;
+      }
+      .desktop-updater-lock {
+        position: fixed;
+        inset: 0;
+        z-index: 12000;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(15, 23, 42, 0.42);
+      }
+      .desktop-updater-lock.active {
+        display: flex;
+      }
+      .desktop-updater-lock-card {
+        width: min(460px, calc(100vw - 24px));
+        background: #ffffff;
+        border: 1px solid #cbd5e1;
+        border-radius: 14px;
+        padding: 18px;
+        box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+      }
+      .desktop-updater-lock-title {
+        margin: 0 0 6px;
+        font-size: 16px;
+        font-weight: 700;
+        color: #0f172a;
+      }
+      .desktop-updater-lock-note {
+        margin: 0;
+        font-size: 13px;
+        color: #334155;
+      }
+      @keyframes desktop-updater-pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.45; transform: scale(1.2); }
+      }
+    `
+    document.head.appendChild(style)
+  }
+
+  function ensureUpdaterElements() {
+    ensureUpdaterStyle()
+    if (!updaterBadge) {
+      updaterBadge = document.createElement('div')
+      updaterBadge.className = 'desktop-updater-badge'
+      updaterBadge.innerHTML = `
+        <span class="desktop-updater-dot"></span>
+        <span class="desktop-updater-label">Memeriksa update...</span>
+        <span class="desktop-updater-progress"><i></i></span>
+      `
+      updaterLabel = updaterBadge.querySelector('.desktop-updater-label')
+      updaterProgress = updaterBadge.querySelector('.desktop-updater-progress > i')
+      const topbarRight = document.querySelector('.topbar-right') || document.querySelector('.topbar') || document.body
+      topbarRight.appendChild(updaterBadge)
+    }
+    if (!updateLockOverlay) {
+      updateLockOverlay = document.createElement('div')
+      updateLockOverlay.className = 'desktop-updater-lock'
+      updateLockOverlay.innerHTML = `
+        <div class="desktop-updater-lock-card">
+          <div class="desktop-updater-lock-title">Pembaruan aplikasi sedang berjalan</div>
+          <p class="desktop-updater-lock-note">Untuk mencegah bentrok data, input dinonaktifkan sementara hingga update selesai.</p>
+        </div>
+      `
+      document.body.appendChild(updateLockOverlay)
+    }
+  }
+
+  function updateDesktopUpdaterUi(detail) {
+    ensureUpdaterElements()
+    const stage = String(detail?.stage || '').trim().toLowerCase()
+    const message = String(detail?.message || '').trim() || 'Memproses pembaruan...'
+    const progress = Number(detail?.progress)
+    const hasProgress = Number.isFinite(progress)
+
+    updaterLabel.textContent = message
+    if (hasProgress) {
+      updaterProgress.style.width = `${Math.max(0, Math.min(100, progress))}%`
+    }
+
+    const isLock = stage === 'downloading' || stage === 'installing' || stage === 'ready_restart'
+    updateLockOverlay.classList.toggle('active', isLock)
+
+    const shouldShowBadge =
+      stage === 'checking' ||
+      stage === 'available' ||
+      stage === 'downloading' ||
+      stage === 'installing' ||
+      stage === 'ready_restart' ||
+      stage === 'error'
+    updaterBadge.classList.toggle('active', shouldShowBadge)
+
+    if (stage === 'no_update') {
+      updaterLabel.textContent = message
+      updaterProgress.style.width = '100%'
+      updaterBadge.classList.add('active')
+      setTimeout(() => {
+        if (!updateLockOverlay.classList.contains('active')) {
+          updaterBadge.classList.remove('active')
+        }
+      }, 1800)
+      return
+    }
+
+    if (stage === 'error') {
+      updaterBadge.style.borderColor = '#fecaca'
+      updaterBadge.style.color = '#b91c1c'
+      updaterProgress.style.background = '#fca5a5'
+      updateLockOverlay.classList.remove('active')
+      return
+    }
+
+    updaterBadge.style.borderColor = '#cbd5e1'
+    updaterBadge.style.color = '#0f172a'
+    updaterProgress.style.background = '#22c55e'
+  }
+
+  window.addEventListener('desktop-updater-status', event => {
+    updateDesktopUpdaterUi(event?.detail || {})
+  })
+}
+
 window.setTopbarUserIdentity = function setTopbarUserIdentity(nameOrObject, maybeFotoUrl) {
   let name = ''
   let fotoUrl = ''
@@ -175,6 +344,7 @@ window.setTopbarUserIdentity = function setTopbarUserIdentity(nameOrObject, mayb
 }
 
 initTopbarAccountMenu()
+initDesktopUpdaterUi()
 
 function logout() {
   localStorage.clear()
