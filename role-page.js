@@ -462,6 +462,16 @@ function initDesktopUpdaterUi() {
   })
 }
 
+async function invokeTauriCommand(command, payload = {}) {
+  if (window.__TAURI__?.core?.invoke) {
+    return window.__TAURI__.core.invoke(command, payload)
+  }
+  if (window.__TAURI_INTERNALS__?.invoke) {
+    return window.__TAURI_INTERNALS__.invoke(command, payload)
+  }
+  throw new Error('Tauri invoke tidak tersedia di window.')
+}
+
 window.openExternalUrl = async function openExternalUrl(url) {
   const target = String(url || '').trim()
   if (!target) return false
@@ -471,10 +481,8 @@ window.openExternalUrl = async function openExternalUrl(url) {
     return !!popup
   }
   try {
-    if (window.__TAURI__?.core?.invoke) {
-      await window.__TAURI__.core.invoke('open_external_url', { url: target })
-      return true
-    }
+    await invokeTauriCommand('open_external_url', { url: target })
+    return true
   } catch (error) {
     console.error('openExternalUrl invoke failed:', error)
   }
@@ -533,7 +541,7 @@ window.printPdfBlobInPlace = async function printPdfBlobInPlace(blob) {
 window.savePdfDesktopAndOpen = async function savePdfDesktopAndOpen(blob, fileName) {
   if (!(blob instanceof Blob)) return { ok: false, path: '', error: 'Blob tidak valid.' }
   const isDesktopApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
-  if (!isDesktopApp || !window.__TAURI__?.core?.invoke) {
+  if (!isDesktopApp) {
     return { ok: false, path: '', error: 'Bukan mode desktop.' }
   }
   try {
@@ -544,11 +552,11 @@ window.savePdfDesktopAndOpen = async function savePdfDesktopAndOpen(blob, fileNa
       binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
     }
     const base64Data = btoa(binary)
-    const savedPath = await window.__TAURI__.core.invoke('save_pdf_base64', {
+    const savedPath = await invokeTauriCommand('save_pdf_base64', {
       fileName: String(fileName || 'Dokumen.pdf'),
       base64Data
     })
-    await window.__TAURI__.core.invoke('open_file_path', { path: String(savedPath || '') })
+    await invokeTauriCommand('open_file_path', { path: String(savedPath || '') })
     return { ok: true, path: String(savedPath || '') }
   } catch (error) {
     console.error('savePdfDesktopAndOpen failed:', error)
