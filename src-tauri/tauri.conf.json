@@ -38,7 +38,7 @@
     "updater": {
       "active": true,
       "dialog": false,
-      "pubkey": "$TAURI_UPDATER_PUBKEY",
+      "pubkey": "RWQ1NQQvEzgcvt++/NGi9GRNPek3vCA3EJpb2gnvy25xs42QIulBH3aK",
       "endpoints": [
         "https://github.com/timakademikmim/mim-app/releases/latest/download/latest.json"
       ]
