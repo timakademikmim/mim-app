@@ -11451,6 +11451,10 @@ function getGuruExamHtmlUtils() {
   return window.guruExamHtmlUtils || {}
 }
 
+function getGuruExamEditorUtils() {
+  return window.guruExamEditorUtils || {}
+}
+
 function buildExamBrowserSectionsHtml(sections, lang, isAr) {
   const utils = getGuruExamHtmlUtils()
   if (typeof utils.buildExamBrowserSectionsHtml === 'function') {
@@ -11781,19 +11785,19 @@ function renderGuruExamListHtml(examRows, soalMap) {
 }
 
 function getGuruUjianTypeShortLabel(type) {
-  const utils = window.guruExamEditorUtils || {}
+  const utils = getGuruExamEditorUtils()
   if (typeof utils.getTypeShortLabel === 'function') return utils.getTypeShortLabel(type)
   return 'PG'
 }
 
 function buildGuruUjianTypeInfoText(typeCfg) {
-  const utils = window.guruExamEditorUtils || {}
+  const utils = getGuruExamEditorUtils()
   if (typeof utils.buildTypeInfoText === 'function') return utils.buildTypeInfoText(typeCfg)
   return 'Model aktif: -'
 }
 
 function buildGuruUjianSectionRowHtml({ i, qType, sectionForNo, sectionIndexByStart, sectionsLength }) {
-  const utils = window.guruExamEditorUtils || {}
+  const utils = getGuruExamEditorUtils()
   if (typeof utils.buildSectionRowHtml === 'function') {
     return utils.buildSectionRowHtml({ i, qType, sectionForNo, sectionIndexByStart, sectionsLength, escapeHtml })
   }
@@ -11801,7 +11805,7 @@ function buildGuruUjianSectionRowHtml({ i, qType, sectionForNo, sectionIndexBySt
 }
 
 function buildGuruUjianQuestionPgHtml(i, localNo, prev) {
-  const utils = window.guruExamEditorUtils || {}
+  const utils = getGuruExamEditorUtils()
   if (typeof utils.buildQuestionPgHtml === 'function') {
     return utils.buildQuestionPgHtml({ i, localNo, prev, escapeHtml })
   }
@@ -11809,7 +11813,7 @@ function buildGuruUjianQuestionPgHtml(i, localNo, prev) {
 }
 
 function buildGuruUjianQuestionPasangkanHtml(i, localNo, prev) {
-  const utils = window.guruExamEditorUtils || {}
+  const utils = getGuruExamEditorUtils()
   if (typeof utils.buildQuestionPasangkanHtml === 'function') {
     return utils.buildQuestionPasangkanHtml({ i, localNo, prev, escapeHtml })
   }
@@ -11817,7 +11821,7 @@ function buildGuruUjianQuestionPasangkanHtml(i, localNo, prev) {
 }
 
 function buildGuruUjianQuestionIsiTitikHtml(i, localNo, prev, sectionForNo) {
-  const utils = window.guruExamEditorUtils || {}
+  const utils = getGuruExamEditorUtils()
   if (typeof utils.buildQuestionIsiTitikHtml === 'function') {
     return utils.buildQuestionIsiTitikHtml({ i, localNo, prev, sectionForNo, escapeHtml })
   }
@@ -11825,7 +11829,7 @@ function buildGuruUjianQuestionIsiTitikHtml(i, localNo, prev, sectionForNo) {
 }
 
 function buildGuruUjianQuestionEsaiHtml(i, localNo, prev) {
-  const utils = window.guruExamEditorUtils || {}
+  const utils = getGuruExamEditorUtils()
   if (typeof utils.buildQuestionEsaiHtml === 'function') {
     return utils.buildQuestionEsaiHtml({ i, localNo, prev, escapeHtml })
   }
@@ -11833,7 +11837,7 @@ function buildGuruUjianQuestionEsaiHtml(i, localNo, prev) {
 }
 
 function buildGuruUjianQuestionCardHtml(i, qType, localNo, prev, sectionForNo) {
-  const utils = window.guruExamEditorUtils || {}
+  const utils = getGuruExamEditorUtils()
   if (typeof utils.buildQuestionCardHtml === 'function') {
     return utils.buildQuestionCardHtml({ i, qType, localNo, prev, sectionForNo, escapeHtml })
   }
