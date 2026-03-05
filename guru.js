@@ -12800,11 +12800,8 @@ async function renderGuruPrestasiPelanggaranPage() {
 async function loadGuruPage(page) {
   const requestedPage = String(page || DEFAULT_GURU_PAGE)
   const targetPage = VALID_GURU_PAGE_SET.has(requestedPage) ? requestedPage : DEFAULT_GURU_PAGE
-  if (targetPage !== 'chat' && window.ChatModule && typeof window.ChatModule.stop === 'function') {
-    window.ChatModule.stop()
-  }
-  const contentEl = document.getElementById('guru-content')
-  if (contentEl) contentEl.classList.remove('mapel-detail-locked')
+  stopGuruChatModuleIfNeeded(targetPage)
+  unlockGuruContentContainer()
 
   const isWaliKelas = await setupRaporAccess()
   const isWakasekAkademik = await setupMonitoringAccess()
@@ -12880,6 +12877,17 @@ async function loadGuruPage(page) {
     default:
       renderPlaceholder('Panel Guru', 'Pilih menu di sidebar.')
   }
+}
+
+function stopGuruChatModuleIfNeeded(targetPage) {
+  if (targetPage !== 'chat' && window.ChatModule && typeof window.ChatModule.stop === 'function') {
+    window.ChatModule.stop()
+  }
+}
+
+function unlockGuruContentContainer() {
+  const contentEl = document.getElementById('guru-content')
+  if (contentEl) contentEl.classList.remove('mapel-detail-locked')
 }
 
 async function renderGuruPageAndHandleCache({ pageKey, renderFn, cacheAction = 'set' }) {
