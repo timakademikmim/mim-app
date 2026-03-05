@@ -4133,22 +4133,23 @@ function isMissingAbsensiPenggantiColumnError(error) {
   return msg.includes('guru_pengganti_id') || msg.includes('keterangan_pengganti')
 }
 
-function isMissingAbsensiTableError(error) {
+function isMissingTableErrorByName(error, tableName) {
   const code = String(error?.code || '').toUpperCase()
   const msg = String(error?.message || '').toLowerCase()
+  const table = String(tableName || '').trim().toLowerCase()
+  if (!table) return code === '42P01'
   if (code === '42P01') return true
-  if (msg.includes(`table 'public.${ATTENDANCE_TABLE}'`.toLowerCase())) return true
-  if (msg.includes('relation') && msg.includes(ATTENDANCE_TABLE.toLowerCase())) return true
+  if (msg.includes(`table 'public.${table}'`)) return true
+  if (msg.includes('relation') && msg.includes(table)) return true
   return false
 }
 
+function isMissingAbsensiTableError(error) {
+  return isMissingTableErrorByName(error, ATTENDANCE_TABLE)
+}
+
 function isMissingInputNilaiTableError(error) {
-  const code = String(error?.code || '').toUpperCase()
-  const msg = String(error?.message || '').toLowerCase()
-  if (code === '42P01') return true
-  if (msg.includes(`table 'public.${INPUT_NILAI_TABLE}'`.toLowerCase())) return true
-  if (msg.includes('relation') && msg.includes(INPUT_NILAI_TABLE.toLowerCase())) return true
-  return false
+  return isMissingTableErrorByName(error, INPUT_NILAI_TABLE)
 }
 
 function buildInputNilaiMissingTableMessage() {
@@ -4156,12 +4157,7 @@ function buildInputNilaiMissingTableMessage() {
 }
 
 function isMissingRaporDescTableError(error) {
-  const code = String(error?.code || '').toUpperCase()
-  const msg = String(error?.message || '').toLowerCase()
-  if (code === '42P01') return true
-  if (msg.includes(`table 'public.${RAPOR_DESC_TABLE}'`.toLowerCase())) return true
-  if (msg.includes('relation') && msg.includes(RAPOR_DESC_TABLE.toLowerCase())) return true
-  return false
+  return isMissingTableErrorByName(error, RAPOR_DESC_TABLE)
 }
 
 function buildRaporDescMissingTableMessage() {
@@ -4169,12 +4165,7 @@ function buildRaporDescMissingTableMessage() {
 }
 
 function isMissingMonthlyReportTableError(error) {
-  const code = String(error?.code || '').toUpperCase()
-  const msg = String(error?.message || '').toLowerCase()
-  if (code === '42P01') return true
-  if (msg.includes(`table 'public.${MONTHLY_REPORT_TABLE}'`.toLowerCase())) return true
-  if (msg.includes('relation') && msg.includes(MONTHLY_REPORT_TABLE.toLowerCase())) return true
-  return false
+  return isMissingTableErrorByName(error, MONTHLY_REPORT_TABLE)
 }
 
 function buildMonthlyReportMissingTableMessage() {
