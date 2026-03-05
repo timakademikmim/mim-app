@@ -70,6 +70,27 @@ body {
   font-weight: 500;
 }
 
+.guru-nav-btn,
+.guru-submenu-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.guru-nav-btn-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.guru-nav-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  color: currentColor;
+}
+
 .sidebar button:hover {
   background: #eeeeae;
 }

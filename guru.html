@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="guru.css?v=20260303-topbar-avatar-01">
+  <link rel="stylesheet" href="guru.css?v=20260305-sidebar-icons-01">
 </head>
 
 <body data-role="guru">
@@ -15,27 +15,102 @@
     <aside class="sidebar">
       <img src="00 Logo MIM .png" alt="Logo Guru" class="sidebar-logo">
       <div class="sidebar-nav-scroll">
-        <button class="guru-nav-btn" data-page="dashboard" onclick="loadGuruPage('dashboard')">Dashboard</button>
-        <button class="guru-nav-btn" data-page="tugas" onclick="loadGuruPage('tugas')">Mutabaah</button>
-        <button class="guru-nav-btn" data-page="perizinan" onclick="loadGuruPage('perizinan')">Perizinan</button>
-        <button class="guru-nav-btn" data-page="jadwal" onclick="loadGuruPage('jadwal')">Jadwal</button>
-        <button class="guru-nav-btn" data-page="mapel" onclick="loadGuruPage('mapel')">Mapel</button>
-        <button class="guru-nav-btn" data-page="ujian" onclick="loadGuruPage('ujian')">Ujian</button>
-        <button class="guru-nav-btn" id="guru-nav-ekskul" data-page="ekskul" onclick="loadGuruPage('ekskul')" style="display:none;">Ekskul</button>
-        <button class="guru-nav-btn" id="guru-nav-monitoring" data-page="monitoring" onclick="loadGuruPage('monitoring')" style="display:none;">Monitoring</button>
-        <button class="guru-nav-btn" id="guru-nav-prestasi-pelanggaran" data-page="prestasi-pelanggaran" onclick="loadGuruPage('prestasi-pelanggaran')" style="display:none;">Prestasi & Pelanggaran</button>
-        <button class="guru-nav-btn guru-parent-btn" data-page="input" onclick="toggleGuruInputMenu()">Input</button>
+        <button class="guru-nav-btn" data-page="dashboard" onclick="loadGuruPage('dashboard')">
+          <span class="guru-nav-btn-content">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1V9.5Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Dashboard</span>
+          </span>
+        </button>
+        <button class="guru-nav-btn" data-page="tugas" onclick="loadGuruPage('tugas')">
+          <span class="guru-nav-btn-content">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="4" y="3.5" width="16" height="18" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M8 8h8M8 12h8M8 16h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span>Mutabaah</span>
+          </span>
+        </button>
+        <button class="guru-nav-btn" data-page="perizinan" onclick="loadGuruPage('perizinan')">
+          <span class="guru-nav-btn-content">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 3h8M7 6h10a2 2 0 0 1 2 2v10a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V8a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.8"/><path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Perizinan</span>
+          </span>
+        </button>
+        <button class="guru-nav-btn" data-page="jadwal" onclick="loadGuruPage('jadwal')">
+          <span class="guru-nav-btn-content">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 10h17M8 3.5v3M16 3.5v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span>Jadwal</span>
+          </span>
+        </button>
+        <button class="guru-nav-btn" data-page="mapel" onclick="loadGuruPage('mapel')">
+          <span class="guru-nav-btn-content">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16.5A1.5 1.5 0 0 1 18.5 21H6.5A2.5 2.5 0 0 1 4 18.5v-13Z" stroke="currentColor" stroke-width="1.8"/><path d="M7.5 7.5h8M7.5 11h8M7.5 14.5h5.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span>Mapel</span>
+          </span>
+        </button>
+        <button class="guru-nav-btn" data-page="ujian" onclick="loadGuruPage('ujian')">
+          <span class="guru-nav-btn-content">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 5h8l2 2v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7l2-2Z" stroke="currentColor" stroke-width="1.8"/><path d="M9 3h6M9 11h6M9 15h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span>Ujian</span>
+          </span>
+        </button>
+        <button class="guru-nav-btn" id="guru-nav-ekskul" data-page="ekskul" onclick="loadGuruPage('ekskul')" style="display:none;">
+          <span class="guru-nav-btn-content">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="3.2" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 19a6.5 6.5 0 0 1 13 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M4 11.5h3M17 11.5h3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span>Ekskul</span>
+          </span>
+        </button>
+        <button class="guru-nav-btn" id="guru-nav-monitoring" data-page="monitoring" onclick="loadGuruPage('monitoring')" style="display:none;">
+          <span class="guru-nav-btn-content">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 19.5h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6.5 16V10M12 16V6M17.5 16v-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span>Monitoring</span>
+          </span>
+        </button>
+        <button class="guru-nav-btn" id="guru-nav-prestasi-pelanggaran" data-page="prestasi-pelanggaran" onclick="loadGuruPage('prestasi-pelanggaran')" style="display:none;">
+          <span class="guru-nav-btn-content">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3.5l2.3 4.7 5.2.8-3.8 3.7.9 5.3L12 15.8 7.4 18l.9-5.3L4.5 9l5.2-.8L12 3.5Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+            <span>Prestasi & Pelanggaran</span>
+          </span>
+        </button>
+        <button class="guru-nav-btn guru-parent-btn" data-page="input" onclick="toggleGuruInputMenu()">
+          <span class="guru-nav-btn-content">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 19.5h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M7.5 15.5V8.5M12 15.5V5.5M16.5 15.5v-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span>Input</span>
+          </span>
+        </button>
         <div id="guru-input-submenu" class="guru-submenu">
-          <button class="guru-submenu-btn" data-page="input-nilai" onclick="loadGuruInputFromSidebar('input-nilai')">Input Nilai</button>
-          <button class="guru-submenu-btn" data-page="input-absensi" onclick="loadGuruInputFromSidebar('input-absensi')">Input Absen</button>
+          <button class="guru-submenu-btn" data-page="input-nilai" onclick="loadGuruInputFromSidebar('input-nilai')">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 4h9l3 3v13H6V4Z" stroke="currentColor" stroke-width="1.8"/><path d="M9 11h6M9 15h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span>Input Nilai</span>
+          </button>
+          <button class="guru-submenu-btn" data-page="input-absensi" onclick="loadGuruInputFromSidebar('input-absensi')">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="4" y="5" width="16" height="16" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M8 3.5v3M16 3.5v3M4 10h16M8.5 14l2 2 5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Input Absen</span>
+          </button>
         </div>
-        <button class="guru-nav-btn guru-parent-btn" data-page="laporan" onclick="toggleGuruLaporanMenu()">Laporan</button>
+        <button class="guru-nav-btn guru-parent-btn" data-page="laporan" onclick="toggleGuruLaporanMenu()">
+          <span class="guru-nav-btn-content">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 3.5h10l2 2v15H6v-17Z" stroke="currentColor" stroke-width="1.8"/><path d="M9 10h6M9 13.5h6M9 17h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span>Laporan</span>
+          </span>
+        </button>
         <div id="guru-laporan-submenu" class="guru-submenu">
-          <button class="guru-submenu-btn" data-page="laporan-absensi" onclick="loadGuruLaporanFromSidebar('laporan-absensi')">Absensi</button>
-          <button class="guru-submenu-btn" data-page="laporan-pekanan" onclick="loadGuruLaporanFromSidebar('laporan-pekanan')">Laporan Pekanan</button>
-          <button class="guru-submenu-btn" data-page="laporan-bulanan" onclick="loadGuruLaporanFromSidebar('laporan-bulanan')">Laporan Bulanan</button>
+          <button class="guru-submenu-btn" data-page="laporan-absensi" onclick="loadGuruLaporanFromSidebar('laporan-absensi')">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7 4h10l2 2v14H5V4h2Z" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 10.5h7M8.5 14h7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span>Absensi</span>
+          </button>
+          <button class="guru-submenu-btn" data-page="laporan-pekanan" onclick="loadGuruLaporanFromSidebar('laporan-pekanan')">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="4" y="5.5" width="16" height="14.5" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M4 10h16M8 3.5v3M16 3.5v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span>Laporan Pekanan</span>
+          </button>
+          <button class="guru-submenu-btn" data-page="laporan-bulanan" onclick="loadGuruLaporanFromSidebar('laporan-bulanan')">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M8 8h8M8 12h8M8 16h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span>Laporan Bulanan</span>
+          </button>
         </div>
-        <button class="guru-nav-btn" id="guru-nav-rapor" data-page="rapor" onclick="loadGuruPage('rapor')">Rapor</button>
+        <button class="guru-nav-btn" id="guru-nav-rapor" data-page="rapor" onclick="loadGuruPage('rapor')">
+          <span class="guru-nav-btn-content">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 3.5h11l2 2v15H6V3.5Z" stroke="currentColor" stroke-width="1.8"/><path d="M9 9.5h6M9 13h6M9 16.5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span>Rapor</span>
+          </span>
+        </button>
       </div>
     </aside>
 
