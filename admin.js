@@ -410,6 +410,7 @@ function setActiveSidebarTab(page) {
     page === 'kelas-distribusi-mapel' ||
     page === 'kelas-guru-mapel' ||
     page === 'jadwal' ||
+    page === 'ekstrakurikuler' ||
     page === 'ujian' ||
     page === 'jadwal-ujian' ||
     page === 'santri' ||
