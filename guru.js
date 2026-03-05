@@ -1174,6 +1174,52 @@ function selectTopbarCalendarDate(dateKey) {
   renderTopbarCalendar()
 }
 
+function buildGuruSolidNavIconFrom(sourceSvg) {
+  const solidSvg = sourceSvg.cloneNode(true)
+  solidSvg.classList.remove('guru-nav-icon-outline')
+  solidSvg.classList.add('guru-nav-icon-solid')
+
+  const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+  bg.setAttribute('x', '1.25')
+  bg.setAttribute('y', '1.25')
+  bg.setAttribute('width', '21.5')
+  bg.setAttribute('height', '21.5')
+  bg.setAttribute('rx', '6')
+  bg.setAttribute('fill', 'currentColor')
+  bg.setAttribute('stroke', 'none')
+  solidSvg.insertBefore(bg, solidSvg.firstChild)
+
+  solidSvg.querySelectorAll('path, line, polyline, polygon, circle, ellipse, rect').forEach(shape => {
+    if (shape === bg) return
+    shape.setAttribute('fill', 'none')
+    shape.setAttribute('stroke', '#ffffff')
+    shape.setAttribute('stroke-width', '1.9')
+    shape.setAttribute('stroke-linecap', shape.getAttribute('stroke-linecap') || 'round')
+    shape.setAttribute('stroke-linejoin', shape.getAttribute('stroke-linejoin') || 'round')
+  })
+
+  return solidSvg
+}
+
+function enhanceGuruSidebarIcons() {
+  const icons = document.querySelectorAll('.guru-nav-btn-content > .guru-nav-icon, .guru-submenu-btn > .guru-nav-icon')
+  icons.forEach(icon => {
+    if (!(icon instanceof SVGElement)) return
+    if (icon.closest('.guru-nav-icon-stack')) return
+    const outlineSvg = icon.cloneNode(true)
+    outlineSvg.classList.add('guru-nav-icon-outline')
+    const solidSvg = buildGuruSolidNavIconFrom(icon)
+
+    const stack = document.createElement('span')
+    stack.className = 'guru-nav-icon-stack'
+    stack.setAttribute('aria-hidden', 'true')
+    stack.appendChild(outlineSvg)
+    stack.appendChild(solidSvg)
+
+    icon.replaceWith(stack)
+  })
+}
+
 function setNavActive(page) {
   const mainButtons = document.querySelectorAll('.guru-nav-btn')
   const subButtons = document.querySelectorAll('.guru-submenu-btn')
@@ -13101,6 +13147,7 @@ window.onGuruEkskulMonthlyPeriodeChange = onGuruEkskulMonthlyPeriodeChange
 window.saveGuruEkskulMonthlyReport = saveGuruEkskulMonthlyReport
 
 document.addEventListener('DOMContentLoaded', () => {
+  enhanceGuruSidebarIcons()
   setupCustomPopupSystem()
   loadGuruNotifPrefs()
   ensureTopbarNotification()

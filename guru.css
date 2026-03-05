@@ -84,32 +84,47 @@ body {
   min-width: 0;
 }
 
-.guru-nav-icon {
+.guru-nav-icon-stack {
+  position: relative;
   width: 16px;
   height: 16px;
   flex: 0 0 16px;
+  display: inline-block;
+}
+
+.guru-nav-icon {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   color: currentColor;
-  transition: transform 0.22s ease, color 0.22s ease, opacity 0.22s ease;
+  transition: transform 0.22s ease, opacity 0.22s ease;
 }
 
-.guru-nav-icon * {
-  transition: fill 0.22s ease, stroke 0.22s ease, stroke-width 0.22s ease, opacity 0.22s ease;
+.guru-nav-icon-outline {
+  opacity: 1;
+  transform: scale(1);
 }
 
-.guru-nav-btn:hover .guru-nav-icon,
-.guru-submenu-btn:hover .guru-nav-icon,
-.guru-nav-btn.active .guru-nav-icon,
-.guru-submenu-btn.active .guru-nav-icon {
-  transform: scale(1.06);
+.guru-nav-icon-solid {
+  opacity: 0;
+  transform: scale(0.84);
 }
 
-.guru-nav-btn:hover .guru-nav-icon *,
-.guru-submenu-btn:hover .guru-nav-icon *,
-.guru-nav-btn.active .guru-nav-icon *,
-.guru-submenu-btn.active .guru-nav-icon * {
-  fill: currentColor !important;
-  stroke: currentColor !important;
-  stroke-width: 1.55 !important;
+.guru-nav-btn:hover .guru-nav-icon-outline,
+.guru-submenu-btn:hover .guru-nav-icon-outline,
+.guru-nav-btn.active .guru-nav-icon-outline,
+.guru-submenu-btn.active .guru-nav-icon-outline {
+  opacity: 0;
+  transform: scale(1.1);
+}
+
+.guru-nav-btn:hover .guru-nav-icon-solid,
+.guru-submenu-btn:hover .guru-nav-icon-solid,
+.guru-nav-btn.active .guru-nav-icon-solid,
+.guru-submenu-btn.active .guru-nav-icon-solid {
+  opacity: 1;
+  transform: scale(1);
 }
 
 .sidebar button:hover {
