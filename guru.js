@@ -2288,6 +2288,7 @@ function renderGuruEkskulMonthlyInputRows() {
   }
   const santriMap = new Map((guruEkskulState.santriRows || []).map(item => [String(item.id || ''), item]))
   const monthlyMap = new Map((guruEkskulState.monthlyRows || []).map(item => [String(item.santri_id || ''), item]))
+  const utils = getGuruEkskulUtils()
   box.innerHTML = `
     <div style="overflow:auto;">
       <table style="width:100%; min-width:860px; border-collapse:collapse; font-size:13px;">
@@ -2307,18 +2308,18 @@ function renderGuruEkskulMonthlyInputRows() {
               ? ''
               : String(report.kehadiran_persen)
             const catatanValue = String(report?.catatan_pj || '')
-            return `
-              <tr data-guru-ekskul-monthly-row="1" data-santri-id="${escapeHtml(sid)}">
-                <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${idx + 1}</td>
-                <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(String(santriMap.get(sid)?.nama || '-'))}</td>
-                <td style="padding:8px; border:1px solid #e2e8f0;">
-                  <input class="guru-field" type="number" min="0" max="100" step="0.01" placeholder="0-100" data-guru-ekskul-monthly-kehadiran="1" value="${escapeHtml(kehadiranValue)}">
-                </td>
-                <td style="padding:8px; border:1px solid #e2e8f0;">
-                  <input class="guru-field" type="text" placeholder="Catatan PJ ekskul" data-guru-ekskul-monthly-catatan="1" value="${escapeHtml(catatanValue)}">
-                </td>
-              </tr>
-            `
+            const nama = String(santriMap.get(sid)?.nama || '-')
+            if (typeof utils.buildMonthlyTableRowHtml === 'function') {
+              return utils.buildMonthlyTableRowHtml({
+                index: idx + 1,
+                sid,
+                nama,
+                kehadiranValue,
+                catatanValue,
+                escapeHtml
+              })
+            }
+            return `<tr><td>${idx + 1}</td><td>${escapeHtml(nama)}</td><td></td><td></td></tr>`
           }).join('')}
         </tbody>
       </table>
@@ -2678,6 +2679,7 @@ function renderGuruEkskulProgressInputRows() {
     box.innerHTML = '<div style="color:#64748b; font-size:12px;">Belum ada indikator untuk ekskul ini.</div>'
     return
   }
+  const utils = getGuruEkskulUtils()
   box.innerHTML = `
     <div style="margin-bottom:8px; color:#0f172a;"><strong>Santri:</strong> ${escapeHtml(String(santriMap.get(sid)?.nama || '-'))}</div>
     <div style="overflow:auto;">
@@ -2693,24 +2695,17 @@ function renderGuruEkskulProgressInputRows() {
         <tbody>
           ${indikatorRows.map((indikator, idx) => {
             const iid = String(indikator.id || '')
-            return `
-              <tr data-guru-ekskul-indikator-row="1" data-indikator-id="${escapeHtml(iid)}">
-                <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${idx + 1}</td>
-                <td style="padding:8px; border:1px solid #e2e8f0;">
-                  <div style="font-weight:600;">${escapeHtml(String(indikator.nama || '-'))}</div>
-                  <div style="font-size:11px; color:#64748b;">${escapeHtml(String(indikator.deskripsi || '-'))}</div>
-                </td>
-                <td style="padding:8px; border:1px solid #e2e8f0;">
-                  <div style="display:grid; grid-template-columns:86px 1fr; gap:8px; align-items:center;">
-                    <input class="guru-field" type="number" min="1" max="100" step="1" placeholder="1-100" data-guru-ekskul-indikator-nilai="1" oninput="guruEkskulUpdateIndicatorStars(this)">
-                    <div data-guru-ekskul-star-view="1">${getGuruEkskulEmptyStarsHtml()}</div>
-                  </div>
-                </td>
-                <td style="padding:8px; border:1px solid #e2e8f0;">
-                  <input class="guru-field" type="text" placeholder="Catatan indikator" data-guru-ekskul-indikator-catatan="1">
-                </td>
-              </tr>
-            `
+            if (typeof utils.buildProgressInputTableRowHtml === 'function') {
+              return utils.buildProgressInputTableRowHtml({
+                index: idx + 1,
+                iid,
+                nama: indikator.nama,
+                deskripsi: indikator.deskripsi,
+                emptyStarsHtml: getGuruEkskulEmptyStarsHtml(),
+                escapeHtml
+              })
+            }
+            return `<tr><td>${idx + 1}</td><td>${escapeHtml(String(indikator.nama || '-'))}</td><td></td><td></td></tr>`
           }).join('')}
         </tbody>
       </table>

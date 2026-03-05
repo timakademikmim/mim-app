@@ -56,11 +56,49 @@
     `
   }
 
+  function buildMonthlyTableRowHtml({ index, sid, nama, kehadiranValue, catatanValue, escapeHtml }) {
+    return `
+      <tr data-guru-ekskul-monthly-row="1" data-santri-id="${escapeHtml(sid)}">
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${index}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(String(nama || '-'))}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">
+          <input class="guru-field" type="number" min="0" max="100" step="0.01" placeholder="0-100" data-guru-ekskul-monthly-kehadiran="1" value="${escapeHtml(String(kehadiranValue || ''))}">
+        </td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">
+          <input class="guru-field" type="text" placeholder="Catatan PJ ekskul" data-guru-ekskul-monthly-catatan="1" value="${escapeHtml(String(catatanValue || ''))}">
+        </td>
+      </tr>
+    `
+  }
+
+  function buildProgressInputTableRowHtml({ index, iid, nama, deskripsi, emptyStarsHtml, escapeHtml }) {
+    return `
+      <tr data-guru-ekskul-indikator-row="1" data-indikator-id="${escapeHtml(iid)}">
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${index}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">
+          <div style="font-weight:600;">${escapeHtml(String(nama || '-'))}</div>
+          <div style="font-size:11px; color:#64748b;">${escapeHtml(String(deskripsi || '-'))}</div>
+        </td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">
+          <div style="display:grid; grid-template-columns:86px 1fr; gap:8px; align-items:center;">
+            <input class="guru-field" type="number" min="1" max="100" step="1" placeholder="1-100" data-guru-ekskul-indikator-nilai="1" oninput="guruEkskulUpdateIndicatorStars(this)">
+            <div data-guru-ekskul-star-view="1">${emptyStarsHtml}</div>
+          </div>
+        </td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">
+          <input class="guru-field" type="text" placeholder="Catatan indikator" data-guru-ekskul-indikator-catatan="1">
+        </td>
+      </tr>
+    `
+  }
+
   window.guruEkskulUtils = {
     buildStarsHtml,
     getEmptyStarsHtml,
     buildMemberCardHtml,
     buildIndikatorCardHtml,
-    buildProgressDetailRowHtml
+    buildProgressDetailRowHtml,
+    buildMonthlyTableRowHtml,
+    buildProgressInputTableRowHtml
   }
 })()
