@@ -26,6 +26,7 @@ const CHAT_MESSAGES_TABLE = 'chat_messages'
 const SCHOOL_PROFILE_TABLE = 'struktur_sekolah'
 const TOPBAR_NOTIF_READ_KEY = 'muhaffiz_topbar_notif_read'
 const TOPBAR_NOTIF_RANGE_KEY = 'muhaffiz_topbar_notif_range_days'
+const MUHAFFIZ_HISTORY_STATE_KEY = 'muhaffiz_tab'
 const MUHAFFIZ_SIDEBAR_COLLAPSED_KEY = 'muhaffiz_sidebar_collapsed'
 const MUHAFFIZ_SIDEBAR_ICON_ONLY_BREAKPOINT = 1180
 
@@ -244,6 +245,20 @@ function initMuhaffizSidebarState() {
   }
   setupMuhaffizSidebarTooltips()
   window.addEventListener('resize', applyMuhaffizSidebarIconsOnlyByViewport)
+}
+
+function pushMuhaffizTabHistory(page) {
+  const target = String(page || '').trim()
+  if (!target || !window?.history?.pushState) return
+  const current = String(window.history.state?.[MUHAFFIZ_HISTORY_STATE_KEY] || '').trim()
+  if (current === target) return
+  window.history.pushState({ [MUHAFFIZ_HISTORY_STATE_KEY]: target }, '', window.location.href)
+}
+
+function replaceMuhaffizTabHistory(page) {
+  const target = String(page || '').trim()
+  if (!target || !window?.history?.replaceState) return
+  window.history.replaceState({ [MUHAFFIZ_HISTORY_STATE_KEY]: target }, '', window.location.href)
 }
 
 const MUHAFFIZ_BULK_EXCEL_HEADERS = [
@@ -3646,7 +3661,8 @@ async function renderMuhaffizManageHalaqahPage() {
   }
 }
 
-async function loadMuhaffizPage(page) {
+async function loadMuhaffizPage(page, options = {}) {
+  const { updateHistory = true, replaceHistory = false } = options || {}
   const targetPage = PAGE_TITLES[page] ? page : 'dashboard'
   if (targetPage !== 'chat' && window.ChatModule && typeof window.ChatModule.stop === 'function') {
     window.ChatModule.stop()
@@ -3656,6 +3672,10 @@ async function loadMuhaffizPage(page) {
   setTopbarTitle(targetPage)
   setNavActive(targetPage === 'profil' ? '' : targetPage)
   if (targetPage !== 'profil') localStorage.setItem(MUHAFFIZ_LAST_PAGE_KEY, targetPage)
+  if (updateHistory) {
+    if (replaceHistory) replaceMuhaffizTabHistory(targetPage)
+    else pushMuhaffizTabHistory(targetPage)
+  }
   closeTopbarUserMenu()
   if (targetPage === 'profil') {
     await renderMuhaffizProfil()
@@ -3815,10 +3835,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   const lastPage = localStorage.getItem(MUHAFFIZ_LAST_PAGE_KEY) || 'dashboard'
-  await loadMuhaffizPage(lastPage)
+  await loadMuhaffizPage(lastPage, { updateHistory: true, replaceHistory: true })
   refreshMuhaffizTopbarNotifications().catch(error => console.error(error))
   refreshMuhaffizTopbarChatBadge().catch(error => console.error(error))
   startMuhaffizTopbarChatBadgeTicker()
+
+  window.addEventListener('popstate', event => {
+    const pageFromState = String(event.state?.[MUHAFFIZ_HISTORY_STATE_KEY] || '').trim()
+    if (!pageFromState) return
+    loadMuhaffizPage(pageFromState, { updateHistory: false }).catch(error => console.error(error))
+  })
 
   document.addEventListener('click', event => {
     const topWrap = document.querySelector('.topbar-user-menu-wrap')

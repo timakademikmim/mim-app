@@ -9,6 +9,8 @@ const externalPageScriptLoaded = {}
 const EXTERNAL_PAGE_ASSET_VERSION = '20260304-desktop-wa-print-fix-01'
 const CHAT_MEMBERS_TABLE = 'chat_thread_members'
 const CHAT_MESSAGES_TABLE = 'chat_messages'
+const ADMIN_HISTORY_STATE_PAGE_KEY = 'admin_page'
+const ADMIN_HISTORY_STATE_PARAMS_KEY = 'admin_params'
 const ADMIN_SIDEBAR_COLLAPSED_KEY = 'admin_sidebar_collapsed'
 const ADMIN_SIDEBAR_ICON_ONLY_BREAKPOINT = 1180
 const pageDataCache = window.__pageDataCache || {}
@@ -206,6 +208,42 @@ function initAdminSidebarState() {
   window.addEventListener('resize', applyAdminSidebarIconsOnlyByViewport)
 }
 
+function normalizeAdminHistoryParams(params = {}) {
+  const plain = {}
+  Object.keys(params || {}).forEach(key => {
+    const value = params[key]
+    if (value === undefined) return
+    if (typeof value === 'function') return
+    plain[key] = value
+  })
+  return plain
+}
+
+function pushAdminTabHistory(page, params = {}) {
+  if (!window?.history?.pushState) return
+  const targetPage = String(page || '').trim()
+  if (!targetPage) return
+  const targetParams = normalizeAdminHistoryParams(params)
+  const currentPage = String(window.history.state?.[ADMIN_HISTORY_STATE_PAGE_KEY] || '').trim()
+  const currentParams = window.history.state?.[ADMIN_HISTORY_STATE_PARAMS_KEY] || {}
+  if (currentPage === targetPage && JSON.stringify(currentParams) === JSON.stringify(targetParams)) return
+  window.history.pushState({
+    [ADMIN_HISTORY_STATE_PAGE_KEY]: targetPage,
+    [ADMIN_HISTORY_STATE_PARAMS_KEY]: targetParams
+  }, '', window.location.href)
+}
+
+function replaceAdminTabHistory(page, params = {}) {
+  if (!window?.history?.replaceState) return
+  const targetPage = String(page || '').trim()
+  if (!targetPage) return
+  const targetParams = normalizeAdminHistoryParams(params)
+  window.history.replaceState({
+    [ADMIN_HISTORY_STATE_PAGE_KEY]: targetPage,
+    [ADMIN_HISTORY_STATE_PARAMS_KEY]: targetParams
+  }, '', window.location.href)
+}
+
 window.getCachedData = function getCachedData(key, ttlMs) {
   const entry = pageDataCache[key]
   if (!entry) return null
@@ -261,7 +299,7 @@ document.addEventListener('DOMContentLoaded', () => {
     localStorage.removeItem('admin_force_dashboard_once')
     localStorage.removeItem('admin_last_page')
     localStorage.removeItem('admin_last_page_params')
-    loadPage('dashboard')
+    loadPage('dashboard', {}, { updateHistory: true, replaceHistory: true })
     return
   }
 
@@ -272,7 +310,14 @@ document.addEventListener('DOMContentLoaded', () => {
   } catch (e) {
     lastParams = {}
   }
-  loadPage(lastPage, lastParams)
+  loadPage(lastPage, lastParams, { updateHistory: true, replaceHistory: true })
+
+  window.addEventListener('popstate', event => {
+    const pageFromState = String(event.state?.[ADMIN_HISTORY_STATE_PAGE_KEY] || '').trim()
+    if (!pageFromState) return
+    const paramsFromState = event.state?.[ADMIN_HISTORY_STATE_PARAMS_KEY] || {}
+    loadPage(pageFromState, paramsFromState, { updateHistory: false })
+  })
 })
 
 
@@ -1302,7 +1347,8 @@ window.syncKelasSidebarSelection = function syncKelasSidebarSelection(subtab) {
 // =======================
 // PAGE ROUTER
 // =======================
-function loadPage(page, params = {}) {
+function loadPage(page, params = {}, options = {}) {
+  const { updateHistory = true, replaceHistory = false } = options || {}
   localStorage.setItem('admin_last_page', page);
   localStorage.setItem('admin_last_page_params', JSON.stringify(params));
   const area = document.getElementById('content-area')
@@ -1312,6 +1358,10 @@ function loadPage(page, params = {}) {
 
   setActiveSidebarTab(page)
   setTopbarTitle(page)
+  if (updateHistory) {
+    if (replaceHistory) replaceAdminTabHistory(page, params)
+    else pushAdminTabHistory(page, params)
+  }
   setupTopbarUserMenuHandlers()
   ensureAdminTopbarChatButton()
   refreshAdminTopbarChatBadge().catch(error => console.error(error))

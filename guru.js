@@ -3,6 +3,7 @@ const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 const sb = supabase.createClient(supabaseUrl, supabaseKey)
 
 const GURU_LAST_PAGE_KEY = 'guru_last_page'
+const GURU_HISTORY_STATE_KEY = 'guru_tab'
 const GURU_SIDEBAR_COLLAPSED_KEY = 'guru_sidebar_collapsed'
 const GURU_MAPEL_DETAIL_STATE_KEY = 'guru_mapel_detail_state'
 const DEFAULT_GURU_PAGE = 'dashboard'
@@ -12963,7 +12964,8 @@ async function renderGuruPrestasiPelanggaranPage() {
   }
 }
 
-async function loadGuruPage(page) {
+async function loadGuruPage(page, options = {}) {
+  const { updateHistory = true, replaceHistory = false } = options || {}
   const requestedPage = String(page || DEFAULT_GURU_PAGE)
   const targetPage = VALID_GURU_PAGE_SET.has(requestedPage) ? requestedPage : DEFAULT_GURU_PAGE
   stopGuruChatModuleIfNeeded(targetPage)
@@ -12986,6 +12988,10 @@ async function loadGuruPage(page) {
   setTopbarTitle(targetPage)
   setNavActive(targetPage === 'profil' ? '' : targetPage)
   if (targetPage !== 'profil') localStorage.setItem(GURU_LAST_PAGE_KEY, targetPage)
+  if (updateHistory) {
+    if (replaceHistory) replaceGuruTabHistory(targetPage)
+    else pushGuruTabHistory(targetPage)
+  }
   closeTopbarUserMenu()
 
   const allowPageCache = targetPage !== 'monitoring'
@@ -13054,6 +13060,20 @@ function stopGuruChatModuleIfNeeded(targetPage) {
 function unlockGuruContentContainer() {
   const contentEl = document.getElementById('guru-content')
   if (contentEl) contentEl.classList.remove('mapel-detail-locked')
+}
+
+function pushGuruTabHistory(page) {
+  const target = String(page || '').trim()
+  if (!target || !window?.history?.pushState) return
+  const current = String(window.history.state?.[GURU_HISTORY_STATE_KEY] || '').trim()
+  if (current === target) return
+  window.history.pushState({ [GURU_HISTORY_STATE_KEY]: target }, '', window.location.href)
+}
+
+function replaceGuruTabHistory(page) {
+  const target = String(page || '').trim()
+  if (!target || !window?.history?.replaceState) return
+  window.history.replaceState({ [GURU_HISTORY_STATE_KEY]: target }, '', window.location.href)
 }
 
 async function renderGuruPageAndHandleCache({ pageKey, renderFn, cacheAction = 'set' }) {
@@ -13280,7 +13300,13 @@ document.addEventListener('DOMContentLoaded', () => {
   setupEkskulAccess(true).catch(error => console.error(error))
   setGuruWelcomeName()
   const lastPage = localStorage.getItem(GURU_LAST_PAGE_KEY) || DEFAULT_GURU_PAGE
-  loadGuruPage(lastPage)
+  loadGuruPage(lastPage, { updateHistory: true, replaceHistory: true })
+
+  window.addEventListener('popstate', event => {
+    const pageFromState = String(event.state?.[GURU_HISTORY_STATE_KEY] || '').trim()
+    if (!pageFromState) return
+    loadGuruPage(pageFromState, { updateHistory: false }).catch(error => console.error(error))
+  })
 
   document.addEventListener('click', event => {
     const topWrap = document.querySelector('.topbar-user-menu-wrap')

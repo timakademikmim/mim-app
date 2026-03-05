@@ -25,6 +25,7 @@ const CHAT_MESSAGES_TABLE = 'chat_messages'
 const SCHOOL_PROFILE_TABLE = 'struktur_sekolah'
 const TOPBAR_NOTIF_READ_KEY = 'musyrif_topbar_notif_read'
 const TOPBAR_NOTIF_RANGE_KEY = 'musyrif_topbar_notif_range_days'
+const MUSYRIF_HISTORY_STATE_KEY = 'musyrif_tab'
 const MUSYRIF_SIDEBAR_COLLAPSED_KEY = 'musyrif_sidebar_collapsed'
 const MUSYRIF_SIDEBAR_ICON_ONLY_BREAKPOINT = 1180
 
@@ -252,6 +253,20 @@ function initMusyrifSidebarState() {
   }
   setupMusyrifSidebarTooltips()
   window.addEventListener('resize', applyMusyrifSidebarIconsOnlyByViewport)
+}
+
+function pushMusyrifTabHistory(page) {
+  const target = String(page || '').trim()
+  if (!target || !window?.history?.pushState) return
+  const current = String(window.history.state?.[MUSYRIF_HISTORY_STATE_KEY] || '').trim()
+  if (current === target) return
+  window.history.pushState({ [MUSYRIF_HISTORY_STATE_KEY]: target }, '', window.location.href)
+}
+
+function replaceMusyrifTabHistory(page) {
+  const target = String(page || '').trim()
+  if (!target || !window?.history?.replaceState) return
+  window.history.replaceState({ [MUSYRIF_HISTORY_STATE_KEY]: target }, '', window.location.href)
 }
 
 const MUSYRIF_BULK_EXCEL_HEADERS = [
@@ -4135,7 +4150,8 @@ async function renderMusyrifManageKamarPage() {
   }
 }
 
-async function loadMusyrifPage(page) {
+async function loadMusyrifPage(page, options = {}) {
+  const { updateHistory = true, replaceHistory = false } = options || {}
   const targetPage = PAGE_TITLES[page] ? page : 'dashboard'
   if (targetPage !== 'chat' && window.ChatModule && typeof window.ChatModule.stop === 'function') {
     window.ChatModule.stop()
@@ -4145,6 +4161,10 @@ async function loadMusyrifPage(page) {
   setTopbarTitle(targetPage)
   setNavActive(targetPage === 'profil' ? '' : targetPage)
   if (targetPage !== 'profil') localStorage.setItem(MUHAFFIZ_LAST_PAGE_KEY, targetPage)
+  if (updateHistory) {
+    if (replaceHistory) replaceMusyrifTabHistory(targetPage)
+    else pushMusyrifTabHistory(targetPage)
+  }
   closeTopbarUserMenu()
   if (targetPage === 'profil') {
     await renderMusyrifProfil()
@@ -4310,10 +4330,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   const lastPage = localStorage.getItem(MUHAFFIZ_LAST_PAGE_KEY) || 'dashboard'
-  await loadMusyrifPage(lastPage)
+  await loadMusyrifPage(lastPage, { updateHistory: true, replaceHistory: true })
   refreshMusyrifTopbarNotifications().catch(error => console.error(error))
   refreshMusyrifTopbarChatBadge().catch(error => console.error(error))
   startMusyrifTopbarChatBadgeTicker()
+
+  window.addEventListener('popstate', event => {
+    const pageFromState = String(event.state?.[MUSYRIF_HISTORY_STATE_KEY] || '').trim()
+    if (!pageFromState) return
+    loadMusyrifPage(pageFromState, { updateHistory: false }).catch(error => console.error(error))
+  })
 
   document.addEventListener('click', event => {
     const topWrap = document.querySelector('.topbar-user-menu-wrap')
