@@ -2713,8 +2713,8 @@ function renderGuruEkskulProgressInputRows() {
   `
 }
 
-async function selectGuruEkskul(exskulId) {
-  guruEkskulState.selectedEkskulId = String(exskulId || '')
+async function selectGuruEkskul(ekskulId) {
+  guruEkskulState.selectedEkskulId = String(ekskulId || '')
   guruEkskulState.selectedSantriId = ''
   refreshGuruEkskulPanels()
   try {
@@ -2893,12 +2893,12 @@ function ensureGuruEkskulSelectedId() {
   guruEkskulState.selectedEkskulId = String(guruEkskulState.ekskulRows?.[0]?.id || '')
 }
 
-async function loadGuruEkskulProgressRowsByEkskulId(exskulId) {
-  if (!exskulId) return []
+async function loadGuruEkskulProgressRowsByEkskulId(ekskulId) {
+  if (!ekskulId) return []
   const { data, error } = await sb
     .from(EKSKUL_PROGRES_TABLE)
     .select('id, ekskul_id, santri_id, indikator_id, tanggal, nilai, catatan, created_at')
-    .eq('ekskul_id', String(exskulId))
+    .eq('ekskul_id', String(ekskulId))
     .order('tanggal', { ascending: false })
     .order('created_at', { ascending: false })
   if (error) throw error
