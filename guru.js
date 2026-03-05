@@ -11447,91 +11447,93 @@ async function createExamPdfDoc(jadwal, soal) {
   return doc
 }
 
-function openExamBrowserPrint(jadwal, soal) {
-  const instruksiMeta = parseExamInstruksiMeta(soal?.instruksi)
-  const lang = instruksiMeta.lang || 'ID'
-  const textMap = getExamPdfStaticText(lang)
-  const isAr = lang === 'AR'
-  const questions = parseExamQuestions(soal?.questions_json)
-  const sections = buildExamPrintSections(questions, soal?.bentuk_soal)
-  const sectionHtml = sections.map((section, sectionIndex) => {
-    const headingParts = getExamPrintTypeParts(section.type, sectionIndex, lang)
-    const instruksiModel = getExamPrintTypeInstruction(section.type, lang)
-    const items = section.items || []
-    const extraLine = section.type === 'isi-titik'
-      ? (() => {
-          const fragSet = new Set()
-          items.forEach(item => {
-            const frags = Array.isArray(item?.fragments) ? item.fragments : []
-            frags.forEach(f => {
-              const txt = String(f || '').trim()
-              if (txt) fragSet.add(txt)
-            })
-          })
-          const list = [...fragSet]
-          if (!list.length) return ''
-          const label = isAr ? 'Ø§Ø®ØªÙŠØ§Ø±Ø§Øª Ø§Ù„ÙƒÙ„Ù…Ø§Øª' : 'Pilihan kata'
-          return `<p><strong>${escapeHtml(label)}:</strong> (${escapeHtml(list.join(', '))})</p>`
-        })()
-      : ''
+function buildExamIsiTitikExtraLineHtml(items, isAr) {
+  const fragSet = new Set()
+  ;(items || []).forEach(item => {
+    const frags = Array.isArray(item?.fragments) ? item.fragments : []
+    frags.forEach(f => {
+      const txt = String(f || '').trim()
+      if (txt) fragSet.add(txt)
+    })
+  })
+  const list = [...fragSet]
+  if (!list.length) return ''
+  const label = isAr ? 'Ø§Ø®ØªÙŠØ§Ø±Ø§Øª Ø§Ù„ÙƒÙ„Ù…Ø§Øª' : 'Pilihan kata'
+  return `<p><strong>${escapeHtml(label)}:</strong> (${escapeHtml(list.join(', '))})</p>`
+}
 
-    const questionsHtml = items.map((q, idx) => {
-      const no = idx + 1
-      const qText = `<div class="q-title">${escapeHtml(formatExamMarker(formatExamNumber(no, lang), lang))} ${escapeHtml(String(q?.text || '-'))}</div>`
-      if (section.type === 'pilihan-ganda') {
-        const opts = q?.options || {}
-        const mA = isAr ? 'Ø£' : 'a'
-        const mB = isAr ? 'Ø¨' : 'b'
-        const mC = isAr ? 'Ø¬' : 'c'
-        const mD = isAr ? 'Ø¯' : 'd'
-        return `
-          <li>
-            ${qText}
-            <div class="pg-grid">
-              <div>${escapeHtml(formatExamMarker(mA, lang))} ${escapeHtml(String(opts.a || '-'))}</div>
-              <div>${escapeHtml(formatExamMarker(mC, lang))} ${escapeHtml(String(opts.c || '-'))}</div>
-              <div>${escapeHtml(formatExamMarker(mB, lang))} ${escapeHtml(String(opts.b || '-'))}</div>
-              <div>${escapeHtml(formatExamMarker(mD, lang))} ${escapeHtml(String(opts.d || '-'))}</div>
-            </div>
-          </li>
-        `
-      }
-      if (section.type === 'pasangkan-kata') {
-        const pairs = Array.isArray(q?.pairs) ? q.pairs : []
-        const rows = pairs.map((pair, i) => `
-          <tr>
-            <td>${escapeHtml(formatExamMarker(formatExamNumber(i + 1, lang), lang))} ${escapeHtml(String(pair?.a || '-'))}</td>
-            <td>${escapeHtml(formatExamMarker((isAr ? getArabicLetterByIndex(i) : String.fromCharCode(65 + i)), lang))} ${escapeHtml(String(pair?.b || '-'))}</td>
-          </tr>
-        `).join('')
-        return `
-          <li>
-            ${qText}
-            <table class="pair-table">
-              <thead><tr><th>${isAr ? 'Ø§Ù„Ø¹Ù…ÙˆØ¯ Ø£' : 'Baris A'}</th><th>${isAr ? 'Ø§Ù„Ø¹Ù…ÙˆØ¯ Ø¨' : 'Baris B'}</th></tr></thead>
-              <tbody>${rows}</tbody>
-            </table>
-          </li>
-        `
-      }
-      return `<li>${qText}</li>`
-    }).join('')
+function buildExamBrowserQuestionTitleHtml(q, no, lang) {
+  return `<div class="q-title">${escapeHtml(formatExamMarker(formatExamNumber(no, lang), lang))} ${escapeHtml(String(q?.text || '-'))}</div>`
+}
 
-    return `
-      <section class="sec">
-        <h3><strong>${escapeHtml(headingParts.marker)}</strong> ${escapeHtml(headingParts.label)}</h3>
-        <p>${escapeHtml(instruksiModel)}</p>
-        ${extraLine}
-        <ol>${questionsHtml}</ol>
-      </section>
-    `
-  }).join('')
+function buildExamBrowserPgQuestionHtml(q, qText, lang, isAr) {
+  const opts = q?.options || {}
+  const mA = isAr ? 'Ø£' : 'a'
+  const mB = isAr ? 'Ø¨' : 'b'
+  const mC = isAr ? 'Ø¬' : 'c'
+  const mD = isAr ? 'Ø¯' : 'd'
+  return `
+    <li>
+      ${qText}
+      <div class="pg-grid">
+        <div>${escapeHtml(formatExamMarker(mA, lang))} ${escapeHtml(String(opts.a || '-'))}</div>
+        <div>${escapeHtml(formatExamMarker(mC, lang))} ${escapeHtml(String(opts.c || '-'))}</div>
+        <div>${escapeHtml(formatExamMarker(mB, lang))} ${escapeHtml(String(opts.b || '-'))}</div>
+        <div>${escapeHtml(formatExamMarker(mD, lang))} ${escapeHtml(String(opts.d || '-'))}</div>
+      </div>
+    </li>
+  `
+}
 
-  const instruksiUmum = instruksiMeta.text
-    ? `<p><strong>${escapeHtml(textMap.instruksiUmum)}:</strong> ${escapeHtml(instruksiMeta.text)}</p>`
-    : ''
+function buildExamBrowserPairQuestionHtml(q, qText, lang, isAr) {
+  const pairs = Array.isArray(q?.pairs) ? q.pairs : []
+  const rows = pairs.map((pair, i) => `
+    <tr>
+      <td>${escapeHtml(formatExamMarker(formatExamNumber(i + 1, lang), lang))} ${escapeHtml(String(pair?.a || '-'))}</td>
+      <td>${escapeHtml(formatExamMarker((isAr ? getArabicLetterByIndex(i) : String.fromCharCode(65 + i)), lang))} ${escapeHtml(String(pair?.b || '-'))}</td>
+    </tr>
+  `).join('')
+  return `
+    <li>
+      ${qText}
+      <table class="pair-table">
+        <thead><tr><th>${isAr ? 'Ø§Ù„Ø¹Ù…ÙˆØ¯ Ø£' : 'Baris A'}</th><th>${isAr ? 'Ø§Ù„Ø¹Ù…ÙˆØ¯ Ø¨' : 'Baris B'}</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </li>
+  `
+}
 
-  const html = `
+function buildExamBrowserQuestionHtml(section, q, idx, lang, isAr) {
+  const no = idx + 1
+  const qText = buildExamBrowserQuestionTitleHtml(q, no, lang)
+  if (section.type === 'pilihan-ganda') return buildExamBrowserPgQuestionHtml(q, qText, lang, isAr)
+  if (section.type === 'pasangkan-kata') return buildExamBrowserPairQuestionHtml(q, qText, lang, isAr)
+  return `<li>${qText}</li>`
+}
+
+function buildExamBrowserSectionHtml(section, sectionIndex, lang, isAr) {
+  const headingParts = getExamPrintTypeParts(section.type, sectionIndex, lang)
+  const instruksiModel = getExamPrintTypeInstruction(section.type, lang)
+  const items = section.items || []
+  const extraLine = section.type === 'isi-titik' ? buildExamIsiTitikExtraLineHtml(items, isAr) : ''
+  const questionsHtml = items.map((q, idx) => buildExamBrowserQuestionHtml(section, q, idx, lang, isAr)).join('')
+  return `
+    <section class="sec">
+      <h3><strong>${escapeHtml(headingParts.marker)}</strong> ${escapeHtml(headingParts.label)}</h3>
+      <p>${escapeHtml(instruksiModel)}</p>
+      ${extraLine}
+      <ol>${questionsHtml}</ol>
+    </section>
+  `
+}
+
+function buildExamBrowserSectionsHtml(sections, lang, isAr) {
+  return (sections || []).map((section, sectionIndex) => buildExamBrowserSectionHtml(section, sectionIndex, lang, isAr)).join('')
+}
+
+function buildExamBrowserDocumentHtml({ jadwal, soal, textMap, isAr, instruksiUmum, sectionHtml }) {
+  return `
 <!doctype html>
 <html lang="${isAr ? 'ar' : 'id'}" dir="${isAr ? 'rtl' : 'ltr'}">
 <head>
@@ -11566,6 +11568,22 @@ function openExamBrowserPrint(jadwal, soal) {
   ${sectionHtml}
 </body>
 </html>`
+}
+
+function openExamBrowserPrint(jadwal, soal) {
+  const instruksiMeta = parseExamInstruksiMeta(soal?.instruksi)
+  const lang = instruksiMeta.lang || 'ID'
+  const textMap = getExamPdfStaticText(lang)
+  const isAr = lang === 'AR'
+  const questions = parseExamQuestions(soal?.questions_json)
+  const sections = buildExamPrintSections(questions, soal?.bentuk_soal)
+  const sectionHtml = buildExamBrowserSectionsHtml(sections, lang, isAr)
+
+  const instruksiUmum = instruksiMeta.text
+    ? `<p><strong>${escapeHtml(textMap.instruksiUmum)}:</strong> ${escapeHtml(instruksiMeta.text)}</p>`
+    : ''
+
+  const html = buildExamBrowserDocumentHtml({ jadwal, soal, textMap, isAr, instruksiUmum, sectionHtml })
 
   const printWin = window.open('', '_blank')
   if (!printWin) {
