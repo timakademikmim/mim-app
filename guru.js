@@ -373,6 +373,7 @@ async function getIsWaliKelas(forceReload = false) {
 }
 
 function escapeHtml(value) {
+  if (typeof window.appEscapeHtml === 'function') return window.appEscapeHtml(value)
   return String(value ?? '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
@@ -3294,6 +3295,10 @@ async function saveLaporanBulananBulkInput() {
 }
 
 function setupCustomPopupSystem() {
+  if (typeof window.setupSharedPopupSystem === 'function') {
+    const ok = window.setupSharedPopupSystem()
+    if (ok) return
+  }
   if (window.__popupReady) return
 
   const overlay = document.getElementById('app-popup-overlay')
@@ -3712,6 +3717,10 @@ function renderTopbarNotifMenu(items = []) {
 }
 
 function setTopbarNotifBadge(count) {
+  if (typeof window.setTopbarBadgeCount === 'function') {
+    window.setTopbarBadgeCount('topbar-notif-badge', count)
+    return
+  }
   const badge = document.getElementById('topbar-notif-badge')
   if (!badge) return
   const total = Number.isFinite(Number(count)) ? Number(count) : 0
@@ -3725,6 +3734,10 @@ function setTopbarNotifBadge(count) {
 }
 
 function setTopbarChatBadge(count) {
+  if (typeof window.setTopbarBadgeCount === 'function') {
+    window.setTopbarBadgeCount('topbar-chat-badge', count)
+    return
+  }
   const badge = document.getElementById('topbar-chat-badge')
   if (!badge) return
   const total = Number.isFinite(Number(count)) ? Number(count) : 0

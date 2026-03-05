@@ -33,6 +33,10 @@ window.clearCachedData = function clearCachedData(key) {
 }
 
 function setupCustomPopupSystem() {
+  if (typeof window.setupSharedPopupSystem === 'function') {
+    const ok = window.setupSharedPopupSystem()
+    if (ok) return
+  }
   if (window.__popupReady) return
 
   const overlay = document.getElementById('app-popup-overlay')
@@ -333,6 +337,10 @@ function ensureAdminTopbarChatButton() {
 }
 
 function setAdminTopbarChatBadge(count) {
+  if (typeof window.setTopbarBadgeCount === 'function') {
+    window.setTopbarBadgeCount('topbar-chat-badge', count)
+    return
+  }
   const badge = document.getElementById('topbar-chat-badge')
   if (!badge) return
   const total = Number.isFinite(Number(count)) ? Number(count) : 0
@@ -566,6 +574,7 @@ async function appendTopbarMeta(page) {
 }
 
 function escapeHtml(value) {
+  if (typeof window.appEscapeHtml === 'function') return window.appEscapeHtml(value)
   return String(value || '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
