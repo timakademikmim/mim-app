@@ -29,6 +29,7 @@ const CHAT_MEMBERS_TABLE = 'chat_thread_members'
 const CHAT_MESSAGES_TABLE = 'chat_messages'
 const TOPBAR_CHAT_BADGE_TICK_MS = 10000
 const TOPBAR_NOTIF_RANGE_OPTIONS = [1, 3, 7]
+const GURU_LAPORAN_PAGE_SET = new Set(['laporan', 'laporan-absensi', 'laporan-pekanan', 'laporan-bulanan'])
 const MONTHLY_REPORT_SELECT_NEW = 'id, nilai_akhlak, predikat, catatan_wali, muhaffiz, no_hp_muhaffiz, nilai_kehadiran_halaqah, sakit_halaqah, izin_halaqah, nilai_akhlak_halaqah, keterangan_akhlak_halaqah, nilai_ujian_bulanan, keterangan_ujian_bulanan, nilai_target_hafalan, keterangan_target_hafalan, nilai_capaian_hafalan_bulanan, nilai_jumlah_hafalan_halaman, nilai_jumlah_hafalan_juz, catatan_muhaffiz, musyrif, no_hp_musyrif, nilai_kehadiran_liqa_muhasabah, sakit_liqa_muhasabah, izin_liqa_muhasabah, nilai_ibadah, keterangan_ibadah, nilai_kedisiplinan, keterangan_kedisiplinan, nilai_kebersihan, keterangan_kebersihan, nilai_adab, keterangan_adab, prestasi_kesantrian, pelanggaran_kesantrian, catatan_musyrif'
 const MONTHLY_REPORT_SELECT_LEGACY = 'id, nilai_akhlak, predikat, catatan_wali'
 const EXAM_SCHEDULE_TABLE = 'jadwal_ujian'
@@ -12818,40 +12819,13 @@ async function loadGuruPage(page) {
   const isWakasekAkademik = await setupMonitoringAccess()
   const isWakasekPrestasi = await setupGuruPrestasiPelanggaranAccess()
   const isEkskulPj = await setupEkskulAccess()
-  const isLaporanPage = targetPage === 'laporan' || targetPage === 'laporan-absensi' || targetPage === 'laporan-pekanan' || targetPage === 'laporan-bulanan'
-  const isMonitoringPage = targetPage === 'monitoring'
-  const isEkskulPage = targetPage === 'ekskul'
-  const isPrestasiPage = targetPage === 'prestasi-pelanggaran'
-  if ((targetPage === 'rapor' || isLaporanPage) && !isWaliKelas) {
-    const blockedTitle = targetPage === 'rapor' ? 'Rapor' : 'Laporan'
-    const blockedMessage = targetPage === 'rapor'
-      ? 'Menu rapor hanya dapat diakses oleh guru dengan role wali kelas.'
-      : 'Menu laporan hanya dapat diakses oleh guru dengan role wali kelas.'
-    renderPlaceholder(blockedTitle, blockedMessage)
-    setTopbarTitle(targetPage === 'rapor' ? 'rapor' : 'laporan')
-    setNavActive('')
-    closeTopbarUserMenu()
-    return
-  }
-  if (isMonitoringPage && !isWakasekAkademik) {
-    renderPlaceholder('Monitoring', 'Menu monitoring hanya dapat diakses oleh wakasek akademik.')
-    setTopbarTitle('monitoring')
-    setNavActive('')
-    closeTopbarUserMenu()
-    return
-  }
-  if (isEkskulPage && !isEkskulPj) {
-    renderPlaceholder('Ekskul', 'Menu ekskul hanya dapat diakses oleh PJ ekskul.')
-    setTopbarTitle('ekskul')
-    setNavActive('')
-    closeTopbarUserMenu()
-    return
-  }
-  if (isPrestasiPage && !isWakasekPrestasi) {
-    renderPlaceholder('Prestasi & Pelanggaran', 'Menu ini hanya dapat diakses oleh wakasek akademik.')
-    setTopbarTitle('prestasi-pelanggaran')
-    setNavActive('')
-    closeTopbarUserMenu()
+  if (guardGuruPageAccess({
+    targetPage,
+    isWaliKelas,
+    isWakasekAkademik,
+    isWakasekPrestasi,
+    isEkskulPj
+  })) {
     return
   }
 
@@ -12945,6 +12919,58 @@ async function loadGuruPage(page) {
     default:
       renderPlaceholder('Panel Guru', 'Pilih menu di sidebar.')
   }
+}
+
+function isGuruLaporanPage(page) {
+  return GURU_LAPORAN_PAGE_SET.has(String(page || '').trim())
+}
+
+function renderBlockedGuruPage({ title, message, topbarKey }) {
+  renderPlaceholder(title, message)
+  setTopbarTitle(topbarKey)
+  setNavActive('')
+  closeTopbarUserMenu()
+}
+
+function guardGuruPageAccess({ targetPage, isWaliKelas, isWakasekAkademik, isWakasekPrestasi, isEkskulPj }) {
+  const isLaporanPage = isGuruLaporanPage(targetPage)
+  if ((targetPage === 'rapor' || isLaporanPage) && !isWaliKelas) {
+    const blockedTitle = targetPage === 'rapor' ? 'Rapor' : 'Laporan'
+    const blockedMessage = targetPage === 'rapor'
+      ? 'Menu rapor hanya dapat diakses oleh guru dengan role wali kelas.'
+      : 'Menu laporan hanya dapat diakses oleh guru dengan role wali kelas.'
+    renderBlockedGuruPage({
+      title: blockedTitle,
+      message: blockedMessage,
+      topbarKey: targetPage === 'rapor' ? 'rapor' : 'laporan'
+    })
+    return true
+  }
+  if (targetPage === 'monitoring' && !isWakasekAkademik) {
+    renderBlockedGuruPage({
+      title: 'Monitoring',
+      message: 'Menu monitoring hanya dapat diakses oleh wakasek akademik.',
+      topbarKey: 'monitoring'
+    })
+    return true
+  }
+  if (targetPage === 'ekskul' && !isEkskulPj) {
+    renderBlockedGuruPage({
+      title: 'Ekskul',
+      message: 'Menu ekskul hanya dapat diakses oleh PJ ekskul.',
+      topbarKey: 'ekskul'
+    })
+    return true
+  }
+  if (targetPage === 'prestasi-pelanggaran' && !isWakasekPrestasi) {
+    renderBlockedGuruPage({
+      title: 'Prestasi & Pelanggaran',
+      message: 'Menu ini hanya dapat diakses oleh wakasek akademik.',
+      topbarKey: 'prestasi-pelanggaran'
+    })
+    return true
+  }
+  return false
 }
 
 async function renderGuruChatPage() {
