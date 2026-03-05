@@ -3587,7 +3587,7 @@ function markAllGuruNotifRead() {
 function setGuruNotifRangeFilter(days) {
   setGuruNotifRangeDays(days)
   topbarNotifState.loaded = false
-  refreshGuruTopbarNotifications(true).catch(error => console.error(error))
+  refreshGuruTopbarNotificationsSafe(true)
 }
 
 function renderTopbarNotifMenu(items = []) {
@@ -3729,10 +3729,23 @@ async function refreshGuruTopbarChatBadge() {
   }
 }
 
+function refreshGuruTopbarNotificationsSafe(forceReload = false) {
+  refreshGuruTopbarNotifications(forceReload).catch(error => console.error(error))
+}
+
+function refreshGuruTopbarChatBadgeSafe() {
+  refreshGuruTopbarChatBadge().catch(error => console.error(error))
+}
+
+function refreshGuruTopbarIndicators() {
+  refreshGuruTopbarNotificationsSafe()
+  refreshGuruTopbarChatBadgeSafe()
+}
+
 function startGuruTopbarChatBadgeTicker() {
   if (topbarChatBadgeState.intervalId) return
   topbarChatBadgeState.intervalId = window.setInterval(() => {
-    refreshGuruTopbarChatBadge().catch(error => console.error(error))
+    refreshGuruTopbarChatBadgeSafe()
   }, TOPBAR_CHAT_BADGE_TICK_MS)
 }
 
@@ -13084,8 +13097,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupCustomPopupSystem()
   loadGuruNotifPrefs()
   ensureTopbarNotification()
-  refreshGuruTopbarNotifications().catch(error => console.error(error))
-  refreshGuruTopbarChatBadge().catch(error => console.error(error))
+  refreshGuruTopbarIndicators()
   startGuruTopbarChatBadgeTicker()
   setupRaporAccess(true)
   setupMonitoringAccess(true).catch(error => console.error(error))
