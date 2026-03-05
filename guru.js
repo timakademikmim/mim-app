@@ -10351,10 +10351,12 @@ async function renderMonitoringPage() {
 }
 
 function normalizeExamLookup(value) {
+  if (window.guruExamUtils?.normalizeExamLookup) return window.guruExamUtils.normalizeExamLookup(value)
   return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
 function getExamPerangkatanFromClassName(kelasName) {
+  if (window.guruExamUtils?.getExamPerangkatanFromClassName) return window.guruExamUtils.getExamPerangkatanFromClassName(kelasName)
   const text = String(kelasName || '').trim().toLowerCase()
   if (!text) return 'SMP'
   if (text.includes('smp') || /^([789])([a-z]|\b|[-\s]|$)/i.test(text) || /\b7\b|\b8\b|\b9\b/.test(text)) return 'SMP'
@@ -10363,6 +10365,7 @@ function getExamPerangkatanFromClassName(kelasName) {
 }
 
 function getExamMapelBaseLabel(mapelText) {
+  if (window.guruExamUtils?.getExamMapelBaseLabel) return window.guruExamUtils.getExamMapelBaseLabel(mapelText)
   const raw = String(mapelText || '').trim()
   if (!raw) return ''
   return raw
@@ -10373,6 +10376,7 @@ function getExamMapelBaseLabel(mapelText) {
 }
 
 function parseExamMetaFromSchedule(row) {
+  if (window.guruExamUtils?.parseExamMetaFromSchedule) return window.guruExamUtils.parseExamMetaFromSchedule(row)
   const raw = String(row?.keterangan || '').trim()
   if (!raw) return {}
   try {
@@ -10384,6 +10388,7 @@ function parseExamMetaFromSchedule(row) {
 }
 
 function splitExamClassTokens(value) {
+  if (window.guruExamUtils?.splitExamClassTokens) return window.guruExamUtils.splitExamClassTokens(value)
   const raw = String(value || '').trim()
   if (!raw) return []
   const normalized = raw.replace(/\s+(dan|&)\s+/ig, ',')
@@ -10396,6 +10401,7 @@ function splitExamClassTokens(value) {
 }
 
 function getExamRowClassLabel(row) {
+  if (window.guruExamUtils?.getExamRowClassLabel) return window.guruExamUtils.getExamRowClassLabel(row)
   const meta = parseExamMetaFromSchedule(row)
   const classRows = Array.isArray(meta?.class_rows) ? meta.class_rows : []
   const kelasNames = [...new Set(classRows.map(item => String(item?.kelas_nama || '').trim()).filter(Boolean))]
@@ -10404,6 +10410,7 @@ function getExamRowClassLabel(row) {
 }
 
 function getExamRowClassList(row, fallbackClassNames = []) {
+  if (window.guruExamUtils?.getExamRowClassList) return window.guruExamUtils.getExamRowClassList(row, fallbackClassNames)
   const meta = parseExamMetaFromSchedule(row)
   const classRows = Array.isArray(meta?.class_rows) ? meta.class_rows : []
   const kelasNames = [...new Set(classRows.map(item => String(item?.kelas_nama || '').trim()).filter(Boolean))]
@@ -10429,6 +10436,7 @@ function getExamRowClassList(row, fallbackClassNames = []) {
 }
 
 function getExamRowMapelLabel(row) {
+  if (window.guruExamUtils?.getExamRowMapelLabel) return window.guruExamUtils.getExamRowMapelLabel(row)
   const meta = parseExamMetaFromSchedule(row)
   const mapelRaw = String(meta?.mapel_nama || '').trim() || String(row?.mapel || '').trim()
   const mapelBase = getExamMapelBaseLabel(mapelRaw)
