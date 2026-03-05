@@ -2483,15 +2483,21 @@ function renderGuruEkskulMemberList() {
     box.innerHTML = '<div style="color:#64748b; font-size:12px;">Belum ada anggota.</div>'
     return
   }
+  const utils = getGuruEkskulUtils()
   box.innerHTML = rows.map((item, idx) => {
     const sid = String(item.santri_id || '')
     const isActive = String(guruEkskulState.selectedSantriId || '') === sid
-    return `
-      <div style="display:grid; grid-template-columns:1fr auto; gap:6px; align-items:center; padding:8px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px; background:#fff;">
-        <button type="button" class="modal-btn" onclick="selectGuruEkskulProgresSantri('${escapeHtml(sid)}')" style="display:block; width:100%; text-align:left; font-size:13px; ${isActive ? 'border-color:#d4d456; background:#fefce8; font-weight:700;' : 'font-weight:500;'}">${idx + 1}. ${escapeHtml(String(santriMap.get(sid)?.nama || '-'))}</button>
-        <button type="button" class="modal-btn" onclick="openGuruEkskulSantriDetail('${escapeHtml(sid)}')">Detail</button>
-      </div>
-    `
+    const nama = String(santriMap.get(sid)?.nama || '-')
+    if (typeof utils.buildMemberCardHtml === 'function') {
+      return utils.buildMemberCardHtml({
+        sid,
+        name: nama,
+        index: idx + 1,
+        isActive,
+        escapeHtml
+      })
+    }
+    return `<div>${idx + 1}. ${escapeHtml(nama)}</div>`
   }).join('')
 }
 
@@ -2527,12 +2533,17 @@ function renderGuruEkskulIndikatorList() {
   if (!rows.length) {
     box.innerHTML = '<div style="color:#64748b; font-size:12px;">Belum ada indikator.</div>'
   } else {
-    box.innerHTML = rows.map(item => `
-      <div style="padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px;">
-        <div style="font-weight:600; font-size:13px;">${escapeHtml(String(item.nama || '-'))}</div>
-        <div style="font-size:12px; color:#64748b;">${escapeHtml(String(item.deskripsi || '-'))}</div>
-      </div>
-    `).join('')
+    const utils = getGuruEkskulUtils()
+    box.innerHTML = rows.map(item => {
+      if (typeof utils.buildIndikatorCardHtml === 'function') {
+        return utils.buildIndikatorCardHtml({
+          nama: item.nama,
+          deskripsi: item.deskripsi,
+          escapeHtml
+        })
+      }
+      return `<div>${escapeHtml(String(item.nama || '-'))}</div>`
+    }).join('')
   }
 }
 
@@ -2608,6 +2619,7 @@ function openGuruEkskulSantriDetail(santriId) {
   if (!rows.length) {
     body.innerHTML = '<div style="color:#64748b; font-size:12px;">Belum ada progres untuk santri ini.</div>'
   } else {
+    const utils = getGuruEkskulUtils()
     body.innerHTML = `
       <div style="overflow:auto;">
         <table style="width:100%; min-width:700px; border-collapse:collapse; font-size:13px;">
@@ -2620,14 +2632,19 @@ function openGuruEkskulSantriDetail(santriId) {
             </tr>
           </thead>
           <tbody>
-            ${rows.map(item => `
-              <tr>
-                <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(String(item.tanggal || '-'))}</td>
-                <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(String(indikatorMap.get(String(item.indikator_id || ''))?.nama || 'Umum'))}</td>
-                <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${getGuruEkskulStars(item.nilai)}</td>
-                <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(String(item.catatan || '-'))}</td>
-              </tr>
-            `).join('')}
+            ${rows.map(item => {
+              const indikatorNama = String(indikatorMap.get(String(item.indikator_id || ''))?.nama || 'Umum')
+              if (typeof utils.buildProgressDetailRowHtml === 'function') {
+                return utils.buildProgressDetailRowHtml({
+                  tanggal: item.tanggal,
+                  indikatorNama,
+                  nilaiHtml: getGuruEkskulStars(item.nilai),
+                  catatan: item.catatan,
+                  escapeHtml
+                })
+              }
+              return `<tr><td>${escapeHtml(String(item.tanggal || '-'))}</td><td>${escapeHtml(indikatorNama)}</td><td>${getGuruEkskulStars(item.nilai)}</td><td>${escapeHtml(String(item.catatan || '-'))}</td></tr>`
+            }).join('')}
           </tbody>
         </table>
       </div>

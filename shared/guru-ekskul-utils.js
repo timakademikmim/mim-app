@@ -27,8 +27,40 @@
     return html
   }
 
+  function buildMemberCardHtml({ sid, name, index, isActive, escapeHtml }) {
+    return `
+      <div style="display:grid; grid-template-columns:1fr auto; gap:6px; align-items:center; padding:8px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px; background:#fff;">
+        <button type="button" class="modal-btn" onclick="selectGuruEkskulProgresSantri('${escapeHtml(sid)}')" style="display:block; width:100%; text-align:left; font-size:13px; ${isActive ? 'border-color:#d4d456; background:#fefce8; font-weight:700;' : 'font-weight:500;'}">${index}. ${escapeHtml(String(name || '-'))}</button>
+        <button type="button" class="modal-btn" onclick="openGuruEkskulSantriDetail('${escapeHtml(sid)}')">Detail</button>
+      </div>
+    `
+  }
+
+  function buildIndikatorCardHtml({ nama, deskripsi, escapeHtml }) {
+    return `
+      <div style="padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px;">
+        <div style="font-weight:600; font-size:13px;">${escapeHtml(String(nama || '-'))}</div>
+        <div style="font-size:12px; color:#64748b;">${escapeHtml(String(deskripsi || '-'))}</div>
+      </div>
+    `
+  }
+
+  function buildProgressDetailRowHtml({ tanggal, indikatorNama, nilaiHtml, catatan, escapeHtml }) {
+    return `
+      <tr>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(String(tanggal || '-'))}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(String(indikatorNama || 'Umum'))}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${nilaiHtml}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(String(catatan || '-'))}</td>
+      </tr>
+    `
+  }
+
   window.guruEkskulUtils = {
     buildStarsHtml,
-    getEmptyStarsHtml
+    getEmptyStarsHtml,
+    buildMemberCardHtml,
+    buildIndikatorCardHtml,
+    buildProgressDetailRowHtml
   }
 })()
