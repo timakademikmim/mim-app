@@ -1236,15 +1236,13 @@ function getGuruNavButtonLabel(btn) {
   return String(contentText || btn.textContent || '').trim()
 }
 
-function getGuruNavSubtabLabels(btn) {
+function getGuruNavSubtabButtons(btn) {
   if (!btn || !btn.classList.contains('guru-parent-btn')) return []
   const targetPage = String(btn.getAttribute('data-page') || '').trim()
   const submenuId = targetPage === 'input' ? 'guru-input-submenu' : targetPage === 'laporan' ? 'guru-laporan-submenu' : ''
   const submenu = submenuId ? document.getElementById(submenuId) : null
   if (!submenu) return []
   return Array.from(submenu.querySelectorAll('.guru-submenu-btn'))
-    .map(child => getGuruNavButtonLabel(child))
-    .filter(Boolean)
 }
 
 function removeGuruNavTooltip() {
@@ -1254,18 +1252,40 @@ function removeGuruNavTooltip() {
 function showGuruNavTooltip(btn, options = {}) {
   if (!isGuruSidebarIconsOnlyMode() || !btn) return
   removeGuruNavTooltip()
-  const { persistent = false } = options
+  const { persistent = false, interactive = false } = options
   const title = getGuruNavButtonLabel(btn)
   if (!title) return
-  const subTabs = getGuruNavSubtabLabels(btn)
+  const subTabButtons = getGuruNavSubtabButtons(btn)
 
   const tip = document.createElement('div')
   tip.id = 'guru-nav-tooltip'
   tip.className = 'guru-nav-tooltip'
-  tip.innerHTML = `
-    <div class="guru-nav-tooltip-title">${escapeHtml(title)}</div>
-    ${subTabs.length ? `<div class="guru-nav-tooltip-sublist">${subTabs.map(item => `<div class="guru-nav-tooltip-subitem">${escapeHtml(item)}</div>`).join('')}</div>` : ''}
-  `
+  tip.innerHTML = `<div class="guru-nav-tooltip-title">${escapeHtml(title)}</div>`
+  if (subTabButtons.length) {
+    const sublist = document.createElement('div')
+    sublist.className = 'guru-nav-tooltip-sublist'
+    subTabButtons.forEach(subBtn => {
+      const label = getGuruNavButtonLabel(subBtn)
+      if (!label) return
+      if (interactive) {
+        const actionBtn = document.createElement('button')
+        actionBtn.type = 'button'
+        actionBtn.className = 'guru-nav-tooltip-subbtn'
+        actionBtn.textContent = label
+        actionBtn.addEventListener('click', () => {
+          subBtn.click()
+          removeGuruNavTooltip()
+        })
+        sublist.appendChild(actionBtn)
+      } else {
+        const itemEl = document.createElement('div')
+        itemEl.className = 'guru-nav-tooltip-subitem'
+        itemEl.textContent = label
+        sublist.appendChild(itemEl)
+      }
+    })
+    tip.appendChild(sublist)
+  }
   document.body.appendChild(tip)
 
   const rect = btn.getBoundingClientRect()
@@ -1299,7 +1319,7 @@ function setupGuruSidebarIconTooltips() {
       if (isGuruSidebarIconsOnlyMode()) showGuruNavTooltip(btn)
     })
     btn.addEventListener('touchstart', () => {
-      if (isGuruSidebarIconsOnlyMode()) showGuruNavTooltip(btn, { persistent: true })
+      if (isGuruSidebarIconsOnlyMode()) showGuruNavTooltip(btn, { persistent: true, interactive: true })
     }, { passive: true })
   })
   document.addEventListener('click', event => {
@@ -1361,6 +1381,11 @@ function closeGuruInputMenu() {
 }
 
 function toggleGuruInputMenu() {
+  const inputBtn = document.querySelector('.guru-nav-btn[data-page="input"]')
+  if (isGuruSidebarIconsOnlyMode()) {
+    if (inputBtn) showGuruNavTooltip(inputBtn, { persistent: true, interactive: true })
+    return
+  }
   const submenu = document.getElementById('guru-input-submenu')
   if (!submenu) return
   const isOpen = submenu.classList.contains('open')
@@ -1430,6 +1455,10 @@ function animateGuruSidebarSubmenu(submenu, expand) {
 
 function toggleGuruLaporanMenu() {
   const laporanBtn = document.querySelector('.guru-nav-btn[data-page="laporan"]')
+  if (isGuruSidebarIconsOnlyMode()) {
+    if (laporanBtn) showGuruNavTooltip(laporanBtn, { persistent: true, interactive: true })
+    return
+  }
   if (laporanBtn?.disabled) return
   const submenu = document.getElementById('guru-laporan-submenu')
   if (!submenu) return
