@@ -12846,78 +12846,59 @@ async function loadGuruPage(page) {
 
   switch (targetPage) {
     case 'dashboard':
-      await renderDashboard()
-      setGuruPageCache(targetPage)
-      return
+      return renderGuruPageAndHandleCache({ pageKey: targetPage, renderFn: renderDashboard })
     case 'input':
     case 'input-nilai':
     case 'nilai':
-      await renderInputNilaiPage()
-      setGuruPageCache('input-nilai')
-      return
+      return renderGuruPageAndHandleCache({ pageKey: 'input-nilai', renderFn: renderInputNilaiPage })
     case 'input-absensi':
     case 'absensi':
-      await renderAbsensiPage()
-      setGuruPageCache('input-absensi')
-      return
+      return renderGuruPageAndHandleCache({ pageKey: 'input-absensi', renderFn: renderAbsensiPage })
     case 'jadwal':
-      await loadJadwalGuru()
-      setGuruPageCache(targetPage)
-      return
+      return renderGuruPageAndHandleCache({ pageKey: targetPage, renderFn: loadJadwalGuru })
     case 'chat':
-      await renderGuruChatPage()
-      clearGuruPageCache(targetPage)
-      return
+      return renderGuruPageAndHandleCache({ pageKey: targetPage, renderFn: renderGuruChatPage, cacheAction: 'clear' })
     case 'ujian':
-      await renderUjianPage()
-      setGuruPageCache(targetPage)
-      return
+      return renderGuruPageAndHandleCache({ pageKey: targetPage, renderFn: renderUjianPage })
     case 'ekskul':
-      await renderGuruEkskulPage()
-      setGuruPageCache(targetPage)
-      return
+      return renderGuruPageAndHandleCache({ pageKey: targetPage, renderFn: renderGuruEkskulPage })
     case 'prestasi-pelanggaran':
-      await renderGuruPrestasiPelanggaranPage()
-      clearGuruPageCache(targetPage)
-      return
+      return renderGuruPageAndHandleCache({ pageKey: targetPage, renderFn: renderGuruPrestasiPelanggaranPage, cacheAction: 'clear' })
     case 'mapel':
-      await renderMapelPage()
-      setGuruPageCache(targetPage)
-      return
+      return renderGuruPageAndHandleCache({ pageKey: targetPage, renderFn: renderMapelPage })
     case 'monitoring':
-      await renderMonitoringPage()
-      clearGuruPageCache(targetPage)
-      return
+      return renderGuruPageAndHandleCache({ pageKey: targetPage, renderFn: renderMonitoringPage, cacheAction: 'clear' })
     case 'tugas':
-      await renderTugasHarianPage()
-      setGuruPageCache(targetPage)
-      return
+      return renderGuruPageAndHandleCache({ pageKey: targetPage, renderFn: renderTugasHarianPage })
     case 'perizinan':
-      await renderGuruPerizinanPage()
-      setGuruPageCache(targetPage)
-      return
+      return renderGuruPageAndHandleCache({ pageKey: targetPage, renderFn: renderGuruPerizinanPage })
     case 'laporan':
     case 'laporan-pekanan':
       renderPlaceholder('Laporan Pekanan', 'Modul laporan pekanan disiapkan untuk rekap aktivitas mingguan.')
       setGuruPageCache('laporan-pekanan')
       return
     case 'laporan-absensi':
-      await renderLaporanAbsensiPage()
-      setGuruPageCache(targetPage)
-      return
+      return renderGuruPageAndHandleCache({ pageKey: targetPage, renderFn: renderLaporanAbsensiPage })
     case 'laporan-bulanan':
-      await renderLaporanBulananPage()
-      setGuruPageCache(targetPage)
-      return
+      return renderGuruPageAndHandleCache({ pageKey: targetPage, renderFn: renderLaporanBulananPage })
     case 'rapor':
-      await renderRaporPage()
-      setGuruPageCache(targetPage)
-      return
+      return renderGuruPageAndHandleCache({ pageKey: targetPage, renderFn: renderRaporPage })
     case 'profil':
       await renderGuruProfil()
       return
     default:
       renderPlaceholder('Panel Guru', 'Pilih menu di sidebar.')
+  }
+}
+
+async function renderGuruPageAndHandleCache({ pageKey, renderFn, cacheAction = 'set' }) {
+  await renderFn()
+  if (cacheAction === 'clear') {
+    clearGuruPageCache(pageKey)
+    return
+  }
+  if (cacheAction === 'set') {
+    setGuruPageCache(pageKey)
   }
 }
 
