@@ -2360,17 +2360,15 @@ async function saveGuruEkskulMonthlyReport() {
     alert('Isi minimal satu data kehadiran atau catatan.')
     return
   }
-  const { error } = await sb
-    .from(EKSKUL_MONTHLY_TABLE)
-    .upsert(payload, { onConflict: 'periode,ekskul_id,santri_id' })
-  if (error) {
-    console.error(error)
-    alert(`Gagal menyimpan laporan bulanan ekskul: ${error?.message || 'Unknown error'}`)
-    return
-  }
-  await loadGuruEkskulMonthlyRows()
-  renderGuruEkskulMonthlyInputRows()
-  alert('Laporan bulanan ekskul berhasil disimpan.')
+  await executeGuruEkskulMutation({
+    operation: () => sb.from(EKSKUL_MONTHLY_TABLE).upsert(payload, { onConflict: 'periode,ekskul_id,santri_id' }),
+    errorPrefix: 'Gagal menyimpan laporan bulanan ekskul',
+    successMessage: 'Laporan bulanan ekskul berhasil disimpan.',
+    onSuccess: async () => {
+      await loadGuruEkskulMonthlyRows()
+      renderGuruEkskulMonthlyInputRows()
+    }
+  })
 }
 
 async function setupEkskulAccess(forceReload = false) {
@@ -2724,16 +2722,29 @@ async function selectGuruEkskul(exskulId) {
   }
 }
 
-async function executeGuruEkskulInsert({ table, rows, errorPrefix, onSuccess }) {
-  const { error } = await sb.from(table).insert(rows)
+async function executeGuruEkskulMutation({ operation, errorPrefix, successMessage = '', onSuccess = null }) {
+  const result = await operation()
+  const error = result?.error || null
   if (error) {
+    console.error(error)
     alert(`${errorPrefix}: ${error.message || 'Unknown error'}`)
     return false
   }
   if (typeof onSuccess === 'function') {
     await onSuccess()
   }
+  if (successMessage) {
+    alert(successMessage)
+  }
   return true
+}
+
+async function executeGuruEkskulInsert({ table, rows, errorPrefix, onSuccess }) {
+  return executeGuruEkskulMutation({
+    operation: () => sb.from(table).insert(rows),
+    errorPrefix,
+    onSuccess
+  })
 }
 
 async function addGuruEkskulMember() {
@@ -2799,12 +2810,13 @@ async function saveGuruEkskulProgressBatch() {
     alert('Isi minimal satu indikator sebelum submit.')
     return
   }
-  const { error } = await sb.from(EKSKUL_PROGRES_TABLE).insert(payload)
-  if (error) {
-    alert(`Gagal menyimpan progres: ${error.message || 'Unknown error'}`)
-    return
-  }
-  await renderGuruEkskulPage(true)
+  await executeGuruEkskulMutation({
+    operation: () => sb.from(EKSKUL_PROGRES_TABLE).insert(payload),
+    errorPrefix: 'Gagal menyimpan progres',
+    onSuccess: async () => {
+      await renderGuruEkskulPage(true)
+    }
+  })
 }
 
 function buildGuruEkskulMonthlyPayload({ rowEls, periode, ekskulId, updatedBy }) {
@@ -12087,20 +12099,18 @@ function closeGuruUjianEditor() {
 }
 
 function onGuruUjianCountChange() {
-  const latest = getGuruUjianSectionsSource()
-  ujianGuruState.sectionDefs = latest
-  renderGuruUjianSectionRows(latest)
-  renderGuruUjianQuestionRows(latest)
+  syncGuruUjianSectionsFromSource()
 }
 
 function onGuruUjianShapeChange() {
-  const latest = getGuruUjianSectionsSource()
-  ujianGuruState.sectionDefs = latest
-  renderGuruUjianSectionRows(latest)
-  renderGuruUjianQuestionRows(latest)
+  syncGuruUjianSectionsFromSource()
 }
 
 function onGuruUjianSectionChange() {
+  syncGuruUjianSectionsFromSource()
+}
+
+function syncGuruUjianSectionsFromSource() {
   const latest = getGuruUjianSectionsSource()
   ujianGuruState.sectionDefs = latest
   renderGuruUjianSectionRows(latest)
