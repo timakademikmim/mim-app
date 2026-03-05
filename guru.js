@@ -13147,7 +13147,6 @@ window.onGuruEkskulMonthlyPeriodeChange = onGuruEkskulMonthlyPeriodeChange
 window.saveGuruEkskulMonthlyReport = saveGuruEkskulMonthlyReport
 
 document.addEventListener('DOMContentLoaded', () => {
-  enhanceGuruSidebarIcons()
   setupCustomPopupSystem()
   loadGuruNotifPrefs()
   ensureTopbarNotification()
