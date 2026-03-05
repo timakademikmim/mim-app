@@ -11845,6 +11845,19 @@ function renderGuruExamListHtml(examRows, soalMap) {
   `
 }
 
+function getGuruUjianTypeShortLabel(type) {
+  if (type === 'esai') return 'Esai'
+  if (type === 'pasangkan-kata') return 'Pasangkan Kata'
+  if (type === 'isi-titik') return 'Isi Titik'
+  return 'PG'
+}
+
+function buildGuruUjianTypeInfoText(typeCfg) {
+  const sections = typeCfg?.sections || []
+  const sectionLabel = sections.map(item => `${getGuruUjianTypeShortLabel(item.type)} ${item.start}-${item.end}`).join(' | ')
+  return `Model aktif: ${sectionLabel || '-'}`
+}
+
 async function renderUjianPage() {
   const content = document.getElementById('guru-content')
   if (!content) return
@@ -12049,15 +12062,7 @@ function renderGuruUjianQuestionRows(forcedSections = null) {
     if (typeCfg.errors.length) {
       infoEl.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(typeCfg.errors[0])}</span>`
     } else {
-      const sectionLabel = (typeCfg.sections || []).map(item => {
-        const label = item.type === 'esai'
-          ? 'Esai'
-          : (item.type === 'pasangkan-kata'
-            ? 'Pasangkan Kata'
-            : (item.type === 'isi-titik' ? 'Isi Titik' : 'PG'))
-        return `${label} ${item.start}-${item.end}`
-      }).join(' | ')
-      infoEl.textContent = `Model aktif: ${sectionLabel || '-'}`
+      infoEl.textContent = buildGuruUjianTypeInfoText(typeCfg)
     }
   }
   listEl.innerHTML = html
@@ -12070,33 +12075,29 @@ function toggleGuruExamFolder(folderNameEncoded) {
   renderUjianPage()
 }
 
-function openGuruUjianEditorPage(jadwalId) {
-  const decodedKey = decodeURIComponent(String(jadwalId || '')).trim()
-  if (!decodedKey) return
-  const row = (ujianGuruState.rows || []).find(item => String(item.rowKey || '') === decodedKey)
-  if (!row?.jadwal) return
-  const jadwal = row.jadwal
-  const sid = String(jadwal.id || '')
-  ujianGuruState.activeSoal = ujianGuruState.supportsKelasTarget
-    ? (ujianGuruState.soalByJadwal.get(decodedKey) || null)
-    : (ujianGuruState.soalByJadwal.get(decodedKey) || ujianGuruState.soalByJadwal.get(`${sid}|*`) || null)
+function findGuruUjianRowByKey(decodedKey) {
+  return (ujianGuruState.rows || []).find(item => String(item.rowKey || '') === String(decodedKey || ''))
+}
 
-  const content = document.getElementById('guru-content')
-  if (!content) return
+function resolveGuruUjianActiveSoal(decodedKey, jadwalId) {
+  const sid = String(jadwalId || '')
+  if (ujianGuruState.supportsKelasTarget) {
+    return ujianGuruState.soalByJadwal.get(decodedKey) || null
+  }
+  return ujianGuruState.soalByJadwal.get(decodedKey) || ujianGuruState.soalByJadwal.get(`${sid}|*`) || null
+}
 
-  const existing = parseExamQuestions(ujianGuruState.activeSoal?.questions_json)
-  const countValue = ujianGuruState.activeSoal?.jumlah_nomor || existing.length || 0
-  const fallbackType = String(ujianGuruState.activeSoal?.bentuk_soal || 'pilihan-ganda')
-  const sections = deriveExamSectionsFromQuestions(existing, fallbackType, Number(countValue))
-  const instruksiMeta = parseExamInstruksiMeta(ujianGuruState.activeSoal?.instruksi)
-  const instruksi = String(instruksiMeta.text || '').trim()
-  const kelasLabel = String(row.kelasNama || '-')
-  const mapelLabel = String(row.mapelLabel || getExamRowMapelLabel(jadwal))
+function buildGuruUjianSectionDefs(sections) {
+  return (Array.isArray(sections) ? sections : []).map(item => ({
+    type: item.type,
+    end: item.end,
+    words: item.wordPool || '',
+    count: item.blankCount || null
+  }))
+}
 
-  ujianGuruState.activeJadwal = jadwal
-  ujianGuruState.activeKelasName = kelasLabel
-  ujianGuruState.sectionDefs = sections.map(item => ({ type: item.type, end: item.end, words: item.wordPool || '', count: item.blankCount || null }))
-  content.innerHTML = `
+function buildGuruUjianEditorShellHtml({ jadwal, kelasLabel, mapelLabel, countValue, instruksi, instruksiLang }) {
+  return `
     <div class="placeholder-card" style="border-color:#93c5fd;">
       <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
         <div style="font-weight:700; color:#0f172a;">Editor Soal - ${escapeHtml(jadwal.nama || '-')}</div>
@@ -12117,8 +12118,8 @@ function openGuruUjianEditorPage(jadwalId) {
       <div style="margin-bottom:10px;">
         <label class="guru-label">Bahasa Soal</label>
         <select id="guru-ujian-lang" class="guru-field" style="max-width:240px;">
-          <option value="ID" ${instruksiMeta.lang !== 'AR' ? 'selected' : ''}>Indonesia</option>
-          <option value="AR" ${instruksiMeta.lang === 'AR' ? 'selected' : ''}>Arab</option>
+          <option value="ID" ${instruksiLang !== 'AR' ? 'selected' : ''}>Indonesia</option>
+          <option value="AR" ${instruksiLang === 'AR' ? 'selected' : ''}>Arab</option>
         </select>
       </div>
       <div style="margin-bottom:10px;">
@@ -12134,6 +12135,39 @@ function openGuruUjianEditorPage(jadwalId) {
       </div>
     </div>
   `
+}
+
+function openGuruUjianEditorPage(jadwalId) {
+  const decodedKey = decodeURIComponent(String(jadwalId || '')).trim()
+  if (!decodedKey) return
+  const row = findGuruUjianRowByKey(decodedKey)
+  if (!row?.jadwal) return
+  const jadwal = row.jadwal
+  ujianGuruState.activeSoal = resolveGuruUjianActiveSoal(decodedKey, jadwal.id)
+
+  const content = document.getElementById('guru-content')
+  if (!content) return
+
+  const existing = parseExamQuestions(ujianGuruState.activeSoal?.questions_json)
+  const countValue = ujianGuruState.activeSoal?.jumlah_nomor || existing.length || 0
+  const fallbackType = String(ujianGuruState.activeSoal?.bentuk_soal || 'pilihan-ganda')
+  const sections = deriveExamSectionsFromQuestions(existing, fallbackType, Number(countValue))
+  const instruksiMeta = parseExamInstruksiMeta(ujianGuruState.activeSoal?.instruksi)
+  const instruksi = String(instruksiMeta.text || '').trim()
+  const kelasLabel = String(row.kelasNama || '-')
+  const mapelLabel = String(row.mapelLabel || getExamRowMapelLabel(jadwal))
+
+  ujianGuruState.activeJadwal = jadwal
+  ujianGuruState.activeKelasName = kelasLabel
+  ujianGuruState.sectionDefs = buildGuruUjianSectionDefs(sections)
+  content.innerHTML = buildGuruUjianEditorShellHtml({
+    jadwal,
+    kelasLabel,
+    mapelLabel,
+    countValue,
+    instruksi,
+    instruksiLang: instruksiMeta.lang
+  })
   renderGuruUjianSectionRows(ujianGuruState.sectionDefs)
   renderGuruUjianQuestionRows(ujianGuruState.sectionDefs)
 }
@@ -12148,7 +12182,11 @@ function backToGuruUjianList() {
 
 function openGuruUjianEditor(jadwalId) {
   const sid = String(jadwalId || '')
-  const row = (ujianGuruState.rows || []).find(item => String(item.rowKey || '') === sid || String(item.jadwal?.id || '') === sid)
+  const row = (ujianGuruState.rows || []).find(item => {
+    const rowKey = String(item.rowKey || '')
+    const rowJadwalId = String(item.jadwal?.id || '')
+    return rowKey === sid || rowJadwalId === sid
+  })
   if (!row) return
   openGuruUjianEditorPage(encodeURIComponent(String(row.rowKey || sid)))
 }
