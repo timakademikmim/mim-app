@@ -2724,6 +2724,18 @@ async function selectGuruEkskul(exskulId) {
   }
 }
 
+async function executeGuruEkskulInsert({ table, rows, errorPrefix, onSuccess }) {
+  const { error } = await sb.from(table).insert(rows)
+  if (error) {
+    alert(`${errorPrefix}: ${error.message || 'Unknown error'}`)
+    return false
+  }
+  if (typeof onSuccess === 'function') {
+    await onSuccess()
+  }
+  return true
+}
+
 async function addGuruEkskulMember() {
   const eid = String(guruEkskulState.selectedEkskulId || '')
   const sid = String(document.getElementById('guru-ekskul-santri')?.value || '').trim()
@@ -2731,12 +2743,14 @@ async function addGuruEkskulMember() {
     alert('Pilih ekskul dan siswa terlebih dahulu.')
     return
   }
-  const { error } = await sb.from(EKSKUL_MEMBER_TABLE).insert([{ ekskul_id: eid, santri_id: sid }])
-  if (error) {
-    alert(`Gagal tambah anggota: ${error.message || 'Unknown error'}`)
-    return
-  }
-  await renderGuruEkskulPage(true)
+  await executeGuruEkskulInsert({
+    table: EKSKUL_MEMBER_TABLE,
+    rows: [{ ekskul_id: eid, santri_id: sid }],
+    errorPrefix: 'Gagal tambah anggota',
+    onSuccess: async () => {
+      await renderGuruEkskulPage(true)
+    }
+  })
 }
 
 async function addGuruEkskulIndikator() {
@@ -2748,14 +2762,16 @@ async function addGuruEkskulIndikator() {
     return
   }
   const urutan = ((guruEkskulState.indikatorRows || []).filter(item => String(item.ekskul_id || '') === eid).length || 0) + 1
-  const { error } = await sb.from(EKSKUL_INDIKATOR_TABLE).insert([{ ekskul_id: eid, nama, deskripsi: deskripsi || null, urutan }])
-  if (error) {
-    alert(`Gagal tambah indikator: ${error.message || 'Unknown error'}`)
-    return
-  }
-  document.getElementById('guru-ekskul-indikator-nama').value = ''
-  document.getElementById('guru-ekskul-indikator-deskripsi').value = ''
-  await renderGuruEkskulPage(true)
+  await executeGuruEkskulInsert({
+    table: EKSKUL_INDIKATOR_TABLE,
+    rows: [{ ekskul_id: eid, nama, deskripsi: deskripsi || null, urutan }],
+    errorPrefix: 'Gagal tambah indikator',
+    onSuccess: async () => {
+      document.getElementById('guru-ekskul-indikator-nama').value = ''
+      document.getElementById('guru-ekskul-indikator-deskripsi').value = ''
+      await renderGuruEkskulPage(true)
+    }
+  })
 }
 
 async function saveGuruEkskulProgressBatch() {
