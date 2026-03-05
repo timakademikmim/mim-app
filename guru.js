@@ -11599,49 +11599,57 @@ function openExamBrowserPrint(jadwal, soal) {
   }, 250)
 }
 
-async function buildExamWordHtml(jadwal, soal) {
-  const instruksiMeta = parseExamInstruksiMeta(soal?.instruksi)
-  const lang = instruksiMeta.lang || 'ID'
-  const textMap = getExamPdfStaticText(lang)
-  const isAr = lang === 'AR'
-  const bgDataUrl = await ensureExamPrintBackgroundLoaded()
-  const questions = parseExamQuestions(soal?.questions_json)
-  const sections = buildExamPrintSections(questions, soal?.bentuk_soal)
-  const wordFontFamily = isAr ? '"Traditional Arabic","Times New Roman",serif' : '"Times New Roman",serif'
-  const wordDirectionCss = isAr ? 'direction:rtl; unicode-bidi:embed; text-align:right;' : 'direction:ltr; text-align:left;'
-  const wordBidiCss = isAr ? 'mso-bidi-font-family:"Traditional Arabic"; mso-fareast-font-family:"Traditional Arabic";' : ''
-  const markerHtml = token => {
+function createExamWordMarkerFormatter(lang, isAr) {
+  return token => {
     const marker = formatExamMarker(token, lang)
     if (!isAr) return escapeHtml(marker)
     return `<span class="ar-marker">${escapeHtml(marker)}</span>`
   }
-  const sectionHtml = sections.map((section, sectionIndex) => {
-    const headingParts = getExamPrintTypeParts(section.type, sectionIndex, lang)
-    const instruksiModel = getExamPrintTypeInstruction(section.type, lang)
-    const items = section.items || []
-    const questionsHtml = items.map((q, idx) => {
-      const no = idx + 1
-      const qText = `<div class="q-title">${markerHtml(formatExamNumber(no, lang))} ${escapeHtml(String(q?.text || '-'))}</div>`
-      if (section.type === 'pilihan-ganda') {
-        const opts = q?.options || {}
-        const mA = isAr ? 'Ø£' : 'a'
-        const mB = isAr ? 'Ø¨' : 'b'
-        const mC = isAr ? 'Ø¬' : 'c'
-        const mD = isAr ? 'Ø¯' : 'd'
-        return `<li>${qText}<div class="pg-grid">
-          <div>${markerHtml(mA)} ${escapeHtml(String(opts.a || '-'))}</div>
-          <div>${markerHtml(mC)} ${escapeHtml(String(opts.c || '-'))}</div>
-          <div>${markerHtml(mB)} ${escapeHtml(String(opts.b || '-'))}</div>
-          <div>${markerHtml(mD)} ${escapeHtml(String(opts.d || '-'))}</div>
-        </div></li>`
-      }
-      return `<li>${qText}</li>`
-    }).join('')
-    return `<section class="sec"><h3><strong>${isAr ? `<span class="ar-marker">${escapeHtml(headingParts.marker)}</span>` : escapeHtml(headingParts.marker)}</strong> ${escapeHtml(headingParts.label)}</h3><p>${escapeHtml(instruksiModel)}</p><ol>${questionsHtml}</ol></section>`
-  }).join('')
-  const instruksiUmum = instruksiMeta.text
-    ? `<p><strong>${escapeHtml(textMap.instruksiUmum)}:</strong> ${escapeHtml(instruksiMeta.text)}</p>`
-    : ''
+}
+
+function buildExamWordQuestionHtml(section, q, idx, lang, isAr, markerHtml) {
+  const no = idx + 1
+  const qText = `<div class="q-title">${markerHtml(formatExamNumber(no, lang))} ${escapeHtml(String(q?.text || '-'))}</div>`
+  if (section.type === 'pilihan-ganda') {
+    const opts = q?.options || {}
+    const mA = isAr ? 'Ø£' : 'a'
+    const mB = isAr ? 'Ø¨' : 'b'
+    const mC = isAr ? 'Ø¬' : 'c'
+    const mD = isAr ? 'Ø¯' : 'd'
+    return `<li>${qText}<div class="pg-grid">
+      <div>${markerHtml(mA)} ${escapeHtml(String(opts.a || '-'))}</div>
+      <div>${markerHtml(mC)} ${escapeHtml(String(opts.c || '-'))}</div>
+      <div>${markerHtml(mB)} ${escapeHtml(String(opts.b || '-'))}</div>
+      <div>${markerHtml(mD)} ${escapeHtml(String(opts.d || '-'))}</div>
+    </div></li>`
+  }
+  return `<li>${qText}</li>`
+}
+
+function buildExamWordSectionHtml(section, sectionIndex, lang, isAr, markerHtml) {
+  const headingParts = getExamPrintTypeParts(section.type, sectionIndex, lang)
+  const instruksiModel = getExamPrintTypeInstruction(section.type, lang)
+  const items = section.items || []
+  const questionsHtml = items.map((q, idx) => buildExamWordQuestionHtml(section, q, idx, lang, isAr, markerHtml)).join('')
+  return `<section class="sec"><h3><strong>${isAr ? `<span class="ar-marker">${escapeHtml(headingParts.marker)}</span>` : escapeHtml(headingParts.marker)}</strong> ${escapeHtml(headingParts.label)}</h3><p>${escapeHtml(instruksiModel)}</p><ol>${questionsHtml}</ol></section>`
+}
+
+function buildExamWordSectionsHtml(sections, lang, isAr, markerHtml) {
+  return (sections || []).map((section, sectionIndex) => buildExamWordSectionHtml(section, sectionIndex, lang, isAr, markerHtml)).join('')
+}
+
+function buildExamWordDocumentHtml({
+  jadwal,
+  soal,
+  textMap,
+  isAr,
+  bgDataUrl,
+  wordFontFamily,
+  wordDirectionCss,
+  wordBidiCss,
+  instruksiUmum,
+  sectionHtml
+}) {
   return `<!doctype html>
 <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns:v="urn:schemas-microsoft-com:vml" lang="${isAr ? 'ar' : 'id'}" dir="${isAr ? 'rtl' : 'ltr'}">
 <head><meta charset="utf-8"><title>${escapeHtml(textMap.title)}</title>
@@ -11682,6 +11690,36 @@ ${sectionHtml}
 </div>
 </div>
 </body></html>`
+}
+
+async function buildExamWordHtml(jadwal, soal) {
+  const instruksiMeta = parseExamInstruksiMeta(soal?.instruksi)
+  const lang = instruksiMeta.lang || 'ID'
+  const textMap = getExamPdfStaticText(lang)
+  const isAr = lang === 'AR'
+  const bgDataUrl = await ensureExamPrintBackgroundLoaded()
+  const questions = parseExamQuestions(soal?.questions_json)
+  const sections = buildExamPrintSections(questions, soal?.bentuk_soal)
+  const wordFontFamily = isAr ? '"Traditional Arabic","Times New Roman",serif' : '"Times New Roman",serif'
+  const wordDirectionCss = isAr ? 'direction:rtl; unicode-bidi:embed; text-align:right;' : 'direction:ltr; text-align:left;'
+  const wordBidiCss = isAr ? 'mso-bidi-font-family:"Traditional Arabic"; mso-fareast-font-family:"Traditional Arabic";' : ''
+  const markerHtml = createExamWordMarkerFormatter(lang, isAr)
+  const sectionHtml = buildExamWordSectionsHtml(sections, lang, isAr, markerHtml)
+  const instruksiUmum = instruksiMeta.text
+    ? `<p><strong>${escapeHtml(textMap.instruksiUmum)}:</strong> ${escapeHtml(instruksiMeta.text)}</p>`
+    : ''
+  return buildExamWordDocumentHtml({
+    jadwal,
+    soal,
+    textMap,
+    isAr,
+    bgDataUrl,
+    wordFontFamily,
+    wordDirectionCss,
+    wordBidiCss,
+    instruksiUmum,
+    sectionHtml
+  })
 }
 
 async function exportExamWordFile(jadwal, soal, fileName) {
