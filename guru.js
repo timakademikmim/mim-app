@@ -28,6 +28,8 @@ const KARYAWAN_FOTO_MAX_SIZE_BYTES = 300 * 1024
 const CHAT_MEMBERS_TABLE = 'chat_thread_members'
 const CHAT_MESSAGES_TABLE = 'chat_messages'
 const TOPBAR_CHAT_BADGE_TICK_MS = 10000
+const MONTHLY_REPORT_SELECT_NEW = 'id, nilai_akhlak, predikat, catatan_wali, muhaffiz, no_hp_muhaffiz, nilai_kehadiran_halaqah, sakit_halaqah, izin_halaqah, nilai_akhlak_halaqah, keterangan_akhlak_halaqah, nilai_ujian_bulanan, keterangan_ujian_bulanan, nilai_target_hafalan, keterangan_target_hafalan, nilai_capaian_hafalan_bulanan, nilai_jumlah_hafalan_halaman, nilai_jumlah_hafalan_juz, catatan_muhaffiz, musyrif, no_hp_musyrif, nilai_kehadiran_liqa_muhasabah, sakit_liqa_muhasabah, izin_liqa_muhasabah, nilai_ibadah, keterangan_ibadah, nilai_kedisiplinan, keterangan_kedisiplinan, nilai_kebersihan, keterangan_kebersihan, nilai_adab, keterangan_adab, prestasi_kesantrian, pelanggaran_kesantrian, catatan_musyrif'
+const MONTHLY_REPORT_SELECT_LEGACY = 'id, nilai_akhlak, predikat, catatan_wali'
 const EXAM_SCHEDULE_TABLE = 'jadwal_ujian'
 const EXAM_QUESTION_TABLE = 'soal_ujian'
 const EXAM_ARABIC_FONT_FILE = 'Traditional Arabic Regular.ttf'
@@ -6432,12 +6434,9 @@ async function getLaporanBulananDetailData(santriId, opts = {}) {
   let monthlyReport = null
   let monthlyReportMissingTable = false
   let monthlyReportMissingColumns = false
-  const reportSelectNew = 'id, nilai_akhlak, predikat, catatan_wali, muhaffiz, no_hp_muhaffiz, nilai_kehadiran_halaqah, sakit_halaqah, izin_halaqah, nilai_akhlak_halaqah, keterangan_akhlak_halaqah, nilai_ujian_bulanan, keterangan_ujian_bulanan, nilai_target_hafalan, keterangan_target_hafalan, nilai_capaian_hafalan_bulanan, nilai_jumlah_hafalan_halaman, nilai_jumlah_hafalan_juz, catatan_muhaffiz, musyrif, no_hp_musyrif, nilai_kehadiran_liqa_muhasabah, sakit_liqa_muhasabah, izin_liqa_muhasabah, nilai_ibadah, keterangan_ibadah, nilai_kedisiplinan, keterangan_kedisiplinan, nilai_kebersihan, keterangan_kebersihan, nilai_adab, keterangan_adab, prestasi_kesantrian, pelanggaran_kesantrian, catatan_musyrif'
-  const reportSelectLegacy = 'id, nilai_akhlak, predikat, catatan_wali'
-
   let reportRes = await sb
     .from(MONTHLY_REPORT_TABLE)
-    .select(reportSelectNew)
+    .select(MONTHLY_REPORT_SELECT_NEW)
     .eq('periode', periode)
     .eq('guru_id', String(guru.id))
     .eq('kelas_id', String(santri.kelas_id))
@@ -6448,7 +6447,7 @@ async function getLaporanBulananDetailData(santriId, opts = {}) {
     monthlyReportMissingColumns = true
     reportRes = await sb
       .from(MONTHLY_REPORT_TABLE)
-      .select(reportSelectLegacy)
+      .select(MONTHLY_REPORT_SELECT_LEGACY)
       .eq('periode', periode)
       .eq('guru_id', String(guru.id))
       .eq('kelas_id', String(santri.kelas_id))
