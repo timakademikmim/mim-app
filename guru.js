@@ -94,6 +94,7 @@ const PAGE_TITLES = {
   rapor: 'Rapor',
   profil: 'Profil'
 }
+const VALID_GURU_PAGE_SET = new Set(Object.keys(PAGE_TITLES))
 
 let guruContextCache = null
 let activeTahunAjaranCache = null
@@ -12798,8 +12799,7 @@ async function renderGuruPrestasiPelanggaranPage() {
 
 async function loadGuruPage(page) {
   const requestedPage = String(page || DEFAULT_GURU_PAGE)
-  const validPages = Object.keys(PAGE_TITLES)
-  const targetPage = validPages.includes(requestedPage) ? requestedPage : DEFAULT_GURU_PAGE
+  const targetPage = VALID_GURU_PAGE_SET.has(requestedPage) ? requestedPage : DEFAULT_GURU_PAGE
   if (targetPage !== 'chat' && window.ChatModule && typeof window.ChatModule.stop === 'function') {
     window.ChatModule.stop()
   }
