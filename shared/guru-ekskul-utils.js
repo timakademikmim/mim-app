@@ -92,6 +92,87 @@
     `
   }
 
+  function buildEkskulPageHtml({ ekskulRows, selectedEkskulId, monthlyPeriode, todayDate, monthToday, escapeHtml }) {
+    const rows = Array.isArray(ekskulRows) ? ekskulRows : []
+    return `
+      <div style="display:grid; gap:12px;">
+        <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+          <div style="font-weight:700; margin-bottom:8px;">Ekskul Binaan</div>
+          <div style="display:flex; flex-wrap:wrap; gap:8px;">
+            ${rows.map(item => `
+              <button type="button" class="modal-btn" onclick="selectGuruEkskul('${escapeHtml(String(item.id || ''))}')" style="${String(selectedEkskulId || '') === String(item.id || '') ? 'border-color:#d4d456; background:#fefce8;' : ''}">
+                ${escapeHtml(String(item.nama || '-'))}
+              </button>
+            `).join('')}
+          </div>
+        </div>
+
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="guru-ekskul-tab-btn-progres" type="button" class="modal-btn modal-btn-primary" onclick="setGuruEkskulTab('progres')">Input Progres</button>
+          <button id="guru-ekskul-tab-btn-laporan" type="button" class="modal-btn" onclick="setGuruEkskulTab('laporan')">Laporan Bulanan Ekskul</button>
+        </div>
+
+        <div id="guru-ekskul-tab-progres" style="display:grid; gap:12px;">
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+            <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+              <div style="font-weight:700; margin-bottom:8px;">Anggota Ekskul</div>
+              <div style="display:grid; grid-template-columns:1fr auto; gap:8px; margin-bottom:8px;">
+                <select id="guru-ekskul-santri" class="guru-field"></select>
+                <button type="button" class="modal-btn modal-btn-primary" onclick="addGuruEkskulMember()">Tambah</button>
+              </div>
+              <div id="guru-ekskul-member-list">Loading...</div>
+            </div>
+
+            <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+              <div style="font-weight:700; margin-bottom:8px;">Indikator Penilaian</div>
+              <div style="display:grid; gap:8px; margin-bottom:8px;">
+                <input id="guru-ekskul-indikator-nama" class="guru-field" type="text" placeholder="Nama indikator">
+                <input id="guru-ekskul-indikator-deskripsi" class="guru-field" type="text" placeholder="Deskripsi indikator (opsional)">
+                <button type="button" class="modal-btn modal-btn-primary" onclick="addGuruEkskulIndikator()">Tambah Indikator</button>
+              </div>
+              <div id="guru-ekskul-indikator-list">Loading...</div>
+            </div>
+          </div>
+
+          <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+            <div style="font-weight:700; margin-bottom:8px;">Input Progres Ekskul</div>
+            <div style="display:grid; grid-template-columns:160px 1fr auto; gap:8px; margin-bottom:8px;">
+              <input id="guru-ekskul-progres-tanggal" class="guru-field" type="date" value="${escapeHtml(String(todayDate || ''))}">
+              <select id="guru-ekskul-progres-santri" class="guru-field" onchange="selectGuruEkskulProgresSantri(this.value)"></select>
+              <button type="button" class="modal-btn modal-btn-primary" onclick="saveGuruEkskulProgressBatch()">Submit Progres</button>
+            </div>
+            <div id="guru-ekskul-progres-input-list">Loading...</div>
+          </div>
+        </div>
+
+        <div id="guru-ekskul-tab-laporan" style="display:none; border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+          <div style="font-weight:700; margin-bottom:8px;">Input Laporan Bulanan Ekskul</div>
+          <div style="font-size:12px; color:#64748b; margin-bottom:8px;">Data ini akan dipakai di Detail Laporan Bulanan pada page guru (bagian D. Ekstrakulikuler).</div>
+          <div style="display:grid; grid-template-columns:180px 1fr auto; gap:8px; margin-bottom:8px; align-items:end;">
+            <div>
+              <label class="guru-label">Periode Bulan</label>
+              <input id="guru-ekskul-monthly-periode" class="guru-field" type="month" value="${escapeHtml(String(monthlyPeriode || monthToday || ''))}" onchange="onGuruEkskulMonthlyPeriodeChange()">
+            </div>
+            <div></div>
+            <div>
+              <button type="button" class="modal-btn modal-btn-primary" onclick="saveGuruEkskulMonthlyReport()">Simpan Laporan Bulanan</button>
+            </div>
+          </div>
+          <div id="guru-ekskul-monthly-list">Loading...</div>
+        </div>
+      </div>
+      <div id="guru-ekskul-santri-detail-overlay" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.45); z-index:2000; padding:20px;">
+        <div style="max-width:940px; margin:0 auto; background:#fff; border-radius:12px; border:1px solid #e2e8f0; overflow:hidden;">
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid #e2e8f0;">
+            <div id="guru-ekskul-santri-detail-title" style="font-weight:700; color:#0f172a;">Detail Progres</div>
+            <button type="button" class="modal-btn" onclick="closeGuruEkskulSantriDetail()">Tutup</button>
+          </div>
+          <div id="guru-ekskul-santri-detail-body" style="padding:12px; max-height:70vh; overflow:auto;">Loading...</div>
+        </div>
+      </div>
+    `
+  }
+
   window.guruEkskulUtils = {
     buildStarsHtml,
     getEmptyStarsHtml,
@@ -99,6 +180,7 @@
     buildIndikatorCardHtml,
     buildProgressDetailRowHtml,
     buildMonthlyTableRowHtml,
-    buildProgressInputTableRowHtml
+    buildProgressInputTableRowHtml,
+    buildEkskulPageHtml
   }
 })()
