@@ -27,6 +27,7 @@ const KARYAWAN_FOTO_BUCKET = 'karyawan-foto'
 const KARYAWAN_FOTO_MAX_SIZE_BYTES = 300 * 1024
 const CHAT_MEMBERS_TABLE = 'chat_thread_members'
 const CHAT_MESSAGES_TABLE = 'chat_messages'
+const TOPBAR_CHAT_BADGE_TICK_MS = 10000
 const EXAM_SCHEDULE_TABLE = 'jadwal_ujian'
 const EXAM_QUESTION_TABLE = 'soal_ujian'
 const EXAM_ARABIC_FONT_FILE = 'Traditional Arabic Regular.ttf'
@@ -3730,7 +3731,7 @@ function startGuruTopbarChatBadgeTicker() {
   if (topbarChatBadgeState.intervalId) return
   topbarChatBadgeState.intervalId = window.setInterval(() => {
     refreshGuruTopbarChatBadge().catch(error => console.error(error))
-  }, 10000)
+  }, TOPBAR_CHAT_BADGE_TICK_MS)
 }
 
 async function fetchGuruTopbarNotifications() {
