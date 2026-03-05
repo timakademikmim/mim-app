@@ -20,14 +20,6 @@ const EKSKUL_MEMBER_TABLE = 'ekstrakurikuler_anggota'
 const EKSKUL_INDIKATOR_TABLE = 'ekstrakurikuler_indikator'
 const EKSKUL_PROGRES_TABLE = 'ekstrakurikuler_progres'
 const EKSKUL_MONTHLY_TABLE = 'ekstrakurikuler_laporan_bulanan'
-const KARYAWAN_SELECT_VARIANTS_FOR_COMPAT = [
-  'id, id_karyawan, nama, no_hp, hp, no_telp, nomor_hp, telepon, aktif',
-  'id, id_karyawan, nama, no_hp, hp, aktif',
-  'id, id_karyawan, nama, no_hp, hp',
-  'id, id_karyawan, nama, no_hp',
-  'id, id_karyawan, nama',
-  'id, nama'
-]
 const SANTRI_PRESTASI_TABLE = 'santri_prestasi'
 const SANTRI_PELANGGARAN_TABLE = 'santri_pelanggaran'
 const SANTRI_SURAT_BUCKET = 'surat-pemberitahuan'
@@ -3632,12 +3624,12 @@ function renderTopbarNotifMenu(items = []) {
   menu.innerHTML = `${headHtml}${rowsHtml}`
 }
 
-function setTopbarNotifBadge(count) {
+function setGuruTopbarBadgeById(badgeId, count) {
   if (typeof window.setTopbarBadgeCount === 'function') {
-    window.setTopbarBadgeCount('topbar-notif-badge', count)
+    window.setTopbarBadgeCount(badgeId, count)
     return
   }
-  const badge = document.getElementById('topbar-notif-badge')
+  const badge = document.getElementById(String(badgeId || ''))
   if (!badge) return
   const total = Number.isFinite(Number(count)) ? Number(count) : 0
   if (total <= 0) {
@@ -3649,21 +3641,12 @@ function setTopbarNotifBadge(count) {
   badge.textContent = total > 99 ? '99+' : String(total)
 }
 
+function setTopbarNotifBadge(count) {
+  setGuruTopbarBadgeById('topbar-notif-badge', count)
+}
+
 function setTopbarChatBadge(count) {
-  if (typeof window.setTopbarBadgeCount === 'function') {
-    window.setTopbarBadgeCount('topbar-chat-badge', count)
-    return
-  }
-  const badge = document.getElementById('topbar-chat-badge')
-  if (!badge) return
-  const total = Number.isFinite(Number(count)) ? Number(count) : 0
-  if (total <= 0) {
-    badge.textContent = '0'
-    badge.classList.add('hidden')
-    return
-  }
-  badge.textContent = total > 99 ? '99+' : String(total)
-  badge.classList.remove('hidden')
+  setGuruTopbarBadgeById('topbar-chat-badge', count)
 }
 
 function getTimestampMs(value) {
@@ -6502,22 +6485,48 @@ async function getLaporanBulananDetailData(santriId, opts = {}) {
   const nilaiTargetHafalan = toNullableNumber(monthlyReport?.nilai_target_hafalan)
   const keteranganTargetHafalan = String(monthlyReport?.keterangan_target_hafalan || '').trim()
   const nilaiCapaianHafalanBulanan = toNullableNumber(monthlyReport?.nilai_capaian_hafalan_bulanan)
-  const keteranganCapaianHafalanBulanan = await loadOptionalMonthlyReportTextField({
-    periode,
-    guruId: guru.id,
-    kelasId: santri.kelas_id,
-    santriId: sid,
-    fieldName: 'keterangan_capaian_hafalan_bulanan',
-    warnLabel: 'keterangan capaian hafalan bulanan'
-  })
-  const keteranganJumlahHafalanBulanan = await loadOptionalMonthlyReportTextField({
-    periode,
-    guruId: guru.id,
-    kelasId: santri.kelas_id,
-    santriId: sid,
-    fieldName: 'keterangan_jumlah_hafalan_bulanan',
-    warnLabel: 'keterangan jumlah hafalan bulanan'
-  })
+  let keteranganCapaianHafalanBulanan = ''
+  try {
+    const capRes = await sb
+      .from(MONTHLY_REPORT_TABLE)
+      .select('keterangan_capaian_hafalan_bulanan')
+      .eq('periode', periode)
+      .eq('guru_id', String(guru.id))
+      .eq('kelas_id', String(santri.kelas_id))
+      .eq('santri_id', sid)
+      .maybeSingle()
+    if (!capRes.error) {
+      keteranganCapaianHafalanBulanan = String(capRes.data?.keterangan_capaian_hafalan_bulanan || '').trim()
+    } else {
+      const msg = String(capRes.error?.message || '').toLowerCase()
+      if (!(msg.includes('column') && msg.includes('keterangan_capaian_hafalan_bulanan'))) {
+        throw capRes.error
+      }
+    }
+  } catch (error) {
+    console.warn('Gagal memuat keterangan capaian hafalan bulanan:', error)
+  }
+  let keteranganJumlahHafalanBulanan = ''
+  try {
+    const jumlahRes = await sb
+      .from(MONTHLY_REPORT_TABLE)
+      .select('keterangan_jumlah_hafalan_bulanan')
+      .eq('periode', periode)
+      .eq('guru_id', String(guru.id))
+      .eq('kelas_id', String(santri.kelas_id))
+      .eq('santri_id', sid)
+      .maybeSingle()
+    if (!jumlahRes.error) {
+      keteranganJumlahHafalanBulanan = String(jumlahRes.data?.keterangan_jumlah_hafalan_bulanan || '').trim()
+    } else {
+      const msg = String(jumlahRes.error?.message || '').toLowerCase()
+      if (!(msg.includes('column') && msg.includes('keterangan_jumlah_hafalan_bulanan'))) {
+        throw jumlahRes.error
+      }
+    }
+  } catch (error) {
+    console.warn('Gagal memuat keterangan jumlah hafalan bulanan:', error)
+  }
   const nilaiJumlahHafalanHalaman = toNullableNumber(monthlyReport?.nilai_jumlah_hafalan_halaman)
   const nilaiJumlahHafalanJuz = toNullableNumber(monthlyReport?.nilai_jumlah_hafalan_juz)
   const catatanMuhaffiz = String(monthlyReport?.catatan_muhaffiz || '').trim()
@@ -6795,8 +6804,16 @@ async function quickSendLaporanBulananWA(santriId) {
 
 async function loadActiveKaryawanRowsForEkskulReport() {
   // Toleran terhadap variasi skema kolom karyawan di deployment lama.
+  const karyawanSelectVariants = [
+    'id, id_karyawan, nama, no_hp, hp, no_telp, nomor_hp, telepon, aktif',
+    'id, id_karyawan, nama, no_hp, hp, aktif',
+    'id, id_karyawan, nama, no_hp, hp',
+    'id, id_karyawan, nama, no_hp',
+    'id, id_karyawan, nama',
+    'id, nama'
+  ]
   let karyawanLastError = null
-  for (const selectCols of KARYAWAN_SELECT_VARIANTS_FOR_COMPAT) {
+  for (const selectCols of karyawanSelectVariants) {
     const { data, error } = await sb
       .from('karyawan')
       .select(selectCols)
