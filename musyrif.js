@@ -25,6 +25,8 @@ const CHAT_MESSAGES_TABLE = 'chat_messages'
 const SCHOOL_PROFILE_TABLE = 'struktur_sekolah'
 const TOPBAR_NOTIF_READ_KEY = 'musyrif_topbar_notif_read'
 const TOPBAR_NOTIF_RANGE_KEY = 'musyrif_topbar_notif_range_days'
+const MUSYRIF_SIDEBAR_COLLAPSED_KEY = 'musyrif_sidebar_collapsed'
+const MUSYRIF_SIDEBAR_ICON_ONLY_BREAKPOINT = 1180
 
 const PAGE_TITLES = {
   dashboard: 'Dashboard',
@@ -109,6 +111,145 @@ let musyrifManageKamarState = {
   search: ''
 }
 let wakasekKesantrianAccessCache = null
+
+function getMusyrifLayoutElement() {
+  return document.querySelector('.layout')
+}
+
+function buildMusyrifSidebarIconSvg(pageKey = '') {
+  const key = String(pageKey || '').trim()
+  const map = {
+    dashboard: '<path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1V9.5Z"/>',
+    'laporan-bulanan': '<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+    'data-kamar': '<path d="M4 8h16v11H4z"/><path d="M4 12h16M12 8v11"/>',
+    'perizinan-santri': '<path d="M8 3h8M7 6h10a2 2 0 0 1 2 2v10a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V8a2 2 0 0 1 2-2Z"/><path d="M9 12l2 2 4-4"/>',
+    'prestasi-pelanggaran': '<path d="M12 3.5l2.3 4.7 5.2.8-3.8 3.7.9 5.3L12 15.8 7.4 18l.9-5.3L4.5 9l5.2-.8L12 3.5Z"/>',
+    ekskul: '<circle cx="12" cy="8" r="3.2"/><path d="M5.5 19a6.5 6.5 0 0 1 13 0"/><path d="M4 11.5h3M17 11.5h3"/>'
+  }
+  const paths = map[key] || '<circle cx="12" cy="12" r="4.2"/><path d="M12 4v2M12 18v2M4 12h2M18 12h2"/>'
+  return `<svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`
+}
+
+function ensureMusyrifSidebarIcons() {
+  const buttons = document.querySelectorAll('.guru-nav-btn, .guru-submenu-btn')
+  buttons.forEach(btn => {
+    if (btn.querySelector('.guru-nav-btn-content')) return
+    const pageKey = String(btn.getAttribute('data-page') || '').trim()
+    const label = String(btn.textContent || '').trim()
+    btn.textContent = ''
+    const content = document.createElement('span')
+    content.className = 'guru-nav-btn-content'
+    content.innerHTML = `${buildMusyrifSidebarIconSvg(pageKey)}<span></span>`
+    const labelEl = content.querySelector('span:last-child')
+    if (labelEl) labelEl.textContent = label
+    btn.appendChild(content)
+  })
+}
+
+function applyMusyrifSidebarIconsOnlyByViewport() {
+  const layout = getMusyrifLayoutElement()
+  if (!layout) return
+  layout.classList.toggle('sidebar-icons-only', window.innerWidth <= MUSYRIF_SIDEBAR_ICON_ONLY_BREAKPOINT)
+}
+
+function updateMusyrifSidebarToggleState() {
+  const layout = getMusyrifLayoutElement()
+  const btn = document.getElementById('musyrif-sidebar-toggle')
+  if (!layout || !btn) return
+  const collapsed = layout.classList.contains('sidebar-collapsed')
+  btn.setAttribute('aria-label', collapsed ? 'Tampilkan sidebar' : 'Sembunyikan sidebar')
+  btn.title = collapsed ? 'Tampilkan Sidebar' : 'Sembunyikan Sidebar'
+}
+
+function setMusyrifSidebarCollapsed(collapsed) {
+  const layout = getMusyrifLayoutElement()
+  if (!layout) return
+  layout.classList.toggle('sidebar-collapsed', Boolean(collapsed))
+  try {
+    localStorage.setItem(MUSYRIF_SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0')
+  } catch (_) {}
+  updateMusyrifSidebarToggleState()
+}
+
+function toggleMusyrifSidebar() {
+  const layout = getMusyrifLayoutElement()
+  if (!layout) return
+  setMusyrifSidebarCollapsed(!layout.classList.contains('sidebar-collapsed'))
+}
+
+function isMusyrifSidebarIconsOnlyMode() {
+  const layout = getMusyrifLayoutElement()
+  return Boolean(layout && layout.classList.contains('sidebar-icons-only'))
+}
+
+function getMusyrifNavButtonLabel(btn) {
+  return String(btn?.querySelector('.guru-nav-btn-content > span:last-child')?.textContent || btn?.textContent || '').trim()
+}
+
+function getMusyrifNavSubtabLabels(btn) {
+  const submenu = btn?.nextElementSibling
+  if (!submenu || !(submenu instanceof HTMLElement) || !submenu.classList.contains('guru-submenu')) return []
+  return Array.from(submenu.querySelectorAll('.guru-submenu-btn')).map(item => getMusyrifNavButtonLabel(item)).filter(Boolean)
+}
+
+function removeMusyrifSidebarTooltip() {
+  document.getElementById('musyrif-nav-tooltip')?.remove()
+}
+
+function showMusyrifSidebarTooltip(btn) {
+  if (!isMusyrifSidebarIconsOnlyMode()) return
+  removeMusyrifSidebarTooltip()
+  const title = getMusyrifNavButtonLabel(btn)
+  if (!title) return
+  const subTabs = getMusyrifNavSubtabLabels(btn)
+  const tip = document.createElement('div')
+  tip.id = 'musyrif-nav-tooltip'
+  tip.className = 'guru-nav-tooltip'
+  tip.innerHTML = `<div class="guru-nav-tooltip-title">${title}</div>${subTabs.length ? `<div class="guru-nav-tooltip-sublist">${subTabs.map(item => `<div class="guru-nav-tooltip-subitem">${item}</div>`).join('')}</div>` : ''}`
+  document.body.appendChild(tip)
+  const rect = btn.getBoundingClientRect()
+  const tipRect = tip.getBoundingClientRect()
+  const margin = 8
+  let left = rect.right + margin
+  let top = rect.top + (rect.height / 2) - (tipRect.height / 2)
+  if (left + tipRect.width > window.innerWidth - 8) left = Math.max(8, rect.left - tipRect.width - margin)
+  top = Math.max(8, Math.min(top, window.innerHeight - tipRect.height - 8))
+  tip.style.left = `${left}px`
+  tip.style.top = `${top}px`
+  window.setTimeout(() => {
+    if (tip.isConnected) tip.remove()
+  }, 1600)
+}
+
+function setupMusyrifSidebarTooltips() {
+  const buttons = document.querySelectorAll('.guru-nav-btn, .guru-submenu-btn')
+  buttons.forEach(btn => {
+    if (btn.dataset.iconTooltipBound === '1') return
+    btn.dataset.iconTooltipBound = '1'
+    btn.addEventListener('mouseenter', () => showMusyrifSidebarTooltip(btn))
+    btn.addEventListener('focus', () => showMusyrifSidebarTooltip(btn))
+    btn.addEventListener('touchstart', () => showMusyrifSidebarTooltip(btn), { passive: true })
+  })
+  document.addEventListener('click', event => {
+    const target = event.target
+    if (!(target instanceof HTMLElement)) return
+    if (!target.closest('.guru-nav-btn, .guru-submenu-btn, #musyrif-nav-tooltip')) {
+      removeMusyrifSidebarTooltip()
+    }
+  })
+}
+
+function initMusyrifSidebarState() {
+  ensureMusyrifSidebarIcons()
+  applyMusyrifSidebarIconsOnlyByViewport()
+  try {
+    setMusyrifSidebarCollapsed(localStorage.getItem(MUSYRIF_SIDEBAR_COLLAPSED_KEY) === '1')
+  } catch (_) {
+    setMusyrifSidebarCollapsed(false)
+  }
+  setupMusyrifSidebarTooltips()
+  window.addEventListener('resize', applyMusyrifSidebarIconsOnlyByViewport)
+}
 
 const MUSYRIF_BULK_EXCEL_HEADERS = [
   'Nama Santri',
@@ -4136,9 +4277,11 @@ window.deleteMusyrifPelanggaranEntry = deleteMusyrifPelanggaranEntry
 window.openMusyrifPrestasiDoc = openMusyrifPrestasiDoc
 window.closeMusyrifPrestasiDoc = closeMusyrifPrestasiDoc
 window.uploadMusyrifPelanggaranSuratFile = uploadMusyrifPelanggaranSuratFile
+window.toggleMusyrifSidebar = toggleMusyrifSidebar
 window.logout = logout
 
 document.addEventListener('DOMContentLoaded', async () => {
+  initMusyrifSidebarState()
   setupCustomPopupSystem()
   loadMusyrifNotifPrefs()
   ensureTopbarNotification()

@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="guru.css?v=20260303-topbar-avatar-01">
+  <link rel="stylesheet" href="guru.css?v=20260305-sidebar-tooltip-01">
 </head>
 
 <body data-role="muhaffiz">
@@ -25,7 +25,10 @@
 
     <main class="content">
       <div class="topbar">
-        <div id="muhaffiz-topbar-title" class="topbar-title">Dashboard</div>
+        <div class="topbar-left">
+          <button type="button" id="muhaffiz-sidebar-toggle" class="topbar-sidebar-toggle" onclick="toggleMuhaffizSidebar()" aria-label="Toggle sidebar" title="Sembunyikan/Tampilkan Sidebar">&#9776;</button>
+          <div id="muhaffiz-topbar-title" class="topbar-title">Dashboard</div>
+        </div>
         <div class="topbar-user-menu-wrap">
           <button type="button" class="topbar-user-trigger" onclick="toggleTopbarUserMenu()">
             <span id="welcome" class="topbar-user-name"></span>
@@ -51,7 +54,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="chat-module.js?v=20260304-chat-refresh-stable-01"></script>
   <script src="role-page.js?v=20260304-desktop-wa-print-fix-02"></script>
-  <script src="muhaffiz.js?v=20260304-shared-utils-01"></script>
+  <script src="muhaffiz.js?v=20260305-sidebar-toggle-tooltip-01"></script>
 
   <div id="app-popup-overlay" class="app-popup-overlay" aria-hidden="true">
     <div class="app-popup-card" role="dialog" aria-modal="true" aria-labelledby="app-popup-message">

@@ -26,6 +26,8 @@ const CHAT_MESSAGES_TABLE = 'chat_messages'
 const SCHOOL_PROFILE_TABLE = 'struktur_sekolah'
 const TOPBAR_NOTIF_READ_KEY = 'muhaffiz_topbar_notif_read'
 const TOPBAR_NOTIF_RANGE_KEY = 'muhaffiz_topbar_notif_range_days'
+const MUHAFFIZ_SIDEBAR_COLLAPSED_KEY = 'muhaffiz_sidebar_collapsed'
+const MUHAFFIZ_SIDEBAR_ICON_ONLY_BREAKPOINT = 1180
 
 const PAGE_TITLES = {
   dashboard: 'Dashboard',
@@ -102,6 +104,144 @@ let muhaffizManageHalaqahState = {
   search: ''
 }
 let wakasekKetahfizanAccessCache = null
+
+function getMuhaffizLayoutElement() {
+  return document.querySelector('.layout')
+}
+
+function buildMuhaffizSidebarIconSvg(pageKey = '') {
+  const key = String(pageKey || '').trim()
+  const map = {
+    dashboard: '<path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1V9.5Z"/>',
+    'laporan-bulanan': '<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+    'data-halaqah': '<path d="M5 5.5h14v13H5z"/><path d="M9 5.5v13"/>',
+    'prestasi-pelanggaran': '<path d="M12 3.5l2.3 4.7 5.2.8-3.8 3.7.9 5.3L12 15.8 7.4 18l.9-5.3L4.5 9l5.2-.8L12 3.5Z"/>',
+    ekskul: '<circle cx="12" cy="8" r="3.2"/><path d="M5.5 19a6.5 6.5 0 0 1 13 0"/><path d="M4 11.5h3M17 11.5h3"/>'
+  }
+  const paths = map[key] || '<circle cx="12" cy="12" r="4.2"/><path d="M12 4v2M12 18v2M4 12h2M18 12h2"/>'
+  return `<svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`
+}
+
+function ensureMuhaffizSidebarIcons() {
+  const buttons = document.querySelectorAll('.guru-nav-btn, .guru-submenu-btn')
+  buttons.forEach(btn => {
+    if (btn.querySelector('.guru-nav-btn-content')) return
+    const pageKey = String(btn.getAttribute('data-page') || '').trim()
+    const label = String(btn.textContent || '').trim()
+    btn.textContent = ''
+    const content = document.createElement('span')
+    content.className = 'guru-nav-btn-content'
+    content.innerHTML = `${buildMuhaffizSidebarIconSvg(pageKey)}<span></span>`
+    const labelEl = content.querySelector('span:last-child')
+    if (labelEl) labelEl.textContent = label
+    btn.appendChild(content)
+  })
+}
+
+function applyMuhaffizSidebarIconsOnlyByViewport() {
+  const layout = getMuhaffizLayoutElement()
+  if (!layout) return
+  layout.classList.toggle('sidebar-icons-only', window.innerWidth <= MUHAFFIZ_SIDEBAR_ICON_ONLY_BREAKPOINT)
+}
+
+function updateMuhaffizSidebarToggleState() {
+  const layout = getMuhaffizLayoutElement()
+  const btn = document.getElementById('muhaffiz-sidebar-toggle')
+  if (!layout || !btn) return
+  const collapsed = layout.classList.contains('sidebar-collapsed')
+  btn.setAttribute('aria-label', collapsed ? 'Tampilkan sidebar' : 'Sembunyikan sidebar')
+  btn.title = collapsed ? 'Tampilkan Sidebar' : 'Sembunyikan Sidebar'
+}
+
+function setMuhaffizSidebarCollapsed(collapsed) {
+  const layout = getMuhaffizLayoutElement()
+  if (!layout) return
+  layout.classList.toggle('sidebar-collapsed', Boolean(collapsed))
+  try {
+    localStorage.setItem(MUHAFFIZ_SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0')
+  } catch (_) {}
+  updateMuhaffizSidebarToggleState()
+}
+
+function toggleMuhaffizSidebar() {
+  const layout = getMuhaffizLayoutElement()
+  if (!layout) return
+  setMuhaffizSidebarCollapsed(!layout.classList.contains('sidebar-collapsed'))
+}
+
+function isMuhaffizSidebarIconsOnlyMode() {
+  const layout = getMuhaffizLayoutElement()
+  return Boolean(layout && layout.classList.contains('sidebar-icons-only'))
+}
+
+function getMuhaffizNavButtonLabel(btn) {
+  return String(btn?.querySelector('.guru-nav-btn-content > span:last-child')?.textContent || btn?.textContent || '').trim()
+}
+
+function getMuhaffizNavSubtabLabels(btn) {
+  const submenu = btn?.nextElementSibling
+  if (!submenu || !(submenu instanceof HTMLElement) || !submenu.classList.contains('guru-submenu')) return []
+  return Array.from(submenu.querySelectorAll('.guru-submenu-btn')).map(item => getMuhaffizNavButtonLabel(item)).filter(Boolean)
+}
+
+function removeMuhaffizSidebarTooltip() {
+  document.getElementById('muhaffiz-nav-tooltip')?.remove()
+}
+
+function showMuhaffizSidebarTooltip(btn) {
+  if (!isMuhaffizSidebarIconsOnlyMode()) return
+  removeMuhaffizSidebarTooltip()
+  const title = getMuhaffizNavButtonLabel(btn)
+  if (!title) return
+  const subTabs = getMuhaffizNavSubtabLabels(btn)
+  const tip = document.createElement('div')
+  tip.id = 'muhaffiz-nav-tooltip'
+  tip.className = 'guru-nav-tooltip'
+  tip.innerHTML = `<div class="guru-nav-tooltip-title">${title}</div>${subTabs.length ? `<div class="guru-nav-tooltip-sublist">${subTabs.map(item => `<div class="guru-nav-tooltip-subitem">${item}</div>`).join('')}</div>` : ''}`
+  document.body.appendChild(tip)
+  const rect = btn.getBoundingClientRect()
+  const tipRect = tip.getBoundingClientRect()
+  const margin = 8
+  let left = rect.right + margin
+  let top = rect.top + (rect.height / 2) - (tipRect.height / 2)
+  if (left + tipRect.width > window.innerWidth - 8) left = Math.max(8, rect.left - tipRect.width - margin)
+  top = Math.max(8, Math.min(top, window.innerHeight - tipRect.height - 8))
+  tip.style.left = `${left}px`
+  tip.style.top = `${top}px`
+  window.setTimeout(() => {
+    if (tip.isConnected) tip.remove()
+  }, 1600)
+}
+
+function setupMuhaffizSidebarTooltips() {
+  const buttons = document.querySelectorAll('.guru-nav-btn, .guru-submenu-btn')
+  buttons.forEach(btn => {
+    if (btn.dataset.iconTooltipBound === '1') return
+    btn.dataset.iconTooltipBound = '1'
+    btn.addEventListener('mouseenter', () => showMuhaffizSidebarTooltip(btn))
+    btn.addEventListener('focus', () => showMuhaffizSidebarTooltip(btn))
+    btn.addEventListener('touchstart', () => showMuhaffizSidebarTooltip(btn), { passive: true })
+  })
+  document.addEventListener('click', event => {
+    const target = event.target
+    if (!(target instanceof HTMLElement)) return
+    if (!target.closest('.guru-nav-btn, .guru-submenu-btn, #muhaffiz-nav-tooltip')) {
+      removeMuhaffizSidebarTooltip()
+    }
+  })
+}
+
+function initMuhaffizSidebarState() {
+  ensureMuhaffizSidebarIcons()
+  applyMuhaffizSidebarIconsOnlyByViewport()
+  try {
+    setMuhaffizSidebarCollapsed(localStorage.getItem(MUHAFFIZ_SIDEBAR_COLLAPSED_KEY) === '1')
+  } catch (_) {
+    setMuhaffizSidebarCollapsed(false)
+  }
+  setupMuhaffizSidebarTooltips()
+  window.addEventListener('resize', applyMuhaffizSidebarIconsOnlyByViewport)
+}
 
 const MUHAFFIZ_BULK_EXCEL_HEADERS = [
   'Nama Santri',
@@ -3642,9 +3782,11 @@ window.deleteMuhaffizPelanggaranEntry = deleteMuhaffizPelanggaranEntry
 window.openMuhaffizPrestasiDoc = openMuhaffizPrestasiDoc
 window.closeMuhaffizPrestasiDoc = closeMuhaffizPrestasiDoc
 window.uploadMuhaffizPelanggaranSuratFile = uploadMuhaffizPelanggaranSuratFile
+window.toggleMuhaffizSidebar = toggleMuhaffizSidebar
 window.logout = logout
 
 document.addEventListener('DOMContentLoaded', async () => {
+  initMuhaffizSidebarState()
   setupCustomPopupSystem()
   loadMuhaffizNotifPrefs()
   ensureTopbarNotification()

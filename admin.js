@@ -9,12 +9,171 @@ const externalPageScriptLoaded = {}
 const EXTERNAL_PAGE_ASSET_VERSION = '20260304-desktop-wa-print-fix-01'
 const CHAT_MEMBERS_TABLE = 'chat_thread_members'
 const CHAT_MESSAGES_TABLE = 'chat_messages'
+const ADMIN_SIDEBAR_COLLAPSED_KEY = 'admin_sidebar_collapsed'
+const ADMIN_SIDEBAR_ICON_ONLY_BREAKPOINT = 1180
 const pageDataCache = window.__pageDataCache || {}
 window.__pageDataCache = pageDataCache
 let adminTopbarChatBadgeState = {
   userId: '',
   intervalId: null,
   refreshInFlight: false
+}
+
+function getAdminLayoutElement() {
+  return document.querySelector('.layout')
+}
+
+function buildAdminSidebarIconSvg(pageKey = '') {
+  const key = String(pageKey || '').trim()
+  const svgMap = {
+    dashboard: '<path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1V9.5Z" />',
+    'struktur-sekolah': '<path d="M4 19h16M6 19V8l6-4 6 4v11M9 12h6M12 12v7" />',
+    'kalender-akademik': '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3.5v3M16 3.5v3"/>',
+    'tahun-ajaran': '<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+    akademik: '<path d="M4 19.5h16"/><path d="M6.5 16V10M12 16V6M17.5 16v-3.5"/>',
+    ketahfizan: '<path d="M5 5.5h14v13H5z"/><path d="M9 5.5v13M12 9h5M12 13h5"/>',
+    kesantrian: '<circle cx="12" cy="8" r="3.2"/><path d="M5.5 19a6.5 6.5 0 0 1 13 0"/>',
+    karyawan: '<path d="M4 6h16v12H4z"/><path d="M8 10h8M8 14h5"/>',
+    'set-tugas': '<rect x="4" y="3.5" width="16" height="18" rx="2.5"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+    kelas: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+    santri: '<circle cx="12" cy="8" r="3.2"/><path d="M5.5 19a6.5 6.5 0 0 1 13 0"/>',
+    'perizinan-santri': '<path d="M8 3h8M7 6h10a2 2 0 0 1 2 2v10a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V8a2 2 0 0 1 2-2Z"/><path d="M9 12l2 2 4-4"/>',
+    'prestasi-pelanggaran': '<path d="M12 3.5l2.3 4.7 5.2.8-3.8 3.7.9 5.3L12 15.8 7.4 18l.9-5.3L4.5 9l5.2-.8L12 3.5Z"/>',
+    alumni: '<path d="M6 4h9l3 3v13H6V4Z"/><path d="M9 11h6M9 15h4"/>',
+    'kelas-guru-mapel': '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16.5A1.5 1.5 0 0 1 18.5 21H6.5A2.5 2.5 0 0 1 4 18.5v-13Z"/><path d="M7.5 7.5h8M7.5 11h8M7.5 14.5h5.5"/>',
+    jadwal: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3.5v3M16 3.5v3"/>',
+    ekstrakurikuler: '<circle cx="12" cy="8" r="3.2"/><path d="M5.5 19a6.5 6.5 0 0 1 13 0"/><path d="M4 11.5h3M17 11.5h3"/>',
+    ujian: '<path d="M8 5h8l2 2v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7l2-2Z"/><path d="M9 3h6M9 11h6M9 15h4"/>',
+    'jadwal-ujian': '<rect x="4" y="5" width="16" height="16" rx="2.5"/><path d="M8 3.5v3M16 3.5v3M4 10h16M8.5 14l2 2 5-5"/>',
+    'ketahfizan-halaqah': '<path d="M5 5.5h14v13H5z"/><path d="M9 5.5v13"/>',
+    'ketahfizan-hafalan': '<path d="M6 4h12v16H6z"/><path d="M9 8h6M9 12h6M9 16h4"/>',
+    'ketahfizan-jadwal': '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3.5v3M16 3.5v3"/>',
+    'kesantrian-kamar': '<path d="M4 8h16v11H4z"/><path d="M4 12h16M12 8v11"/>',
+    'kehadiran-guru': '<path d="M4 19.5h16"/><path d="M6.5 16V10M12 16V6M17.5 16v-3.5"/>',
+    'perizinan-karyawan': '<path d="M8 3h8M7 6h10a2 2 0 0 1 2 2v10a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V8a2 2 0 0 1 2-2Z"/><path d="M9 12l2 2 4-4"/>'
+  }
+  const paths = svgMap[key] || '<circle cx="12" cy="12" r="4.2"/><path d="M12 4v2M12 18v2M4 12h2M18 12h2"/>'
+  return `<svg class="sidebar-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`
+}
+
+function ensureAdminSidebarIcons() {
+  const buttons = document.querySelectorAll('.sidebar-nav-btn, .sidebar-submenu-btn, .sidebar-submenu-btn-nested, .sidebar-submenu-parent-btn')
+  buttons.forEach(btn => {
+    if (btn.querySelector('.sidebar-btn-content')) return
+    const pageKey = String(btn.getAttribute('data-page') || '').trim()
+    const label = String(btn.textContent || '').trim()
+    btn.textContent = ''
+    const content = document.createElement('span')
+    content.className = 'sidebar-btn-content'
+    content.innerHTML = `${buildAdminSidebarIconSvg(pageKey)}<span class="sidebar-btn-label"></span>`
+    const labelEl = content.querySelector('.sidebar-btn-label')
+    if (labelEl) labelEl.textContent = label
+    btn.appendChild(content)
+  })
+}
+
+function applyAdminSidebarIconsOnlyByViewport() {
+  const layout = getAdminLayoutElement()
+  if (!layout) return
+  layout.classList.toggle('sidebar-icons-only', window.innerWidth <= ADMIN_SIDEBAR_ICON_ONLY_BREAKPOINT)
+}
+
+function updateAdminSidebarToggleState() {
+  const layout = getAdminLayoutElement()
+  const btn = document.getElementById('admin-sidebar-toggle')
+  if (!layout || !btn) return
+  const collapsed = layout.classList.contains('sidebar-collapsed')
+  btn.setAttribute('aria-label', collapsed ? 'Tampilkan sidebar' : 'Sembunyikan sidebar')
+  btn.title = collapsed ? 'Tampilkan Sidebar' : 'Sembunyikan Sidebar'
+}
+
+function setAdminSidebarCollapsed(collapsed) {
+  const layout = getAdminLayoutElement()
+  if (!layout) return
+  layout.classList.toggle('sidebar-collapsed', Boolean(collapsed))
+  try {
+    localStorage.setItem(ADMIN_SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0')
+  } catch (_) {}
+  updateAdminSidebarToggleState()
+}
+
+function toggleAdminSidebar() {
+  const layout = getAdminLayoutElement()
+  if (!layout) return
+  setAdminSidebarCollapsed(!layout.classList.contains('sidebar-collapsed'))
+}
+
+function getAdminNavButtonLabel(btn) {
+  return String(btn?.querySelector('.sidebar-btn-label')?.textContent || btn?.textContent || '').trim()
+}
+
+function getAdminNavSubtabLabels(btn) {
+  const submenu = btn?.nextElementSibling
+  if (!submenu || !(submenu instanceof HTMLElement)) return []
+  if (!(submenu.classList.contains('sidebar-submenu') || submenu.classList.contains('sidebar-submenu-nested'))) return []
+  return Array.from(submenu.querySelectorAll('.sidebar-submenu-btn, .sidebar-submenu-btn-nested'))
+    .map(item => getAdminNavButtonLabel(item))
+    .filter(Boolean)
+}
+
+function removeAdminSidebarTooltip() {
+  document.getElementById('admin-sidebar-tooltip')?.remove()
+}
+
+function showAdminSidebarTooltip(btn) {
+  const layout = getAdminLayoutElement()
+  if (!layout || !layout.classList.contains('sidebar-icons-only')) return
+  removeAdminSidebarTooltip()
+  const title = getAdminNavButtonLabel(btn)
+  if (!title) return
+  const subTabs = getAdminNavSubtabLabels(btn)
+  const tip = document.createElement('div')
+  tip.id = 'admin-sidebar-tooltip'
+  tip.className = 'sidebar-nav-tooltip'
+  tip.innerHTML = `<div class="sidebar-nav-tooltip-title">${title}</div>${subTabs.length ? `<div class="sidebar-nav-tooltip-sublist">${subTabs.map(item => `<div class="sidebar-nav-tooltip-subitem">${item}</div>`).join('')}</div>` : ''}`
+  document.body.appendChild(tip)
+  const rect = btn.getBoundingClientRect()
+  const tipRect = tip.getBoundingClientRect()
+  const margin = 8
+  let left = rect.right + margin
+  let top = rect.top + (rect.height / 2) - (tipRect.height / 2)
+  if (left + tipRect.width > window.innerWidth - 8) left = Math.max(8, rect.left - tipRect.width - margin)
+  top = Math.max(8, Math.min(top, window.innerHeight - tipRect.height - 8))
+  tip.style.left = `${left}px`
+  tip.style.top = `${top}px`
+  window.setTimeout(() => {
+    if (tip.isConnected) tip.remove()
+  }, 1600)
+}
+
+function setupAdminSidebarTooltips() {
+  const buttons = document.querySelectorAll('.sidebar-nav-btn, .sidebar-submenu-btn, .sidebar-submenu-btn-nested, .sidebar-submenu-parent-btn')
+  buttons.forEach(btn => {
+    if (btn.dataset.iconTooltipBound === '1') return
+    btn.dataset.iconTooltipBound = '1'
+    btn.addEventListener('mouseenter', () => showAdminSidebarTooltip(btn))
+    btn.addEventListener('focus', () => showAdminSidebarTooltip(btn))
+    btn.addEventListener('touchstart', () => showAdminSidebarTooltip(btn), { passive: true })
+  })
+  document.addEventListener('click', event => {
+    const target = event.target
+    if (!(target instanceof HTMLElement)) return
+    if (!target.closest('.sidebar-nav-btn, .sidebar-submenu-btn, .sidebar-submenu-btn-nested, .sidebar-submenu-parent-btn, #admin-sidebar-tooltip')) {
+      removeAdminSidebarTooltip()
+    }
+  })
+}
+
+function initAdminSidebarState() {
+  ensureAdminSidebarIcons()
+  applyAdminSidebarIconsOnlyByViewport()
+  try {
+    setAdminSidebarCollapsed(localStorage.getItem(ADMIN_SIDEBAR_COLLAPSED_KEY) === '1')
+  } catch (_) {
+    setAdminSidebarCollapsed(false)
+  }
+  setupAdminSidebarTooltips()
+  window.addEventListener('resize', applyAdminSidebarIconsOnlyByViewport)
 }
 
 window.getCachedData = function getCachedData(key, ttlMs) {
@@ -59,6 +218,7 @@ if (!loginId) {
 
 document.addEventListener('DOMContentLoaded', () => {
   setupCustomPopupSystem()
+  initAdminSidebarState()
   renderAdminTopbarName()
   hydrateAdminLoginDisplayName()
   ensureAdminTopbarChatButton()
