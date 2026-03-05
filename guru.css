@@ -89,6 +89,27 @@ body {
   height: 16px;
   flex: 0 0 16px;
   color: currentColor;
+  transition: transform 0.22s ease, color 0.22s ease, opacity 0.22s ease;
+}
+
+.guru-nav-icon * {
+  transition: fill 0.22s ease, stroke 0.22s ease, stroke-width 0.22s ease, opacity 0.22s ease;
+}
+
+.guru-nav-btn:hover .guru-nav-icon,
+.guru-submenu-btn:hover .guru-nav-icon,
+.guru-nav-btn.active .guru-nav-icon,
+.guru-submenu-btn.active .guru-nav-icon {
+  transform: scale(1.06);
+}
+
+.guru-nav-btn:hover .guru-nav-icon *,
+.guru-submenu-btn:hover .guru-nav-icon *,
+.guru-nav-btn.active .guru-nav-icon *,
+.guru-submenu-btn.active .guru-nav-icon * {
+  fill: currentColor !important;
+  stroke: currentColor !important;
+  stroke-width: 1.55 !important;
 }
 
 .sidebar button:hover {
