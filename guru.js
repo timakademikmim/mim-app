@@ -11679,6 +11679,172 @@ async function exportExamWordFile(jadwal, soal, fileName) {
   setTimeout(() => URL.revokeObjectURL(url), 1200)
 }
 
+function getGuruExamDistribusiMaps(ctx) {
+  const examDataUtils = window.guruExamDataUtils || {}
+  const distribusiMaps = typeof examDataUtils.buildExamDistribusiMaps === 'function'
+    ? examDataUtils.buildExamDistribusiMaps({
+        yearDistribusiList: ctx.yearDistribusiList || [],
+        kelasMap: ctx.kelasMap,
+        mapelMap: ctx.mapelMap,
+        getMapelLabel,
+        normalizeExamLookup,
+        getExamPerangkatanFromClassName,
+        getExamMapelBaseLabel
+      })
+    : buildGuruExamDistribusiMapsLocal(ctx)
+  return {
+    examDataUtils,
+    mapelPairsByClass: distribusiMaps.mapelPairsByClass || new Set(),
+    mapelPairsByPerangkatan: distribusiMaps.mapelPairsByPerangkatan || new Set(),
+    normalizedClassMap: distribusiMaps.normalizedClassMap || new Map()
+  }
+}
+
+function buildGuruExamRowsFromSchedule(jadwalRows, mapData) {
+  const { examDataUtils, mapelPairsByClass, mapelPairsByPerangkatan, normalizedClassMap } = mapData
+  const filtered = typeof examDataUtils.filterExamScheduleRows === 'function'
+    ? examDataUtils.filterExamScheduleRows({
+        jadwalRows: jadwalRows || [],
+        mapelPairsByClass,
+        mapelPairsByPerangkatan,
+        normalizeExamLookup,
+        parseExamMetaFromSchedule,
+        getExamMapelBaseLabel
+      })
+    : filterGuruExamScheduleRowsLocal(jadwalRows || [], mapelPairsByClass, mapelPairsByPerangkatan)
+  return typeof examDataUtils.buildExamRowsFromSchedule === 'function'
+    ? examDataUtils.buildExamRowsFromSchedule({
+        filteredRows: filtered,
+        normalizedClassMap,
+        normalizeExamLookup,
+        parseExamMetaFromSchedule,
+        getExamMapelBaseLabel,
+        getExamRowClassList,
+        getExamRowMapelLabel
+      })
+    : buildGuruExamRowsLocal(filtered, normalizedClassMap)
+}
+
+async function loadGuruExamSoalMap(guruId, jadwalIds) {
+  const soalMap = new Map()
+  ujianGuruState.supportsKelasTarget = true
+  if (!jadwalIds.length) return { soalMap, error: null }
+
+  let soalRes = await sb
+    .from(EXAM_QUESTION_TABLE)
+    .select('id, jadwal_id, kelas_target, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, updated_at')
+    .eq('guru_id', String(guruId))
+    .in('jadwal_id', jadwalIds)
+
+  if (soalRes.error && isExamColumnMissingError(soalRes.error)) {
+    ujianGuruState.supportsKelasTarget = false
+    soalRes = await sb
+      .from(EXAM_QUESTION_TABLE)
+      .select('id, jadwal_id, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, updated_at')
+      .eq('guru_id', String(guruId))
+      .in('jadwal_id', jadwalIds)
+  }
+  if (soalRes.error && !isExamTableMissingError(soalRes.error)) {
+    return { soalMap, error: soalRes.error }
+  }
+  ;(soalRes.data || []).forEach(item => {
+    const kelasTarget = String(item.kelas_target || '').trim()
+    const key = `${String(item.jadwal_id || '')}|${kelasTarget || '-'}`
+    soalMap.set(key, item)
+    if (!ujianGuruState.supportsKelasTarget && !kelasTarget) {
+      soalMap.set(`${String(item.jadwal_id || '')}|*`, item)
+    }
+  })
+  return { soalMap, error: null }
+}
+
+function buildGuruExamFolderMap(examRows) {
+  const folderMap = new Map()
+  ;(examRows || []).forEach(item => {
+    const folderName = String(item?.jadwal?.nama || '-').trim() || '-'
+    if (!folderMap.has(folderName)) folderMap.set(folderName, [])
+    folderMap.get(folderName).push(item)
+  })
+  return folderMap
+}
+
+function renderGuruExamFolderRowsHtml(sortedList, soalMap) {
+  return sortedList.map((item, idx) => {
+    const sid = String(item.jadwal?.id || '')
+    const rowKey = String(item.rowKey || `${sid}|-`)
+    const soal = ujianGuruState.supportsKelasTarget
+      ? (soalMap.get(rowKey) || null)
+      : (soalMap.get(rowKey) || soalMap.get(`${sid}|*`) || null)
+    return `
+      <tr>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${idx + 1}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.kelasNama || '-')}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.mapelLabel || '-')}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.jadwal?.tanggal || '-')}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(toExamStatusLabel(soal?.status))}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0; white-space:nowrap;">
+          <button type="button" class="modal-btn modal-btn-primary" onclick="openGuruUjianEditorPage('${encodeURIComponent(rowKey)}')">${soal ? 'Edit Soal' : 'Buat Soal'}</button>
+          <button type="button" class="modal-btn" ${soal ? '' : 'disabled'} onclick="chooseAndPrintGuruUjianByRow('${encodeURIComponent(rowKey)}')">Cetak</button>
+        </td>
+      </tr>
+    `
+  }).join('')
+}
+
+function renderGuruExamFolderHtml(folderName, list, soalMap) {
+  const sortedList = [...(list || [])].sort((a, b) => {
+    const kelasA = String(a?.kelasNama || '')
+    const kelasB = String(b?.kelasNama || '')
+    const kelasCmp = kelasA.localeCompare(kelasB, undefined, { sensitivity: 'base', numeric: true })
+    if (kelasCmp !== 0) return kelasCmp
+    const mapelCmp = String(a?.mapelLabel || '').localeCompare(String(b?.mapelLabel || ''), undefined, { sensitivity: 'base' })
+    if (mapelCmp !== 0) return mapelCmp
+    return String(a?.jadwal?.tanggal || '').localeCompare(String(b?.jadwal?.tanggal || ''))
+  })
+  const isOpen = ujianGuruState.openFolders.has(folderName)
+  const rowsHtml = renderGuruExamFolderRowsHtml(sortedList, soalMap)
+  return `
+    <div class="placeholder-card" style="margin-bottom:10px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+        <div style="font-weight:700; color:#0f172a;">${escapeHtml(folderName)}</div>
+        <button type="button" class="modal-btn" onclick="toggleGuruExamFolder('${encodeURIComponent(folderName)}')">${isOpen ? 'Tutup' : 'Buka'}</button>
+      </div>
+      ${isOpen ? `
+        <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px; margin-top:8px;">
+          <table style="width:100%; min-width:980px; border-collapse:collapse; font-size:13px;">
+            <thead>
+              <tr style="background:#f8fafc;">
+                <th style="padding:8px; border:1px solid #e2e8f0; width:44px;">No</th>
+                <th style="padding:8px; border:1px solid #e2e8f0;">Kelas</th>
+                <th style="padding:8px; border:1px solid #e2e8f0;">Mapel</th>
+                <th style="padding:8px; border:1px solid #e2e8f0;">Tanggal</th>
+                <th style="padding:8px; border:1px solid #e2e8f0;">Status</th>
+                <th style="padding:8px; border:1px solid #e2e8f0; width:220px;">Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml || '<tr><td colspan="6" style="padding:12px; text-align:center; border:1px solid #e2e8f0;">Tidak ada data.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      ` : ''}
+    </div>
+  `
+}
+
+function renderGuruExamListHtml(examRows, soalMap) {
+  const folderMap = buildGuruExamFolderMap(examRows)
+  const folderNames = [...folderMap.keys()].sort((a, b) => a.localeCompare(b))
+  const folderHtml = folderNames.map(folderName => renderGuruExamFolderHtml(folderName, folderMap.get(folderName) || [], soalMap)).join('')
+  return `
+    <div class="placeholder-card" style="margin-bottom:12px;">
+      <div style="font-weight:700; margin-bottom:6px; color:#0f172a;">Folder Ujian</div>
+      <div style="font-size:12px; color:#64748b;">Klik folder ujian untuk menampilkan daftar mapel dan membuat soal.</div>
+    </div>
+    ${folderHtml || '<div class="placeholder-card">Belum ada jadwal ujian yang sesuai mapel Anda.</div>'}
+  `
+}
+
 async function renderUjianPage() {
   const content = document.getElementById('guru-content')
   if (!content) return
@@ -11698,21 +11864,10 @@ async function renderUjianPage() {
     return
   }
 
-  const examDataUtils = window.guruExamDataUtils || {}
-  const distribusiMaps = typeof examDataUtils.buildExamDistribusiMaps === 'function'
-    ? examDataUtils.buildExamDistribusiMaps({
-        yearDistribusiList: ctx.yearDistribusiList || [],
-        kelasMap: ctx.kelasMap,
-        mapelMap: ctx.mapelMap,
-        getMapelLabel,
-        normalizeExamLookup,
-        getExamPerangkatanFromClassName,
-        getExamMapelBaseLabel
-      })
-    : buildGuruExamDistribusiMapsLocal(ctx)
-  const mapelPairsByClass = distribusiMaps.mapelPairsByClass || new Set()
-  const mapelPairsByPerangkatan = distribusiMaps.mapelPairsByPerangkatan || new Set()
-  const normalizedClassMap = distribusiMaps.normalizedClassMap || new Map()
+  const distribusiData = getGuruExamDistribusiMaps(ctx)
+  const mapelPairsByClass = distribusiData.mapelPairsByClass
+  const mapelPairsByPerangkatan = distribusiData.mapelPairsByPerangkatan
+  const normalizedClassMap = distribusiData.normalizedClassMap
   ujianGuruState.mapelPairs = mapelPairsByClass
   ujianGuruState.classListByMapelPerangkatan = normalizedClassMap
 
@@ -11730,140 +11885,23 @@ async function renderUjianPage() {
     return
   }
 
-  const filtered = typeof examDataUtils.filterExamScheduleRows === 'function'
-    ? examDataUtils.filterExamScheduleRows({
-        jadwalRows: jadwalRes.data || [],
-        mapelPairsByClass,
-        mapelPairsByPerangkatan,
-        normalizeExamLookup,
-        parseExamMetaFromSchedule,
-        getExamMapelBaseLabel
-      })
-    : filterGuruExamScheduleRowsLocal(jadwalRes.data || [], mapelPairsByClass, mapelPairsByPerangkatan)
-  const examRows = typeof examDataUtils.buildExamRowsFromSchedule === 'function'
-    ? examDataUtils.buildExamRowsFromSchedule({
-        filteredRows: filtered,
-        normalizedClassMap,
-        normalizeExamLookup,
-        parseExamMetaFromSchedule,
-        getExamMapelBaseLabel,
-        getExamRowClassList,
-        getExamRowMapelLabel
-      })
-    : buildGuruExamRowsLocal(filtered, normalizedClassMap)
+  const examRows = buildGuruExamRowsFromSchedule(jadwalRes.data || [], {
+    examDataUtils: distribusiData.examDataUtils,
+    mapelPairsByClass,
+    mapelPairsByPerangkatan,
+    normalizedClassMap
+  })
   ujianGuruState.rows = examRows
 
   const jadwalIds = [...new Set(examRows.map(item => String(item.jadwal?.id || '')).filter(Boolean))]
-  const soalMap = new Map()
-  ujianGuruState.supportsKelasTarget = true
-  if (jadwalIds.length) {
-    let soalRes = await sb
-      .from(EXAM_QUESTION_TABLE)
-      .select('id, jadwal_id, kelas_target, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, updated_at')
-      .eq('guru_id', String(ctx.guru.id))
-      .in('jadwal_id', jadwalIds)
-
-    if (soalRes.error && isExamColumnMissingError(soalRes.error)) {
-      ujianGuruState.supportsKelasTarget = false
-      soalRes = await sb
-        .from(EXAM_QUESTION_TABLE)
-        .select('id, jadwal_id, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, updated_at')
-        .eq('guru_id', String(ctx.guru.id))
-        .in('jadwal_id', jadwalIds)
-    }
-    if (soalRes.error && !isExamTableMissingError(soalRes.error)) {
-      console.error(soalRes.error)
-      content.innerHTML = `<div class="placeholder-card">Gagal load soal ujian: ${escapeHtml(soalRes.error.message || 'Unknown error')}</div>`
-      return
-    }
-    ;(soalRes.data || []).forEach(item => {
-      const kelasTarget = String(item.kelas_target || '').trim()
-      const key = `${String(item.jadwal_id || '')}|${kelasTarget || '-'}`
-      soalMap.set(key, item)
-      if (!ujianGuruState.supportsKelasTarget && !kelasTarget) {
-        soalMap.set(`${String(item.jadwal_id || '')}|*`, item)
-      }
-    })
+  const { soalMap, error: soalError } = await loadGuruExamSoalMap(ctx.guru.id, jadwalIds)
+  if (soalError) {
+    console.error(soalError)
+    content.innerHTML = `<div class="placeholder-card">Gagal load soal ujian: ${escapeHtml(soalError.message || 'Unknown error')}</div>`
+    return
   }
   ujianGuruState.soalByJadwal = soalMap
-
-  const folderMap = new Map()
-  examRows.forEach(item => {
-    const folderName = String(item?.jadwal?.nama || '-').trim() || '-'
-    if (!folderMap.has(folderName)) folderMap.set(folderName, [])
-    folderMap.get(folderName).push(item)
-  })
-
-  const folderNames = [...folderMap.keys()].sort((a, b) => a.localeCompare(b))
-  const folderHtml = folderNames.map(folderName => {
-    const list = folderMap.get(folderName) || []
-    const sortedList = [...list].sort((a, b) => {
-      const kelasA = String(a?.kelasNama || '')
-      const kelasB = String(b?.kelasNama || '')
-      const kelasCmp = kelasA.localeCompare(kelasB, undefined, { sensitivity: 'base', numeric: true })
-      if (kelasCmp !== 0) return kelasCmp
-      const mapelCmp = String(a?.mapelLabel || '').localeCompare(String(b?.mapelLabel || ''), undefined, { sensitivity: 'base' })
-      if (mapelCmp !== 0) return mapelCmp
-      return String(a?.jadwal?.tanggal || '').localeCompare(String(b?.jadwal?.tanggal || ''))
-    })
-    const isOpen = ujianGuruState.openFolders.has(folderName)
-    const rowsHtml = sortedList.map((item, idx) => {
-      const sid = String(item.jadwal?.id || '')
-      const rowKey = String(item.rowKey || `${sid}|-`)
-      const soal = ujianGuruState.supportsKelasTarget
-        ? (soalMap.get(rowKey) || null)
-        : (soalMap.get(rowKey) || soalMap.get(`${sid}|*`) || null)
-      return `
-        <tr>
-          <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${idx + 1}</td>
-          <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.kelasNama || '-')}</td>
-          <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.mapelLabel || '-')}</td>
-          <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.jadwal?.tanggal || '-')}</td>
-          <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(toExamStatusLabel(soal?.status))}</td>
-          <td style="padding:8px; border:1px solid #e2e8f0; white-space:nowrap;">
-            <button type="button" class="modal-btn modal-btn-primary" onclick="openGuruUjianEditorPage('${encodeURIComponent(rowKey)}')">${soal ? 'Edit Soal' : 'Buat Soal'}</button>
-            <button type="button" class="modal-btn" ${soal ? '' : 'disabled'} onclick="chooseAndPrintGuruUjianByRow('${encodeURIComponent(rowKey)}')">Cetak</button>
-          </td>
-        </tr>
-      `
-    }).join('')
-
-    return `
-      <div class="placeholder-card" style="margin-bottom:10px;">
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
-          <div style="font-weight:700; color:#0f172a;">${escapeHtml(folderName)}</div>
-          <button type="button" class="modal-btn" onclick="toggleGuruExamFolder('${encodeURIComponent(folderName)}')">${isOpen ? 'Tutup' : 'Buka'}</button>
-        </div>
-        ${isOpen ? `
-          <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px; margin-top:8px;">
-            <table style="width:100%; min-width:980px; border-collapse:collapse; font-size:13px;">
-              <thead>
-                <tr style="background:#f8fafc;">
-                  <th style="padding:8px; border:1px solid #e2e8f0; width:44px;">No</th>
-                  <th style="padding:8px; border:1px solid #e2e8f0;">Kelas</th>
-                  <th style="padding:8px; border:1px solid #e2e8f0;">Mapel</th>
-                  <th style="padding:8px; border:1px solid #e2e8f0;">Tanggal</th>
-                  <th style="padding:8px; border:1px solid #e2e8f0;">Status</th>
-                  <th style="padding:8px; border:1px solid #e2e8f0; width:220px;">Aksi</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${rowsHtml || '<tr><td colspan="6" style="padding:12px; text-align:center; border:1px solid #e2e8f0;">Tidak ada data.</td></tr>'}
-              </tbody>
-            </table>
-          </div>
-        ` : ''}
-      </div>
-    `
-  }).join('')
-
-  content.innerHTML = `
-    <div class="placeholder-card" style="margin-bottom:12px;">
-      <div style="font-weight:700; margin-bottom:6px; color:#0f172a;">Folder Ujian</div>
-      <div style="font-size:12px; color:#64748b;">Klik folder ujian untuk menampilkan daftar mapel dan membuat soal.</div>
-    </div>
-    ${folderHtml || '<div class="placeholder-card">Belum ada jadwal ujian yang sesuai mapel Anda.</div>'}
-  `
+  content.innerHTML = renderGuruExamListHtml(examRows, soalMap)
 }
 
 function renderGuruUjianQuestionRows(forcedSections = null) {
