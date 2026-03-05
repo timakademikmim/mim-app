@@ -2536,24 +2536,23 @@ function renderGuruEkskulIndikatorList() {
   }
 }
 
-function getGuruEkskulStars(value) {
-  const num = Number(value)
-  if (!Number.isFinite(num)) return '-'
-  const score = Math.max(1, Math.min(100, num))
-  const rating = Math.round((score / 20) * 2) / 2
-  const full = Math.floor(rating)
-  const half = rating - full >= 0.5
-  let html = ''
-  for (let i = 0; i < 5; i += 1) {
-    if (i < full) {
-      html += '<span style="color:#f59e0b; font-size:17px; line-height:1;">&#9733;</span>'
-    } else if (i === full && half) {
-      html += '<span style="background:linear-gradient(90deg,#f59e0b 50%,#cbd5e1 50%); -webkit-background-clip:text; background-clip:text; color:transparent; -webkit-text-fill-color:transparent; font-size:17px; line-height:1;">&#9733;</span>'
-    } else {
-      html += '<span style="color:#cbd5e1; font-size:17px; line-height:1;">&#9733;</span>'
-    }
+function getGuruEkskulUtils() {
+  return window.guruEkskulUtils || {}
+}
+
+function getGuruEkskulStars(value, options = {}) {
+  const utils = getGuruEkskulUtils()
+  const emptyAsDash = options?.emptyAsDash !== false
+  if (typeof utils.buildStarsHtml === 'function') {
+    return utils.buildStarsHtml(value, { emptyAsDash })
   }
-  return html
+  return emptyAsDash ? '-' : ''
+}
+
+function getGuruEkskulEmptyStarsHtml() {
+  const utils = getGuruEkskulUtils()
+  if (typeof utils.getEmptyStarsHtml === 'function') return utils.getEmptyStarsHtml()
+  return ''
 }
 
 function renderGuruEkskulProgressSantriSelect() {
@@ -2590,20 +2589,7 @@ function guruEkskulUpdateIndicatorStars(inputEl) {
   if (!starEl) return
   const parsed = Number(String(inputEl.value || '').trim())
   const score = Number.isFinite(parsed) ? Math.max(1, Math.min(100, parsed)) : 0
-  const rating = score > 0 ? Math.round((score / 20) * 2) / 2 : 0
-  const full = Math.floor(rating)
-  const half = rating - full >= 0.5
-  let html = ''
-  for (let i = 0; i < 5; i += 1) {
-    if (i < full) {
-      html += '<span style="color:#f59e0b; font-size:17px; line-height:1;">&#9733;</span>'
-    } else if (i === full && half) {
-      html += '<span style="background:linear-gradient(90deg,#f59e0b 50%,#cbd5e1 50%); -webkit-background-clip:text; background-clip:text; color:transparent; -webkit-text-fill-color:transparent; font-size:17px; line-height:1;">&#9733;</span>'
-    } else {
-      html += '<span style="color:#cbd5e1; font-size:17px; line-height:1;">&#9733;</span>'
-    }
-  }
-  starEl.innerHTML = html
+  starEl.innerHTML = getGuruEkskulStars(score > 0 ? score : null, { emptyAsDash: false })
 }
 
 function openGuruEkskulSantriDetail(santriId) {
@@ -2700,7 +2686,7 @@ function renderGuruEkskulProgressInputRows() {
                 <td style="padding:8px; border:1px solid #e2e8f0;">
                   <div style="display:grid; grid-template-columns:86px 1fr; gap:8px; align-items:center;">
                     <input class="guru-field" type="number" min="1" max="100" step="1" placeholder="1-100" data-guru-ekskul-indikator-nilai="1" oninput="guruEkskulUpdateIndicatorStars(this)">
-                    <div data-guru-ekskul-star-view="1">${Array.from({ length: 5 }).map(() => '<span style="color:#cbd5e1; font-size:17px; line-height:1;">&#9733;</span>').join('')}</div>
+                    <div data-guru-ekskul-star-view="1">${getGuruEkskulEmptyStarsHtml()}</div>
                   </div>
                 </td>
                 <td style="padding:8px; border:1px solid #e2e8f0;">
