@@ -6366,35 +6366,9 @@ async function getLaporanBulananDetailData(santriId, opts = {}) {
         .flatMap(item => [String(item.pj_karyawan_id || '').trim(), String(item.pj_karyawan_id_2 || '').trim()])
         .filter(Boolean)))
 
-      let karyawanRows = []
-      if (pjIds.length) {
-        // Toleran terhadap variasi skema kolom karyawan di deployment lama.
-        const karyawanSelectVariants = [
-          'id, id_karyawan, nama, no_hp, hp, no_telp, nomor_hp, telepon, aktif',
-          'id, id_karyawan, nama, no_hp, hp, aktif',
-          'id, id_karyawan, nama, no_hp, hp',
-          'id, id_karyawan, nama, no_hp',
-          'id, id_karyawan, nama',
-          'id, nama'
-        ]
-        let karyawanLastError = null
-        for (const selectCols of karyawanSelectVariants) {
-          const q = sb
-            .from('karyawan')
-            .select(selectCols)
-          const { data, error } = await q.eq('aktif', true)
-          if (error) {
-            karyawanLastError = error
-            const msg = String(error?.message || '').toLowerCase()
-            if (msg.includes('column')) continue
-            throw error
-          }
-          karyawanRows = data || []
-          karyawanLastError = null
-          break
-        }
-        if (karyawanLastError) throw karyawanLastError
-      }
+      const karyawanRows = pjIds.length
+        ? await loadActiveKaryawanRowsForEkskulReport()
+        : []
 
       const pjMap = new Map()
       const pjByNameMap = new Map()
@@ -6520,48 +6494,22 @@ async function getLaporanBulananDetailData(santriId, opts = {}) {
   const nilaiTargetHafalan = toNullableNumber(monthlyReport?.nilai_target_hafalan)
   const keteranganTargetHafalan = String(monthlyReport?.keterangan_target_hafalan || '').trim()
   const nilaiCapaianHafalanBulanan = toNullableNumber(monthlyReport?.nilai_capaian_hafalan_bulanan)
-  let keteranganCapaianHafalanBulanan = ''
-  try {
-    const capRes = await sb
-      .from(MONTHLY_REPORT_TABLE)
-      .select('keterangan_capaian_hafalan_bulanan')
-      .eq('periode', periode)
-      .eq('guru_id', String(guru.id))
-      .eq('kelas_id', String(santri.kelas_id))
-      .eq('santri_id', sid)
-      .maybeSingle()
-    if (!capRes.error) {
-      keteranganCapaianHafalanBulanan = String(capRes.data?.keterangan_capaian_hafalan_bulanan || '').trim()
-    } else {
-      const msg = String(capRes.error?.message || '').toLowerCase()
-      if (!(msg.includes('column') && msg.includes('keterangan_capaian_hafalan_bulanan'))) {
-        throw capRes.error
-      }
-    }
-  } catch (error) {
-    console.warn('Gagal memuat keterangan capaian hafalan bulanan:', error)
-  }
-  let keteranganJumlahHafalanBulanan = ''
-  try {
-    const jumlahRes = await sb
-      .from(MONTHLY_REPORT_TABLE)
-      .select('keterangan_jumlah_hafalan_bulanan')
-      .eq('periode', periode)
-      .eq('guru_id', String(guru.id))
-      .eq('kelas_id', String(santri.kelas_id))
-      .eq('santri_id', sid)
-      .maybeSingle()
-    if (!jumlahRes.error) {
-      keteranganJumlahHafalanBulanan = String(jumlahRes.data?.keterangan_jumlah_hafalan_bulanan || '').trim()
-    } else {
-      const msg = String(jumlahRes.error?.message || '').toLowerCase()
-      if (!(msg.includes('column') && msg.includes('keterangan_jumlah_hafalan_bulanan'))) {
-        throw jumlahRes.error
-      }
-    }
-  } catch (error) {
-    console.warn('Gagal memuat keterangan jumlah hafalan bulanan:', error)
-  }
+  const keteranganCapaianHafalanBulanan = await loadOptionalMonthlyReportTextField({
+    periode,
+    guruId: guru.id,
+    kelasId: santri.kelas_id,
+    santriId: sid,
+    fieldName: 'keterangan_capaian_hafalan_bulanan',
+    warnLabel: 'keterangan capaian hafalan bulanan'
+  })
+  const keteranganJumlahHafalanBulanan = await loadOptionalMonthlyReportTextField({
+    periode,
+    guruId: guru.id,
+    kelasId: santri.kelas_id,
+    santriId: sid,
+    fieldName: 'keterangan_jumlah_hafalan_bulanan',
+    warnLabel: 'keterangan jumlah hafalan bulanan'
+  })
   const nilaiJumlahHafalanHalaman = toNullableNumber(monthlyReport?.nilai_jumlah_hafalan_halaman)
   const nilaiJumlahHafalanJuz = toNullableNumber(monthlyReport?.nilai_jumlah_hafalan_juz)
   const catatanMuhaffiz = String(monthlyReport?.catatan_muhaffiz || '').trim()
@@ -6835,6 +6783,65 @@ async function quickSendLaporanBulananWA(santriId) {
     return
   }
   window.open(waUrl, '_blank')
+}
+
+async function loadActiveKaryawanRowsForEkskulReport() {
+  // Toleran terhadap variasi skema kolom karyawan di deployment lama.
+  const karyawanSelectVariants = [
+    'id, id_karyawan, nama, no_hp, hp, no_telp, nomor_hp, telepon, aktif',
+    'id, id_karyawan, nama, no_hp, hp, aktif',
+    'id, id_karyawan, nama, no_hp, hp',
+    'id, id_karyawan, nama, no_hp',
+    'id, id_karyawan, nama',
+    'id, nama'
+  ]
+  let karyawanLastError = null
+  for (const selectCols of karyawanSelectVariants) {
+    const { data, error } = await sb
+      .from('karyawan')
+      .select(selectCols)
+      .eq('aktif', true)
+    if (error) {
+      karyawanLastError = error
+      const msg = String(error?.message || '').toLowerCase()
+      if (msg.includes('column')) continue
+      throw error
+    }
+    return data || []
+  }
+  if (karyawanLastError) throw karyawanLastError
+  return []
+}
+
+async function loadOptionalMonthlyReportTextField({
+  periode,
+  guruId,
+  kelasId,
+  santriId,
+  fieldName,
+  warnLabel
+}) {
+  try {
+    const { data, error } = await sb
+      .from(MONTHLY_REPORT_TABLE)
+      .select(fieldName)
+      .eq('periode', periode)
+      .eq('guru_id', String(guruId || ''))
+      .eq('kelas_id', String(kelasId || ''))
+      .eq('santri_id', String(santriId || ''))
+      .maybeSingle()
+    if (!error) {
+      return String(data?.[fieldName] || '').trim()
+    }
+    const msg = String(error?.message || '').toLowerCase()
+    if (msg.includes('column') && msg.includes(String(fieldName || '').toLowerCase())) {
+      return ''
+    }
+    throw error
+  } catch (error) {
+    console.warn(`Gagal memuat ${warnLabel}:`, error)
+    return ''
+  }
 }
 
 function backToLaporanBulananList() {
