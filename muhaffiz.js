@@ -129,6 +129,7 @@ function escapeHtml(value) {
 }
 
 function getKaryawanFotoInitial(nama) {
+  if (typeof window.getProfileInitials === 'function') return window.getProfileInitials(nama)
   const words = String(nama || '').trim().split(/\s+/).filter(Boolean)
   if (!words.length) return 'U'
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase()
@@ -136,6 +137,10 @@ function getKaryawanFotoInitial(nama) {
 }
 
 function renderMuhaffizProfilFotoPreview(fotoUrl, nama) {
+  if (typeof window.renderProfilePhotoPreview === 'function') {
+    window.renderProfilePhotoPreview('muhaffiz-profil-foto-preview', fotoUrl, nama)
+    return
+  }
   const box = document.getElementById('muhaffiz-profil-foto-preview')
   if (!box) return
   const url = String(fotoUrl || '').trim()
@@ -147,6 +152,7 @@ function renderMuhaffizProfilFotoPreview(fotoUrl, nama) {
 }
 
 function getFotoFileExt(fileName = '') {
+  if (typeof window.getProfilePhotoFileExt === 'function') return window.getProfilePhotoFileExt(fileName)
   const raw = String(fileName || '').trim().toLowerCase()
   const parts = raw.split('.')
   const ext = parts.length > 1 ? parts.pop() : ''
@@ -157,6 +163,27 @@ function getFotoFileExt(fileName = '') {
 }
 
 async function uploadMuhaffizProfilePhoto(event) {
+  if (typeof window.uploadProfilePhotoShared === 'function') {
+    try {
+      const result = await window.uploadProfilePhotoShared({
+        event,
+        sb,
+        bucket: KARYAWAN_FOTO_BUCKET,
+        maxSizeBytes: KARYAWAN_FOTO_MAX_SIZE_BYTES,
+        idInputId: 'muhaffiz-profil-id-karyawan',
+        defaultId: 'muhaffiz',
+        fileUrlInputId: 'muhaffiz-profil-foto-url',
+        namaInputId: 'muhaffiz-profil-nama',
+        previewId: 'muhaffiz-profil-foto-preview'
+      })
+      if (result?.ok) return
+      if (result?.reason === 'no_file') return
+    } catch (error) {
+      alert(`Gagal upload foto: ${error?.message || 'Unknown error'}`)
+      if (event?.target) event.target.value = ''
+      return
+    }
+  }
   const file = event?.target?.files?.[0]
   if (!file) return
   try {
