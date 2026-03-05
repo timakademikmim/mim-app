@@ -1225,6 +1225,89 @@ function initGuruSidebarState() {
   window.addEventListener('resize', applyGuruSidebarIconsOnlyByViewport)
 }
 
+function isGuruSidebarIconsOnlyMode() {
+  const layout = getGuruLayoutElement()
+  return Boolean(layout && layout.classList.contains('sidebar-icons-only'))
+}
+
+function getGuruNavButtonLabel(btn) {
+  if (!btn) return ''
+  const contentText = btn.querySelector('.guru-nav-btn-content > span, span')?.textContent || ''
+  return String(contentText || btn.textContent || '').trim()
+}
+
+function getGuruNavSubtabLabels(btn) {
+  if (!btn || !btn.classList.contains('guru-parent-btn')) return []
+  const targetPage = String(btn.getAttribute('data-page') || '').trim()
+  const submenuId = targetPage === 'input' ? 'guru-input-submenu' : targetPage === 'laporan' ? 'guru-laporan-submenu' : ''
+  const submenu = submenuId ? document.getElementById(submenuId) : null
+  if (!submenu) return []
+  return Array.from(submenu.querySelectorAll('.guru-submenu-btn'))
+    .map(child => getGuruNavButtonLabel(child))
+    .filter(Boolean)
+}
+
+function removeGuruNavTooltip() {
+  document.getElementById('guru-nav-tooltip')?.remove()
+}
+
+function showGuruNavTooltip(btn) {
+  if (!isGuruSidebarIconsOnlyMode() || !btn) return
+  removeGuruNavTooltip()
+  const title = getGuruNavButtonLabel(btn)
+  if (!title) return
+  const subTabs = getGuruNavSubtabLabels(btn)
+
+  const tip = document.createElement('div')
+  tip.id = 'guru-nav-tooltip'
+  tip.className = 'guru-nav-tooltip'
+  tip.innerHTML = `
+    <div class="guru-nav-tooltip-title">${escapeHtml(title)}</div>
+    ${subTabs.length ? `<div class="guru-nav-tooltip-sublist">${subTabs.map(item => `<div class="guru-nav-tooltip-subitem">${escapeHtml(item)}</div>`).join('')}</div>` : ''}
+  `
+  document.body.appendChild(tip)
+
+  const rect = btn.getBoundingClientRect()
+  const tipRect = tip.getBoundingClientRect()
+  const margin = 8
+  let left = rect.right + margin
+  let top = rect.top + (rect.height / 2) - (tipRect.height / 2)
+  if (left + tipRect.width > window.innerWidth - 8) {
+    left = Math.max(8, rect.left - tipRect.width - margin)
+  }
+  top = Math.max(8, Math.min(top, window.innerHeight - tipRect.height - 8))
+  tip.style.left = `${left}px`
+  tip.style.top = `${top}px`
+
+  window.setTimeout(() => {
+    if (tip.isConnected) tip.remove()
+  }, 1600)
+}
+
+function setupGuruSidebarIconTooltips() {
+  const buttons = document.querySelectorAll('.guru-nav-btn, .guru-submenu-btn')
+  buttons.forEach(btn => {
+    if (btn.dataset.iconTooltipBound === '1') return
+    btn.dataset.iconTooltipBound = '1'
+    btn.addEventListener('mouseenter', () => {
+      if (isGuruSidebarIconsOnlyMode()) showGuruNavTooltip(btn)
+    })
+    btn.addEventListener('focus', () => {
+      if (isGuruSidebarIconsOnlyMode()) showGuruNavTooltip(btn)
+    })
+    btn.addEventListener('touchstart', () => {
+      if (isGuruSidebarIconsOnlyMode()) showGuruNavTooltip(btn)
+    }, { passive: true })
+  })
+  document.addEventListener('click', event => {
+    const target = event.target
+    if (!(target instanceof HTMLElement)) return
+    if (!target.closest('.guru-nav-btn, .guru-submenu-btn, #guru-nav-tooltip')) {
+      removeGuruNavTooltip()
+    }
+  })
+}
+
 function setNavActive(page) {
   const mainButtons = document.querySelectorAll('.guru-nav-btn')
   const subButtons = document.querySelectorAll('.guru-submenu-btn')
@@ -13154,6 +13237,7 @@ window.saveGuruEkskulMonthlyReport = saveGuruEkskulMonthlyReport
 
 document.addEventListener('DOMContentLoaded', () => {
   initGuruSidebarState()
+  setupGuruSidebarIconTooltips()
   setupCustomPopupSystem()
   loadGuruNotifPrefs()
   ensureTopbarNotification()
