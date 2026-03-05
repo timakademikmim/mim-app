@@ -10552,41 +10552,25 @@ async function ensureExamPrintBackgroundLoaded() {
   return examPrintBackgroundLoadPromise
 }
 
+function getGuruExamPrintUtils() {
+  return window.guruExamPrintUtils || {}
+}
+
 function parseExamInstruksiMeta(value) {
-  const raw = String(value || '')
-  const marker = raw.match(/^\[\[LANG:(AR|ID)\]\]\s*\n?/i)
-  const lang = marker ? String(marker[1] || 'ID').toUpperCase() : 'ID'
-  const text = marker ? raw.slice(marker[0].length) : raw
-  return {
-    lang: lang === 'AR' ? 'AR' : 'ID',
-    text: String(text || '').trim()
-  }
+  const utils = getGuruExamPrintUtils()
+  if (typeof utils.parseExamInstruksiMeta === 'function') return utils.parseExamInstruksiMeta(value)
+  return { lang: 'ID', text: String(value || '').trim() }
 }
 
 function buildExamInstruksiWithMeta(lang, text) {
-  const safeLang = String(lang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
-  const body = String(text || '').trim()
-  if (!body && safeLang === 'ID') return null
-  if (!body) return `[[LANG:${safeLang}]]`
-  return `[[LANG:${safeLang}]]\n${body}`
+  const utils = getGuruExamPrintUtils()
+  if (typeof utils.buildExamInstruksiWithMeta === 'function') return utils.buildExamInstruksiWithMeta(lang, text)
+  return String(text || '').trim()
 }
 
 function getExamPdfStaticText(langCode) {
-  const lang = String(langCode || 'ID').toUpperCase()
-  if (lang === 'AR') {
-    return {
-      title: 'Ø£Ø³Ø¦Ù„Ø© Ø§Ù„Ø§Ù…ØªØ­Ø§Ù†',
-      jenis: 'Ø§Ù„Ù†ÙˆØ¹',
-      namaUjian: 'Ø§Ø³Ù… Ø§Ù„Ø§Ø®ØªØ¨Ø§Ø±',
-      kelasMapel: 'Ø§Ù„ØµÙ',
-      mapel: 'Ø§Ù„Ù…Ø§Ø¯Ø©',
-      tanggalWaktu: 'Ø§Ù„ØªØ§Ø±ÙŠØ®',
-      waktu: 'Ø§Ù„ÙˆÙ‚Øª',
-      guru: 'Ø§Ù„Ù…Ø¹Ù„Ù…',
-      instruksiUmum: 'ØªØ¹Ù„ÙŠÙ…Ø§Øª Ø¹Ø§Ù…Ø©',
-      modelSoal: 'Ù†Ù…ÙˆØ°Ø¬ Ø§Ù„Ø£Ø³Ø¦Ù„Ø©'
-    }
-  }
+  const utils = getGuruExamPrintUtils()
+  if (typeof utils.getExamPdfStaticText === 'function') return utils.getExamPdfStaticText(langCode)
   return {
     title: 'SOAL UJIAN',
     jenis: 'Jenis',
@@ -10601,163 +10585,149 @@ function getExamPdfStaticText(langCode) {
   }
 }
 
-function toArabicIndicDigits(value) {
-  const map = ['Ù ', 'Ù¡', 'Ù¢', 'Ù£', 'Ù¤', 'Ù¥', 'Ù¦', 'Ù§', 'Ù¨', 'Ù©']
-  return String(value == null ? '' : value).replace(/\d/g, d => map[Number(d)] || d)
-}
-
 function formatExamNumber(value, langCode = 'ID') {
-  const lang = String(langCode || 'ID').toUpperCase()
-  return lang === 'AR' ? toArabicIndicDigits(value) : String(value)
+  const utils = getGuruExamPrintUtils()
+  if (typeof utils.formatExamNumber === 'function') return utils.formatExamNumber(value, langCode)
+  return String(value)
 }
 
 function getExamMarkerSeparator(langCode = 'ID') {
+  const utils = getGuruExamPrintUtils()
+  if (typeof utils.getExamMarkerSeparator === 'function') return utils.getExamMarkerSeparator(langCode)
   return '.'
 }
 
 function formatExamMarker(token, langCode = 'ID') {
-  const lang = String(langCode || 'ID').toUpperCase()
+  const utils = getGuruExamPrintUtils()
+  if (typeof utils.formatExamMarker === 'function') return utils.formatExamMarker(token, langCode)
   const body = String(token || '').trim()
-  if (!body) return ''
-  return lang === 'AR' ? `${body}` : `${body}.`
+  return body ? `${body}.` : ''
 }
 
 function getArabicLetterByIndex(index) {
-  const letters = ['Ø£', 'Ø¨', 'Ø¬', 'Ø¯', 'Ù‡Ù€', 'Ùˆ', 'Ø²', 'Ø­', 'Ø·', 'ÙŠ', 'Ùƒ', 'Ù„', 'Ù…', 'Ù†', 'Ø³', 'Ø¹', 'Ù', 'Øµ', 'Ù‚', 'Ø±', 'Ø´', 'Øª', 'Ø«', 'Ø®', 'Ø°', 'Ø¶']
+  const utils = getGuruExamPrintUtils()
+  if (typeof utils.getArabicLetterByIndex === 'function') return utils.getArabicLetterByIndex(index)
+  const letters = ['A', 'B', 'C', 'D']
   return letters[Number(index || 0) % letters.length]
 }
 
 function buildExamPrintSections(questions, fallbackType = 'pilihan-ganda') {
-  const rows = Array.isArray(questions) ? questions : []
-  const sections = []
-  let currentType = ''
-  let currentItems = []
-  rows.forEach((item, idx) => {
-    const qType = normalizeExamQuestionType(item?.type, fallbackType)
-    const numbered = {
-      ...item,
-      no: Number(item?.no || (idx + 1))
-    }
-    if (!currentType) {
-      currentType = qType
-      currentItems.push(numbered)
-      return
-    }
-    if (qType !== currentType) {
-      sections.push({ type: currentType, items: currentItems })
-      currentType = qType
-      currentItems = [numbered]
-      return
-    }
-    currentItems.push(numbered)
-  })
-  if (currentItems.length) sections.push({ type: currentType || 'pilihan-ganda', items: currentItems })
-  return sections
+  const utils = getGuruExamPrintUtils()
+  if (typeof utils.buildExamPrintSections === 'function') return utils.buildExamPrintSections(questions, fallbackType)
+  return [{ type: fallbackType || 'pilihan-ganda', items: Array.isArray(questions) ? questions : [] }]
 }
 
 function getExamPrintTypeTitle(type, index, langCode = 'ID') {
-  const parts = getExamPrintTypeParts(type, index, langCode)
-  return `${parts.marker} ${parts.label}`
+  const utils = getGuruExamPrintUtils()
+  if (typeof utils.getExamPrintTypeTitle === 'function') return utils.getExamPrintTypeTitle(type, index, langCode)
+  return `${String.fromCharCode(65 + (Number(index || 0) % 26))}. ${String(type || 'Pilihan Ganda')}`
 }
 
 function getExamPrintTypeParts(type, index, langCode = 'ID') {
-  const lang = String(langCode || 'ID').toUpperCase()
-  let label = 'Pilihan Ganda'
-  if (lang === 'AR') {
-    if (type === 'esai') label = 'Ù…Ù‚Ø§Ù„'
-    else if (type === 'pasangkan-kata') label = 'ÙˆØµÙ„ Ø§Ù„ÙƒÙ„Ù…Ø§Øª'
-    else if (type === 'isi-titik') label = 'Ø§Ù…Ù„Ø£ Ø§Ù„ÙØ±Ø§Øº'
-    else label = 'Ø§Ø®ØªÙŠØ§Ø± Ù…Ù† Ù…ØªØ¹Ø¯Ø¯'
-  } else {
-    if (type === 'esai') label = 'Esai'
-    else if (type === 'pasangkan-kata') label = 'Pasangkan Kata'
-    else if (type === 'isi-titik') label = 'Isi Titik Kosong'
-  }
-  const code = lang === 'AR' ? getArabicLetterByIndex(index) : String.fromCharCode(65 + (Number(index || 0) % 26))
+  const utils = getGuruExamPrintUtils()
+  if (typeof utils.getExamPrintTypeParts === 'function') return utils.getExamPrintTypeParts(type, index, langCode)
   return {
-    marker: formatExamMarker(code, lang),
-    label
+    marker: `${String.fromCharCode(65 + (Number(index || 0) % 26))}.`,
+    label: String(type || 'Pilihan Ganda')
   }
 }
 
 function getExamPrintTypeInstruction(type, langCode = 'ID') {
-  const lang = String(langCode || 'ID').toUpperCase()
-  if (lang === 'AR') {
-    if (type === 'esai') return 'Ø£Ø¬Ø¨ Ø¹Ù† Ø§Ù„Ø£Ø³Ø¦Ù„Ø© Ø§Ù„ØªØ§Ù„ÙŠØ© Ø¨ÙˆØ¶ÙˆØ­ ÙˆØµØ­Ø©.'
-    if (type === 'pasangkan-kata') return 'ØµÙÙ„ ÙƒÙ„Ù…Ø§Øª Ø§Ù„Ø¹Ù…ÙˆØ¯ (Ø£) Ø¨Ù…Ø§ ÙŠÙ†Ø§Ø³Ø¨Ù‡Ø§ ÙÙŠ Ø§Ù„Ø¹Ù…ÙˆØ¯ (Ø¨).'
-    if (type === 'isi-titik') return 'Ø£ÙƒÙ…Ù„ Ø§Ù„ÙØ±Ø§Øº Ø¨Ø§Ù„ÙƒÙ„Ù…Ø© Ø§Ù„Ù…Ù†Ø§Ø³Ø¨Ø© Ù…Ù† Ø§Ù„ÙƒÙ„Ù…Ø§Øª Ø§Ù„Ù…Ø¹Ø·Ø§Ø©.'
-    return 'Ø§Ø®ØªØ± Ø¥Ø¬Ø§Ø¨Ø© ÙˆØ§Ø­Ø¯Ø© ØµØ­ÙŠØ­Ø©.'
-  }
-  if (type === 'esai') return 'Jawablah soal berikut dengan jelas dan benar.'
-  if (type === 'pasangkan-kata') return 'Pasangkan kata pada baris A dengan pasangan yang tepat pada baris B.'
-  if (type === 'isi-titik') return 'Lengkapi bagian yang kosong dengan penggalan kata yang disediakan.'
+  const utils = getGuruExamPrintUtils()
+  if (typeof utils.getExamPrintTypeInstruction === 'function') return utils.getExamPrintTypeInstruction(type, langCode)
   return 'Pilihlah satu jawaban yang paling tepat.'
 }
 
 function normalizeExamQuestionType(value, fallbackType = '') {
-  const raw = String(value || '').trim().toLowerCase()
-  if (raw === 'esai' || raw === 'essay') return 'esai'
-  if (raw === 'pilihan-ganda' || raw === 'pilihan ganda' || raw === 'pg') return 'pilihan-ganda'
-  if (raw === 'pasangkan-kata' || raw === 'pasangkan kata' || raw === 'matching') return 'pasangkan-kata'
-  if (raw === 'isi-titik' || raw === 'isi titik' || raw === 'fill-blank' || raw === 'fill blank') return 'isi-titik'
-  const fallback = String(fallbackType || '').trim().toLowerCase()
-  if (fallback === 'esai' || fallback === 'essay') return 'esai'
-  if (fallback === 'pasangkan-kata' || fallback === 'pasangkan kata' || fallback === 'matching') return 'pasangkan-kata'
-  if (fallback === 'isi-titik' || fallback === 'isi titik' || fallback === 'fill-blank' || fallback === 'fill blank') return 'isi-titik'
-  return 'pilihan-ganda'
+  const utils = getGuruExamPrintUtils()
+  if (typeof utils.normalizeExamQuestionType === 'function') return utils.normalizeExamQuestionType(value, fallbackType)
+  return String(value || fallbackType || 'pilihan-ganda').trim().toLowerCase() || 'pilihan-ganda'
 }
 
 function deriveExamSectionsFromQuestions(questions, fallbackType = 'pilihan-ganda', totalCount = 0) {
-  const rows = Array.isArray(questions) ? questions : []
-  let maxNo = 0
-  rows.forEach((item, idx) => {
-    const no = Number(item?.no || (idx + 1))
-    if (Number.isFinite(no) && no > maxNo) maxNo = no
+  const utils = getGuruExamPrintUtils()
+  if (typeof utils.deriveExamSectionsFromQuestions === 'function') return utils.deriveExamSectionsFromQuestions(questions, fallbackType, totalCount)
+  const safeCount = Number.isFinite(totalCount) ? Math.max(1, Math.round(totalCount)) : Math.max(1, Array.isArray(questions) ? questions.length : 1)
+  return [{ type: normalizeExamQuestionType('', fallbackType), start: 1, end: safeCount, wordPool: '', blankCount: safeCount }]
+}
+
+function buildGuruExamDistribusiMapsLocal(ctx) {
+  const mapelPairsByClass = new Set(
+    (ctx.yearDistribusiList || []).map(item => {
+      const kelas = ctx.kelasMap.get(String(item.kelas_id || ''))
+      const mapel = ctx.mapelMap.get(String(item.mapel_id || ''))
+      return `${normalizeExamLookup(kelas?.nama_kelas)}|${normalizeExamLookup(getMapelLabel(mapel))}`
+    }).filter(Boolean)
+  )
+  const mapelPairsByPerangkatan = new Set(
+    (ctx.yearDistribusiList || []).map(item => {
+      const kelas = ctx.kelasMap.get(String(item.kelas_id || ''))
+      const mapel = ctx.mapelMap.get(String(item.mapel_id || ''))
+      const perangkatan = getExamPerangkatanFromClassName(kelas?.nama_kelas)
+      const mapelBase = getExamMapelBaseLabel(getMapelLabel(mapel))
+      if (!perangkatan || !mapelBase) return ''
+      return `${normalizeExamLookup(mapelBase)}|${normalizeExamLookup(perangkatan)}`
+    }).filter(Boolean)
+  )
+  const classListByMapelPerangkatan = new Map()
+  ;(ctx.yearDistribusiList || []).forEach(item => {
+    const kelas = ctx.kelasMap.get(String(item.kelas_id || ''))
+    const mapel = ctx.mapelMap.get(String(item.mapel_id || ''))
+    const kelasNama = String(kelas?.nama_kelas || '').trim()
+    const perangkatan = getExamPerangkatanFromClassName(kelasNama)
+    const mapelBase = getExamMapelBaseLabel(getMapelLabel(mapel))
+    if (!kelasNama || !perangkatan || !mapelBase) return
+    const key = `${normalizeExamLookup(mapelBase)}|${normalizeExamLookup(perangkatan)}`
+    if (!classListByMapelPerangkatan.has(key)) classListByMapelPerangkatan.set(key, new Set())
+    classListByMapelPerangkatan.get(key).add(kelasNama)
   })
-  const safeCount = Number.isFinite(totalCount) ? Math.max(1, Math.min(200, Math.round(totalCount))) : Math.max(1, maxNo || 1)
-  const typeMap = new Array(safeCount + 1).fill(normalizeExamQuestionType('', fallbackType))
-  rows.forEach((item, idx) => {
-    const no = Number(item?.no || (idx + 1))
-    if (!Number.isFinite(no) || no <= 0 || no > safeCount) return
-    typeMap[no] = normalizeExamQuestionType(item?.type, fallbackType)
+  const normalizedClassMap = new Map()
+  classListByMapelPerangkatan.forEach((setValue, key) => {
+    normalizedClassMap.set(key, [...setValue].sort((a, b) => a.localeCompare(b)))
   })
-  const sections = []
-  let start = 1
-  let current = typeMap[1]
-  for (let i = 2; i <= safeCount; i += 1) {
-    if (typeMap[i] === current) continue
-    const segmentItems = rows.filter((item, idx) => {
-      const no = Number(item?.no || (idx + 1))
-      return no >= start && no <= (i - 1)
-    })
-    const fragSet = new Set()
-    segmentItems.forEach(item => {
-      const frags = Array.isArray(item?.fragments) ? item.fragments : []
-      frags.forEach(f => {
-        const txt = String(f || '').trim()
-        if (txt) fragSet.add(txt)
+  return { mapelPairsByClass, mapelPairsByPerangkatan, normalizedClassMap }
+}
+
+function filterGuruExamScheduleRowsLocal(jadwalRows, mapelPairsByClass, mapelPairsByPerangkatan) {
+  return (Array.isArray(jadwalRows) ? jadwalRows : []).filter(item => {
+    const keyByClass = `${normalizeExamLookup(item.kelas)}|${normalizeExamLookup(item.mapel)}`
+    if (mapelPairsByClass.has(keyByClass)) return true
+    const meta = parseExamMetaFromSchedule(item)
+    const perangkatan = String(meta?.perangkatan || '').trim() || String(item?.kelas || '').trim()
+    const mapelBase = getExamMapelBaseLabel(String(meta?.mapel_nama || '').trim()) || getExamMapelBaseLabel(item?.mapel)
+    const keyByPerangkatan = `${normalizeExamLookup(mapelBase)}|${normalizeExamLookup(perangkatan)}`
+    return mapelPairsByPerangkatan.has(keyByPerangkatan)
+  })
+}
+
+function buildGuruExamRowsLocal(filteredRows, normalizedClassMap) {
+  const examRows = []
+  ;(Array.isArray(filteredRows) ? filteredRows : []).forEach(item => {
+    const meta = parseExamMetaFromSchedule(item)
+    const perangkatan = String(meta?.perangkatan || '').trim() || String(item?.kelas || '').trim()
+    const mapelBase = getExamMapelBaseLabel(String(meta?.mapel_nama || '').trim()) || getExamMapelBaseLabel(item?.mapel)
+    const distKey = `${normalizeExamLookup(mapelBase)}|${normalizeExamLookup(perangkatan)}`
+    const fallbackClassNames = normalizedClassMap.get(distKey) || []
+    const kelasList = getExamRowClassList(item, fallbackClassNames)
+    if (!kelasList.length) {
+      examRows.push({
+        rowKey: `${String(item.id || '')}|-`,
+        jadwal: item,
+        kelasNama: '-',
+        mapelLabel: getExamRowMapelLabel(item)
+      })
+      return
+    }
+    kelasList.forEach(kelasNama => {
+      examRows.push({
+        rowKey: `${String(item.id || '')}|${kelasNama}`,
+        jadwal: item,
+        kelasNama,
+        mapelLabel: getExamRowMapelLabel(item)
       })
     })
-    sections.push({ type: current, start, end: i - 1, wordPool: [...fragSet].join(', '), blankCount: (i - 1) - start + 1 })
-    start = i
-    current = typeMap[i]
-  }
-  {
-    const segmentItems = rows.filter((item, idx) => {
-      const no = Number(item?.no || (idx + 1))
-      return no >= start && no <= safeCount
-    })
-    const fragSet = new Set()
-    segmentItems.forEach(item => {
-      const frags = Array.isArray(item?.fragments) ? item.fragments : []
-      frags.forEach(f => {
-        const txt = String(f || '').trim()
-        if (txt) fragSet.add(txt)
-      })
-    })
-    sections.push({ type: current, start, end: safeCount, wordPool: [...fragSet].join(', '), blankCount: safeCount - start + 1 })
-  }
-  return sections
+  })
+  return examRows
 }
 
 function parseGuruUjianRangeValue(value, maxCount) {
@@ -11728,39 +11698,21 @@ async function renderUjianPage() {
     return
   }
 
-  const mapelPairsByClass = new Set(
-    (ctx.yearDistribusiList || []).map(item => {
-      const kelas = ctx.kelasMap.get(String(item.kelas_id || ''))
-      const mapel = ctx.mapelMap.get(String(item.mapel_id || ''))
-      return `${normalizeExamLookup(kelas?.nama_kelas)}|${normalizeExamLookup(getMapelLabel(mapel))}`
-    }).filter(Boolean)
-  )
-  const mapelPairsByPerangkatan = new Set(
-    (ctx.yearDistribusiList || []).map(item => {
-      const kelas = ctx.kelasMap.get(String(item.kelas_id || ''))
-      const mapel = ctx.mapelMap.get(String(item.mapel_id || ''))
-      const perangkatan = getExamPerangkatanFromClassName(kelas?.nama_kelas)
-      const mapelBase = getExamMapelBaseLabel(getMapelLabel(mapel))
-      if (!perangkatan || !mapelBase) return ''
-      return `${normalizeExamLookup(mapelBase)}|${normalizeExamLookup(perangkatan)}`
-    }).filter(Boolean)
-  )
-  const classListByMapelPerangkatan = new Map()
-  ;(ctx.yearDistribusiList || []).forEach(item => {
-    const kelas = ctx.kelasMap.get(String(item.kelas_id || ''))
-    const mapel = ctx.mapelMap.get(String(item.mapel_id || ''))
-    const kelasNama = String(kelas?.nama_kelas || '').trim()
-    const perangkatan = getExamPerangkatanFromClassName(kelasNama)
-    const mapelBase = getExamMapelBaseLabel(getMapelLabel(mapel))
-    if (!kelasNama || !perangkatan || !mapelBase) return
-    const key = `${normalizeExamLookup(mapelBase)}|${normalizeExamLookup(perangkatan)}`
-    if (!classListByMapelPerangkatan.has(key)) classListByMapelPerangkatan.set(key, new Set())
-    classListByMapelPerangkatan.get(key).add(kelasNama)
-  })
-  const normalizedClassMap = new Map()
-  classListByMapelPerangkatan.forEach((setValue, key) => {
-    normalizedClassMap.set(key, [...setValue].sort((a, b) => a.localeCompare(b)))
-  })
+  const examDataUtils = window.guruExamDataUtils || {}
+  const distribusiMaps = typeof examDataUtils.buildExamDistribusiMaps === 'function'
+    ? examDataUtils.buildExamDistribusiMaps({
+        yearDistribusiList: ctx.yearDistribusiList || [],
+        kelasMap: ctx.kelasMap,
+        mapelMap: ctx.mapelMap,
+        getMapelLabel,
+        normalizeExamLookup,
+        getExamPerangkatanFromClassName,
+        getExamMapelBaseLabel
+      })
+    : buildGuruExamDistribusiMapsLocal(ctx)
+  const mapelPairsByClass = distribusiMaps.mapelPairsByClass || new Set()
+  const mapelPairsByPerangkatan = distribusiMaps.mapelPairsByPerangkatan || new Set()
+  const normalizedClassMap = distribusiMaps.normalizedClassMap || new Map()
   ujianGuruState.mapelPairs = mapelPairsByClass
   ujianGuruState.classListByMapelPerangkatan = normalizedClassMap
 
@@ -11778,42 +11730,27 @@ async function renderUjianPage() {
     return
   }
 
-  const filtered = (jadwalRes.data || []).filter(item => {
-    const keyByClass = `${normalizeExamLookup(item.kelas)}|${normalizeExamLookup(item.mapel)}`
-    if (mapelPairsByClass.has(keyByClass)) return true
-
-    const meta = parseExamMetaFromSchedule(item)
-    const perangkatan = String(meta?.perangkatan || '').trim() || String(item?.kelas || '').trim()
-    const mapelBase = getExamMapelBaseLabel(String(meta?.mapel_nama || '').trim()) || getExamMapelBaseLabel(item?.mapel)
-    const keyByPerangkatan = `${normalizeExamLookup(mapelBase)}|${normalizeExamLookup(perangkatan)}`
-    return mapelPairsByPerangkatan.has(keyByPerangkatan)
-  })
-  const examRows = []
-  filtered.forEach(item => {
-    const meta = parseExamMetaFromSchedule(item)
-    const perangkatan = String(meta?.perangkatan || '').trim() || String(item?.kelas || '').trim()
-    const mapelBase = getExamMapelBaseLabel(String(meta?.mapel_nama || '').trim()) || getExamMapelBaseLabel(item?.mapel)
-    const distKey = `${normalizeExamLookup(mapelBase)}|${normalizeExamLookup(perangkatan)}`
-    const fallbackClassNames = normalizedClassMap.get(distKey) || []
-    const kelasList = getExamRowClassList(item, fallbackClassNames)
-    if (!kelasList.length) {
-      examRows.push({
-        rowKey: `${String(item.id || '')}|-`,
-        jadwal: item,
-        kelasNama: '-',
-        mapelLabel: getExamRowMapelLabel(item)
+  const filtered = typeof examDataUtils.filterExamScheduleRows === 'function'
+    ? examDataUtils.filterExamScheduleRows({
+        jadwalRows: jadwalRes.data || [],
+        mapelPairsByClass,
+        mapelPairsByPerangkatan,
+        normalizeExamLookup,
+        parseExamMetaFromSchedule,
+        getExamMapelBaseLabel
       })
-      return
-    }
-    kelasList.forEach(kelasNama => {
-      examRows.push({
-        rowKey: `${String(item.id || '')}|${kelasNama}`,
-        jadwal: item,
-        kelasNama,
-        mapelLabel: getExamRowMapelLabel(item)
+    : filterGuruExamScheduleRowsLocal(jadwalRes.data || [], mapelPairsByClass, mapelPairsByPerangkatan)
+  const examRows = typeof examDataUtils.buildExamRowsFromSchedule === 'function'
+    ? examDataUtils.buildExamRowsFromSchedule({
+        filteredRows: filtered,
+        normalizedClassMap,
+        normalizeExamLookup,
+        parseExamMetaFromSchedule,
+        getExamMapelBaseLabel,
+        getExamRowClassList,
+        getExamRowMapelLabel
       })
-    })
-  })
+    : buildGuruExamRowsLocal(filtered, normalizedClassMap)
   ujianGuruState.rows = examRows
 
   const jadwalIds = [...new Set(examRows.map(item => String(item.jadwal?.id || '')).filter(Boolean))]
