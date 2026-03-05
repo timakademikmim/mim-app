@@ -193,7 +193,7 @@ fn main() {
             emit_updater_status(
               &app_handle,
               "no_update",
-              "Aplikasi sudah versi terbaru.",
+              "Siap.",
               Some(100.0),
               Some(&current_version),
               Some(&current_version),

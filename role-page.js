@@ -184,7 +184,7 @@ function initDesktopUpdaterUi() {
         padding: 10px;
         border-top: 1px solid #e2e8f0;
         display: grid;
-        gap: 8px;
+        gap: 6px;
         justify-items: center;
       }
       .desktop-version-btn {
@@ -200,6 +200,7 @@ function initDesktopUpdaterUi() {
         display: inline-flex;
         align-items: center;
         gap: 6px;
+        order: 3;
       }
       .desktop-version-btn:hover {
         color: #94a3b8;
@@ -210,6 +211,7 @@ function initDesktopUpdaterUi() {
         gap: 8px;
         width: 100%;
         justify-content: center;
+        order: 1;
       }
       .desktop-online-indicator {
         display: inline-flex;
@@ -232,8 +234,9 @@ function initDesktopUpdaterUi() {
         font-size: 11px;
         color: #64748b;
         line-height: 1.25;
-        min-height: 28px;
+        min-height: 14px;
         text-align: center;
+        order: 2;
       }
       .desktop-release-overlay {
         position: fixed;
@@ -387,7 +390,7 @@ function initDesktopUpdaterUi() {
         changelogBody.textContent = releaseInfoState.notes || 'Belum ada catatan perubahan pada versi ini.'
       }
       changelogOverlay?.classList.add('open')
-    }, { once: true })
+    })
   }
 
   function setOnlineIndicator() {
@@ -404,7 +407,7 @@ function initDesktopUpdaterUi() {
       const info = await res.json()
       if (info && typeof info === 'object') {
         const latestVersion = String(info.version || '').trim()
-        const notes = String(info.notes || '').trim()
+        const notes = String(info.notes || info.body || info.changelog || info.releaseNotes || '').trim()
         if (latestVersion) releaseInfoState.latestVersion = latestVersion
         if (notes) releaseInfoState.notes = notes
         if (!releaseInfoState.currentVersion && latestVersion) releaseInfoState.currentVersion = latestVersion
