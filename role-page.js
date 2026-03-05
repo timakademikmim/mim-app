@@ -162,12 +162,12 @@ function initDesktopUpdaterUi() {
   const releaseInfoState = {
     currentVersion: String(localStorage.getItem('desktop_app_version') || '').trim(),
     latestVersion: '',
-    notes: ''
+    notes: '',
+    notesByVersion: {}
   }
 
   let sidebarPanel = null
   let versionBtn = null
-  let statusLabel = null
   let onlineDot = null
   let onlineText = null
   let changelogOverlay = null
@@ -200,7 +200,7 @@ function initDesktopUpdaterUi() {
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        order: 3;
+        order: 1;
       }
       .desktop-version-btn:hover {
         color: #94a3b8;
@@ -211,7 +211,7 @@ function initDesktopUpdaterUi() {
         gap: 8px;
         width: 100%;
         justify-content: center;
-        order: 1;
+        order: 2;
       }
       .desktop-online-indicator {
         display: inline-flex;
@@ -229,14 +229,6 @@ function initDesktopUpdaterUi() {
       }
       .desktop-online-indicator.online i {
         background: #22c55e;
-      }
-      .desktop-updater-status {
-        font-size: 11px;
-        color: #64748b;
-        line-height: 1.25;
-        min-height: 14px;
-        text-align: center;
-        order: 2;
       }
       .desktop-release-overlay {
         position: fixed;
@@ -333,14 +325,12 @@ function initDesktopUpdaterUi() {
       sidebarPanel = document.createElement('div')
       sidebarPanel.className = 'desktop-updater-sidebar'
       sidebarPanel.innerHTML = `
-        <button type="button" class="desktop-version-btn">versi - <span aria-hidden="true">›</span></button>
+        <button type="button" class="desktop-version-btn">versi - <span aria-hidden="true">&rsaquo;</span></button>
         <div class="desktop-status-row">
           <span class="desktop-online-indicator"><i></i><span>Offline</span></span>
         </div>
-        <div class="desktop-updater-status">Siap.</div>
       `
       versionBtn = sidebarPanel.querySelector('.desktop-version-btn')
-      statusLabel = sidebarPanel.querySelector('.desktop-updater-status')
       onlineDot = sidebarPanel.querySelector('.desktop-online-indicator')
       onlineText = sidebarPanel.querySelector('.desktop-online-indicator span')
       const sidebar = document.querySelector('.sidebar')
@@ -379,15 +369,18 @@ function initDesktopUpdaterUi() {
       `
       document.body.appendChild(updateLockOverlay)
     }
-    versionBtn?.addEventListener('click', () => {
+    versionBtn?.addEventListener('click', async () => {
       const meta = changelogOverlay?.querySelector('#desktop-release-meta')
       if (meta) {
         const current = releaseInfoState.currentVersion || '-'
         const latest = releaseInfoState.latestVersion || current
         meta.textContent = `Versi saat ini: v${current} | Versi terbaru: v${latest}`
       }
+      const noteVersion = releaseInfoState.currentVersion || releaseInfoState.latestVersion
+      if (noteVersion) await ensureReleaseNotesForVersion(noteVersion)
       if (changelogBody) {
-        changelogBody.textContent = releaseInfoState.notes || 'Belum ada catatan perubahan pada versi ini.'
+        const resolvedNote = noteVersion ? (releaseInfoState.notesByVersion[noteVersion] || '') : ''
+        changelogBody.textContent = resolvedNote || releaseInfoState.notes || 'Catatan rilis belum tersedia.'
       }
       changelogOverlay?.classList.add('open')
     })
@@ -409,11 +402,48 @@ function initDesktopUpdaterUi() {
         const latestVersion = String(info.version || '').trim()
         const notes = String(info.notes || info.body || info.changelog || info.releaseNotes || '').trim()
         if (latestVersion) releaseInfoState.latestVersion = latestVersion
-        if (notes) releaseInfoState.notes = notes
+        if (notes) {
+          releaseInfoState.notes = notes
+          if (latestVersion) releaseInfoState.notesByVersion[latestVersion] = notes
+        }
         if (!releaseInfoState.currentVersion && latestVersion) releaseInfoState.currentVersion = latestVersion
+        if (latestVersion) await ensureReleaseNotesForVersion(latestVersion)
         renderVersionLabel()
       }
     } catch (_error) {}
+  }
+
+  async function fetchReleaseBodyByTag(version) {
+    const cleanVersion = String(version || '').trim().replace(/^v/i, '')
+    if (!cleanVersion) return ''
+    try {
+      const res = await fetch(`https://api.github.com/repos/timakademikmim/mim-app/releases/tags/v${encodeURIComponent(cleanVersion)}`, {
+        cache: 'no-store',
+        headers: { Accept: 'application/vnd.github+json' }
+      })
+      if (!res.ok) return ''
+      const info = await res.json()
+      return String(info?.body || '').trim()
+    } catch (_error) {
+      return ''
+    }
+  }
+
+  async function ensureReleaseNotesForVersion(version) {
+    const cleanVersion = String(version || '').trim().replace(/^v/i, '')
+    if (!cleanVersion) return
+    if (releaseInfoState.notesByVersion[cleanVersion]) return
+    const notes = await fetchReleaseBodyByTag(cleanVersion)
+    if (notes) {
+      releaseInfoState.notesByVersion[cleanVersion] = notes
+      if (releaseInfoState.latestVersion === cleanVersion || !releaseInfoState.notes) {
+        releaseInfoState.notes = notes
+      }
+      return
+    }
+    if (releaseInfoState.latestVersion === cleanVersion && releaseInfoState.notes) {
+      releaseInfoState.notesByVersion[cleanVersion] = releaseInfoState.notes
+    }
   }
 
   function renderVersionLabel() {
@@ -425,18 +455,17 @@ function initDesktopUpdaterUi() {
   function updateDesktopUpdaterUi(detail) {
     ensureUpdaterElements()
     const stage = String(detail?.stage || '').trim().toLowerCase()
-    const message = String(detail?.message || '').trim() || 'Memproses pembaruan...'
-    const progress = Number(detail?.progress)
     const currentVersion = String(detail?.currentVersion || '').trim()
     const latestVersion = String(detail?.latestVersion || '').trim()
     const notes = String(detail?.notes || '').trim()
     if (currentVersion) releaseInfoState.currentVersion = currentVersion
     if (latestVersion) releaseInfoState.latestVersion = latestVersion
-    if (notes) releaseInfoState.notes = notes
+    if (notes) {
+      releaseInfoState.notes = notes
+      if (latestVersion) releaseInfoState.notesByVersion[latestVersion] = notes
+    }
     if (releaseInfoState.currentVersion) localStorage.setItem('desktop_app_version', releaseInfoState.currentVersion)
     renderVersionLabel()
-
-    statusLabel.textContent = message
 
     const isLock = stage === 'downloading' || stage === 'installing' || stage === 'ready_restart'
     updateLockOverlay.classList.toggle('active', isLock)
@@ -446,12 +475,9 @@ function initDesktopUpdaterUi() {
     }
 
     if (stage === 'error') {
-      if (statusLabel) statusLabel.style.color = '#b91c1c'
       updateLockOverlay.classList.remove('active')
       return
     }
-
-    if (statusLabel) statusLabel.style.color = '#64748b'
   }
 
   ensureUpdaterElements()
