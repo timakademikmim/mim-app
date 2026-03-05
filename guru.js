@@ -3,6 +3,7 @@ const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 const sb = supabase.createClient(supabaseUrl, supabaseKey)
 
 const GURU_LAST_PAGE_KEY = 'guru_last_page'
+const GURU_SIDEBAR_COLLAPSED_KEY = 'guru_sidebar_collapsed'
 const GURU_MAPEL_DETAIL_STATE_KEY = 'guru_mapel_detail_state'
 const DEFAULT_GURU_PAGE = 'dashboard'
 const ATTENDANCE_TABLE = 'absensi_santri'
@@ -29,6 +30,7 @@ const CHAT_MEMBERS_TABLE = 'chat_thread_members'
 const CHAT_MESSAGES_TABLE = 'chat_messages'
 const TOPBAR_CHAT_BADGE_TICK_MS = 10000
 const TOPBAR_NOTIF_RANGE_OPTIONS = [1, 3, 7]
+const GURU_SIDEBAR_ICON_ONLY_BREAKPOINT = 1180
 const GURU_LAPORAN_PAGE_SET = new Set(['laporan', 'laporan-absensi', 'laporan-pekanan', 'laporan-bulanan'])
 const MONTHLY_REPORT_SELECT_NEW = 'id, nilai_akhlak, predikat, catatan_wali, muhaffiz, no_hp_muhaffiz, nilai_kehadiran_halaqah, sakit_halaqah, izin_halaqah, nilai_akhlak_halaqah, keterangan_akhlak_halaqah, nilai_ujian_bulanan, keterangan_ujian_bulanan, nilai_target_hafalan, keterangan_target_hafalan, nilai_capaian_hafalan_bulanan, nilai_jumlah_hafalan_halaman, nilai_jumlah_hafalan_juz, catatan_muhaffiz, musyrif, no_hp_musyrif, nilai_kehadiran_liqa_muhasabah, sakit_liqa_muhasabah, izin_liqa_muhasabah, nilai_ibadah, keterangan_ibadah, nilai_kedisiplinan, keterangan_kedisiplinan, nilai_kebersihan, keterangan_kebersihan, nilai_adab, keterangan_adab, prestasi_kesantrian, pelanggaran_kesantrian, catatan_musyrif'
 const MONTHLY_REPORT_SELECT_LEGACY = 'id, nilai_akhlak, predikat, catatan_wali'
@@ -1174,50 +1176,53 @@ function selectTopbarCalendarDate(dateKey) {
   renderTopbarCalendar()
 }
 
-function buildGuruSolidNavIconFrom(sourceSvg) {
-  const solidSvg = sourceSvg.cloneNode(true)
-  solidSvg.classList.remove('guru-nav-icon-outline')
-  solidSvg.classList.add('guru-nav-icon-solid')
-
-  const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
-  bg.setAttribute('x', '1.25')
-  bg.setAttribute('y', '1.25')
-  bg.setAttribute('width', '21.5')
-  bg.setAttribute('height', '21.5')
-  bg.setAttribute('rx', '6')
-  bg.setAttribute('fill', 'currentColor')
-  bg.setAttribute('stroke', 'none')
-  solidSvg.insertBefore(bg, solidSvg.firstChild)
-
-  solidSvg.querySelectorAll('path, line, polyline, polygon, circle, ellipse, rect').forEach(shape => {
-    if (shape === bg) return
-    shape.setAttribute('fill', 'none')
-    shape.setAttribute('stroke', '#ffffff')
-    shape.setAttribute('stroke-width', '1.9')
-    shape.setAttribute('stroke-linecap', shape.getAttribute('stroke-linecap') || 'round')
-    shape.setAttribute('stroke-linejoin', shape.getAttribute('stroke-linejoin') || 'round')
-  })
-
-  return solidSvg
+function getGuruLayoutElement() {
+  return document.querySelector('.layout')
 }
 
-function enhanceGuruSidebarIcons() {
-  const icons = document.querySelectorAll('.guru-nav-btn-content > .guru-nav-icon, .guru-submenu-btn > .guru-nav-icon')
-  icons.forEach(icon => {
-    if (!(icon instanceof SVGElement)) return
-    if (icon.closest('.guru-nav-icon-stack')) return
-    const outlineSvg = icon.cloneNode(true)
-    outlineSvg.classList.add('guru-nav-icon-outline')
-    const solidSvg = buildGuruSolidNavIconFrom(icon)
+function applyGuruSidebarIconsOnlyByViewport() {
+  const layout = getGuruLayoutElement()
+  if (!layout) return
+  const shouldIconsOnly = window.innerWidth <= GURU_SIDEBAR_ICON_ONLY_BREAKPOINT
+  layout.classList.toggle('sidebar-icons-only', shouldIconsOnly)
+}
 
-    const stack = document.createElement('span')
-    stack.className = 'guru-nav-icon-stack'
-    stack.setAttribute('aria-hidden', 'true')
-    stack.appendChild(outlineSvg)
-    stack.appendChild(solidSvg)
+function updateGuruSidebarToggleState() {
+  const layout = getGuruLayoutElement()
+  const btn = document.getElementById('guru-sidebar-toggle')
+  if (!layout || !btn) return
+  const collapsed = layout.classList.contains('sidebar-collapsed')
+  btn.setAttribute('aria-label', collapsed ? 'Tampilkan sidebar' : 'Sembunyikan sidebar')
+  btn.title = collapsed ? 'Tampilkan Sidebar' : 'Sembunyikan Sidebar'
+}
 
-    icon.replaceWith(stack)
-  })
+function setGuruSidebarCollapsed(collapsed) {
+  const layout = getGuruLayoutElement()
+  if (!layout) return
+  const next = Boolean(collapsed)
+  layout.classList.toggle('sidebar-collapsed', next)
+  try {
+    localStorage.setItem(GURU_SIDEBAR_COLLAPSED_KEY, next ? '1' : '0')
+  } catch (_) {}
+  updateGuruSidebarToggleState()
+}
+
+function toggleGuruSidebar() {
+  const layout = getGuruLayoutElement()
+  if (!layout) return
+  const collapsed = layout.classList.contains('sidebar-collapsed')
+  setGuruSidebarCollapsed(!collapsed)
+}
+
+function initGuruSidebarState() {
+  applyGuruSidebarIconsOnlyByViewport()
+  try {
+    const saved = localStorage.getItem(GURU_SIDEBAR_COLLAPSED_KEY)
+    setGuruSidebarCollapsed(saved === '1')
+  } catch (_) {
+    setGuruSidebarCollapsed(false)
+  }
+  window.addEventListener('resize', applyGuruSidebarIconsOnlyByViewport)
 }
 
 function setNavActive(page) {
@@ -13025,6 +13030,7 @@ async function renderGuruChatPage() {
 }
 
 window.loadGuruPage = loadGuruPage
+window.toggleGuruSidebar = toggleGuruSidebar
 window.toggleGuruInputMenu = toggleGuruInputMenu
 window.toggleGuruLaporanMenu = toggleGuruLaporanMenu
 window.loadGuruInputFromSidebar = loadGuruInputFromSidebar
@@ -13147,6 +13153,7 @@ window.onGuruEkskulMonthlyPeriodeChange = onGuruEkskulMonthlyPeriodeChange
 window.saveGuruEkskulMonthlyReport = saveGuruEkskulMonthlyReport
 
 document.addEventListener('DOMContentLoaded', () => {
+  initGuruSidebarState()
   setupCustomPopupSystem()
   loadGuruNotifPrefs()
   ensureTopbarNotification()

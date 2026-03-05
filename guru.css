@@ -84,14 +84,6 @@ body {
   min-width: 0;
 }
 
-.guru-nav-icon-stack {
-  position: relative;
-  width: 18px;
-  height: 18px;
-  flex: 0 0 18px;
-  display: inline-block;
-}
-
 .guru-nav-icon {
   width: 18px;
   height: 18px;
@@ -310,6 +302,35 @@ body {
   border-radius: 10px;
   padding: 12px 16px;
   margin-bottom: 16px;
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.topbar-sidebar-toggle {
+  width: 34px;
+  height: 34px;
+  border: 1px solid #dbe3ee;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #334155;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.topbar-sidebar-toggle:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #0f172a;
 }
 
 .sidebar button,
@@ -1390,4 +1411,55 @@ body {
   .guru-submenu-btn {
     font-size: 12px;
   }
+}
+
+.layout.sidebar-collapsed .sidebar {
+  width: 0;
+  min-width: 0;
+  padding: 0;
+  border-right: none;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.layout.sidebar-collapsed .content {
+  width: 100%;
+}
+
+.layout.sidebar-icons-only .sidebar {
+  width: 72px;
+  min-width: 72px;
+  padding: 12px 8px 20px;
+}
+
+.layout.sidebar-icons-only .sidebar-logo {
+  max-width: 50px;
+  margin-bottom: 14px;
+}
+
+.layout.sidebar-icons-only .guru-nav-btn,
+.layout.sidebar-icons-only .guru-submenu-btn {
+  justify-content: center;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.layout.sidebar-icons-only .guru-nav-btn-content {
+  gap: 0;
+  justify-content: center;
+}
+
+.layout.sidebar-icons-only .guru-nav-btn-content > span,
+.layout.sidebar-icons-only .guru-submenu-btn > span {
+  display: none;
+}
+
+.layout.sidebar-icons-only .guru-submenu {
+  margin-left: 0;
+  border-left: none;
+  padding-left: 0;
+}
+
+.layout.sidebar-icons-only .guru-parent-btn::after {
+  display: none;
 }
