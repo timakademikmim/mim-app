@@ -129,86 +129,44 @@ function escapeHtml(value) {
 }
 
 function getKaryawanFotoInitial(nama) {
-  if (typeof window.getProfileInitials === 'function') return window.getProfileInitials(nama)
-  const words = String(nama || '').trim().split(/\s+/).filter(Boolean)
-  if (!words.length) return 'U'
-  if (words.length === 1) return words[0].slice(0, 2).toUpperCase()
-  return `${words[0][0] || ''}${words[1][0] || ''}`.toUpperCase()
+  return typeof window.getProfileInitials === 'function'
+    ? window.getProfileInitials(nama)
+    : 'U'
 }
 
 function renderMuhaffizProfilFotoPreview(fotoUrl, nama) {
-  if (typeof window.renderProfilePhotoPreview === 'function') {
-    window.renderProfilePhotoPreview('muhaffiz-profil-foto-preview', fotoUrl, nama)
-    return
-  }
-  const box = document.getElementById('muhaffiz-profil-foto-preview')
-  if (!box) return
-  const url = String(fotoUrl || '').trim()
-  if (url) {
-    box.innerHTML = `<img src="${escapeHtml(url)}" alt="Foto Profil" style="width:64px; height:64px; border-radius:999px; object-fit:cover; border:1px solid #cbd5e1;">`
-    return
-  }
-  box.innerHTML = `<span style="width:64px; height:64px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; background:#e2e8f0; color:#0f172a; font-weight:700; border:1px solid #cbd5e1;">${escapeHtml(getKaryawanFotoInitial(nama))}</span>`
+  if (typeof window.renderProfilePhotoPreview !== 'function') return
+  window.renderProfilePhotoPreview('muhaffiz-profil-foto-preview', fotoUrl, nama)
 }
 
 function getFotoFileExt(fileName = '') {
-  if (typeof window.getProfilePhotoFileExt === 'function') return window.getProfilePhotoFileExt(fileName)
-  const raw = String(fileName || '').trim().toLowerCase()
-  const parts = raw.split('.')
-  const ext = parts.length > 1 ? parts.pop() : ''
-  if (!ext) return 'jpg'
-  if (ext === 'jpeg') return 'jpg'
-  if (ext === 'png' || ext === 'jpg' || ext === 'webp') return ext
-  return 'jpg'
+  return typeof window.getProfilePhotoFileExt === 'function'
+    ? window.getProfilePhotoFileExt(fileName)
+    : 'jpg'
 }
 
 async function uploadMuhaffizProfilePhoto(event) {
-  if (typeof window.uploadProfilePhotoShared === 'function') {
-    try {
-      const result = await window.uploadProfilePhotoShared({
-        event,
-        sb,
-        bucket: KARYAWAN_FOTO_BUCKET,
-        maxSizeBytes: KARYAWAN_FOTO_MAX_SIZE_BYTES,
-        idInputId: 'muhaffiz-profil-id-karyawan',
-        defaultId: 'muhaffiz',
-        fileUrlInputId: 'muhaffiz-profil-foto-url',
-        namaInputId: 'muhaffiz-profil-nama',
-        previewId: 'muhaffiz-profil-foto-preview'
-      })
-      if (result?.ok) return
-      if (result?.reason === 'no_file') return
-    } catch (error) {
-      alert(`Gagal upload foto: ${error?.message || 'Unknown error'}`)
-      if (event?.target) event.target.value = ''
-      return
-    }
+  if (typeof window.uploadProfilePhotoShared !== 'function') {
+    alert('Modul upload foto belum termuat. Refresh halaman lalu coba lagi.')
+    if (event?.target) event.target.value = ''
+    return
   }
-  const file = event?.target?.files?.[0]
-  if (!file) return
   try {
-    if (!String(file.type || '').toLowerCase().startsWith('image/')) {
-      throw new Error('File harus berupa gambar (JPG, PNG, WEBP).')
-    }
-    if (Number(file.size || 0) > KARYAWAN_FOTO_MAX_SIZE_BYTES) {
-      throw new Error('Ukuran gambar maksimal 300 KB.')
-    }
-    const idKaryawan = String(document.getElementById('muhaffiz-profil-id-karyawan')?.value || 'muhaffiz').trim().replaceAll(' ', '_')
-    const ext = getFotoFileExt(file.name)
-    const filePath = `${idKaryawan}_${Date.now()}.${ext}`
-    const uploadRes = await sb.storage.from(KARYAWAN_FOTO_BUCKET).upload(filePath, file, { upsert: true })
-    if (uploadRes.error) throw uploadRes.error
-    const pub = sb.storage.from(KARYAWAN_FOTO_BUCKET).getPublicUrl(filePath)
-    const fotoUrl = String(pub?.data?.publicUrl || '').trim()
-    if (!fotoUrl) throw new Error('URL foto tidak valid.')
-    const input = document.getElementById('muhaffiz-profil-foto-url')
-    if (input) input.value = fotoUrl
-    const nama = String(document.getElementById('muhaffiz-profil-nama')?.value || '').trim()
-    renderMuhaffizProfilFotoPreview(fotoUrl, nama)
+    const result = await window.uploadProfilePhotoShared({
+      event,
+      sb,
+      bucket: KARYAWAN_FOTO_BUCKET,
+      maxSizeBytes: KARYAWAN_FOTO_MAX_SIZE_BYTES,
+      idInputId: 'muhaffiz-profil-id-karyawan',
+      defaultId: 'muhaffiz',
+      fileUrlInputId: 'muhaffiz-profil-foto-url',
+      namaInputId: 'muhaffiz-profil-nama',
+      previewId: 'muhaffiz-profil-foto-preview'
+    })
+    if (result?.ok || result?.reason === 'no_file') return
+    throw new Error('Upload foto gagal.')
   } catch (error) {
     alert(`Gagal upload foto: ${error?.message || 'Unknown error'}`)
-  } finally {
-    if (event?.target) event.target.value = ''
   }
 }
 
