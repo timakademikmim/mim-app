@@ -28,4 +28,10 @@ if (Test-Path $pagesSrc) {
   Copy-Item -Path $pagesSrc -Destination $pagesDst -Recurse -Force
 }
 
+$sharedSrc = Join-Path $root "shared"
+$sharedDst = Join-Path $outDir "shared"
+if (Test-Path $sharedSrc) {
+  Copy-Item -Path $sharedSrc -Destination $sharedDst -Recurse -Force
+}
+
 Write-Host "Desktop assets built at: $outDir"
