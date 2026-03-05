@@ -412,7 +412,6 @@ function setActiveSidebarTab(page) {
     page === 'jadwal' ||
     page === 'ujian' ||
     page === 'jadwal-ujian' ||
-    page === 'kalender-akademik' ||
     page === 'santri' ||
     page === 'prestasi-pelanggaran' ||
     page === 'perizinan-santri' ||
