@@ -2747,6 +2747,10 @@ async function executeGuruEkskulInsert({ table, rows, errorPrefix, onSuccess }) 
   })
 }
 
+async function refreshGuruEkskulPage() {
+  await renderGuruEkskulPage(true)
+}
+
 async function addGuruEkskulMember() {
   const eid = String(guruEkskulState.selectedEkskulId || '')
   const sid = String(document.getElementById('guru-ekskul-santri')?.value || '').trim()
@@ -2758,9 +2762,7 @@ async function addGuruEkskulMember() {
     table: EKSKUL_MEMBER_TABLE,
     rows: [{ ekskul_id: eid, santri_id: sid }],
     errorPrefix: 'Gagal tambah anggota',
-    onSuccess: async () => {
-      await renderGuruEkskulPage(true)
-    }
+    onSuccess: refreshGuruEkskulPage
   })
 }
 
@@ -2780,7 +2782,7 @@ async function addGuruEkskulIndikator() {
     onSuccess: async () => {
       document.getElementById('guru-ekskul-indikator-nama').value = ''
       document.getElementById('guru-ekskul-indikator-deskripsi').value = ''
-      await renderGuruEkskulPage(true)
+      await refreshGuruEkskulPage()
     }
   })
 }
@@ -2813,9 +2815,7 @@ async function saveGuruEkskulProgressBatch() {
   await executeGuruEkskulMutation({
     operation: () => sb.from(EKSKUL_PROGRES_TABLE).insert(payload),
     errorPrefix: 'Gagal menyimpan progres',
-    onSuccess: async () => {
-      await renderGuruEkskulPage(true)
-    }
+    onSuccess: refreshGuruEkskulPage
   })
 }
 
@@ -2857,7 +2857,7 @@ function buildGuruEkskulProgressPayload({ rowEls, ekskulId, santriId, tanggal, u
     const catatan = String(rowEl.querySelector('[data-guru-ekskul-indikator-catatan="1"]')?.value || '').trim()
     if (!catatan && !Number.isFinite(nilai)) return
     payload.push({
-      ekskul_id: String(exskulId || ''),
+      ekskul_id: String(ekskulId || ''),
       santri_id: String(santriId || ''),
       indikator_id: indikatorId,
       tanggal: String(tanggal || ''),
