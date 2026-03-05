@@ -188,9 +188,10 @@ function removeMuhaffizSidebarTooltip() {
   document.getElementById('muhaffiz-nav-tooltip')?.remove()
 }
 
-function showMuhaffizSidebarTooltip(btn) {
+function showMuhaffizSidebarTooltip(btn, options = {}) {
   if (!isMuhaffizSidebarIconsOnlyMode()) return
   removeMuhaffizSidebarTooltip()
+  const { persistent = false } = options
   const title = getMuhaffizNavButtonLabel(btn)
   if (!title) return
   const subTabs = getMuhaffizNavSubtabLabels(btn)
@@ -208,9 +209,11 @@ function showMuhaffizSidebarTooltip(btn) {
   top = Math.max(8, Math.min(top, window.innerHeight - tipRect.height - 8))
   tip.style.left = `${left}px`
   tip.style.top = `${top}px`
-  window.setTimeout(() => {
-    if (tip.isConnected) tip.remove()
-  }, 1600)
+  if (!persistent) {
+    window.setTimeout(() => {
+      if (tip.isConnected) tip.remove()
+    }, 1600)
+  }
 }
 
 function setupMuhaffizSidebarTooltips() {
@@ -220,7 +223,7 @@ function setupMuhaffizSidebarTooltips() {
     btn.dataset.iconTooltipBound = '1'
     btn.addEventListener('mouseenter', () => showMuhaffizSidebarTooltip(btn))
     btn.addEventListener('focus', () => showMuhaffizSidebarTooltip(btn))
-    btn.addEventListener('touchstart', () => showMuhaffizSidebarTooltip(btn), { passive: true })
+    btn.addEventListener('touchstart', () => showMuhaffizSidebarTooltip(btn, { persistent: true }), { passive: true })
   })
   document.addEventListener('click', event => {
     const target = event.target

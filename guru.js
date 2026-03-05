@@ -1251,9 +1251,10 @@ function removeGuruNavTooltip() {
   document.getElementById('guru-nav-tooltip')?.remove()
 }
 
-function showGuruNavTooltip(btn) {
+function showGuruNavTooltip(btn, options = {}) {
   if (!isGuruSidebarIconsOnlyMode() || !btn) return
   removeGuruNavTooltip()
+  const { persistent = false } = options
   const title = getGuruNavButtonLabel(btn)
   if (!title) return
   const subTabs = getGuruNavSubtabLabels(btn)
@@ -1279,9 +1280,11 @@ function showGuruNavTooltip(btn) {
   tip.style.left = `${left}px`
   tip.style.top = `${top}px`
 
-  window.setTimeout(() => {
-    if (tip.isConnected) tip.remove()
-  }, 1600)
+  if (!persistent) {
+    window.setTimeout(() => {
+      if (tip.isConnected) tip.remove()
+    }, 1600)
+  }
 }
 
 function setupGuruSidebarIconTooltips() {
@@ -1296,7 +1299,7 @@ function setupGuruSidebarIconTooltips() {
       if (isGuruSidebarIconsOnlyMode()) showGuruNavTooltip(btn)
     })
     btn.addEventListener('touchstart', () => {
-      if (isGuruSidebarIconsOnlyMode()) showGuruNavTooltip(btn)
+      if (isGuruSidebarIconsOnlyMode()) showGuruNavTooltip(btn, { persistent: true })
     }, { passive: true })
   })
   document.addEventListener('click', event => {

@@ -196,9 +196,10 @@ function removeMusyrifSidebarTooltip() {
   document.getElementById('musyrif-nav-tooltip')?.remove()
 }
 
-function showMusyrifSidebarTooltip(btn) {
+function showMusyrifSidebarTooltip(btn, options = {}) {
   if (!isMusyrifSidebarIconsOnlyMode()) return
   removeMusyrifSidebarTooltip()
+  const { persistent = false } = options
   const title = getMusyrifNavButtonLabel(btn)
   if (!title) return
   const subTabs = getMusyrifNavSubtabLabels(btn)
@@ -216,9 +217,11 @@ function showMusyrifSidebarTooltip(btn) {
   top = Math.max(8, Math.min(top, window.innerHeight - tipRect.height - 8))
   tip.style.left = `${left}px`
   tip.style.top = `${top}px`
-  window.setTimeout(() => {
-    if (tip.isConnected) tip.remove()
-  }, 1600)
+  if (!persistent) {
+    window.setTimeout(() => {
+      if (tip.isConnected) tip.remove()
+    }, 1600)
+  }
 }
 
 function setupMusyrifSidebarTooltips() {
@@ -228,7 +231,7 @@ function setupMusyrifSidebarTooltips() {
     btn.dataset.iconTooltipBound = '1'
     btn.addEventListener('mouseenter', () => showMusyrifSidebarTooltip(btn))
     btn.addEventListener('focus', () => showMusyrifSidebarTooltip(btn))
-    btn.addEventListener('touchstart', () => showMusyrifSidebarTooltip(btn), { passive: true })
+    btn.addEventListener('touchstart', () => showMusyrifSidebarTooltip(btn, { persistent: true }), { passive: true })
   })
   document.addEventListener('click', event => {
     const target = event.target

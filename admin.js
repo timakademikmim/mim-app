@@ -78,6 +78,11 @@ function applyAdminSidebarIconsOnlyByViewport() {
   layout.classList.toggle('sidebar-icons-only', window.innerWidth <= ADMIN_SIDEBAR_ICON_ONLY_BREAKPOINT)
 }
 
+function isAdminSidebarIconsOnlyMode() {
+  const layout = getAdminLayoutElement()
+  return Boolean(layout && layout.classList.contains('sidebar-icons-only'))
+}
+
 function updateAdminSidebarToggleState() {
   const layout = getAdminLayoutElement()
   const btn = document.getElementById('admin-sidebar-toggle')
@@ -107,30 +112,53 @@ function getAdminNavButtonLabel(btn) {
   return String(btn?.querySelector('.sidebar-btn-label')?.textContent || btn?.textContent || '').trim()
 }
 
-function getAdminNavSubtabLabels(btn) {
+function getAdminNavSubtabButtons(btn) {
   const submenu = btn?.nextElementSibling
   if (!submenu || !(submenu instanceof HTMLElement)) return []
   if (!(submenu.classList.contains('sidebar-submenu') || submenu.classList.contains('sidebar-submenu-nested'))) return []
   return Array.from(submenu.querySelectorAll('.sidebar-submenu-btn, .sidebar-submenu-btn-nested'))
-    .map(item => getAdminNavButtonLabel(item))
-    .filter(Boolean)
 }
 
 function removeAdminSidebarTooltip() {
   document.getElementById('admin-sidebar-tooltip')?.remove()
 }
 
-function showAdminSidebarTooltip(btn) {
-  const layout = getAdminLayoutElement()
-  if (!layout || !layout.classList.contains('sidebar-icons-only')) return
+function showAdminSidebarTooltip(btn, options = {}) {
+  if (!isAdminSidebarIconsOnlyMode()) return
   removeAdminSidebarTooltip()
   const title = getAdminNavButtonLabel(btn)
   if (!title) return
-  const subTabs = getAdminNavSubtabLabels(btn)
+  const { persistent = false, interactive = false } = options
+  const subTabButtons = getAdminNavSubtabButtons(btn)
   const tip = document.createElement('div')
   tip.id = 'admin-sidebar-tooltip'
   tip.className = 'sidebar-nav-tooltip'
-  tip.innerHTML = `<div class="sidebar-nav-tooltip-title">${title}</div>${subTabs.length ? `<div class="sidebar-nav-tooltip-sublist">${subTabs.map(item => `<div class="sidebar-nav-tooltip-subitem">${item}</div>`).join('')}</div>` : ''}`
+  tip.innerHTML = `<div class="sidebar-nav-tooltip-title">${escapeHtml(title)}</div>`
+  if (subTabButtons.length) {
+    const sublist = document.createElement('div')
+    sublist.className = 'sidebar-nav-tooltip-sublist'
+    subTabButtons.forEach(subBtn => {
+      const label = getAdminNavButtonLabel(subBtn)
+      if (!label) return
+      if (interactive) {
+        const actionBtn = document.createElement('button')
+        actionBtn.type = 'button'
+        actionBtn.className = 'sidebar-nav-tooltip-subbtn'
+        actionBtn.textContent = label
+        actionBtn.addEventListener('click', () => {
+          subBtn.click()
+          removeAdminSidebarTooltip()
+        })
+        sublist.appendChild(actionBtn)
+      } else {
+        const row = document.createElement('div')
+        row.className = 'sidebar-nav-tooltip-subitem'
+        row.textContent = label
+        sublist.appendChild(row)
+      }
+    })
+    tip.appendChild(sublist)
+  }
   document.body.appendChild(tip)
   const rect = btn.getBoundingClientRect()
   const tipRect = tip.getBoundingClientRect()
@@ -141,9 +169,11 @@ function showAdminSidebarTooltip(btn) {
   top = Math.max(8, Math.min(top, window.innerHeight - tipRect.height - 8))
   tip.style.left = `${left}px`
   tip.style.top = `${top}px`
-  window.setTimeout(() => {
-    if (tip.isConnected) tip.remove()
-  }, 1600)
+  if (!persistent) {
+    window.setTimeout(() => {
+      if (tip.isConnected) tip.remove()
+    }, 1600)
+  }
 }
 
 function setupAdminSidebarTooltips() {
@@ -153,7 +183,7 @@ function setupAdminSidebarTooltips() {
     btn.dataset.iconTooltipBound = '1'
     btn.addEventListener('mouseenter', () => showAdminSidebarTooltip(btn))
     btn.addEventListener('focus', () => showAdminSidebarTooltip(btn))
-    btn.addEventListener('touchstart', () => showAdminSidebarTooltip(btn), { passive: true })
+    btn.addEventListener('touchstart', () => showAdminSidebarTooltip(btn, { persistent: true, interactive: true }), { passive: true })
   })
   document.addEventListener('click', event => {
     const target = event.target
@@ -1136,6 +1166,11 @@ function animateSidebarSubmenu(submenu, expand) {
 }
 
 function toggleAkademikSidebarMenu() {
+  const parentBtn = document.querySelector('.sidebar-parent-btn[data-page="akademik"]')
+  if (isAdminSidebarIconsOnlyMode()) {
+    if (parentBtn) showAdminSidebarTooltip(parentBtn, { persistent: true, interactive: true })
+    return
+  }
   const submenu = document.getElementById('sidebar-akademik-submenu')
   if (!submenu) return
   const willExpand = !submenu.classList.contains('open')
@@ -1148,6 +1183,11 @@ function toggleAkademikSidebarMenu() {
 }
 
 function toggleKaryawanSidebarMenu() {
+  const parentBtn = document.querySelector('.sidebar-parent-btn[data-page="karyawan"]')
+  if (isAdminSidebarIconsOnlyMode()) {
+    if (parentBtn) showAdminSidebarTooltip(parentBtn, { persistent: true, interactive: true })
+    return
+  }
   const submenu = document.getElementById('sidebar-karyawan-submenu')
   if (!submenu) return
   const willExpand = !submenu.classList.contains('open')
@@ -1160,6 +1200,11 @@ function toggleKaryawanSidebarMenu() {
 }
 
 function toggleKetahfizanSidebarMenu() {
+  const parentBtn = document.querySelector('.sidebar-parent-btn[data-page="ketahfizan"]')
+  if (isAdminSidebarIconsOnlyMode()) {
+    if (parentBtn) showAdminSidebarTooltip(parentBtn, { persistent: true, interactive: true })
+    return
+  }
   const submenu = document.getElementById('sidebar-ketahfizan-submenu')
   if (!submenu) return
   const willExpand = !submenu.classList.contains('open')
@@ -1172,6 +1217,11 @@ function toggleKetahfizanSidebarMenu() {
 }
 
 function toggleKesantrianSidebarMenu() {
+  const parentBtn = document.querySelector('.sidebar-parent-btn[data-page="kesantrian"]')
+  if (isAdminSidebarIconsOnlyMode()) {
+    if (parentBtn) showAdminSidebarTooltip(parentBtn, { persistent: true, interactive: true })
+    return
+  }
   const submenu = document.getElementById('sidebar-kesantrian-submenu')
   if (!submenu) return
   const willExpand = !submenu.classList.contains('open')
