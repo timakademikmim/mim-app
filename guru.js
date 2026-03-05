@@ -6485,48 +6485,22 @@ async function getLaporanBulananDetailData(santriId, opts = {}) {
   const nilaiTargetHafalan = toNullableNumber(monthlyReport?.nilai_target_hafalan)
   const keteranganTargetHafalan = String(monthlyReport?.keterangan_target_hafalan || '').trim()
   const nilaiCapaianHafalanBulanan = toNullableNumber(monthlyReport?.nilai_capaian_hafalan_bulanan)
-  let keteranganCapaianHafalanBulanan = ''
-  try {
-    const capRes = await sb
-      .from(MONTHLY_REPORT_TABLE)
-      .select('keterangan_capaian_hafalan_bulanan')
-      .eq('periode', periode)
-      .eq('guru_id', String(guru.id))
-      .eq('kelas_id', String(santri.kelas_id))
-      .eq('santri_id', sid)
-      .maybeSingle()
-    if (!capRes.error) {
-      keteranganCapaianHafalanBulanan = String(capRes.data?.keterangan_capaian_hafalan_bulanan || '').trim()
-    } else {
-      const msg = String(capRes.error?.message || '').toLowerCase()
-      if (!(msg.includes('column') && msg.includes('keterangan_capaian_hafalan_bulanan'))) {
-        throw capRes.error
-      }
-    }
-  } catch (error) {
-    console.warn('Gagal memuat keterangan capaian hafalan bulanan:', error)
-  }
-  let keteranganJumlahHafalanBulanan = ''
-  try {
-    const jumlahRes = await sb
-      .from(MONTHLY_REPORT_TABLE)
-      .select('keterangan_jumlah_hafalan_bulanan')
-      .eq('periode', periode)
-      .eq('guru_id', String(guru.id))
-      .eq('kelas_id', String(santri.kelas_id))
-      .eq('santri_id', sid)
-      .maybeSingle()
-    if (!jumlahRes.error) {
-      keteranganJumlahHafalanBulanan = String(jumlahRes.data?.keterangan_jumlah_hafalan_bulanan || '').trim()
-    } else {
-      const msg = String(jumlahRes.error?.message || '').toLowerCase()
-      if (!(msg.includes('column') && msg.includes('keterangan_jumlah_hafalan_bulanan'))) {
-        throw jumlahRes.error
-      }
-    }
-  } catch (error) {
-    console.warn('Gagal memuat keterangan jumlah hafalan bulanan:', error)
-  }
+  const keteranganCapaianHafalanBulanan = await loadOptionalMonthlyReportTextField({
+    periode,
+    guruId: guru.id,
+    kelasId: santri.kelas_id,
+    santriId: sid,
+    fieldName: 'keterangan_capaian_hafalan_bulanan',
+    warnLabel: 'keterangan capaian hafalan bulanan'
+  })
+  const keteranganJumlahHafalanBulanan = await loadOptionalMonthlyReportTextField({
+    periode,
+    guruId: guru.id,
+    kelasId: santri.kelas_id,
+    santriId: sid,
+    fieldName: 'keterangan_jumlah_hafalan_bulanan',
+    warnLabel: 'keterangan jumlah hafalan bulanan'
+  })
   const nilaiJumlahHafalanHalaman = toNullableNumber(monthlyReport?.nilai_jumlah_hafalan_halaman)
   const nilaiJumlahHafalanJuz = toNullableNumber(monthlyReport?.nilai_jumlah_hafalan_juz)
   const catatanMuhaffiz = String(monthlyReport?.catatan_muhaffiz || '').trim()
