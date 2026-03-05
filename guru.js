@@ -28,6 +28,7 @@ const KARYAWAN_FOTO_MAX_SIZE_BYTES = 300 * 1024
 const CHAT_MEMBERS_TABLE = 'chat_thread_members'
 const CHAT_MESSAGES_TABLE = 'chat_messages'
 const TOPBAR_CHAT_BADGE_TICK_MS = 10000
+const TOPBAR_NOTIF_RANGE_OPTIONS = [1, 3, 7]
 const MONTHLY_REPORT_SELECT_NEW = 'id, nilai_akhlak, predikat, catatan_wali, muhaffiz, no_hp_muhaffiz, nilai_kehadiran_halaqah, sakit_halaqah, izin_halaqah, nilai_akhlak_halaqah, keterangan_akhlak_halaqah, nilai_ujian_bulanan, keterangan_ujian_bulanan, nilai_target_hafalan, keterangan_target_hafalan, nilai_capaian_hafalan_bulanan, nilai_jumlah_hafalan_halaman, nilai_jumlah_hafalan_juz, catatan_muhaffiz, musyrif, no_hp_musyrif, nilai_kehadiran_liqa_muhasabah, sakit_liqa_muhasabah, izin_liqa_muhasabah, nilai_ibadah, keterangan_ibadah, nilai_kedisiplinan, keterangan_kedisiplinan, nilai_kebersihan, keterangan_kebersihan, nilai_adab, keterangan_adab, prestasi_kesantrian, pelanggaran_kesantrian, catatan_musyrif'
 const MONTHLY_REPORT_SELECT_LEGACY = 'id, nilai_akhlak, predikat, catatan_wali'
 const EXAM_SCHEDULE_TABLE = 'jadwal_ujian'
@@ -3596,7 +3597,7 @@ function renderTopbarNotifMenu(items = []) {
 
   const list = Array.isArray(items) ? items : []
   const selectedRange = Number(topbarNotifState.rangeDays || 3)
-  const filtersHtml = [1, 3, 7].map(days => (
+  const filtersHtml = TOPBAR_NOTIF_RANGE_OPTIONS.map(days => (
     `<button type="button" class="topbar-notif-filter-btn ${selectedRange === days ? 'active' : ''}" onclick="setGuruNotifRangeFilter(${days})">${days === 1 ? 'Hari ini' : `${days} hari`}</button>`
   )).join('')
   const headHtml = `
