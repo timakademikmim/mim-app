@@ -2350,27 +2350,11 @@ async function saveGuruEkskulMonthlyReport() {
     alert('Belum ada anggota ekskul untuk diinput.')
     return
   }
-  const payload = []
-  rowEls.forEach(rowEl => {
-    const sid = String(rowEl.getAttribute('data-santri-id') || '').trim()
-    if (!sid) return
-    const kehadiranRaw = String(rowEl.querySelector('[data-guru-ekskul-monthly-kehadiran="1"]')?.value || '').trim()
-    const catatanRaw = String(rowEl.querySelector('[data-guru-ekskul-monthly-catatan="1"]')?.value || '').trim()
-    const kehadiranNum = kehadiranRaw === '' ? null : Number(kehadiranRaw)
-    const kehadiran = Number.isFinite(kehadiranNum)
-      ? Math.max(0, Math.min(100, Number(kehadiranNum.toFixed(2))))
-      : null
-    const catatan = catatanRaw || null
-    if (kehadiran === null && !catatan) return
-    payload.push({
-      periode,
-      ekskul_id: String(selected.id),
-      santri_id: sid,
-      kehadiran_persen: kehadiran,
-      catatan_pj: catatan,
-      updated_by: String(guru?.id || '').trim() || null,
-      updated_at: new Date().toISOString()
-    })
+  const payload = buildGuruEkskulMonthlyPayload({
+    rowEls,
+    periode,
+    ekskulId: String(selected.id),
+    updatedBy: String(guru?.id || '').trim() || null
   })
   if (!payload.length) {
     alert('Isi minimal satu data kehadiran atau catatan.')
@@ -2788,25 +2772,12 @@ async function saveGuruEkskulProgressBatch() {
     alert('Belum ada indikator untuk diinput.')
     return
   }
-  const payload = []
-  rowEls.forEach(rowEl => {
-    const indikatorId = String(rowEl.getAttribute('data-indikator-id') || '').trim() || null
-    const nilaiRaw = String(rowEl.querySelector('[data-guru-ekskul-indikator-nilai="1"]')?.value || '').trim()
-    const nilaiParsed = nilaiRaw ? Number(nilaiRaw) : null
-    const nilai = Number.isFinite(nilaiParsed)
-      ? Math.max(1, Math.min(100, Math.round(nilaiParsed)))
-      : null
-    const catatan = String(rowEl.querySelector('[data-guru-ekskul-indikator-catatan="1"]')?.value || '').trim()
-    if (!catatan && !Number.isFinite(nilai)) return
-    payload.push({
-      ekskul_id: eid,
-      santri_id: sid,
-      indikator_id: indikatorId,
-      tanggal,
-      nilai: Number.isFinite(nilai) ? nilai : null,
-      catatan: catatan || null,
-      updated_by: String(guru?.id || '').trim() || null
-    })
+  const payload = buildGuruEkskulProgressPayload({
+    rowEls,
+    ekskulId: eid,
+    santriId: sid,
+    tanggal,
+    updatedBy: String(guru?.id || '').trim() || null
   })
   if (!payload.length) {
     alert('Isi minimal satu indikator sebelum submit.')
@@ -2818,6 +2789,56 @@ async function saveGuruEkskulProgressBatch() {
     return
   }
   await renderGuruEkskulPage(true)
+}
+
+function buildGuruEkskulMonthlyPayload({ rowEls, periode, ekskulId, updatedBy }) {
+  const payload = []
+  ;(Array.isArray(rowEls) ? rowEls : []).forEach(rowEl => {
+    const sid = String(rowEl.getAttribute('data-santri-id') || '').trim()
+    if (!sid) return
+    const kehadiranRaw = String(rowEl.querySelector('[data-guru-ekskul-monthly-kehadiran="1"]')?.value || '').trim()
+    const catatanRaw = String(rowEl.querySelector('[data-guru-ekskul-monthly-catatan="1"]')?.value || '').trim()
+    const kehadiranNum = kehadiranRaw === '' ? null : Number(kehadiranRaw)
+    const kehadiran = Number.isFinite(kehadiranNum)
+      ? Math.max(0, Math.min(100, Number(kehadiranNum.toFixed(2))))
+      : null
+    const catatan = catatanRaw || null
+    if (kehadiran === null && !catatan) return
+    payload.push({
+      periode,
+      ekskul_id: String(ekskulId || ''),
+      santri_id: sid,
+      kehadiran_persen: kehadiran,
+      catatan_pj: catatan,
+      updated_by: updatedBy || null,
+      updated_at: new Date().toISOString()
+    })
+  })
+  return payload
+}
+
+function buildGuruEkskulProgressPayload({ rowEls, ekskulId, santriId, tanggal, updatedBy }) {
+  const payload = []
+  ;(Array.isArray(rowEls) ? rowEls : []).forEach(rowEl => {
+    const indikatorId = String(rowEl.getAttribute('data-indikator-id') || '').trim() || null
+    const nilaiRaw = String(rowEl.querySelector('[data-guru-ekskul-indikator-nilai="1"]')?.value || '').trim()
+    const nilaiParsed = nilaiRaw ? Number(nilaiRaw) : null
+    const nilai = Number.isFinite(nilaiParsed)
+      ? Math.max(1, Math.min(100, Math.round(nilaiParsed)))
+      : null
+    const catatan = String(rowEl.querySelector('[data-guru-ekskul-indikator-catatan="1"]')?.value || '').trim()
+    if (!catatan && !Number.isFinite(nilai)) return
+    payload.push({
+      ekskul_id: String(exskulId || ''),
+      santri_id: String(santriId || ''),
+      indikator_id: indikatorId,
+      tanggal: String(tanggal || ''),
+      nilai: Number.isFinite(nilai) ? nilai : null,
+      catatan: catatan || null,
+      updated_by: updatedBy || null
+    })
+  })
+  return payload
 }
 
 function refreshGuruEkskulPanels() {
