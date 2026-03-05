@@ -2716,11 +2716,7 @@ function renderGuruEkskulProgressInputRows() {
 async function selectGuruEkskul(exskulId) {
   guruEkskulState.selectedEkskulId = String(exskulId || '')
   guruEkskulState.selectedSantriId = ''
-  renderGuruEkskulMemberList()
-  renderGuruEkskulSantriSelect()
-  renderGuruEkskulIndikatorList()
-  renderGuruEkskulProgressSantriSelect()
-  renderGuruEkskulProgressInputRows()
+  refreshGuruEkskulPanels()
   try {
     await loadGuruEkskulMonthlyRows()
     renderGuruEkskulMonthlyInputRows()
@@ -2809,6 +2805,39 @@ async function saveGuruEkskulProgressBatch() {
   await renderGuruEkskulPage(true)
 }
 
+function refreshGuruEkskulPanels() {
+  renderGuruEkskulMemberList()
+  renderGuruEkskulSantriSelect()
+  renderGuruEkskulIndikatorList()
+  renderGuruEkskulProgressSantriSelect()
+  renderGuruEkskulProgressInputRows()
+}
+
+function applyGuruEkskulDataToState(data) {
+  guruEkskulState.ekskulRows = data?.ekskulRows || []
+  guruEkskulState.memberRows = data?.memberRows || []
+  guruEkskulState.indikatorRows = data?.indikatorRows || []
+  guruEkskulState.santriRows = data?.santriRows || []
+}
+
+function ensureGuruEkskulSelectedId() {
+  const hasSelected = (guruEkskulState.ekskulRows || []).some(item => String(item.id || '') === String(guruEkskulState.selectedEkskulId || ''))
+  if (guruEkskulState.selectedEkskulId && hasSelected) return
+  guruEkskulState.selectedEkskulId = String(guruEkskulState.ekskulRows?.[0]?.id || '')
+}
+
+async function loadGuruEkskulProgressRowsByEkskulId(exskulId) {
+  if (!exskulId) return []
+  const { data, error } = await sb
+    .from(EKSKUL_PROGRES_TABLE)
+    .select('id, ekskul_id, santri_id, indikator_id, tanggal, nilai, catatan, created_at')
+    .eq('ekskul_id', String(exskulId))
+    .order('tanggal', { ascending: false })
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return data || []
+}
+
 async function renderGuruEkskulPage(forceReload = false) {
   const content = document.getElementById('guru-content')
   if (!content) return
@@ -2821,22 +2850,10 @@ async function renderGuruEkskulPage(forceReload = false) {
       content.innerHTML = '<div class="placeholder-card">Anda belum ditetapkan sebagai PJ ekskul.</div>'
       return
     }
-    guruEkskulState.ekskulRows = data.ekskulRows || []
-    guruEkskulState.memberRows = data.memberRows || []
-    guruEkskulState.indikatorRows = data.indikatorRows || []
-    guruEkskulState.santriRows = data.santriRows || []
-    if (!guruEkskulState.selectedEkskulId || !(guruEkskulState.ekskulRows || []).some(item => String(item.id || '') === String(guruEkskulState.selectedEkskulId || ''))) {
-      guruEkskulState.selectedEkskulId = String(guruEkskulState.ekskulRows?.[0]?.id || '')
-    }
+    applyGuruEkskulDataToState(data)
+    ensureGuruEkskulSelectedId()
     const selected = getGuruEkskulSelected()
-    const { data: progressRows, error: progressError } = await sb
-      .from(EKSKUL_PROGRES_TABLE)
-      .select('id, ekskul_id, santri_id, indikator_id, tanggal, nilai, catatan, created_at')
-      .eq('ekskul_id', String(selected?.id || ''))
-      .order('tanggal', { ascending: false })
-      .order('created_at', { ascending: false })
-    if (progressError) throw progressError
-    guruEkskulState.progressRows = progressRows || []
+    guruEkskulState.progressRows = await loadGuruEkskulProgressRowsByEkskulId(String(selected?.id || ''))
     if (!guruEkskulState.monthlyPeriode) guruEkskulState.monthlyPeriode = getMonthInputToday()
     await loadGuruEkskulMonthlyRows()
 
@@ -2917,11 +2934,7 @@ async function renderGuruEkskulPage(forceReload = false) {
         </div>
       </div>
     `
-    renderGuruEkskulSantriSelect()
-    renderGuruEkskulMemberList()
-    renderGuruEkskulIndikatorList()
-    renderGuruEkskulProgressSantriSelect()
-    renderGuruEkskulProgressInputRows()
+    refreshGuruEkskulPanels()
     renderGuruEkskulMonthlyInputRows()
     setGuruEkskulTab(guruEkskulState.activeTab || 'progres')
   } catch (error) {
