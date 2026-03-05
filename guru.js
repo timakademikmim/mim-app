@@ -20,6 +20,14 @@ const EKSKUL_MEMBER_TABLE = 'ekstrakurikuler_anggota'
 const EKSKUL_INDIKATOR_TABLE = 'ekstrakurikuler_indikator'
 const EKSKUL_PROGRES_TABLE = 'ekstrakurikuler_progres'
 const EKSKUL_MONTHLY_TABLE = 'ekstrakurikuler_laporan_bulanan'
+const KARYAWAN_SELECT_VARIANTS_FOR_COMPAT = [
+  'id, id_karyawan, nama, no_hp, hp, no_telp, nomor_hp, telepon, aktif',
+  'id, id_karyawan, nama, no_hp, hp, aktif',
+  'id, id_karyawan, nama, no_hp, hp',
+  'id, id_karyawan, nama, no_hp',
+  'id, id_karyawan, nama',
+  'id, nama'
+]
 const SANTRI_PRESTASI_TABLE = 'santri_prestasi'
 const SANTRI_PELANGGARAN_TABLE = 'santri_pelanggaran'
 const SANTRI_SURAT_BUCKET = 'surat-pemberitahuan'
@@ -6787,16 +6795,8 @@ async function quickSendLaporanBulananWA(santriId) {
 
 async function loadActiveKaryawanRowsForEkskulReport() {
   // Toleran terhadap variasi skema kolom karyawan di deployment lama.
-  const karyawanSelectVariants = [
-    'id, id_karyawan, nama, no_hp, hp, no_telp, nomor_hp, telepon, aktif',
-    'id, id_karyawan, nama, no_hp, hp, aktif',
-    'id, id_karyawan, nama, no_hp, hp',
-    'id, id_karyawan, nama, no_hp',
-    'id, id_karyawan, nama',
-    'id, nama'
-  ]
   let karyawanLastError = null
-  for (const selectCols of karyawanSelectVariants) {
+  for (const selectCols of KARYAWAN_SELECT_VARIANTS_FOR_COMPAT) {
     const { data, error } = await sb
       .from('karyawan')
       .select(selectCols)
