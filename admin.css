@@ -783,6 +783,7 @@ body {
   font-size: 12px;
   font-weight: 700;
   overflow: hidden;
+  transition: box-shadow 180ms ease;
 }
 
 .topbar-avatar-initials {

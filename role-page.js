@@ -128,6 +128,17 @@ function initTopbarAccountMenu() {
   const roleMenu = document.getElementById('topbar-role-switch-menu')
   if (!roleBtn || !roleMenu) return
 
+  const isDesktopApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
+  if (isDesktopApp && !document.getElementById('topbar-app-info-btn')) {
+    const infoBtn = document.createElement('button')
+    infoBtn.type = 'button'
+    infoBtn.id = 'topbar-app-info-btn'
+    infoBtn.textContent = 'Info'
+    const firstButton = menu.querySelector('button')
+    if (firstButton) firstButton.before(infoBtn)
+    else menu.appendChild(infoBtn)
+  }
+
   roleBtn.textContent = `Role: ${activeRole || '-'}`
   const optionRoles = [...new Set(roles)].filter(role => !!ROLE_PAGE_MAP[role] && role !== activeRole)
   roleMenu.innerHTML = optionRoles.length
@@ -166,10 +177,8 @@ function initDesktopUpdaterUi() {
     notesByVersion: {}
   }
 
-  let sidebarPanel = null
-  let versionBtn = null
-  let onlineDot = null
-  let onlineText = null
+  let infoBtn = null
+  let avatarEl = null
   let changelogOverlay = null
   let changelogBody = null
   let updateLockOverlay = null
@@ -179,56 +188,11 @@ function initDesktopUpdaterUi() {
     const style = document.createElement('style')
     style.id = 'desktop-updater-style'
     style.textContent = `
-      .desktop-updater-sidebar {
-        margin-top: auto;
-        padding: 10px;
-        border-top: 1px solid #e2e8f0;
-        display: grid;
-        gap: 6px;
-        justify-items: center;
+      .topbar-avatar.desktop-online {
+        box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.9), 0 0 0 4px rgba(37, 99, 235, 0.24);
       }
-      .desktop-version-btn {
-        width: auto;
-        text-align: center;
-        border: none;
-        background: transparent;
-        color: #cbd5e1;
-        font-size: 11px;
-        line-height: 1.2;
-        padding: 4px 6px;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        order: 1;
-      }
-      .desktop-version-btn:hover {
-        color: #94a3b8;
-      }
-      .desktop-status-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        width: 100%;
-        justify-content: center;
-        order: 2;
-      }
-      .desktop-online-indicator {
-        display: inline-flex;
-        align-items: center;
-        gap: 5px;
-        font-size: 11px;
-        color: #64748b;
-        min-width: 72px;
-      }
-      .desktop-online-indicator i {
-        width: 7px;
-        height: 7px;
-        border-radius: 999px;
-        background: #ef4444;
-      }
-      .desktop-online-indicator.online i {
-        background: #22c55e;
+      .topbar-avatar.desktop-offline {
+        box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.9), 0 0 0 4px rgba(220, 38, 38, 0.24);
       }
       .desktop-release-overlay {
         position: fixed;
@@ -321,22 +285,8 @@ function initDesktopUpdaterUi() {
 
   function ensureUpdaterElements() {
     ensureUpdaterStyle()
-    if (!sidebarPanel) {
-      sidebarPanel = document.createElement('div')
-      sidebarPanel.className = 'desktop-updater-sidebar'
-      sidebarPanel.innerHTML = `
-        <button type="button" class="desktop-version-btn">versi - <span aria-hidden="true">&rsaquo;</span></button>
-        <div class="desktop-status-row">
-          <span class="desktop-online-indicator"><i></i><span>Offline</span></span>
-        </div>
-      `
-      versionBtn = sidebarPanel.querySelector('.desktop-version-btn')
-      onlineDot = sidebarPanel.querySelector('.desktop-online-indicator')
-      onlineText = sidebarPanel.querySelector('.desktop-online-indicator span')
-      const sidebar = document.querySelector('.sidebar')
-      if (sidebar) sidebar.appendChild(sidebarPanel)
-      else document.body.appendChild(sidebarPanel)
-    }
+    if (!avatarEl) avatarEl = document.getElementById('topbar-avatar')
+    if (!infoBtn) infoBtn = document.getElementById('topbar-app-info-btn')
     if (!changelogOverlay) {
       changelogOverlay = document.createElement('div')
       changelogOverlay.className = 'desktop-release-overlay'
@@ -369,7 +319,8 @@ function initDesktopUpdaterUi() {
       `
       document.body.appendChild(updateLockOverlay)
     }
-    versionBtn?.addEventListener('click', async () => {
+    if (!window.openDesktopReleaseInfo) {
+      window.openDesktopReleaseInfo = async function openDesktopReleaseInfo() {
       const meta = changelogOverlay?.querySelector('#desktop-release-meta')
       if (meta) {
         const current = releaseInfoState.currentVersion || '-'
@@ -383,14 +334,22 @@ function initDesktopUpdaterUi() {
         changelogBody.textContent = resolvedNote || releaseInfoState.notes || 'Catatan rilis belum tersedia.'
       }
       changelogOverlay?.classList.add('open')
-    })
+      }
+    }
+    if (infoBtn && infoBtn.dataset.boundInfoClick !== '1') {
+      infoBtn.dataset.boundInfoClick = '1'
+      infoBtn.addEventListener('click', () => {
+        if (typeof window.openDesktopReleaseInfo === 'function') window.openDesktopReleaseInfo()
+      })
+    }
   }
 
   function setOnlineIndicator() {
     ensureUpdaterElements()
     const isOnline = navigator.onLine
-    onlineDot?.classList.toggle('online', isOnline)
-    if (onlineText) onlineText.textContent = isOnline ? 'Online' : 'Offline'
+    if (!avatarEl) return
+    avatarEl.classList.toggle('desktop-online', isOnline)
+    avatarEl.classList.toggle('desktop-offline', !isOnline)
   }
 
   async function hydrateLatestReleaseInfo() {
@@ -449,7 +408,7 @@ function initDesktopUpdaterUi() {
   function renderVersionLabel() {
     ensureUpdaterElements()
     const current = releaseInfoState.currentVersion || '-'
-    if (versionBtn) versionBtn.textContent = `versi ${current}`
+    if (infoBtn) infoBtn.textContent = `Info (v${current})`
   }
 
   function updateDesktopUpdaterUi(detail) {
