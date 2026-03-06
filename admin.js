@@ -3,7 +3,9 @@
 // =======================
 const supabaseUrl = 'https://optucpelkueqmlhwlbej.supabase.co'
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9wdHVjcGVsa3VlcW1saHdsYmVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAxOTY4MTgsImV4cCI6MjA4NTc3MjgxOH0.Vqaey9pcnltu9uRbPk0J-AGWaGDZjQLw92pcRv67GNE'
-const sb = supabase.createClient(supabaseUrl, supabaseKey)
+const sb = window.createDesktopAwareSupabaseClient
+  ? window.createDesktopAwareSupabaseClient(supabaseUrl, supabaseKey)
+  : supabase.createClient(supabaseUrl, supabaseKey)
 const externalPageHtmlCache = {}
 const externalPageScriptLoaded = {}
 const EXTERNAL_PAGE_ASSET_VERSION = '20260304-desktop-wa-print-fix-01'
