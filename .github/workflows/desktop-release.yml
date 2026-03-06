@@ -38,6 +38,12 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: MIM Desktop ${{ github.ref_name }}
-          releaseBody: Desktop release otomatis dengan updater artifacts.
+          releaseBody: |
+            What's new in this version:
+            - Perbaikan reconnect desktop: saat jaringan kembali, aplikasi mencoba tersambung ulang otomatis tanpa perlu tutup-buka aplikasi.
+            - Mode offline desktop lebih stabil: request baca data memakai cache saat offline, dan request ubah data diblokir (read-only).
+            - Fallback pesan offline diperjelas saat data belum pernah tersimpan di cache.
+            - Penyempurnaan cache GET agar akses data saat offline lebih konsisten.
           releaseDraft: false
           prerelease: false
+

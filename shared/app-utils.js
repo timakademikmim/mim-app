@@ -73,6 +73,16 @@
     })
   }
 
+  async function fetchWithTimeout(fetcher, request, timeoutMs = 2500) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      return await fetcher(new Request(request, { signal: controller.signal, cache: 'no-store' }))
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   function isSupabaseDataEndpoint(urlText) {
     const text = String(urlText || '')
     return text.includes('/rest/v1/') || text.includes('/storage/v1/')
@@ -117,30 +127,30 @@
 
       const key = buildCacheKey(req)
       const online = navigator.onLine
-      if (!online) {
-        if (!isRead) {
-          return makeOfflineResponse('Mode offline: perubahan data dinonaktifkan. Hanya baca data yang tersedia di cache.')
-        }
-        const cached = await getOfflineCacheItem(key)
-        if (cached && Date.now() - Number(cached.cachedAt || 0) <= DESKTOP_OFFLINE_MAX_AGE_MS) {
-          return cacheRecordToResponse(cached)
-        }
-        return makeOfflineResponse('Data belum tersedia offline. Buka data ini saat online agar tersimpan di cache.')
-      }
 
       try {
-        const response = await baseFetch(req)
+        let response
+        if (online) {
+          response = await baseFetch(req)
+        } else {
+          // Di desktop kadang navigator.onLine terlambat update saat jaringan sudah kembali.
+          // Coba reconnect singkat dulu sebelum memutuskan benar-benar offline.
+          response = await fetchWithTimeout(baseFetch, req, 2500)
+        }
         if (isRead && response.ok) {
           const cacheRecord = await responseToCacheRecord(key, response)
           await setOfflineCacheItem(cacheRecord)
         }
         return response
       } catch (error) {
+        if (!isRead) {
+          return makeOfflineResponse('Mode offline: perubahan data dinonaktifkan. Silakan coba lagi setelah jaringan stabil.')
+        }
         if (isRead) {
           const cached = await getOfflineCacheItem(key)
           if (cached) return cacheRecordToResponse(cached)
         }
-        throw error
+        return makeOfflineResponse('Data belum tersedia offline. Buka data ini saat online agar tersimpan di cache.')
       }
     }
   }
