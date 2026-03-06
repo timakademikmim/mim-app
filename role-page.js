@@ -134,8 +134,8 @@ function initTopbarAccountMenu() {
     infoBtn.type = 'button'
     infoBtn.id = 'topbar-app-info-btn'
     infoBtn.textContent = 'Info'
-    const firstButton = menu.querySelector('button')
-    if (firstButton) firstButton.before(infoBtn)
+    const logoutBtn = menu.querySelector('button[onclick*="logout"], button[onclick*="Logout"]')
+    if (logoutBtn) logoutBtn.before(infoBtn)
     else menu.appendChild(infoBtn)
   }
 
@@ -179,9 +179,11 @@ function initDesktopUpdaterUi() {
 
   let infoBtn = null
   let avatarEl = null
+  let avatarTriggerEl = null
   let changelogOverlay = null
   let changelogBody = null
   let updateLockOverlay = null
+  let lastOnlineState = null
 
   function ensureUpdaterStyle() {
     if (document.getElementById('desktop-updater-style')) return
@@ -192,6 +194,12 @@ function initDesktopUpdaterUi() {
         box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.9), 0 0 0 4px rgba(37, 99, 235, 0.24);
       }
       .topbar-avatar.desktop-offline {
+        box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.9), 0 0 0 4px rgba(220, 38, 38, 0.24);
+      }
+      .topbar-avatar-trigger.desktop-online .topbar-avatar {
+        box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.9), 0 0 0 4px rgba(37, 99, 235, 0.24);
+      }
+      .topbar-avatar-trigger.desktop-offline .topbar-avatar {
         box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.9), 0 0 0 4px rgba(220, 38, 38, 0.24);
       }
       .desktop-release-overlay {
@@ -286,6 +294,7 @@ function initDesktopUpdaterUi() {
   function ensureUpdaterElements() {
     ensureUpdaterStyle()
     if (!avatarEl) avatarEl = document.getElementById('topbar-avatar')
+    if (!avatarTriggerEl) avatarTriggerEl = document.querySelector('.topbar-user-trigger')
     if (!infoBtn) infoBtn = document.getElementById('topbar-app-info-btn')
     if (!changelogOverlay) {
       changelogOverlay = document.createElement('div')
@@ -331,7 +340,7 @@ function initDesktopUpdaterUi() {
       if (noteVersion) await ensureReleaseNotesForVersion(noteVersion)
       if (changelogBody) {
         const resolvedNote = noteVersion ? (releaseInfoState.notesByVersion[noteVersion] || '') : ''
-        changelogBody.textContent = resolvedNote || releaseInfoState.notes || 'Catatan rilis belum tersedia.'
+        changelogBody.textContent = resolvedNote || releaseInfoState.notes || `What's new in this version:\n- Penanda status online/offline sekarang berupa cincin permanen di avatar topbar.\n- Menu akun menambahkan item Info untuk membuka catatan rilis.\n- Tampilan info rilis dirapikan agar lebih jelas.`
       }
       changelogOverlay?.classList.add('open')
       }
@@ -347,9 +356,26 @@ function initDesktopUpdaterUi() {
   function setOnlineIndicator() {
     ensureUpdaterElements()
     const isOnline = navigator.onLine
-    if (!avatarEl) return
-    avatarEl.classList.toggle('desktop-online', isOnline)
-    avatarEl.classList.toggle('desktop-offline', !isOnline)
+    lastOnlineState = isOnline
+    avatarEl = document.getElementById('topbar-avatar')
+    avatarTriggerEl = document.querySelector('.topbar-user-trigger')
+    if (!avatarEl && !avatarTriggerEl) return
+    avatarEl?.classList.toggle('desktop-online', isOnline)
+    avatarEl?.classList.toggle('desktop-offline', !isOnline)
+    avatarTriggerEl?.classList.toggle('desktop-online', isOnline)
+    avatarTriggerEl?.classList.toggle('desktop-offline', !isOnline)
+  }
+
+  function bindAvatarPersistence() {
+    const host = document.querySelector('.topbar-user-menu-wrap') || document.body
+    if (!host || host.dataset.desktopStatusObserver === '1') return
+    host.dataset.desktopStatusObserver = '1'
+    const observer = new MutationObserver(() => {
+      if (typeof lastOnlineState === 'boolean') {
+        setOnlineIndicator()
+      }
+    })
+    observer.observe(host, { childList: true, subtree: true })
   }
 
   async function hydrateLatestReleaseInfo() {
@@ -407,8 +433,7 @@ function initDesktopUpdaterUi() {
 
   function renderVersionLabel() {
     ensureUpdaterElements()
-    const current = releaseInfoState.currentVersion || '-'
-    if (infoBtn) infoBtn.textContent = `Info (v${current})`
+    if (infoBtn) infoBtn.textContent = 'Info'
   }
 
   function updateDesktopUpdaterUi(detail) {
@@ -440,6 +465,7 @@ function initDesktopUpdaterUi() {
   }
 
   ensureUpdaterElements()
+  bindAvatarPersistence()
   setOnlineIndicator()
   renderVersionLabel()
   hydrateLatestReleaseInfo()
