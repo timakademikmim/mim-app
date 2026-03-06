@@ -79,6 +79,7 @@ function getSavedLastPage() {
   const allow = new Set([
     'admin.html',
     'guru.html',
+    'wakasek-kurikulum.html',
     'muhaffiz.html',
     'musyrif.html',
     'pages/guru-detail.html',

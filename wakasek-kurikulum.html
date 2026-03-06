@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Panel Wakasek Kurikulum</title>
+  <link rel="icon" type="image/png" href="00%20Logo%20MIM%20.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="guru.css?v=20260305-sidebar-transition-01">
+</head>
+<body data-role="guru" data-panel="wakasek-kurikulum">
+  <div class="layout">
+    <aside class="sidebar">
+      <img src="00 Logo MIM .png" alt="Logo Wakasek Kurikulum" class="sidebar-logo">
+      <div class="sidebar-nav-scroll">
+        <button class="guru-nav-btn" data-page="dashboard" onclick="loadGuruPage('dashboard')">
+          <span class="guru-nav-btn-content">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1V9.5Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Dashboard</span>
+          </span>
+        </button>
+        <button class="guru-nav-btn" data-page="monitoring" onclick="loadGuruPage('monitoring')">
+          <span class="guru-nav-btn-content">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 19.5h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6.5 16V10M12 16V6M17.5 16v-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span>Monitoring</span>
+          </span>
+        </button>
+        <button class="guru-nav-btn" data-page="perizinan" onclick="loadGuruPage('perizinan')">
+          <span class="guru-nav-btn-content">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 3h8M7 6h10a2 2 0 0 1 2 2v10a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V8a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.8"/><path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Perizinan</span>
+          </span>
+        </button>
+        <button class="guru-nav-btn" data-page="prestasi-pelanggaran" onclick="loadGuruPage('prestasi-pelanggaran')">
+          <span class="guru-nav-btn-content">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3.5l2.3 4.7 5.2.8-3.8 3.7.9 5.3L12 15.8 7.4 18l.9-5.3L4.5 9l5.2-.8L12 3.5Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+            <span>Prestasi & Pelanggaran</span>
+          </span>
+        </button>
+        <button class="guru-nav-btn" onclick="backToGuruPanel()">
+          <span class="guru-nav-btn-content">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 6 9 12l6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 12h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span>Kembali ke Guru</span>
+          </span>
+        </button>
+      </div>
+    </aside>
+
+    <main class="content">
+      <div class="topbar">
+        <div class="topbar-left">
+          <button type="button" id="guru-sidebar-toggle" class="topbar-sidebar-toggle" onclick="toggleGuruSidebar()" aria-label="Toggle sidebar" title="Sembunyikan/Tampilkan Sidebar">&#9776;</button>
+          <div id="guru-topbar-title" class="topbar-title">Dashboard</div>
+        </div>
+        <div class="topbar-user-menu-wrap">
+          <button type="button" class="topbar-user-trigger" onclick="toggleTopbarUserMenu()">
+            <span id="welcome" class="topbar-user-name"></span>
+            <span class="topbar-user-arrow">&#9662;</span>
+          </button>
+          <div id="topbar-user-menu" class="topbar-user-menu">
+            <button type="button" onclick="openGuruProfile()">Profil</button>
+            <button type="button" onclick="logout()">Logout</button>
+          </div>
+        </div>
+      </div>
+      <div id="guru-content" class="content-area">Loading...</div>
+      <div class="page-bg-signature" aria-hidden="true">Copyright &copy; BnB Studio</div>
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="shared/app-utils.js?v=20260304-shared-utils-01"></script>
+  <script src="shared/popup-utils.js?v=20260304-shared-popup-01"></script>
+  <script src="shared/topbar-utils.js?v=20260304-shared-topbar-01"></script>
+  <script src="shared/profile-photo-utils.js?v=20260304-shared-profile-photo-01"></script>
+  <script src="shared/guru-exam-utils.js?v=20260304-guru-exam-utils-01"></script>
+  <script src="shared/guru-exam-data-utils.js?v=20260305-guru-exam-data-utils-01"></script>
+  <script src="shared/guru-exam-print-utils.js?v=20260305-guru-exam-print-utils-01"></script>
+  <script src="shared/guru-exam-html-utils.js?v=20260305-guru-exam-html-utils-01"></script>
+  <script src="shared/guru-exam-editor-utils.js?v=20260305-guru-exam-editor-utils-01"></script>
+  <script src="shared/guru-ekskul-utils.js?v=20260305-guru-ekskul-utils-01"></script>
+  <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@^1/index.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+  <script src="chat-module.js?v=20260304-chat-refresh-stable-01"></script>
+  <script src="role-page.js?v=20260304-desktop-wa-print-fix-02"></script>
+  <script src="guru.js?v=20260305-tab-history-01"></script>
+
+  <div id="app-popup-overlay" class="app-popup-overlay" aria-hidden="true">
+    <div class="app-popup-card" role="dialog" aria-modal="true" aria-labelledby="app-popup-message">
+      <div id="app-popup-message" class="app-popup-message"></div>
+      <div id="app-popup-actions" class="app-popup-actions">
+        <button type="button" id="app-popup-ok-btn">OK</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

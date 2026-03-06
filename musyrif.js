@@ -1299,7 +1299,10 @@ function renderMusyrifPerizinanReviewRows() {
         <input id="musyrif-perizinan-note-${escapeHtml(String(item.id || ''))}" class="guru-field" type="text" value="${escapeHtml(String(item.catatan_wakasek || ''))}" placeholder="Catatan wakasek" style="padding:6px 8px; font-size:12px;">
       </td>
       <td style="padding:8px; border:1px solid #e2e8f0;">
-        <button type="button" class="modal-btn modal-btn-primary" onclick="saveSantriPerizinanReview('${escapeHtml(String(item.id || ''))}')">Simpan</button>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <button type="button" class="modal-btn modal-btn-primary" onclick="saveSantriPerizinanReview('${escapeHtml(String(item.id || ''))}')">Simpan</button>
+          <button type="button" class="modal-btn modal-btn-danger" onclick="deleteSantriPerizinanReview('${escapeHtml(String(item.id || ''))}')">Hapus</button>
+        </div>
       </td>
     </tr>
   `).join('')
@@ -1386,6 +1389,24 @@ async function saveSantriPerizinanReview(id) {
       return
     }
     alert(`Gagal menyimpan persetujuan: ${error.message || 'Unknown error'}`)
+    return
+  }
+  await renderMusyrifPerizinanPage(true)
+}
+
+async function deleteSantriPerizinanReview(id) {
+  const sid = String(id || '').trim()
+  if (!sid) return
+  if (!(musyrifPerizinanState.reviewTargets || []).length) return
+  const ok = window.confirm('Hapus pengajuan izin santri ini?')
+  if (!ok) return
+  const { error } = await sb.from(SANTRI_PERIZINAN_TABLE).delete().eq('id', sid)
+  if (error) {
+    if (isSantriPerizinanMissingTableError(error)) {
+      alert(getSantriPerizinanMissingTableMessage())
+      return
+    }
+    alert(`Gagal menghapus pengajuan izin: ${error.message || 'Unknown error'}`)
     return
   }
   await renderMusyrifPerizinanPage(true)
@@ -4254,6 +4275,7 @@ window.saveMusyrifLaporanDetail = saveMusyrifLaporanDetail
 window.renderMusyrifPerizinanPage = renderMusyrifPerizinanPage
 window.submitSantriPerizinanForm = submitSantriPerizinanForm
 window.saveSantriPerizinanReview = saveSantriPerizinanReview
+window.deleteSantriPerizinanReview = deleteSantriPerizinanReview
 window.onMusyrifKesantrianGradeChange = onMusyrifKesantrianGradeChange
 window.toggleTopbarUserMenu = toggleTopbarUserMenu
 window.setMusyrifNotifRangeFilter = setMusyrifNotifRangeFilter

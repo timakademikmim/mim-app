@@ -6,6 +6,9 @@ const GURU_LAST_PAGE_KEY = 'guru_last_page'
 const GURU_HISTORY_STATE_KEY = 'guru_tab'
 const GURU_SIDEBAR_COLLAPSED_KEY = 'guru_sidebar_collapsed'
 const GURU_MAPEL_DETAIL_STATE_KEY = 'guru_mapel_detail_state'
+const GURU_PANEL_MODE = String(document.body?.dataset?.panel || '').trim().toLowerCase()
+const IS_WAKASEK_KURIKULUM_PANEL = GURU_PANEL_MODE === 'wakasek-kurikulum'
+const WAKASEK_KURIKULUM_PAGE_SET = new Set(['dashboard', 'monitoring', 'perizinan', 'prestasi-pelanggaran', 'chat', 'profil'])
 const DEFAULT_GURU_PAGE = 'dashboard'
 const ATTENDANCE_TABLE = 'absensi_santri'
 const INPUT_NILAI_TABLE = 'nilai_input_akademik'
@@ -98,6 +101,13 @@ const PAGE_TITLES = {
   profil: 'Profil'
 }
 const VALID_GURU_PAGE_SET = new Set(Object.keys(PAGE_TITLES))
+
+function sanitizeGuruTargetPage(page) {
+  const requested = String(page || DEFAULT_GURU_PAGE)
+  const valid = VALID_GURU_PAGE_SET.has(requested) ? requested : DEFAULT_GURU_PAGE
+  if (!IS_WAKASEK_KURIKULUM_PANEL) return valid
+  return WAKASEK_KURIKULUM_PAGE_SET.has(valid) ? valid : DEFAULT_GURU_PAGE
+}
 
 let guruContextCache = null
 let activeTahunAjaranCache = null
@@ -2039,7 +2049,7 @@ function renderGuruPerizinanApprovalRows() {
   const panel = document.getElementById('guru-perizinan-approval-panel')
   const box = document.getElementById('guru-perizinan-approval-list')
   if (!panel || !box) return
-  if (!guruPerizinanState.isWakasek) {
+  if (!guruPerizinanState.isWakasek || !IS_WAKASEK_KURIKULUM_PANEL) {
     panel.style.display = 'none'
     box.innerHTML = ''
     return
@@ -2065,7 +2075,10 @@ function renderGuruPerizinanApprovalRows() {
             <option value="diterima" ${item.status === 'diterima' ? 'selected' : ''}>Diterima</option>
             <option value="ditolak" ${item.status === 'ditolak' ? 'selected' : ''}>Ditolak</option>
           </select>
-          <button type="button" class="modal-btn modal-btn-primary" onclick="saveGuruPerizinanApproval('${escapeHtml(String(item.id || ''))}')">Simpan</button>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <button type="button" class="modal-btn modal-btn-primary" onclick="saveGuruPerizinanApproval('${escapeHtml(String(item.id || ''))}')">Simpan</button>
+            <button type="button" class="modal-btn modal-btn-danger" onclick="deleteGuruPerizinanApproval('${escapeHtml(String(item.id || ''))}')">Hapus</button>
+          </div>
         </div>
       </td>
       <td style="padding:8px; border:1px solid #e2e8f0;">
@@ -2098,7 +2111,7 @@ function renderGuruSantriPerizinanApprovalRows() {
   const panel = document.getElementById('guru-perizinan-santri-approval-panel')
   const box = document.getElementById('guru-perizinan-santri-approval-list')
   if (!panel || !box) return
-  if (!guruPerizinanState.isWakasek) {
+  if (!guruPerizinanState.isWakasek || !IS_WAKASEK_KURIKULUM_PANEL) {
     panel.style.display = 'none'
     box.innerHTML = ''
     return
@@ -2130,7 +2143,10 @@ function renderGuruSantriPerizinanApprovalRows() {
             <option value="diterima" ${item.status === 'diterima' ? 'selected' : ''}>Diterima</option>
             <option value="ditolak" ${item.status === 'ditolak' ? 'selected' : ''}>Ditolak</option>
           </select>
-          <button type="button" class="modal-btn modal-btn-primary" onclick="saveGuruSantriPerizinanApproval('${escapeHtml(String(item.id || ''))}')" style="display:inline-flex; align-items:center; justify-content:center; min-width:76px;">Simpan</button>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <button type="button" class="modal-btn modal-btn-primary" onclick="saveGuruSantriPerizinanApproval('${escapeHtml(String(item.id || ''))}')" style="display:inline-flex; align-items:center; justify-content:center; min-width:76px;">Simpan</button>
+            <button type="button" class="modal-btn modal-btn-danger" onclick="deleteGuruSantriPerizinanApproval('${escapeHtml(String(item.id || ''))}')">Hapus</button>
+          </div>
         </div>
       </td>
       <td style="padding:8px; border:1px solid #e2e8f0;">
@@ -2236,6 +2252,32 @@ async function saveGuruPerizinanApproval(id) {
   await renderGuruPerizinanPage(true)
 }
 
+function openWakasekKurikulumPanel() {
+  location.href = 'wakasek-kurikulum.html'
+}
+
+function backToGuruPanel() {
+  location.href = 'guru.html'
+}
+
+async function deleteGuruPerizinanApproval(id) {
+  const sid = String(id || '').trim()
+  if (!sid) return
+  if (!guruPerizinanState.isWakasek) return
+  const ok = await popupConfirm('Hapus pengajuan izin guru ini?')
+  if (!ok) return
+  const { error } = await sb.from(GURU_PERIZINAN_TABLE).delete().eq('id', sid)
+  if (error) {
+    if (isGuruPerizinanMissingTableError(error)) {
+      alert(getGuruPerizinanMissingTableMessage())
+      return
+    }
+    alert(`Gagal menghapus pengajuan izin guru: ${error.message || 'Unknown error'}`)
+    return
+  }
+  await renderGuruPerizinanPage(true)
+}
+
 async function saveGuruSantriPerizinanApproval(id) {
   const sid = String(id || '').trim()
   if (!sid) return
@@ -2263,6 +2305,24 @@ async function saveGuruSantriPerizinanApproval(id) {
   await renderGuruPerizinanPage(true)
 }
 
+async function deleteGuruSantriPerizinanApproval(id) {
+  const sid = String(id || '').trim()
+  if (!sid) return
+  if (!guruPerizinanState.isWakasek) return
+  const ok = await popupConfirm('Hapus pengajuan izin santri ini?')
+  if (!ok) return
+  const { error } = await sb.from(SANTRI_PERIZINAN_TABLE).delete().eq('id', sid)
+  if (error) {
+    if (isGuruSantriPerizinanMissingTableError(error)) {
+      alert(`Tabel '${SANTRI_PERIZINAN_TABLE}' belum ada.`)
+      return
+    }
+    alert(`Gagal menghapus pengajuan izin santri: ${error.message || 'Unknown error'}`)
+    return
+  }
+  await renderGuruPerizinanPage(true)
+}
+
 async function renderGuruPerizinanPage(forceReload = false) {
   const content = document.getElementById('guru-content')
   if (!content) return
@@ -2270,9 +2330,9 @@ async function renderGuruPerizinanPage(forceReload = false) {
   try {
     const data = await loadGuruPerizinanData()
     guruPerizinanState = data
-
-    content.innerHTML = `
-      <div style="display:grid; gap:12px;">
+    const ownSectionHtml = IS_WAKASEK_KURIKULUM_PANEL
+      ? ''
+      : `
         <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
           <div style="font-weight:700; margin-bottom:8px; color:#0f172a;">Form Pengajuan Izin Guru</div>
           <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:8px;">
@@ -2299,6 +2359,11 @@ async function renderGuruPerizinanPage(forceReload = false) {
           <div style="font-weight:700; margin-bottom:8px; color:#0f172a;">Daftar Pengajuan Izin Saya</div>
           <div id="guru-perizinan-own-list">Loading...</div>
         </div>
+      `
+
+    content.innerHTML = `
+      <div style="display:grid; gap:12px;">
+        ${ownSectionHtml}
 
         <div id="guru-perizinan-approval-panel" style="display:none; border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
           <div style="font-weight:700; margin-bottom:8px; color:#0f172a;">Persetujuan Izin Guru (Wakasek Akademik)</div>
@@ -2312,7 +2377,7 @@ async function renderGuruPerizinanPage(forceReload = false) {
       </div>
     `
 
-    renderGuruPerizinanOwnRows()
+    if (!IS_WAKASEK_KURIKULUM_PANEL) renderGuruPerizinanOwnRows()
     renderGuruPerizinanApprovalRows()
     renderGuruSantriPerizinanApprovalRows()
   } catch (error) {
@@ -12610,7 +12675,9 @@ async function setupRaporAccess(forceReload = false) {
 async function setupMonitoringAccess(forceReload = false) {
   const isAllowed = await getIsWakasekAkademik(forceReload)
   const btn = document.getElementById('guru-nav-monitoring')
-  if (btn) btn.style.display = isAllowed ? '' : 'none'
+  const wakasekPanelBtn = document.getElementById('guru-nav-wakasek-panel')
+  if (btn) btn.style.display = (isAllowed && IS_WAKASEK_KURIKULUM_PANEL) ? '' : 'none'
+  if (wakasekPanelBtn) wakasekPanelBtn.style.display = (isAllowed && !IS_WAKASEK_KURIKULUM_PANEL) ? '' : 'none'
   return isAllowed
 }
 
@@ -12622,7 +12689,7 @@ function isGuruEkskulMissingPj2ColumnError(error) {
 async function setupGuruPrestasiPelanggaranAccess(forceReload = false) {
   const isAllowed = await getIsWakasekAkademik(forceReload)
   const btn = document.getElementById('guru-nav-prestasi-pelanggaran')
-  if (btn) btn.style.display = isAllowed ? '' : 'none'
+  if (btn) btn.style.display = (isAllowed && IS_WAKASEK_KURIKULUM_PANEL) ? '' : 'none'
   return isAllowed
 }
 
@@ -12966,8 +13033,7 @@ async function renderGuruPrestasiPelanggaranPage() {
 
 async function loadGuruPage(page, options = {}) {
   const { updateHistory = true, replaceHistory = false } = options || {}
-  const requestedPage = String(page || DEFAULT_GURU_PAGE)
-  const targetPage = VALID_GURU_PAGE_SET.has(requestedPage) ? requestedPage : DEFAULT_GURU_PAGE
+  const targetPage = sanitizeGuruTargetPage(page)
   stopGuruChatModuleIfNeeded(targetPage)
   unlockGuruContentContainer()
 
@@ -13099,6 +13165,14 @@ function renderBlockedGuruPage({ title, message, topbarKey }) {
 }
 
 function guardGuruPageAccess({ targetPage, isWaliKelas, isWakasekAkademik, isWakasekPrestasi, isEkskulPj }) {
+  if (!IS_WAKASEK_KURIKULUM_PANEL && (targetPage === 'monitoring' || targetPage === 'prestasi-pelanggaran')) {
+    renderBlockedGuruPage({
+      title: targetPage === 'monitoring' ? 'Monitoring' : 'Prestasi & Pelanggaran',
+      message: 'Menu ini sudah dipindahkan ke halaman khusus Wakasek Kurikulum.',
+      topbarKey: targetPage
+    })
+    return true
+  }
   const isLaporanPage = isGuruLaporanPage(targetPage)
   if ((targetPage === 'rapor' || isLaporanPage) && !isWaliKelas) {
     const blockedTitle = targetPage === 'rapor' ? 'Rapor' : 'Laporan'
@@ -13274,7 +13348,9 @@ window.submitGuruDailyTask = submitGuruDailyTask
 window.renderGuruPerizinanPage = renderGuruPerizinanPage
 window.submitGuruPerizinanForm = submitGuruPerizinanForm
 window.saveGuruPerizinanApproval = saveGuruPerizinanApproval
+window.deleteGuruPerizinanApproval = deleteGuruPerizinanApproval
 window.saveGuruSantriPerizinanApproval = saveGuruSantriPerizinanApproval
+window.deleteGuruSantriPerizinanApproval = deleteGuruSantriPerizinanApproval
 window.selectGuruEkskul = selectGuruEkskul
 window.selectGuruEkskulProgresSantri = selectGuruEkskulProgresSantri
 window.guruEkskulUpdateIndicatorStars = guruEkskulUpdateIndicatorStars
@@ -13286,6 +13362,8 @@ window.saveGuruEkskulProgressBatch = saveGuruEkskulProgressBatch
 window.setGuruEkskulTab = setGuruEkskulTab
 window.onGuruEkskulMonthlyPeriodeChange = onGuruEkskulMonthlyPeriodeChange
 window.saveGuruEkskulMonthlyReport = saveGuruEkskulMonthlyReport
+window.openWakasekKurikulumPanel = openWakasekKurikulumPanel
+window.backToGuruPanel = backToGuruPanel
 
 document.addEventListener('DOMContentLoaded', () => {
   initGuruSidebarState()
@@ -13296,7 +13374,14 @@ document.addEventListener('DOMContentLoaded', () => {
   refreshGuruTopbarIndicators()
   startGuruTopbarChatBadgeTicker()
   setupRaporAccess(true)
-  setupMonitoringAccess(true).catch(error => console.error(error))
+  setupMonitoringAccess(true)
+    .then(isAllowed => {
+      if (IS_WAKASEK_KURIKULUM_PANEL && !isAllowed) {
+        alert('Halaman ini khusus Wakasek Kurikulum.')
+        location.replace('guru.html')
+      }
+    })
+    .catch(error => console.error(error))
   setupEkskulAccess(true).catch(error => console.error(error))
   setGuruWelcomeName()
   const lastPage = localStorage.getItem(GURU_LAST_PAGE_KEY) || DEFAULT_GURU_PAGE

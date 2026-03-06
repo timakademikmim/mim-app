@@ -138,6 +138,104 @@ function initTopbarAccountMenu() {
     if (logoutBtn) logoutBtn.before(infoBtn)
     else menu.appendChild(infoBtn)
   }
+  if (!isDesktopApp && !document.getElementById('topbar-web-info-btn')) {
+    const infoBtn = document.createElement('button')
+    infoBtn.type = 'button'
+    infoBtn.id = 'topbar-web-info-btn'
+    infoBtn.textContent = 'Info'
+    const logoutBtn = menu.querySelector('button[onclick*="logout"], button[onclick*="Logout"]')
+    if (logoutBtn) logoutBtn.before(infoBtn)
+    else menu.appendChild(infoBtn)
+  }
+
+  if (!document.getElementById('topbar-web-desktop-info-style')) {
+    const style = document.createElement('style')
+    style.id = 'topbar-web-desktop-info-style'
+    style.textContent = `
+      .topbar-web-info-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 12100;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(15, 23, 42, 0.4);
+        padding: 16px;
+      }
+      .topbar-web-info-overlay.open {
+        display: flex;
+      }
+      .topbar-web-info-card {
+        width: min(520px, calc(100vw - 24px));
+        max-height: min(78vh, 620px);
+        overflow: auto;
+        background: #fff;
+        border: 1px solid #cbd5e1;
+        border-radius: 14px;
+        box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+        padding: 16px;
+      }
+      .topbar-web-info-card h3 {
+        margin: 0 0 8px;
+        font-size: 16px;
+        color: #0f172a;
+      }
+      .topbar-web-desktop-version {
+        font-size: 12px;
+        color: #475569;
+        margin-bottom: 6px;
+      }
+      .topbar-web-desktop-notes {
+        white-space: pre-wrap;
+        font-size: 12px;
+        color: #334155;
+        line-height: 1.45;
+        margin-bottom: 8px;
+      }
+      .topbar-web-desktop-downloads {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      .topbar-web-desktop-download-btn {
+        width: 100%;
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        background: #fff;
+        color: #0f172a;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 8px 10px;
+        cursor: pointer;
+      }
+      .topbar-web-desktop-download-btn:hover {
+        background: #f8fafc;
+      }
+      .topbar-web-mobile-note {
+        margin-top: 6px;
+        font-size: 11px;
+        color: #64748b;
+      }
+      .topbar-web-info-actions {
+        margin-top: 12px;
+        display: flex;
+        justify-content: flex-end;
+      }
+      .topbar-web-info-actions button {
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        background: #fff;
+        color: #0f172a;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 6px 12px;
+        cursor: pointer;
+      }
+    `
+    document.head.appendChild(style)
+  }
+
+  initWebDesktopInfoPopup()
 
   roleBtn.textContent = `Role: ${activeRole || '-'}`
   const optionRoles = [...new Set(roles)].filter(role => !!ROLE_PAGE_MAP[role] && role !== activeRole)
@@ -166,9 +264,139 @@ function initTopbarAccountMenu() {
   })
 }
 
+async function initWebDesktopInfoPopup() {
+  const isDesktopApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
+  if (isDesktopApp) return
+  const GENERIC_NOTE = 'desktop release otomatis dengan updater artifacts.'
+  const WEB_VERSION_WHATS_NEW = {
+    '0.3.0': `What's new in this version:
+- Cincin status avatar sekarang tampil permanen (biru saat online, merah saat offline).
+- Menu akun menambahkan tombol Info di bawah Profil.
+- Popup Info rilis dirapikan agar catatan versi lebih jelas.`,
+    '0.2.9': `What's new in this version:
+- Info rilis dipindahkan ke menu avatar di topbar.
+- Indikator online/offline dipindah ke cincin di sekitar avatar.`
+  }
+  const normalizeVersion = version => String(version || '').trim().replace(/^v/i, '')
+  const isGenericNotes = text => String(text || '').trim().toLowerCase() === GENERIC_NOTE
+  const getStoredVersion = () => normalizeVersion(localStorage.getItem('web_desktop_latest_version') || '')
+  const setStoredVersion = version => {
+    const v = normalizeVersion(version)
+    if (v) localStorage.setItem('web_desktop_latest_version', v)
+  }
+  const fallbackNotes = version => {
+    const v = normalizeVersion(version)
+    if (WEB_VERSION_WHATS_NEW[v]) return WEB_VERSION_WHATS_NEW[v]
+    return `What's new in this version:
+- Pembaruan fitur dan penyempurnaan stabilitas aplikasi desktop.`
+  }
+  const infoBtn = document.getElementById('topbar-web-info-btn')
+  if (!infoBtn) return
+  let overlay = document.getElementById('topbar-web-info-overlay')
+  if (!overlay) {
+    overlay = document.createElement('div')
+    overlay.id = 'topbar-web-info-overlay'
+    overlay.className = 'topbar-web-info-overlay'
+    overlay.innerHTML = `
+      <div class="topbar-web-info-card">
+        <h3>Info Versi Desktop</h3>
+        <div id="topbar-web-desktop-version" class="topbar-web-desktop-version">Versi desktop: memuat...</div>
+        <div id="topbar-web-desktop-notes" class="topbar-web-desktop-notes">Memuat catatan rilis...</div>
+        <div class="topbar-web-desktop-downloads">
+          <button type="button" id="topbar-web-desktop-download-exe" class="topbar-web-desktop-download-btn">Download EXE</button>
+          <button type="button" id="topbar-web-desktop-download-msi" class="topbar-web-desktop-download-btn">Download MSI</button>
+        </div>
+        <div class="topbar-web-mobile-note">Versi mobile: segera hadir.</div>
+        <div class="topbar-web-info-actions">
+          <button type="button" id="topbar-web-info-close">Tutup</button>
+        </div>
+      </div>
+    `
+    document.body.appendChild(overlay)
+    const closeBtn = overlay.querySelector('#topbar-web-info-close')
+    closeBtn?.addEventListener('click', () => overlay.classList.remove('open'))
+    overlay.addEventListener('click', event => {
+      if (event.target === overlay) overlay.classList.remove('open')
+    })
+  }
+  const versionEl = overlay.querySelector('#topbar-web-desktop-version')
+  const notesEl = overlay.querySelector('#topbar-web-desktop-notes')
+  const downloadExeBtn = overlay.querySelector('#topbar-web-desktop-download-exe')
+  const downloadMsiBtn = overlay.querySelector('#topbar-web-desktop-download-msi')
+  if (!versionEl || !notesEl || !downloadExeBtn || !downloadMsiBtn) return
+
+  const downloadState = {
+    exe: '',
+    msi: ''
+  }
+
+  if (infoBtn.dataset.boundDesktopInfo !== '1') {
+    infoBtn.dataset.boundDesktopInfo = '1'
+    infoBtn.addEventListener('click', () => {
+      overlay.classList.add('open')
+    })
+  }
+  if (downloadExeBtn.dataset.boundDesktopDownload !== '1') {
+    downloadExeBtn.dataset.boundDesktopDownload = '1'
+    downloadExeBtn.addEventListener('click', () => {
+      const url = downloadState.exe || `https://github.com/timakademikmim/mim-app/releases/latest/download/MIM.App_${getStoredVersion() || '0.3.0'}_x64-setup.exe`
+      window.open(url, '_blank', 'noopener,noreferrer')
+    })
+  }
+  if (downloadMsiBtn.dataset.boundDesktopDownload !== '1') {
+    downloadMsiBtn.dataset.boundDesktopDownload = '1'
+    downloadMsiBtn.addEventListener('click', () => {
+      const url = downloadState.msi || `https://github.com/timakademikmim/mim-app/releases/latest/download/MIM.App_${getStoredVersion() || '0.3.0'}_x64_en-US.msi`
+      window.open(url, '_blank', 'noopener,noreferrer')
+    })
+  }
+
+  try {
+    const latestRes = await fetch('https://github.com/timakademikmim/mim-app/releases/latest/download/latest.json', { cache: 'no-store' })
+    if (!latestRes.ok) throw new Error('latest.json not available')
+    const latest = await latestRes.json()
+    const fetchedVersion = normalizeVersion(latest?.version || '')
+    const version = fetchedVersion || getStoredVersion() || '0.3.0'
+    setStoredVersion(version)
+    versionEl.textContent = `Versi desktop terbaru: v${version}`
+    const platforms = latest?.platforms && typeof latest.platforms === 'object' ? latest.platforms : {}
+    downloadState.exe = String(platforms?.['windows-x86_64-nsis']?.url || '').trim()
+    downloadState.msi = String(platforms?.['windows-x86_64-msi']?.url || platforms?.['windows-x86_64']?.url || '').trim()
+    let notes = String(latest?.notes || latest?.body || latest?.changelog || '').trim()
+    if (!notes || isGenericNotes(notes)) {
+      const releaseRes = await fetch(`https://api.github.com/repos/timakademikmim/mim-app/releases/tags/v${encodeURIComponent(version)}`, {
+        cache: 'no-store',
+        headers: { Accept: 'application/vnd.github+json' }
+      })
+      if (releaseRes.ok) {
+        const release = await releaseRes.json()
+        notes = String(release?.body || '').trim()
+      }
+    }
+    notesEl.textContent = (!notes || isGenericNotes(notes)) ? fallbackNotes(version) : notes
+  } catch (_error) {
+    const storedVersion = getStoredVersion() || '0.3.0'
+    versionEl.textContent = `Versi desktop terbaru: v${storedVersion}`
+    notesEl.textContent = fallbackNotes(storedVersion)
+  }
+}
+
 function initDesktopUpdaterUi() {
   const isDesktopApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
   if (!isDesktopApp) return
+
+  const GENERIC_RELEASE_NOTE_PATTERNS = [
+    'desktop release otomatis dengan updater artifacts.'
+  ]
+  const VERSION_WHATS_NEW = {
+    '0.3.0': `What's new in this version:
+- Cincin status avatar sekarang tampil permanen (biru saat online, merah saat offline).
+- Menu akun menambahkan tombol Info di bawah Profil.
+- Popup Info rilis dirapikan agar catatan versi lebih jelas.`,
+    '0.2.9': `What's new in this version:
+- Info rilis dipindahkan ke menu avatar di topbar.
+- Indikator online/offline dipindah ke cincin di sekitar avatar.`
+  }
 
   const releaseInfoState = {
     currentVersion: String(localStorage.getItem('desktop_app_version') || '').trim(),
@@ -184,6 +412,24 @@ function initDesktopUpdaterUi() {
   let changelogBody = null
   let updateLockOverlay = null
   let lastOnlineState = null
+
+  function cleanVersion(version) {
+    return String(version || '').trim().replace(/^v/i, '')
+  }
+
+  function isGenericReleaseNotes(text) {
+    const value = String(text || '').trim().toLowerCase()
+    if (!value) return true
+    return GENERIC_RELEASE_NOTE_PATTERNS.includes(value)
+  }
+
+  function getFallbackReleaseNotes(version) {
+    const v = cleanVersion(version)
+    if (VERSION_WHATS_NEW[v]) return VERSION_WHATS_NEW[v]
+    return `What's new in this version:
+- Pembaruan stabilitas dan penyempurnaan antarmuka.
+- Perbaikan minor pada pengalaman penggunaan desktop.`
+  }
 
   function ensureUpdaterStyle() {
     if (document.getElementById('desktop-updater-style')) return
@@ -330,6 +576,8 @@ function initDesktopUpdaterUi() {
     }
     if (!window.openDesktopReleaseInfo) {
       window.openDesktopReleaseInfo = async function openDesktopReleaseInfo() {
+      await hydrateLatestReleaseInfo()
+      syncVersionFromStorage()
       const meta = changelogOverlay?.querySelector('#desktop-release-meta')
       if (meta) {
         const current = releaseInfoState.currentVersion || '-'
@@ -340,7 +588,7 @@ function initDesktopUpdaterUi() {
       if (noteVersion) await ensureReleaseNotesForVersion(noteVersion)
       if (changelogBody) {
         const resolvedNote = noteVersion ? (releaseInfoState.notesByVersion[noteVersion] || '') : ''
-        changelogBody.textContent = resolvedNote || releaseInfoState.notes || `What's new in this version:\n- Penanda status online/offline sekarang berupa cincin permanen di avatar topbar.\n- Menu akun menambahkan item Info untuk membuka catatan rilis.\n- Tampilan info rilis dirapikan agar lebih jelas.`
+        changelogBody.textContent = resolvedNote || releaseInfoState.notes || getFallbackReleaseNotes(noteVersion)
       }
       changelogOverlay?.classList.add('open')
       }
@@ -378,6 +626,22 @@ function initDesktopUpdaterUi() {
     observer.observe(host, { childList: true, subtree: true })
   }
 
+  function syncVersionFromStorage() {
+    if (!releaseInfoState.currentVersion) {
+      const stored = String(localStorage.getItem('desktop_app_version') || '').trim()
+      if (stored) releaseInfoState.currentVersion = stored
+    }
+    if (!releaseInfoState.currentVersion && releaseInfoState.latestVersion) {
+      releaseInfoState.currentVersion = releaseInfoState.latestVersion
+    }
+    if (!releaseInfoState.latestVersion && releaseInfoState.currentVersion) {
+      releaseInfoState.latestVersion = releaseInfoState.currentVersion
+    }
+    if (releaseInfoState.currentVersion) {
+      localStorage.setItem('desktop_app_version', releaseInfoState.currentVersion)
+    }
+  }
+
   async function hydrateLatestReleaseInfo() {
     try {
       const res = await fetch('https://github.com/timakademikmim/mim-app/releases/latest/download/latest.json', { cache: 'no-store' })
@@ -387,9 +651,13 @@ function initDesktopUpdaterUi() {
         const latestVersion = String(info.version || '').trim()
         const notes = String(info.notes || info.body || info.changelog || info.releaseNotes || '').trim()
         if (latestVersion) releaseInfoState.latestVersion = latestVersion
-        if (notes) {
+        if (notes && !isGenericReleaseNotes(notes)) {
           releaseInfoState.notes = notes
           if (latestVersion) releaseInfoState.notesByVersion[latestVersion] = notes
+        } else if (latestVersion) {
+          const fallback = getFallbackReleaseNotes(latestVersion)
+          releaseInfoState.notes = fallback
+          releaseInfoState.notesByVersion[latestVersion] = fallback
         }
         if (!releaseInfoState.currentVersion && latestVersion) releaseInfoState.currentVersion = latestVersion
         if (latestVersion) await ensureReleaseNotesForVersion(latestVersion)
@@ -399,40 +667,47 @@ function initDesktopUpdaterUi() {
   }
 
   async function fetchReleaseBodyByTag(version) {
-    const cleanVersion = String(version || '').trim().replace(/^v/i, '')
-    if (!cleanVersion) return ''
+    const clean = cleanVersion(version)
+    if (!clean) return ''
     try {
-      const res = await fetch(`https://api.github.com/repos/timakademikmim/mim-app/releases/tags/v${encodeURIComponent(cleanVersion)}`, {
+      const res = await fetch(`https://api.github.com/repos/timakademikmim/mim-app/releases/tags/v${encodeURIComponent(clean)}`, {
         cache: 'no-store',
         headers: { Accept: 'application/vnd.github+json' }
       })
       if (!res.ok) return ''
       const info = await res.json()
-      return String(info?.body || '').trim()
+      const body = String(info?.body || '').trim()
+      if (isGenericReleaseNotes(body)) return ''
+      return body
     } catch (_error) {
       return ''
     }
   }
 
   async function ensureReleaseNotesForVersion(version) {
-    const cleanVersion = String(version || '').trim().replace(/^v/i, '')
-    if (!cleanVersion) return
-    if (releaseInfoState.notesByVersion[cleanVersion]) return
-    const notes = await fetchReleaseBodyByTag(cleanVersion)
+    const clean = cleanVersion(version)
+    if (!clean) return
+    if (releaseInfoState.notesByVersion[clean]) return
+    const notes = await fetchReleaseBodyByTag(clean)
     if (notes) {
-      releaseInfoState.notesByVersion[cleanVersion] = notes
-      if (releaseInfoState.latestVersion === cleanVersion || !releaseInfoState.notes) {
+      releaseInfoState.notesByVersion[clean] = notes
+      if (releaseInfoState.latestVersion === clean || !releaseInfoState.notes) {
         releaseInfoState.notes = notes
       }
       return
     }
-    if (releaseInfoState.latestVersion === cleanVersion && releaseInfoState.notes) {
-      releaseInfoState.notesByVersion[cleanVersion] = releaseInfoState.notes
+    const fallback = getFallbackReleaseNotes(clean)
+    releaseInfoState.notesByVersion[clean] = fallback
+    if (releaseInfoState.latestVersion === clean && releaseInfoState.notes) {
+      releaseInfoState.notesByVersion[clean] = isGenericReleaseNotes(releaseInfoState.notes)
+        ? fallback
+        : releaseInfoState.notes
     }
   }
 
   function renderVersionLabel() {
     ensureUpdaterElements()
+    syncVersionFromStorage()
     if (infoBtn) infoBtn.textContent = 'Info'
   }
 
@@ -444,9 +719,13 @@ function initDesktopUpdaterUi() {
     const notes = String(detail?.notes || '').trim()
     if (currentVersion) releaseInfoState.currentVersion = currentVersion
     if (latestVersion) releaseInfoState.latestVersion = latestVersion
-    if (notes) {
+    if (notes && !isGenericReleaseNotes(notes)) {
       releaseInfoState.notes = notes
       if (latestVersion) releaseInfoState.notesByVersion[latestVersion] = notes
+    } else if (latestVersion) {
+      const fallback = getFallbackReleaseNotes(latestVersion)
+      releaseInfoState.notes = fallback
+      releaseInfoState.notesByVersion[latestVersion] = fallback
     }
     if (releaseInfoState.currentVersion) localStorage.setItem('desktop_app_version', releaseInfoState.currentVersion)
     renderVersionLabel()
@@ -465,6 +744,7 @@ function initDesktopUpdaterUi() {
   }
 
   ensureUpdaterElements()
+  syncVersionFromStorage()
   bindAvatarPersistence()
   setOnlineIndicator()
   renderVersionLabel()
