@@ -3,7 +3,7 @@ name: Android Release
 on:
   push:
     tags:
-      - "v*"
+      - "android-v*"
   workflow_dispatch:
 
 permissions:
@@ -69,7 +69,7 @@ jobs:
           fi
 
           mkdir -p "$OUTPUT_DIR"
-          VERSION_CLEAN="${TAG_NAME#v}"
+          VERSION_CLEAN="${TAG_NAME#android-v}"
           APK_VERSIONED="$OUTPUT_DIR/MIM.App_${VERSION_CLEAN}_android_arm64.apk"
           APK_UPDATER="$OUTPUT_DIR/app-universal-release.apk"
 
@@ -95,7 +95,7 @@ jobs:
       - name: Generate mobile-latest.json
         shell: bash
         run: |
-          VERSION_CLEAN="${TAG_NAME#v}"
+          VERSION_CLEAN="${TAG_NAME#android-v}"
           APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG_NAME}/app-universal-release.apk"
           NOW_UTC="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           cat > "$OUTPUT_DIR/mobile-latest.json" <<EOF
@@ -113,6 +113,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
+          name: Android Release ${{ github.ref_name }}
+          prerelease: true
+          make_latest: false
           files: |
             release-assets/android/MIM.App_*_android_arm64.apk
             release-assets/android/app-universal-release.apk
