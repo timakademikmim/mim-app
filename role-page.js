@@ -76,6 +76,68 @@ function isWebPlatform() {
   return !hasTauriRuntime()
 }
 
+async function fetchLatestAndroidReleaseMeta() {
+  const fallback = {
+    version: '',
+    notes: '',
+    apkUrl: '',
+    aabUrl: ''
+  }
+  try {
+    const res = await fetch('https://api.github.com/repos/timakademikmim/mim-app/releases?per_page=30', {
+      cache: 'no-store',
+      headers: { Accept: 'application/vnd.github+json' }
+    })
+    if (!res.ok) return fallback
+    const releases = await res.json()
+    if (!Array.isArray(releases)) return fallback
+    const androidRelease = releases.find(item => String(item?.tag_name || '').toLowerCase().startsWith('android-v'))
+    if (!androidRelease) return fallback
+
+    const tag = String(androidRelease.tag_name || '').trim()
+    const version = String(tag.replace(/^android-v/i, '') || '').trim()
+    const notes = String(androidRelease.body || '').trim()
+    const assets = Array.isArray(androidRelease.assets) ? androidRelease.assets : []
+
+    const apkAsset = assets.find(asset => {
+      const name = String(asset?.name || '').toLowerCase()
+      return name.endsWith('.apk')
+    })
+    const aabAsset = assets.find(asset => {
+      const name = String(asset?.name || '').toLowerCase()
+      return name.endsWith('.aab')
+    })
+
+    return {
+      version,
+      notes,
+      apkUrl: String(apkAsset?.browser_download_url || '').trim(),
+      aabUrl: String(aabAsset?.browser_download_url || '').trim()
+    }
+  } catch (_error) {
+    return fallback
+  }
+}
+
+function applyPlatformUiSkin() {
+  const body = document.body
+  if (!body) return
+
+  body.classList.remove('platform-android', 'platform-desktop', 'platform-web')
+  if (isAndroidPlatform()) body.classList.add('platform-android')
+  else if (isDesktopPlatform()) body.classList.add('platform-desktop')
+  else body.classList.add('platform-web')
+
+  if (!isAndroidPlatform()) return
+  if (document.getElementById('android-ui-css')) return
+
+  const link = document.createElement('link')
+  link.id = 'android-ui-css'
+  link.rel = 'stylesheet'
+  link.href = 'android-ui.css?v=20260307-android-ui-01'
+  document.head.appendChild(link)
+}
+
 function getActiveRole() {
   if (requiredRole && roles.includes(requiredRole)) return requiredRole
   return roles[0] || ''
@@ -437,24 +499,22 @@ async function initAndroidReleaseInfoPopup() {
     if (!mobileRes.ok) {
       mobileRes = await fetch(`https://github.com/timakademikmim/mim-app/releases/latest/download/latest.json?t=${Date.now()}`, { cache: 'no-store' })
     }
-    if (!mobileRes.ok) throw new Error('mobile latest not available')
-    const latest = await mobileRes.json()
-    const latestVersion = String(latest?.version || '').trim().replace(/^v/i, '') || '-'
-    const mobile = latest?.mobile && typeof latest.mobile === 'object' ? latest.mobile : {}
-    apkUrl = String(mobile?.apk || apkUrl).trim() || apkUrl
-    let notes = String(latest?.notes || '').trim()
-    if (!notes) {
-      try {
-        const rel = await fetch(`https://api.github.com/repos/timakademikmim/mim-app/releases/tags/v${encodeURIComponent(latestVersion)}`, {
-          cache: 'no-store',
-          headers: { Accept: 'application/vnd.github+json' }
-        })
-        if (rel.ok) {
-          const json = await rel.json()
-          notes = String(json?.body || '').trim()
-        }
-      } catch (_error) {}
+    let latestVersion = ''
+    let notes = ''
+    if (mobileRes.ok) {
+      const latest = await mobileRes.json()
+      latestVersion = String(latest?.version || '').trim().replace(/^v/i, '') || ''
+      const mobile = latest?.mobile && typeof latest.mobile === 'object' ? latest.mobile : {}
+      apkUrl = String(mobile?.apk || apkUrl).trim() || apkUrl
+      notes = String(latest?.notes || '').trim()
     }
+
+    const androidMeta = await fetchLatestAndroidReleaseMeta()
+    if (androidMeta.version) latestVersion = androidMeta.version
+    if (androidMeta.apkUrl) apkUrl = androidMeta.apkUrl
+    if ((!notes || notes.length < 10) && androidMeta.notes) notes = androidMeta.notes
+
+    if (!latestVersion) throw new Error('mobile latest not available')
     if (!notes) notes = "What's new in this version:\n- Pembaruan Android tersedia."
     versionEl.textContent = `Versi Android saat ini: v${currentVersion} | Versi terbaru: v${latestVersion}`
     notesEl.textContent = notes
@@ -735,11 +795,9 @@ async function initMobileInAppUpdatePrompt() {
     const fallbackUrl = `https://github.com/timakademikmim/mim-app/releases/latest/download/latest.json?t=${Date.now()}`
     latestRes = await fetch(fallbackUrl, { cache: 'no-store' }).catch(() => null)
   }
-  if (!latestRes || !latestRes.ok) return
-  const latest = await latestRes.json().catch(() => null)
-  if (!latest || typeof latest !== 'object') return
-
-  const latestVersion = normalizeVersion(latest.version)
+  const latest = latestRes && latestRes.ok ? await latestRes.json().catch(() => null) : null
+  const androidMeta = await fetchLatestAndroidReleaseMeta()
+  const latestVersion = normalizeVersion(androidMeta.version || latest?.version || '')
   const currentVersion = await getCurrentVersion()
   if (!latestVersion) return
   localStorage.setItem('mobile_app_version', currentVersion)
@@ -747,15 +805,17 @@ async function initMobileInAppUpdatePrompt() {
   if (compareVersions(latestVersion, currentVersion) <= 0) return
 
   let apkUrl = ''
-  if (latest.mobile && typeof latest.mobile === 'object') {
+  if (latest?.mobile && typeof latest.mobile === 'object') {
     apkUrl = String(latest.mobile.apk || '').trim()
   }
-  if (!apkUrl && latest.platforms && typeof latest.platforms === 'object') {
+  if (!apkUrl && latest?.platforms && typeof latest.platforms === 'object') {
     apkUrl = String(latest.platforms?.['android-arm64-apk']?.url || '').trim()
   }
+  if (!apkUrl && androidMeta.apkUrl) apkUrl = androidMeta.apkUrl
   if (!apkUrl) apkUrl = 'https://github.com/timakademikmim/mim-app/releases/latest/download/app-universal-release.apk'
 
-  let notes = String(latest.notes || latest.body || latest.changelog || '').trim()
+  let notes = String(latest?.notes || latest?.body || latest?.changelog || '').trim()
+  if (!notes && androidMeta.notes) notes = androidMeta.notes
   if (!notes) notes = await getReleaseBodyByTag(latestVersion)
   if (!notes) {
     notes = `What's new in this version:\n- Peningkatan stabilitas dan pembaruan fitur aplikasi mobile.`
@@ -1390,6 +1450,7 @@ window.setTopbarUserIdentity = function setTopbarUserIdentity(nameOrObject, mayb
   setTopbarAvatar(name || String(localStorage.getItem('login_name') || '').trim() || id, fotoUrl)
 }
 
+applyPlatformUiSkin()
 initTopbarAccountMenu()
 initDesktopUpdaterUi()
 
