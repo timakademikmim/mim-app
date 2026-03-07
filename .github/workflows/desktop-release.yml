@@ -40,9 +40,9 @@ jobs:
           releaseName: MIM Desktop ${{ github.ref_name }}
           releaseBody: |
             What's new in this version:
-            - Workflow Android release otomatis ditambahkan: APK kini ikut terupload ke GitHub release saat tag baru dibuat.
-            - Nama asset updater Android distandarkan ke app-universal-release.apk untuk proses update in-app.
-            - Perbaikan lanjutan stabilitas alur update desktop.
+            - Alur update Android dan Desktop dipisah: Android memakai mobile-latest.json, Desktop tetap latest.json.
+            - Workflow Android rilis otomatis kini menghasilkan dan mengupload app-universal-release.apk + mobile-latest.json.
+            - Build command frontend dibuat lintas platform (tidak tergantung PowerShell di runner Linux).
           releaseDraft: false
           prerelease: false
 

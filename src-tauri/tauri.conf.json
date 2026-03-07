@@ -1,11 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "MIM App",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "identifier": "com.mim.app",
   "build": {
-    "beforeDevCommand": "powershell -ExecutionPolicy Bypass -File scripts/build-desktop-assets.ps1",
-    "beforeBuildCommand": "powershell -ExecutionPolicy Bypass -File scripts/build-desktop-assets.ps1",
+    "beforeDevCommand": "node scripts/build-desktop-assets.mjs",
+    "beforeBuildCommand": "node scripts/build-desktop-assets.mjs",
     "frontendDist": "../dist-tauri-web"
   },
   "app": {

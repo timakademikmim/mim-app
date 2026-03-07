@@ -92,6 +92,23 @@ jobs:
             "$APKSIGNER" sign --ks "$OUTPUT_DIR/debug.keystore" --ks-pass pass:android --key-pass pass:android "$APK_UPDATER"
           fi
 
+      - name: Generate mobile-latest.json
+        shell: bash
+        run: |
+          VERSION_CLEAN="${TAG_NAME#v}"
+          APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG_NAME}/app-universal-release.apk"
+          NOW_UTC="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          cat > "$OUTPUT_DIR/mobile-latest.json" <<EOF
+          {
+            "version": "${VERSION_CLEAN}",
+            "notes": "Android release ${VERSION_CLEAN}. Pembaruan stabilitas dan kompatibilitas mobile.",
+            "pub_date": "${NOW_UTC}",
+            "mobile": {
+              "apk": "${APK_URL}"
+            }
+          }
+          EOF
+
       - name: Upload APK assets to GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -99,3 +116,4 @@ jobs:
           files: |
             release-assets/android/MIM.App_*_android_arm64.apk
             release-assets/android/app-universal-release.apk
+            release-assets/android/mobile-latest.json

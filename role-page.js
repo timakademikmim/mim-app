@@ -283,6 +283,10 @@ async function initWebDesktopInfoPopup() {
   if (isTauriApp) return
   const GENERIC_NOTE = 'desktop release otomatis dengan updater artifacts.'
   const WEB_VERSION_WHATS_NEW = {
+    '0.3.8': `What's new in this version:
+- Alur update Android dan Desktop dipisah (Android: mobile-latest.json, Desktop: latest.json).
+- Asset rilis Android kini otomatis terupload bersama metadata mobile-latest.json.
+- Build pipeline lintas platform diperbaiki agar runner Linux tidak gagal karena PowerShell.`,
     '0.3.7': `What's new in this version:
 - Android release kini terotomatisasi: APK ikut terupload saat tag rilis dibuat.
 - Asset APK updater distandarkan ke app-universal-release.apk agar update in-app lebih konsisten.
@@ -424,6 +428,16 @@ async function initWebDesktopInfoPopup() {
       downloadState.apk = String(latest.mobile.apk || '').trim()
       downloadState.aab = String(latest.mobile.aab || '').trim()
     }
+    try {
+      const mobileRes = await fetch('https://github.com/timakademikmim/mim-app/releases/latest/download/mobile-latest.json', { cache: 'no-store' })
+      if (mobileRes.ok) {
+        const mobileLatest = await mobileRes.json()
+        if (mobileLatest && typeof mobileLatest === 'object' && mobileLatest.mobile) {
+          downloadState.apk = String(mobileLatest.mobile.apk || downloadState.apk || '').trim()
+          downloadState.aab = String(mobileLatest.mobile.aab || downloadState.aab || '').trim()
+        }
+      }
+    } catch (_error) {}
     let notes = String(latest?.notes || latest?.body || latest?.changelog || '').trim()
     if (!notes || isGenericNotes(notes) || !downloadState.apk || !downloadState.aab) {
       const releaseRes = await fetch(`https://api.github.com/repos/timakademikmim/mim-app/releases/tags/v${encodeURIComponent(version)}`, {
@@ -498,8 +512,12 @@ async function initMobileInAppUpdatePrompt() {
     }
   }
 
-  const latestUrl = `https://github.com/timakademikmim/mim-app/releases/latest/download/latest.json?t=${Date.now()}`
-  const latestRes = await fetch(latestUrl, { cache: 'no-store' }).catch(() => null)
+  const mobileLatestUrl = `https://github.com/timakademikmim/mim-app/releases/latest/download/mobile-latest.json?t=${Date.now()}`
+  let latestRes = await fetch(mobileLatestUrl, { cache: 'no-store' }).catch(() => null)
+  if (!latestRes || !latestRes.ok) {
+    const fallbackUrl = `https://github.com/timakademikmim/mim-app/releases/latest/download/latest.json?t=${Date.now()}`
+    latestRes = await fetch(fallbackUrl, { cache: 'no-store' }).catch(() => null)
+  }
   if (!latestRes || !latestRes.ok) return
   const latest = await latestRes.json().catch(() => null)
   if (!latest || typeof latest !== 'object') return
@@ -632,6 +650,10 @@ function initDesktopUpdaterUi() {
     'desktop release otomatis dengan updater artifacts.'
   ]
   const VERSION_WHATS_NEW = {
+    '0.3.8': `What's new in this version:
+- Alur update Android dan Desktop dipisah (Android: mobile-latest.json, Desktop: latest.json).
+- Asset rilis Android kini otomatis terupload bersama metadata mobile-latest.json.
+- Build pipeline lintas platform diperbaiki agar runner Linux tidak gagal karena PowerShell.`,
     '0.3.7': `What's new in this version:
 - Android release kini terotomatisasi: APK ikut terupload saat tag rilis dibuat.
 - Asset APK updater distandarkan ke app-universal-release.apk agar update in-app lebih konsisten.
