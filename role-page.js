@@ -136,6 +136,112 @@ function applyPlatformUiSkin() {
   link.rel = 'stylesheet'
   link.href = 'android-ui.css?v=20260307-android-ui-01'
   document.head.appendChild(link)
+
+  ensureAndroidBottomNav()
+}
+
+function goToAndroidDashboard() {
+  try {
+    if (typeof window.loadPage === 'function') {
+      window.loadPage('dashboard')
+      return
+    }
+    if (typeof window.loadGuruPage === 'function') {
+      window.loadGuruPage('dashboard')
+      return
+    }
+    if (typeof window.loadMuhaffizPage === 'function') {
+      window.loadMuhaffizPage('dashboard')
+      return
+    }
+    if (typeof window.loadMusyrifPage === 'function') {
+      window.loadMusyrifPage('dashboard')
+      return
+    }
+  } catch (_error) {}
+}
+
+function ensureAndroidBottomNav() {
+  if (!isAndroidPlatform()) return
+  if (document.getElementById('android-bottom-nav')) return
+  if (!document.body) return
+
+  const role = String(document.body.dataset?.role || '').trim().toLowerCase()
+  const panel = String(document.body.dataset?.panel || '').trim().toLowerCase()
+  const isGuruMainPage = role === 'guru' && panel !== 'wakasek-kurikulum'
+
+  const items = isGuruMainPage
+    ? [
+      { key: 'dashboard', label: 'Dashboard', icon: '<path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1V9.5Z"/>' },
+      { key: 'input', label: 'Input', icon: '<path d="M4 19.5h16"/><path d="M7.5 15.5V8.5M12 15.5V5.5M16.5 15.5v-4"/>' },
+      { key: 'tugas', label: 'Mutabaah', icon: '<rect x="4" y="3.5" width="16" height="18" rx="2.5"/><path d="M8 8h8M8 12h8M8 16h5"/>' },
+      { key: 'jadwal', label: 'Jadwal', icon: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3.5v3M16 3.5v3"/>' }
+    ]
+    : [{ key: 'dashboard', label: 'Dashboard', icon: '<path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1V9.5Z"/>' }]
+
+  const nav = document.createElement('nav')
+  nav.id = 'android-bottom-nav'
+  nav.className = 'android-bottom-nav'
+  nav.innerHTML = items.map((item, index) => `
+    <button type="button" class="android-bottom-nav-btn ${index === 0 ? 'active' : ''}" data-nav-key="${item.key}">
+      <span class="android-bottom-nav-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${item.icon}</svg>
+      </span>
+      <span class="android-bottom-nav-label">${item.label}</span>
+    </button>
+  `).join('')
+  document.body.appendChild(nav)
+
+  const setActive = key => {
+    const buttons = nav.querySelectorAll('.android-bottom-nav-btn')
+    buttons.forEach(btn => {
+      btn.classList.toggle('active', String(btn.getAttribute('data-nav-key') || '') === String(key || ''))
+    })
+  }
+
+  const runAction = key => {
+    const navKey = String(key || '').trim().toLowerCase()
+    try {
+      if (role === 'guru' && panel !== 'wakasek-kurikulum' && typeof window.loadGuruPage === 'function') {
+        if (navKey === 'dashboard') window.loadGuruPage('dashboard')
+        else if (navKey === 'input') window.loadGuruPage('input-nilai')
+        else if (navKey === 'tugas') window.loadGuruPage('tugas')
+        else if (navKey === 'jadwal') window.loadGuruPage('jadwal')
+        else window.loadGuruPage('dashboard')
+        setActive(navKey)
+        return
+      }
+    } catch (_error) {}
+    goToAndroidDashboard()
+    setActive('dashboard')
+  }
+
+  nav.querySelectorAll('.android-bottom-nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      runAction(btn.getAttribute('data-nav-key') || '')
+    })
+  })
+
+  window.updateAndroidBottomNavActive = function updateAndroidBottomNavActive(pageKey) {
+    const key = String(pageKey || '').trim().toLowerCase()
+    if (role === 'guru' && panel !== 'wakasek-kurikulum') {
+      if (key === 'input-nilai' || key === 'input-absensi' || key === 'input' || key === 'nilai' || key === 'absensi') {
+        setActive('input')
+        return
+      }
+      if (key === 'tugas') {
+        setActive('tugas')
+        return
+      }
+      if (key === 'jadwal') {
+        setActive('jadwal')
+        return
+      }
+      setActive('dashboard')
+      return
+    }
+    setActive(key === 'dashboard' ? 'dashboard' : 'dashboard')
+  }
 }
 
 function getActiveRole() {
@@ -1342,10 +1448,24 @@ async function invokeTauriCommand(command, payload = {}) {
 window.openExternalUrl = async function openExternalUrl(url) {
   const target = String(url || '').trim()
   if (!target) return false
-  const isDesktopApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
-  if (!isDesktopApp) {
+  const isTauriApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
+  const isAndroidApp = /android/i.test(String(navigator.userAgent || ''))
+  if (!isTauriApp) {
     const popup = window.open(target, '_blank', 'noopener,noreferrer')
     return !!popup
+  }
+  if (isAndroidApp) {
+    try {
+      window.location.assign(target)
+      return true
+    } catch (_error) {
+      try {
+        window.location.href = target
+        return true
+      } catch (__error) {
+        return false
+      }
+    }
   }
   try {
     await invokeTauriCommand('open_external_url', { url: target })

@@ -119,8 +119,8 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: Android Release ${{ github.ref_name }}
-          prerelease: true
-          make_latest: false
+          prerelease: false
+          make_latest: true
           files: |
             release-assets/android/MIM.App_*_android_arm64.apk
             release-assets/android/app-universal-release.apk
