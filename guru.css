@@ -1416,6 +1416,103 @@ body {
   }
 }
 
+@media (max-width: 820px) {
+  .layout {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .sidebar {
+    width: 72px;
+    min-width: 72px;
+    padding: 12px 8px 16px;
+  }
+
+  .sidebar-logo {
+    max-width: 50px;
+    margin-bottom: 14px;
+  }
+
+  .guru-nav-btn,
+  .guru-submenu-btn {
+    justify-content: center;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .guru-nav-btn-content {
+    gap: 0;
+    justify-content: center;
+  }
+
+  .guru-nav-btn-content > span,
+  .guru-submenu-btn > span {
+    display: none;
+  }
+
+  .guru-submenu {
+    margin-left: 0;
+    border-left: none;
+    padding-left: 0;
+  }
+
+  .guru-parent-btn::after {
+    display: none;
+  }
+
+  .content {
+    min-width: 0;
+    padding: 12px;
+    padding-bottom: 28px;
+  }
+
+  .topbar {
+    padding: 10px;
+    gap: 8px;
+  }
+
+  .topbar-left {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .topbar-title {
+    min-width: 0;
+    font-size: 14px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .topbar-title-sep {
+    display: none;
+  }
+
+  .topbar-title-year,
+  .topbar-title-date-btn {
+    font-size: 12px;
+  }
+
+  .topbar-user-menu-wrap {
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .topbar-notif-trigger,
+  .topbar-avatar-trigger,
+  .topbar-user-trigger {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border-radius: 9px;
+    justify-content: center;
+  }
+
+  .topbar-user-name,
+  .topbar-user-arrow {
+    display: none !important;
+  }
+}
+
 .layout.sidebar-collapsed .sidebar {
   width: 0;
   min-width: 0;
