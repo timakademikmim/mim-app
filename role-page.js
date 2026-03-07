@@ -45,6 +45,37 @@ function rememberLastOpenPage() {
 }
 rememberLastOpenPage()
 
+const PREVIEW_PLATFORM = (() => {
+  try {
+    const raw = new URLSearchParams(window.location.search || '').get('preview')
+    const value = String(raw || '').trim().toLowerCase()
+    if (value === 'android' || value === 'desktop' || value === 'web') return value
+  } catch (_error) {}
+  return ''
+})()
+
+function hasTauriRuntime() {
+  return !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
+}
+
+function isAndroidPlatform() {
+  if (PREVIEW_PLATFORM === 'android') return true
+  if (PREVIEW_PLATFORM === 'desktop' || PREVIEW_PLATFORM === 'web') return false
+  return hasTauriRuntime() && /android/i.test(String(navigator.userAgent || ''))
+}
+
+function isDesktopPlatform() {
+  if (PREVIEW_PLATFORM === 'desktop') return true
+  if (PREVIEW_PLATFORM === 'android' || PREVIEW_PLATFORM === 'web') return false
+  return hasTauriRuntime() && !/android/i.test(String(navigator.userAgent || ''))
+}
+
+function isWebPlatform() {
+  if (PREVIEW_PLATFORM === 'web') return true
+  if (PREVIEW_PLATFORM === 'android' || PREVIEW_PLATFORM === 'desktop') return false
+  return !hasTauriRuntime()
+}
+
 function getActiveRole() {
   if (requiredRole && roles.includes(requiredRole)) return requiredRole
   return roles[0] || ''
@@ -124,9 +155,9 @@ function initTopbarAccountMenu() {
     else menu.appendChild(roleWrap)
   }
 
-  const isTauriApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
-  const isAndroidApp = isTauriApp && /android|linux/i.test(String(navigator.userAgent || ''))
-  const isDesktopApp = isTauriApp && !isAndroidApp
+  const isTauriApp = hasTauriRuntime()
+  const isAndroidApp = isAndroidPlatform()
+  const isDesktopApp = isDesktopPlatform()
   if (isDesktopApp && !document.getElementById('topbar-app-info-btn')) {
     const infoBtn = document.createElement('button')
     infoBtn.type = 'button'
@@ -145,7 +176,7 @@ function initTopbarAccountMenu() {
     if (logoutBtn) logoutBtn.before(infoBtn)
     else menu.appendChild(infoBtn)
   }
-  if (!isTauriApp && !document.getElementById('topbar-web-info-btn')) {
+  if (isWebPlatform() && !document.getElementById('topbar-web-info-btn')) {
     const infoBtn = document.createElement('button')
     infoBtn.type = 'button'
     infoBtn.id = 'topbar-web-info-btn'
@@ -294,9 +325,7 @@ function initTopbarAccountMenu() {
 }
 
 async function initAndroidReleaseInfoPopup() {
-  const isTauriApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
-  const isAndroidApp = isTauriApp && /android/i.test(String(navigator.userAgent || ''))
-  if (!isAndroidApp) return
+  if (!isAndroidPlatform()) return
 
   const infoBtn = document.getElementById('topbar-mobile-info-btn')
   if (!infoBtn) return
@@ -456,8 +485,7 @@ async function initAndroidReleaseInfoPopup() {
 }
 
 async function initWebDesktopInfoPopup() {
-  const isTauriApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
-  if (isTauriApp) return
+  if (!isWebPlatform()) return
   const GENERIC_NOTE = 'desktop release otomatis dengan updater artifacts.'
   const WEB_VERSION_WHATS_NEW = {
     '0.3.8': `What's new in this version:
@@ -658,9 +686,7 @@ async function initWebDesktopInfoPopup() {
 }
 
 async function initMobileInAppUpdatePrompt() {
-  const isTauriApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
-  const isAndroidApp = isTauriApp && /android/i.test(String(navigator.userAgent || ''))
-  if (!isAndroidApp) return
+  if (!isAndroidPlatform()) return
   if (document.getElementById('mobile-update-overlay')) return
 
   const compareVersions = (a, b) => {
