@@ -128,7 +128,9 @@ function initTopbarAccountMenu() {
   const roleMenu = document.getElementById('topbar-role-switch-menu')
   if (!roleBtn || !roleMenu) return
 
-  const isDesktopApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
+  const isTauriApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
+  const isAndroidApp = isTauriApp && /android/i.test(String(navigator.userAgent || ''))
+  const isDesktopApp = isTauriApp && !isAndroidApp
   if (isDesktopApp && !document.getElementById('topbar-app-info-btn')) {
     const infoBtn = document.createElement('button')
     infoBtn.type = 'button'
@@ -138,7 +140,7 @@ function initTopbarAccountMenu() {
     if (logoutBtn) logoutBtn.before(infoBtn)
     else menu.appendChild(infoBtn)
   }
-  if (!isDesktopApp && !document.getElementById('topbar-web-info-btn')) {
+  if (!isTauriApp && !document.getElementById('topbar-web-info-btn')) {
     const infoBtn = document.createElement('button')
     infoBtn.type = 'button'
     infoBtn.id = 'topbar-web-info-btn'
@@ -194,6 +196,22 @@ function initTopbarAccountMenu() {
       }
       .topbar-web-desktop-downloads {
         display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+      .topbar-web-download-group {
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 8px;
+      }
+      .topbar-web-download-group-title {
+        font-size: 11px;
+        font-weight: 700;
+        color: #475569;
+        margin: 0 0 6px;
+      }
+      .topbar-web-download-group-buttons {
+        display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 8px;
       }
@@ -210,11 +228,6 @@ function initTopbarAccountMenu() {
       }
       .topbar-web-desktop-download-btn:hover {
         background: #f8fafc;
-      }
-      .topbar-web-mobile-note {
-        margin-top: 6px;
-        font-size: 11px;
-        color: #64748b;
       }
       .topbar-web-info-actions {
         margin-top: 12px;
@@ -236,6 +249,7 @@ function initTopbarAccountMenu() {
   }
 
   initWebDesktopInfoPopup()
+  initMobileInAppUpdatePrompt()
 
   roleBtn.textContent = `Role: ${activeRole || '-'}`
   const optionRoles = [...new Set(roles)].filter(role => !!ROLE_PAGE_MAP[role] && role !== activeRole)
@@ -265,8 +279,8 @@ function initTopbarAccountMenu() {
 }
 
 async function initWebDesktopInfoPopup() {
-  const isDesktopApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
-  if (isDesktopApp) return
+  const isTauriApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
+  if (isTauriApp) return
   const GENERIC_NOTE = 'desktop release otomatis dengan updater artifacts.'
   const WEB_VERSION_WHATS_NEW = {
     '0.3.0': `What's new in this version:
@@ -303,10 +317,21 @@ async function initWebDesktopInfoPopup() {
         <div id="topbar-web-desktop-version" class="topbar-web-desktop-version">Versi desktop: memuat...</div>
         <div id="topbar-web-desktop-notes" class="topbar-web-desktop-notes">Memuat catatan rilis...</div>
         <div class="topbar-web-desktop-downloads">
-          <button type="button" id="topbar-web-desktop-download-exe" class="topbar-web-desktop-download-btn">Download EXE</button>
-          <button type="button" id="topbar-web-desktop-download-msi" class="topbar-web-desktop-download-btn">Download MSI</button>
+          <div class="topbar-web-download-group">
+            <div class="topbar-web-download-group-title">Desktop</div>
+            <div class="topbar-web-download-group-buttons">
+              <button type="button" id="topbar-web-desktop-download-exe" class="topbar-web-desktop-download-btn">Download EXE</button>
+              <button type="button" id="topbar-web-desktop-download-msi" class="topbar-web-desktop-download-btn">Download MSI</button>
+            </div>
+          </div>
+          <div class="topbar-web-download-group">
+            <div class="topbar-web-download-group-title">Android</div>
+            <div class="topbar-web-download-group-buttons">
+              <button type="button" id="topbar-web-mobile-download-apk" class="topbar-web-desktop-download-btn">Download APK</button>
+              <button type="button" id="topbar-web-mobile-download-aab" class="topbar-web-desktop-download-btn">Download AAB</button>
+            </div>
+          </div>
         </div>
-        <div class="topbar-web-mobile-note">Versi mobile: segera hadir.</div>
         <div class="topbar-web-info-actions">
           <button type="button" id="topbar-web-info-close">Tutup</button>
         </div>
@@ -323,11 +348,15 @@ async function initWebDesktopInfoPopup() {
   const notesEl = overlay.querySelector('#topbar-web-desktop-notes')
   const downloadExeBtn = overlay.querySelector('#topbar-web-desktop-download-exe')
   const downloadMsiBtn = overlay.querySelector('#topbar-web-desktop-download-msi')
-  if (!versionEl || !notesEl || !downloadExeBtn || !downloadMsiBtn) return
+  const downloadApkBtn = overlay.querySelector('#topbar-web-mobile-download-apk')
+  const downloadAabBtn = overlay.querySelector('#topbar-web-mobile-download-aab')
+  if (!versionEl || !notesEl || !downloadExeBtn || !downloadMsiBtn || !downloadApkBtn || !downloadAabBtn) return
 
   const downloadState = {
     exe: '',
-    msi: ''
+    msi: '',
+    apk: '',
+    aab: ''
   }
 
   if (infoBtn.dataset.boundDesktopInfo !== '1') {
@@ -350,6 +379,20 @@ async function initWebDesktopInfoPopup() {
       window.open(url, '_blank', 'noopener,noreferrer')
     })
   }
+  if (downloadApkBtn.dataset.boundDesktopDownload !== '1') {
+    downloadApkBtn.dataset.boundDesktopDownload = '1'
+    downloadApkBtn.addEventListener('click', () => {
+      const url = downloadState.apk || 'https://github.com/timakademikmim/mim-app/releases/latest/download/app-universal-release.apk'
+      window.open(url, '_blank', 'noopener,noreferrer')
+    })
+  }
+  if (downloadAabBtn.dataset.boundDesktopDownload !== '1') {
+    downloadAabBtn.dataset.boundDesktopDownload = '1'
+    downloadAabBtn.addEventListener('click', () => {
+      const url = downloadState.aab || 'https://github.com/timakademikmim/mim-app/releases/latest/download/app-universal-release.aab'
+      window.open(url, '_blank', 'noopener,noreferrer')
+    })
+  }
 
   try {
     const latestRes = await fetch('https://github.com/timakademikmim/mim-app/releases/latest/download/latest.json', { cache: 'no-store' })
@@ -362,8 +405,12 @@ async function initWebDesktopInfoPopup() {
     const platforms = latest?.platforms && typeof latest.platforms === 'object' ? latest.platforms : {}
     downloadState.exe = String(platforms?.['windows-x86_64-nsis']?.url || '').trim()
     downloadState.msi = String(platforms?.['windows-x86_64-msi']?.url || platforms?.['windows-x86_64']?.url || '').trim()
+    if (latest?.mobile && typeof latest.mobile === 'object') {
+      downloadState.apk = String(latest.mobile.apk || '').trim()
+      downloadState.aab = String(latest.mobile.aab || '').trim()
+    }
     let notes = String(latest?.notes || latest?.body || latest?.changelog || '').trim()
-    if (!notes || isGenericNotes(notes)) {
+    if (!notes || isGenericNotes(notes) || !downloadState.apk || !downloadState.aab) {
       const releaseRes = await fetch(`https://api.github.com/repos/timakademikmim/mim-app/releases/tags/v${encodeURIComponent(version)}`, {
         cache: 'no-store',
         headers: { Accept: 'application/vnd.github+json' }
@@ -371,6 +418,15 @@ async function initWebDesktopInfoPopup() {
       if (releaseRes.ok) {
         const release = await releaseRes.json()
         notes = String(release?.body || '').trim()
+        const assets = Array.isArray(release?.assets) ? release.assets : []
+        if (!downloadState.apk) {
+          const apkAsset = assets.find(asset => String(asset?.name || '').toLowerCase().endsWith('.apk'))
+          downloadState.apk = String(apkAsset?.browser_download_url || '').trim()
+        }
+        if (!downloadState.aab) {
+          const aabAsset = assets.find(asset => String(asset?.name || '').toLowerCase().endsWith('.aab'))
+          downloadState.aab = String(aabAsset?.browser_download_url || '').trim()
+        }
       }
     }
     notesEl.textContent = (!notes || isGenericNotes(notes)) ? fallbackNotes(version) : notes
@@ -379,6 +435,177 @@ async function initWebDesktopInfoPopup() {
     versionEl.textContent = `Versi desktop terbaru: v${storedVersion}`
     notesEl.textContent = fallbackNotes(storedVersion)
   }
+}
+
+async function initMobileInAppUpdatePrompt() {
+  const isTauriApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
+  const isAndroidApp = isTauriApp && /android/i.test(String(navigator.userAgent || ''))
+  if (!isAndroidApp) return
+  if (document.getElementById('mobile-update-overlay')) return
+
+  const compareVersions = (a, b) => {
+    const pa = String(a || '').replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0)
+    const pb = String(b || '').replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0)
+    const maxLen = Math.max(pa.length, pb.length)
+    for (let i = 0; i < maxLen; i += 1) {
+      const ai = pa[i] || 0
+      const bi = pb[i] || 0
+      if (ai > bi) return 1
+      if (ai < bi) return -1
+    }
+    return 0
+  }
+
+  const normalizeVersion = version => String(version || '').trim().replace(/^v/i, '')
+
+  const getCurrentVersion = async () => {
+    try {
+      const version = await invokeTauriCommand('get_app_version', {})
+      const clean = normalizeVersion(version)
+      if (clean) return clean
+    } catch (_error) {}
+    return normalizeVersion(localStorage.getItem('mobile_app_version') || '')
+  }
+
+  const getReleaseBodyByTag = async version => {
+    try {
+      const clean = normalizeVersion(version)
+      if (!clean) return ''
+      const res = await fetch(`https://api.github.com/repos/timakademikmim/mim-app/releases/tags/v${encodeURIComponent(clean)}`, {
+        cache: 'no-store',
+        headers: { Accept: 'application/vnd.github+json' }
+      })
+      if (!res.ok) return ''
+      const json = await res.json()
+      return String(json?.body || '').trim()
+    } catch (_error) {
+      return ''
+    }
+  }
+
+  const latestRes = await fetch('https://github.com/timakademikmim/mim-app/releases/latest/download/latest.json', { cache: 'no-store' }).catch(() => null)
+  if (!latestRes || !latestRes.ok) return
+  const latest = await latestRes.json().catch(() => null)
+  if (!latest || typeof latest !== 'object') return
+
+  const latestVersion = normalizeVersion(latest.version)
+  const currentVersion = await getCurrentVersion()
+  if (!latestVersion || !currentVersion) return
+  localStorage.setItem('mobile_app_version', currentVersion)
+
+  if (compareVersions(latestVersion, currentVersion) <= 0) return
+
+  let apkUrl = ''
+  if (latest.mobile && typeof latest.mobile === 'object') {
+    apkUrl = String(latest.mobile.apk || '').trim()
+  }
+  if (!apkUrl && latest.platforms && typeof latest.platforms === 'object') {
+    apkUrl = String(latest.platforms?.['android-arm64-apk']?.url || '').trim()
+  }
+  if (!apkUrl) apkUrl = 'https://github.com/timakademikmim/mim-app/releases/latest/download/app-universal-release.apk'
+
+  let notes = String(latest.notes || latest.body || latest.changelog || '').trim()
+  if (!notes) notes = await getReleaseBodyByTag(latestVersion)
+  if (!notes) {
+    notes = `What's new in this version:\n- Peningkatan stabilitas dan pembaruan fitur aplikasi mobile.`
+  }
+
+  const styleId = 'mobile-update-style'
+  if (!document.getElementById(styleId)) {
+    const style = document.createElement('style')
+    style.id = styleId
+    style.textContent = `
+      .mobile-update-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 12500;
+        background: rgba(15, 23, 42, 0.45);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+      }
+      .mobile-update-card {
+        width: min(520px, calc(100vw - 24px));
+        max-height: min(80vh, 720px);
+        overflow: auto;
+        background: #fff;
+        border: 1px solid #cbd5e1;
+        border-radius: 14px;
+        box-shadow: 0 20px 40px rgba(15, 23, 42, 0.25);
+        padding: 16px;
+      }
+      .mobile-update-title {
+        margin: 0 0 6px;
+        font-size: 18px;
+        color: #0f172a;
+      }
+      .mobile-update-version {
+        font-size: 12px;
+        color: #475569;
+        margin: 0 0 8px;
+      }
+      .mobile-update-notes {
+        white-space: pre-wrap;
+        font-size: 13px;
+        color: #334155;
+        line-height: 1.45;
+      }
+      .mobile-update-actions {
+        margin-top: 14px;
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+      .mobile-update-actions button {
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        background: #fff;
+        color: #0f172a;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 7px 12px;
+        cursor: pointer;
+      }
+      .mobile-update-actions .primary {
+        background: #0f172a;
+        color: #fff;
+        border-color: #0f172a;
+      }
+    `
+    document.head.appendChild(style)
+  }
+
+  const overlay = document.createElement('div')
+  overlay.id = 'mobile-update-overlay'
+  overlay.className = 'mobile-update-overlay'
+  overlay.innerHTML = `
+    <div class="mobile-update-card">
+      <h3 class="mobile-update-title">Versi baru tersedia</h3>
+      <div class="mobile-update-version">Versi saat ini: v${currentVersion} | Versi terbaru: v${latestVersion}</div>
+      <div class="mobile-update-notes">${notes}</div>
+      <div class="mobile-update-actions">
+        <button type="button" id="mobile-update-later">Nanti</button>
+        <button type="button" id="mobile-update-install" class="primary">Install</button>
+      </div>
+    </div>
+  `
+  document.body.appendChild(overlay)
+
+  overlay.querySelector('#mobile-update-later')?.addEventListener('click', () => {
+    overlay.remove()
+  })
+  overlay.querySelector('#mobile-update-install')?.addEventListener('click', async () => {
+    try {
+      if (typeof window.openExternalUrl === 'function') {
+        const opened = await window.openExternalUrl(apkUrl)
+        if (opened) return
+      }
+      window.location.href = apkUrl
+    } catch (_error) {
+      window.location.href = apkUrl
+    }
+  })
 }
 
 function initDesktopUpdaterUi() {

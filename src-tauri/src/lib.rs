@@ -149,6 +149,11 @@ fn open_file_path(path: String) -> Result<(), String> {
   }
 }
 
+#[tauri::command]
+fn get_app_version(app: tauri::AppHandle) -> String {
+  app.package_info().version.to_string()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   #[cfg(target_os = "android")]
@@ -167,7 +172,8 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       open_external_url,
       save_pdf_base64,
-      open_file_path
+      open_file_path,
+      get_app_version
     ])
     .setup(|app| {
       #[cfg(all(
