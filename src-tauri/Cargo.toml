@@ -4,6 +4,10 @@ version = "0.1.0"
 description = "Desktop wrapper for MIM web app"
 edition = "2021"
 
+[lib]
+name = "mim_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -13,6 +17,7 @@ serde_json = "1"
 tauri = { version = "2", features = [] }
 tauri-plugin-updater = "2"
 base64 = "0.22"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 
 [package.metadata]
 
