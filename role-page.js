@@ -323,6 +323,19 @@ async function initWebDesktopInfoPopup() {
     return `What's new in this version:
 - Pembaruan fitur dan penyempurnaan stabilitas aplikasi desktop.`
   }
+  const fetchLatestDesktopVersionFromApi = async () => {
+    try {
+      const res = await fetch('https://api.github.com/repos/timakademikmim/mim-app/releases/latest', {
+        cache: 'no-store',
+        headers: { Accept: 'application/vnd.github+json' }
+      })
+      if (!res.ok) return ''
+      const json = await res.json()
+      return normalizeVersion(json?.tag_name || json?.name || '')
+    } catch (_error) {
+      return ''
+    }
+  }
   const infoBtn = document.getElementById('topbar-web-info-btn')
   if (!infoBtn) return
   let overlay = document.getElementById('topbar-web-info-overlay')
@@ -387,14 +400,14 @@ async function initWebDesktopInfoPopup() {
   if (downloadExeBtn.dataset.boundDesktopDownload !== '1') {
     downloadExeBtn.dataset.boundDesktopDownload = '1'
     downloadExeBtn.addEventListener('click', () => {
-      const url = downloadState.exe || `https://github.com/timakademikmim/mim-app/releases/latest/download/MIM.App_${getStoredVersion() || '0.3.0'}_x64-setup.exe`
+      const url = downloadState.exe || `https://github.com/timakademikmim/mim-app/releases/latest/download/MIM.App_${getStoredVersion() || '0.3.8'}_x64-setup.exe`
       window.open(url, '_blank', 'noopener,noreferrer')
     })
   }
   if (downloadMsiBtn.dataset.boundDesktopDownload !== '1') {
     downloadMsiBtn.dataset.boundDesktopDownload = '1'
     downloadMsiBtn.addEventListener('click', () => {
-      const url = downloadState.msi || `https://github.com/timakademikmim/mim-app/releases/latest/download/MIM.App_${getStoredVersion() || '0.3.0'}_x64_en-US.msi`
+      const url = downloadState.msi || `https://github.com/timakademikmim/mim-app/releases/latest/download/MIM.App_${getStoredVersion() || '0.3.8'}_x64_en-US.msi`
       window.open(url, '_blank', 'noopener,noreferrer')
     })
   }
@@ -414,11 +427,11 @@ async function initWebDesktopInfoPopup() {
   }
 
   try {
-    const latestRes = await fetch('https://github.com/timakademikmim/mim-app/releases/latest/download/latest.json', { cache: 'no-store' })
+    const latestRes = await fetch(`https://github.com/timakademikmim/mim-app/releases/latest/download/latest.json?t=${Date.now()}`, { cache: 'no-store' })
     if (!latestRes.ok) throw new Error('latest.json not available')
     const latest = await latestRes.json()
     const fetchedVersion = normalizeVersion(latest?.version || '')
-    const version = fetchedVersion || getStoredVersion() || '0.3.0'
+    const version = fetchedVersion || getStoredVersion() || '0.3.8'
     setStoredVersion(version)
     versionEl.textContent = `Versi desktop terbaru: v${version}`
     const platforms = latest?.platforms && typeof latest.platforms === 'object' ? latest.platforms : {}
@@ -460,9 +473,10 @@ async function initWebDesktopInfoPopup() {
     }
     notesEl.textContent = (!notes || isGenericNotes(notes)) ? fallbackNotes(version) : notes
   } catch (_error) {
-    const storedVersion = getStoredVersion() || '0.3.0'
-    versionEl.textContent = `Versi desktop terbaru: v${storedVersion}`
-    notesEl.textContent = fallbackNotes(storedVersion)
+    const fallbackVersion = getStoredVersion() || await fetchLatestDesktopVersionFromApi() || '0.3.8'
+    setStoredVersion(fallbackVersion)
+    versionEl.textContent = `Versi desktop terbaru: v${fallbackVersion}`
+    notesEl.textContent = fallbackNotes(fallbackVersion)
   }
 }
 
