@@ -283,6 +283,10 @@ async function initWebDesktopInfoPopup() {
   if (isTauriApp) return
   const GENERIC_NOTE = 'desktop release otomatis dengan updater artifacts.'
   const WEB_VERSION_WHATS_NEW = {
+    '0.3.4': `What's new in this version:
+- Android update prompt hanya muncul jika ada versi yang benar-benar lebih baru.
+- Tautan unduhan Android diarahkan ke paket ARM64 yang lebih ringan untuk install manual.
+- Catatan rilis fallback diperjelas agar popup Info tetap informatif.`,
     '0.3.0': `What's new in this version:
 - Cincin status avatar sekarang tampil permanen (biru saat online, merah saat offline).
 - Menu akun menambahkan tombol Info di bawah Profil.
@@ -616,6 +620,10 @@ function initDesktopUpdaterUi() {
     'desktop release otomatis dengan updater artifacts.'
   ]
   const VERSION_WHATS_NEW = {
+    '0.3.4': `What's new in this version:
+- Android update prompt hanya muncul jika ada versi yang benar-benar lebih baru.
+- Tautan unduhan Android diarahkan ke paket ARM64 yang lebih ringan untuk install manual.
+- Catatan rilis fallback diperjelas agar popup Info tetap informatif.`,
     '0.3.0': `What's new in this version:
 - Cincin status avatar sekarang tampil permanen (biru saat online, merah saat offline).
 - Menu akun menambahkan tombol Info di bawah Profil.
