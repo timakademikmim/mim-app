@@ -1,0 +1,352 @@
+body.platform-android {
+  --android-bg: #f4f7fb;
+  --android-surface: rgba(255, 255, 255, 0.9);
+  --android-border: rgba(148, 163, 184, 0.28);
+  --android-text: #0f172a;
+  --android-muted: #5b6b83;
+  --android-accent: #2b8cff;
+  background: radial-gradient(1200px 540px at 20% -20%, rgba(43, 140, 255, 0.12), transparent 60%), var(--android-bg);
+}
+
+body.platform-android .layout {
+  min-height: 100dvh;
+}
+
+body.platform-android .sidebar {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.82));
+  border-right-color: rgba(148, 163, 184, 0.22);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+body.platform-android .content {
+  background: transparent;
+}
+
+body.platform-android .topbar {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  padding: 0;
+  margin-bottom: 12px;
+  display: grid;
+  grid-template-columns: 42px 1fr 46px;
+  align-items: center;
+  column-gap: 6px;
+}
+
+body.platform-android .topbar-title-main {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.1px;
+}
+
+body.platform-android .topbar-title-year,
+body.platform-android .topbar-title-date-btn {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--android-muted);
+}
+
+body.platform-android .topbar-left {
+  display: contents;
+}
+
+body.platform-android .topbar-sidebar-toggle {
+  grid-column: 1;
+  justify-self: start;
+}
+
+body.platform-android .topbar-title {
+  grid-column: 2;
+  justify-self: center;
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 1px;
+}
+
+body.platform-android .topbar-title-main {
+  display: block;
+  line-height: 1.15;
+}
+
+body.platform-android .topbar-title-date-btn {
+  display: block;
+  line-height: 1.1;
+  padding: 0;
+}
+
+body.platform-android .topbar-title-year {
+  display: none !important;
+}
+
+body.platform-android .topbar-notif-trigger,
+body.platform-android .topbar-sidebar-toggle,
+body.platform-android .topbar-user-trigger {
+  border-color: var(--android-border);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+body.platform-android .topbar-title-sep {
+  display: none;
+}
+
+body.platform-android .topbar #topbar-chat-trigger,
+body.platform-android .topbar .topbar-avatar-trigger,
+body.platform-android .topbar .topbar-user-name,
+body.platform-android .topbar .topbar-user-arrow {
+  display: none !important;
+}
+
+body.platform-android .topbar-user-menu-wrap {
+  grid-column: 3;
+  justify-self: end;
+  min-width: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  overflow: visible;
+}
+
+body.platform-android .topbar-notif-trigger {
+  width: 34px;
+  height: 34px;
+  font-size: 15px;
+  line-height: 1.15;
+  overflow: visible;
+}
+
+body.platform-android .topbar-notif-badge {
+  top: 1px;
+  right: 1px;
+}
+
+body.platform-android .topbar-avatar {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.95), 0 0 0 4px rgba(43, 140, 255, 0.2);
+}
+
+body.platform-android .sidebar button:hover,
+body.platform-android .guru-submenu-btn:hover,
+body.platform-android .sidebar-submenu-btn:hover {
+  background: rgba(43, 140, 255, 0.12);
+}
+
+body.platform-android .sidebar button.active,
+body.platform-android .guru-submenu-btn.active,
+body.platform-android .sidebar-submenu-btn.active,
+body.platform-android .sidebar-nav-btn.active {
+  background: linear-gradient(135deg, rgba(43, 140, 255, 0.24), rgba(43, 140, 255, 0.16));
+  color: var(--android-text);
+  border: 1px solid rgba(43, 140, 255, 0.2);
+}
+
+body.platform-android .app-popup-card,
+body.platform-android .modal-content,
+body.platform-android .topbar-user-menu,
+body.platform-android .topbar-notif-menu {
+  border-color: var(--android-border);
+  border-radius: 14px;
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.16);
+}
+
+body.platform-android .android-bottom-nav {
+  position: fixed;
+  left: 10px;
+  right: 10px;
+  bottom: max(10px, env(safe-area-inset-bottom));
+  z-index: 12050;
+  display: flex;
+  justify-content: center;
+  padding: 8px;
+  border-radius: 16px;
+  border: 1px solid var(--android-border);
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+  gap: 1px;
+}
+
+body.platform-android .android-bottom-nav-btn {
+  border: none;
+  background: transparent;
+  color: var(--android-muted);
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  font-family: "Poppins", Arial, sans-serif;
+  cursor: pointer;
+  min-width: 54px;
+}
+
+body.platform-android .android-bottom-nav-btn.active {
+  color: var(--android-accent);
+  background: rgba(43, 140, 255, 0.12);
+}
+
+body.platform-android .android-bottom-nav-icon {
+  width: 18px;
+  height: 18px;
+  line-height: 0;
+}
+
+body.platform-android .android-bottom-nav-icon svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+body.platform-android .android-bottom-nav-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1px;
+}
+
+@media (max-width: 820px) {
+  body.platform-android .sidebar {
+    width: 68px !important;
+    min-width: 68px !important;
+    padding: 10px 7px 14px !important;
+  }
+
+  body.platform-android .content {
+    padding: max(10px, env(safe-area-inset-top)) 10px calc(max(14px, env(safe-area-inset-bottom)) + 74px) !important;
+  }
+
+  body.platform-android.android-guru-drawer-enabled .layout {
+    display: block !important;
+    width: 100%;
+    max-width: 100%;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
+  body.platform-android.android-guru-drawer-enabled .content {
+    width: 100%;
+    max-width: 100%;
+    min-height: 100dvh;
+    margin: 0 !important;
+  }
+
+  body.platform-android.android-guru-drawer-enabled .sidebar {
+    position: fixed !important;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: min(82vw, 320px) !important;
+    min-width: min(82vw, 320px) !important;
+    max-width: min(82vw, 320px) !important;
+    padding: 14px 12px 20px !important;
+    transform: translateX(-105%);
+    transition: transform 0.24s ease;
+    z-index: 12100;
+    box-shadow: 14px 0 28px rgba(15, 23, 42, 0.24);
+    border-right: 1px solid var(--android-border);
+  }
+
+  body.platform-android.android-guru-drawer-enabled.android-guru-sidebar-open .sidebar {
+    transform: translateX(0);
+  }
+
+  body.platform-android.android-guru-drawer-enabled .sidebar .guru-nav-btn-content {
+    gap: 8px;
+    justify-content: flex-start;
+  }
+
+  body.platform-android.android-guru-drawer-enabled .sidebar .guru-nav-btn-content > span,
+  body.platform-android.android-guru-drawer-enabled .sidebar .guru-submenu-btn > span {
+    display: inline;
+  }
+
+  body.platform-android.android-guru-drawer-enabled .sidebar .guru-nav-btn,
+  body.platform-android.android-guru-drawer-enabled .sidebar .guru-submenu-btn {
+    justify-content: flex-start;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  body.platform-android.android-guru-drawer-enabled .sidebar .guru-parent-btn::after {
+    display: inline-block;
+  }
+
+  body.platform-android.android-guru-drawer-enabled .sidebar .guru-submenu {
+    margin-left: 12px;
+    border-left: 2px solid #e2e8f0;
+    padding-left: 8px;
+  }
+
+  body.platform-android .guru-android-sidebar-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 12080;
+    background: rgba(15, 23, 42, 0.35);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+
+  body.platform-android.android-guru-drawer-enabled.android-guru-sidebar-open .guru-android-sidebar-scrim {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  body.platform-android .topbar {
+    padding: 0 !important;
+    border-radius: 13px;
+    gap: 0;
+    margin-bottom: 12px;
+    grid-template-columns: 36px 1fr 42px;
+    column-gap: 4px;
+  }
+
+  body.platform-android .topbar-left {
+    gap: 0;
+  }
+
+  body.platform-android .topbar-title {
+    font-size: 14px !important;
+    gap: 1px !important;
+  }
+
+  body.platform-android .topbar-title-year,
+  body.platform-android .topbar-title-date-btn {
+    font-size: 9px !important;
+  }
+
+  body.platform-android .topbar-notif-trigger,
+  body.platform-android .topbar-sidebar-toggle,
+  body.platform-android .topbar-user-trigger,
+  body.platform-android .topbar-avatar-trigger {
+    width: 34px !important;
+    height: 34px !important;
+    border-radius: 10px !important;
+  }
+
+  body.platform-android .topbar-user-menu-wrap {
+    min-width: 42px;
+  }
+
+  body.platform-android .topbar-avatar {
+    width: 30px !important;
+    height: 30px !important;
+  }
+
+  body.platform-android .topbar-notif-badge {
+    min-width: 14px;
+    height: 14px;
+    font-size: 9px;
+    top: 1px;
+    right: 1px;
+  }
+}

@@ -1193,9 +1193,82 @@ function getGuruLayoutElement() {
   return document.querySelector('.layout')
 }
 
+function isAndroidGuruMainUi() {
+  return !IS_WAKASEK_KURIKULUM_PANEL
+    && document.body?.classList?.contains('platform-android')
+}
+
+function isGuruAndroidDrawerOpen() {
+  return document.body?.classList?.contains('android-guru-sidebar-open')
+}
+
+function setGuruAndroidDrawerOpen(open) {
+  if (!isAndroidGuruMainUi()) return
+  const next = Boolean(open)
+  document.body.classList.toggle('android-guru-sidebar-open', next)
+  updateGuruSidebarToggleState()
+}
+
+function initGuruAndroidSidebarDrawer() {
+  if (!isAndroidGuruMainUi()) return
+  document.body.classList.add('android-guru-drawer-enabled')
+  setGuruAndroidDrawerOpen(false)
+
+  let scrim = document.getElementById('guru-android-sidebar-scrim')
+  if (!scrim) {
+    scrim = document.createElement('div')
+    scrim.id = 'guru-android-sidebar-scrim'
+    scrim.className = 'guru-android-sidebar-scrim'
+    scrim.addEventListener('click', () => setGuruAndroidDrawerOpen(false))
+    document.body.appendChild(scrim)
+  }
+
+  const sidebar = document.querySelector('.sidebar')
+  if (sidebar && sidebar.dataset.androidDrawerBound !== '1') {
+    sidebar.dataset.androidDrawerBound = '1'
+    sidebar.addEventListener('click', event => {
+      const target = event.target instanceof HTMLElement ? event.target.closest('button') : null
+      if (!target) return
+      if (target.classList.contains('guru-parent-btn')) return
+      setGuruAndroidDrawerOpen(false)
+    })
+  }
+
+  if (document.body.dataset.androidDrawerSwipeBound !== '1') {
+    document.body.dataset.androidDrawerSwipeBound = '1'
+    let sx = 0
+    let sy = 0
+    document.addEventListener('touchstart', event => {
+      const touch = event.changedTouches?.[0]
+      if (!touch) return
+      sx = touch.clientX
+      sy = touch.clientY
+    }, { passive: true })
+    document.addEventListener('touchend', event => {
+      const touch = event.changedTouches?.[0]
+      if (!touch) return
+      const dx = touch.clientX - sx
+      const dy = touch.clientY - sy
+      if (Math.abs(dy) > 72) return
+      if (!isGuruAndroidDrawerOpen() && sx <= 26 && dx >= 82) {
+        setGuruAndroidDrawerOpen(true)
+        return
+      }
+      if (isGuruAndroidDrawerOpen() && sx >= 56 && dx <= -82) {
+        setGuruAndroidDrawerOpen(false)
+      }
+    }, { passive: true })
+  }
+}
+
 function applyGuruSidebarIconsOnlyByViewport() {
   const layout = getGuruLayoutElement()
   if (!layout) return
+  if (isAndroidGuruMainUi()) {
+    layout.classList.remove('sidebar-icons-only')
+    layout.classList.remove('sidebar-collapsed')
+    return
+  }
   const shouldIconsOnly = window.innerWidth <= GURU_SIDEBAR_ICON_ONLY_BREAKPOINT
   layout.classList.toggle('sidebar-icons-only', shouldIconsOnly)
 }
@@ -1204,12 +1277,22 @@ function updateGuruSidebarToggleState() {
   const layout = getGuruLayoutElement()
   const btn = document.getElementById('guru-sidebar-toggle')
   if (!layout || !btn) return
+  if (isAndroidGuruMainUi()) {
+    const opened = isGuruAndroidDrawerOpen()
+    btn.setAttribute('aria-label', opened ? 'Tutup menu' : 'Buka menu')
+    btn.title = opened ? 'Tutup Menu' : 'Buka Menu'
+    return
+  }
   const collapsed = layout.classList.contains('sidebar-collapsed')
   btn.setAttribute('aria-label', collapsed ? 'Tampilkan sidebar' : 'Sembunyikan sidebar')
   btn.title = collapsed ? 'Tampilkan Sidebar' : 'Sembunyikan Sidebar'
 }
 
 function setGuruSidebarCollapsed(collapsed) {
+  if (isAndroidGuruMainUi()) {
+    setGuruAndroidDrawerOpen(!Boolean(collapsed))
+    return
+  }
   const layout = getGuruLayoutElement()
   if (!layout) return
   const next = Boolean(collapsed)
@@ -1221,6 +1304,10 @@ function setGuruSidebarCollapsed(collapsed) {
 }
 
 function toggleGuruSidebar() {
+  if (isAndroidGuruMainUi()) {
+    setGuruAndroidDrawerOpen(!isGuruAndroidDrawerOpen())
+    return
+  }
   const layout = getGuruLayoutElement()
   if (!layout) return
   const collapsed = layout.classList.contains('sidebar-collapsed')
@@ -1228,6 +1315,11 @@ function toggleGuruSidebar() {
 }
 
 function initGuruSidebarState() {
+  if (isAndroidGuruMainUi()) {
+    initGuruAndroidSidebarDrawer()
+    updateGuruSidebarToggleState()
+    return
+  }
   applyGuruSidebarIconsOnlyByViewport()
   try {
     const saved = localStorage.getItem(GURU_SIDEBAR_COLLAPSED_KEY)
@@ -13055,6 +13147,12 @@ async function loadGuruPage(page, options = {}) {
 
   setTopbarTitle(targetPage)
   setNavActive(targetPage === 'profil' ? '' : targetPage)
+  if (typeof window.updateAndroidBottomNavActive === 'function') {
+    window.updateAndroidBottomNavActive(targetPage)
+  }
+  if (isAndroidGuruMainUi()) {
+    setGuruAndroidDrawerOpen(false)
+  }
   if (targetPage !== 'profil') localStorage.setItem(GURU_LAST_PAGE_KEY, targetPage)
   if (updateHistory) {
     if (replaceHistory) replaceGuruTabHistory(targetPage)

@@ -134,7 +134,7 @@ function applyPlatformUiSkin() {
   const link = document.createElement('link')
   link.id = 'android-ui-css'
   link.rel = 'stylesheet'
-  link.href = 'android-ui.css?v=20260307-android-ui-01'
+  link.href = 'android-ui.css?v=20260307-android-ui-04'
   document.head.appendChild(link)
 
   ensureAndroidBottomNav()
@@ -175,7 +175,8 @@ function ensureAndroidBottomNav() {
       { key: 'dashboard', label: 'Dashboard', icon: '<path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1V9.5Z"/>' },
       { key: 'input', label: 'Input', icon: '<path d="M4 19.5h16"/><path d="M7.5 15.5V8.5M12 15.5V5.5M16.5 15.5v-4"/>' },
       { key: 'tugas', label: 'Mutabaah', icon: '<rect x="4" y="3.5" width="16" height="18" rx="2.5"/><path d="M8 8h8M8 12h8M8 16h5"/>' },
-      { key: 'jadwal', label: 'Jadwal', icon: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3.5v3M16 3.5v3"/>' }
+      { key: 'chat', label: 'Pesan', icon: '<path d="M5 6.5h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H10l-4.5 3V17.5H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z"/>' },
+      { key: 'profil', label: 'Profil', icon: '<circle cx="12" cy="8" r="3.2"/><path d="M5.5 19a6.5 6.5 0 0 1 13 0"/>' }
     ]
     : [{ key: 'dashboard', label: 'Dashboard', icon: '<path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1V9.5Z"/>' }]
 
@@ -206,7 +207,8 @@ function ensureAndroidBottomNav() {
         if (navKey === 'dashboard') window.loadGuruPage('dashboard')
         else if (navKey === 'input') window.loadGuruPage('input-nilai')
         else if (navKey === 'tugas') window.loadGuruPage('tugas')
-        else if (navKey === 'jadwal') window.loadGuruPage('jadwal')
+        else if (navKey === 'chat') window.loadGuruPage('chat')
+        else if (navKey === 'profil') window.loadGuruPage('profil')
         else window.loadGuruPage('dashboard')
         setActive(navKey)
         return
@@ -233,8 +235,12 @@ function ensureAndroidBottomNav() {
         setActive('tugas')
         return
       }
-      if (key === 'jadwal') {
-        setActive('jadwal')
+      if (key === 'chat') {
+        setActive('chat')
+        return
+      }
+      if (key === 'profil') {
+        setActive('profil')
         return
       }
       setActive('dashboard')
