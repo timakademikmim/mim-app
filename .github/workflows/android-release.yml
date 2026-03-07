@@ -1,0 +1,101 @@
+name: Android Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-upload-android:
+    runs-on: ubuntu-latest
+    env:
+      TAG_NAME: ${{ github.ref_name }}
+      VERSION_NAME: ${{ github.ref_name }}
+      APP_DIR: src-tauri/gen/android/app
+      UNSIGNED_APK: src-tauri/gen/android/app/build/outputs/apk/arm64/release/app-arm64-release-unsigned.apk
+      OUTPUT_DIR: release-assets/android
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Prepare Android release signing
+        shell: bash
+        run: |
+          mkdir -p "$APP_DIR"
+          if [ -n "${{ secrets.MIM_ANDROID_KEYSTORE_BASE64 }}" ] && [ -n "${{ secrets.MIM_ANDROID_KEYSTORE_PASSWORD }}" ] && [ -n "${{ secrets.MIM_ANDROID_KEY_ALIAS }}" ] && [ -n "${{ secrets.MIM_ANDROID_KEY_PASSWORD }}" ]; then
+            echo "${{ secrets.MIM_ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > "$APP_DIR/mim-release.keystore"
+            {
+              echo "MIM_ANDROID_KEYSTORE=$GITHUB_WORKSPACE/$APP_DIR/mim-release.keystore"
+              echo "MIM_ANDROID_KEYSTORE_PASSWORD=${{ secrets.MIM_ANDROID_KEYSTORE_PASSWORD }}"
+              echo "MIM_ANDROID_KEY_ALIAS=${{ secrets.MIM_ANDROID_KEY_ALIAS }}"
+              echo "MIM_ANDROID_KEY_PASSWORD=${{ secrets.MIM_ANDROID_KEY_PASSWORD }}"
+            } >> "$GITHUB_ENV"
+          fi
+
+      - name: Build Android APK (arm64 release)
+        run: npx @tauri-apps/cli@latest android build --apk --target aarch64 --split-per-abi
+
+      - name: Fallback sign APK when release signing is not configured
+        shell: bash
+        run: |
+          if [ ! -f "$UNSIGNED_APK" ]; then
+            echo "Unsigned APK not found at $UNSIGNED_APK"
+            exit 1
+          fi
+
+          mkdir -p "$OUTPUT_DIR"
+          VERSION_CLEAN="${TAG_NAME#v}"
+          APK_VERSIONED="$OUTPUT_DIR/MIM.App_${VERSION_CLEAN}_android_arm64.apk"
+          APK_UPDATER="$OUTPUT_DIR/app-universal-release.apk"
+
+          cp "$UNSIGNED_APK" "$APK_VERSIONED"
+          cp "$UNSIGNED_APK" "$APK_UPDATER"
+
+          if [ -z "${{ secrets.MIM_ANDROID_KEYSTORE_BASE64 }}" ]; then
+            keytool -genkeypair \
+              -alias androiddebugkey \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -keystore "$OUTPUT_DIR/debug.keystore" \
+              -storepass android \
+              -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US"
+
+            APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -n 1)
+            "$APKSIGNER" sign --ks "$OUTPUT_DIR/debug.keystore" --ks-pass pass:android --key-pass pass:android "$APK_VERSIONED"
+            "$APKSIGNER" sign --ks "$OUTPUT_DIR/debug.keystore" --ks-pass pass:android --key-pass pass:android "$APK_UPDATER"
+          fi
+
+      - name: Upload APK assets to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            release-assets/android/MIM.App_*_android_arm64.apk
+            release-assets/android/app-universal-release.apk

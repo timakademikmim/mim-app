@@ -283,6 +283,10 @@ async function initWebDesktopInfoPopup() {
   if (isTauriApp) return
   const GENERIC_NOTE = 'desktop release otomatis dengan updater artifacts.'
   const WEB_VERSION_WHATS_NEW = {
+    '0.3.7': `What's new in this version:
+- Android release kini terotomatisasi: APK ikut terupload saat tag rilis dibuat.
+- Asset APK updater distandarkan ke app-universal-release.apk agar update in-app lebih konsisten.
+- Stabilitas updater desktop ditingkatkan.`,
     '0.3.6': `What's new in this version:
 - Perbaikan updater desktop agar status "pembaruan berjalan" tidak stuck berkepanjangan.
 - Lock update otomatis dilepas pada kondisi siap restart / error / timeout watchdog.
@@ -628,6 +632,10 @@ function initDesktopUpdaterUi() {
     'desktop release otomatis dengan updater artifacts.'
   ]
   const VERSION_WHATS_NEW = {
+    '0.3.7': `What's new in this version:
+- Android release kini terotomatisasi: APK ikut terupload saat tag rilis dibuat.
+- Asset APK updater distandarkan ke app-universal-release.apk agar update in-app lebih konsisten.
+- Stabilitas updater desktop ditingkatkan.`,
     '0.3.6': `What's new in this version:
 - Perbaikan updater desktop agar status "pembaruan berjalan" tidak stuck berkepanjangan.
 - Lock update otomatis dilepas pada kondisi siap restart / error / timeout watchdog.

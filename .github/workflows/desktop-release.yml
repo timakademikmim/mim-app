@@ -40,9 +40,9 @@ jobs:
           releaseName: MIM Desktop ${{ github.ref_name }}
           releaseBody: |
             What's new in this version:
-            - Perbaikan updater desktop agar status "pembaruan berjalan" tidak stuck berkepanjangan.
-            - Lock update otomatis dilepas pada kondisi siap restart / error / timeout watchdog.
-            - Stabilitas alur update desktop ditingkatkan untuk mencegah freeze di antarmuka.
+            - Workflow Android release otomatis ditambahkan: APK kini ikut terupload ke GitHub release saat tag baru dibuat.
+            - Nama asset updater Android distandarkan ke app-universal-release.apk untuk proses update in-app.
+            - Perbaikan lanjutan stabilitas alur update desktop.
           releaseDraft: false
           prerelease: false
 
