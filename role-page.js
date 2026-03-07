@@ -124,12 +124,8 @@ function initTopbarAccountMenu() {
     else menu.appendChild(roleWrap)
   }
 
-  const roleBtn = document.getElementById('topbar-role-switch-btn')
-  const roleMenu = document.getElementById('topbar-role-switch-menu')
-  if (!roleBtn || !roleMenu) return
-
   const isTauriApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
-  const isAndroidApp = isTauriApp && /android/i.test(String(navigator.userAgent || ''))
+  const isAndroidApp = isTauriApp && /android|linux/i.test(String(navigator.userAgent || ''))
   const isDesktopApp = isTauriApp && !isAndroidApp
   if (isDesktopApp && !document.getElementById('topbar-app-info-btn')) {
     const infoBtn = document.createElement('button')
@@ -157,6 +153,15 @@ function initTopbarAccountMenu() {
     const logoutBtn = menu.querySelector('button[onclick*="logout"], button[onclick*="Logout"]')
     if (logoutBtn) logoutBtn.before(infoBtn)
     else menu.appendChild(infoBtn)
+  }
+
+  const roleBtn = document.getElementById('topbar-role-switch-btn')
+  const roleMenu = document.getElementById('topbar-role-switch-menu')
+  if (!roleBtn || !roleMenu) {
+    initWebDesktopInfoPopup()
+    initAndroidReleaseInfoPopup()
+    initMobileInAppUpdatePrompt()
+    return
   }
 
   if (!document.getElementById('topbar-web-desktop-info-style')) {

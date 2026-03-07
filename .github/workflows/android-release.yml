@@ -43,6 +43,11 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Sync Android launcher icons
+        shell: bash
+        run: |
+          cp -R src-tauri/icons/android/. src-tauri/gen/android/app/src/main/res/
+
       - name: Prepare Android release signing
         shell: bash
         run: |
