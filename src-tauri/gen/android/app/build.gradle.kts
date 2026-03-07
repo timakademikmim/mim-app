@@ -13,6 +13,31 @@ val tauriProperties = Properties().apply {
     }
 }
 
+val keystoreProperties = Properties().apply {
+    val propFile = file("keystore.properties")
+    if (propFile.exists()) {
+        propFile.inputStream().use { load(it) }
+    }
+}
+
+fun readSigningValue(name: String): String? {
+    val envValue = System.getenv(name)
+    if (!envValue.isNullOrBlank()) return envValue
+    val fileValue = keystoreProperties.getProperty(name)
+    if (!fileValue.isNullOrBlank()) return fileValue
+    return null
+}
+
+val releaseStoreFile = readSigningValue("MIM_ANDROID_KEYSTORE")
+val releaseStorePassword = readSigningValue("MIM_ANDROID_KEYSTORE_PASSWORD")
+val releaseKeyAlias = readSigningValue("MIM_ANDROID_KEY_ALIAS")
+val releaseKeyPassword = readSigningValue("MIM_ANDROID_KEY_PASSWORD")
+val hasReleaseSigning =
+    !releaseStoreFile.isNullOrBlank() &&
+    !releaseStorePassword.isNullOrBlank() &&
+    !releaseKeyAlias.isNullOrBlank() &&
+    !releaseKeyPassword.isNullOrBlank()
+
 android {
     compileSdk = 36
     namespace = "com.mim.app"
@@ -23,6 +48,22 @@ android {
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+    }
+    signingConfigs {
+        create("release") {
+            if (hasReleaseSigning) {
+                storeFile = file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
+    if (!hasReleaseSigning) {
+        logger.warn("Release signing belum dikonfigurasi. Isi env var atau file keystore.properties.")
     }
     buildTypes {
         getByName("debug") {
@@ -37,6 +78,9 @@ android {
             }
         }
         getByName("release") {
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }
