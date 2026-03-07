@@ -40,10 +40,9 @@ jobs:
           releaseName: MIM Desktop ${{ github.ref_name }}
           releaseBody: |
             What's new in this version:
-            - Android update prompt: popup update hanya muncul jika versi terbaru lebih tinggi dari versi terpasang.
-            - Installer Android manual dirapikan: tersedia output ARM64 khusus agar ukuran APK lebih ringan.
-            - Ikon aplikasi Android diperbarui agar branding MIM lebih konsisten.
-            - Penyempurnaan fallback catatan rilis agar menu Info tetap menampilkan what's new per versi.
+            - Perbaikan checker update Android agar popup tetap muncul saat versi lokal belum terbaca.
+            - Cache-busting pembacaan latest.json untuk menghindari data versi stale.
+            - Penyempurnaan catatan rilis fallback pada menu Info.
           releaseDraft: false
           prerelease: false
 

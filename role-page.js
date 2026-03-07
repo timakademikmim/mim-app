@@ -283,6 +283,9 @@ async function initWebDesktopInfoPopup() {
   if (isTauriApp) return
   const GENERIC_NOTE = 'desktop release otomatis dengan updater artifacts.'
   const WEB_VERSION_WHATS_NEW = {
+    '0.3.5': `What's new in this version:
+- Perbaikan checker update Android agar tetap mendeteksi versi baru meski versi lokal belum terbaca.
+- Cache-busting pada pembacaan latest.json supaya tidak tertahan data versi lama.`,
     '0.3.4': `What's new in this version:
 - Android update prompt hanya muncul jika ada versi yang benar-benar lebih baru.
 - Tautan unduhan Android diarahkan ke paket ARM64 yang lebih ringan untuk install manual.
@@ -468,7 +471,7 @@ async function initMobileInAppUpdatePrompt() {
       const clean = normalizeVersion(version)
       if (clean) return clean
     } catch (_error) {}
-    return normalizeVersion(localStorage.getItem('mobile_app_version') || '')
+    return normalizeVersion(localStorage.getItem('mobile_app_version') || '') || '0.0.0'
   }
 
   const getReleaseBodyByTag = async version => {
@@ -487,14 +490,15 @@ async function initMobileInAppUpdatePrompt() {
     }
   }
 
-  const latestRes = await fetch('https://github.com/timakademikmim/mim-app/releases/latest/download/latest.json', { cache: 'no-store' }).catch(() => null)
+  const latestUrl = `https://github.com/timakademikmim/mim-app/releases/latest/download/latest.json?t=${Date.now()}`
+  const latestRes = await fetch(latestUrl, { cache: 'no-store' }).catch(() => null)
   if (!latestRes || !latestRes.ok) return
   const latest = await latestRes.json().catch(() => null)
   if (!latest || typeof latest !== 'object') return
 
   const latestVersion = normalizeVersion(latest.version)
   const currentVersion = await getCurrentVersion()
-  if (!latestVersion || !currentVersion) return
+  if (!latestVersion) return
   localStorage.setItem('mobile_app_version', currentVersion)
 
   if (compareVersions(latestVersion, currentVersion) <= 0) return
@@ -620,6 +624,9 @@ function initDesktopUpdaterUi() {
     'desktop release otomatis dengan updater artifacts.'
   ]
   const VERSION_WHATS_NEW = {
+    '0.3.5': `What's new in this version:
+- Perbaikan checker update Android agar tetap mendeteksi versi baru meski versi lokal belum terbaca.
+- Cache-busting pada pembacaan latest.json supaya tidak tertahan data versi lama.`,
     '0.3.4': `What's new in this version:
 - Android update prompt hanya muncul jika ada versi yang benar-benar lebih baru.
 - Tautan unduhan Android diarahkan ke paket ARM64 yang lebih ringan untuk install manual.
