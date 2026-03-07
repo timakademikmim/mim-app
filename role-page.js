@@ -646,6 +646,7 @@ function initDesktopUpdaterUi() {
     notes: '',
     notesByVersion: {}
   }
+  let updaterLockWatchdog = null
 
   let infoBtn = null
   let avatarEl = null
@@ -972,16 +973,31 @@ function initDesktopUpdaterUi() {
     if (releaseInfoState.currentVersion) localStorage.setItem('desktop_app_version', releaseInfoState.currentVersion)
     renderVersionLabel()
 
-    const isLock = stage === 'downloading' || stage === 'installing' || stage === 'ready_restart'
+    if (updaterLockWatchdog) {
+      clearTimeout(updaterLockWatchdog)
+      updaterLockWatchdog = null
+    }
+
+    const isLock = stage === 'downloading' || stage === 'installing'
     updateLockOverlay.classList.toggle('active', isLock)
+    if (isLock) {
+      updaterLockWatchdog = setTimeout(() => {
+        updateLockOverlay?.classList.remove('active')
+      }, 120000)
+    }
 
     if (stage === 'no_update') {
+      updateLockOverlay.classList.remove('active')
       return
     }
 
     if (stage === 'error') {
       updateLockOverlay.classList.remove('active')
       return
+    }
+
+    if (stage === 'ready_restart') {
+      updateLockOverlay.classList.remove('active')
     }
   }
 
