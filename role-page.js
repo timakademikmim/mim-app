@@ -140,6 +140,15 @@ function initTopbarAccountMenu() {
     if (logoutBtn) logoutBtn.before(infoBtn)
     else menu.appendChild(infoBtn)
   }
+  if (isAndroidApp && !document.getElementById('topbar-mobile-info-btn')) {
+    const infoBtn = document.createElement('button')
+    infoBtn.type = 'button'
+    infoBtn.id = 'topbar-mobile-info-btn'
+    infoBtn.textContent = 'Info'
+    const logoutBtn = menu.querySelector('button[onclick*="logout"], button[onclick*="Logout"]')
+    if (logoutBtn) logoutBtn.before(infoBtn)
+    else menu.appendChild(infoBtn)
+  }
   if (!isTauriApp && !document.getElementById('topbar-web-info-btn')) {
     const infoBtn = document.createElement('button')
     infoBtn.type = 'button'
@@ -249,6 +258,7 @@ function initTopbarAccountMenu() {
   }
 
   initWebDesktopInfoPopup()
+  initAndroidReleaseInfoPopup()
   initMobileInAppUpdatePrompt()
 
   roleBtn.textContent = `Role: ${activeRole || '-'}`
@@ -276,6 +286,168 @@ function initTopbarAccountMenu() {
     if (roleWrap.contains(event.target)) return
     roleMenu.classList.remove('open')
   })
+}
+
+async function initAndroidReleaseInfoPopup() {
+  const isTauriApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
+  const isAndroidApp = isTauriApp && /android/i.test(String(navigator.userAgent || ''))
+  if (!isAndroidApp) return
+
+  const infoBtn = document.getElementById('topbar-mobile-info-btn')
+  if (!infoBtn) return
+
+  if (!document.getElementById('topbar-mobile-info-style')) {
+    const style = document.createElement('style')
+    style.id = 'topbar-mobile-info-style'
+    style.textContent = `
+      .topbar-mobile-info-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 12100;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(15, 23, 42, 0.4);
+        padding: 16px;
+      }
+      .topbar-mobile-info-overlay.open {
+        display: flex;
+      }
+      .topbar-mobile-info-card {
+        width: min(520px, calc(100vw - 24px));
+        max-height: min(78vh, 620px);
+        overflow: auto;
+        background: #fff;
+        border: 1px solid #cbd5e1;
+        border-radius: 14px;
+        box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+        padding: 16px;
+      }
+      .topbar-mobile-info-card h3 {
+        margin: 0 0 8px;
+        font-size: 16px;
+        color: #0f172a;
+      }
+      .topbar-mobile-info-version {
+        font-size: 12px;
+        color: #475569;
+        margin-bottom: 8px;
+      }
+      .topbar-mobile-info-notes {
+        white-space: pre-wrap;
+        font-size: 12px;
+        color: #334155;
+        line-height: 1.45;
+        margin-bottom: 10px;
+      }
+      .topbar-mobile-info-actions {
+        margin-top: 12px;
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .topbar-mobile-info-actions button {
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        background: #fff;
+        color: #0f172a;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 6px 12px;
+        cursor: pointer;
+      }
+    `
+    document.head.appendChild(style)
+  }
+
+  let overlay = document.getElementById('topbar-mobile-info-overlay')
+  if (!overlay) {
+    overlay = document.createElement('div')
+    overlay.id = 'topbar-mobile-info-overlay'
+    overlay.className = 'topbar-mobile-info-overlay'
+    overlay.innerHTML = `
+      <div class="topbar-mobile-info-card">
+        <h3>Info Versi Android</h3>
+        <div id="topbar-mobile-info-version" class="topbar-mobile-info-version">Memuat versi...</div>
+        <div id="topbar-mobile-info-notes" class="topbar-mobile-info-notes">Memuat catatan rilis...</div>
+        <div class="topbar-mobile-info-actions">
+          <button type="button" id="topbar-mobile-download-apk">Download APK</button>
+          <button type="button" id="topbar-mobile-info-close">Tutup</button>
+        </div>
+      </div>
+    `
+    document.body.appendChild(overlay)
+    overlay.querySelector('#topbar-mobile-info-close')?.addEventListener('click', () => {
+      overlay.classList.remove('open')
+    })
+    overlay.addEventListener('click', event => {
+      if (event.target === overlay) overlay.classList.remove('open')
+    })
+  }
+
+  const versionEl = overlay.querySelector('#topbar-mobile-info-version')
+  const notesEl = overlay.querySelector('#topbar-mobile-info-notes')
+  const downloadApkBtn = overlay.querySelector('#topbar-mobile-download-apk')
+  if (!versionEl || !notesEl || !downloadApkBtn) return
+
+  let apkUrl = 'https://github.com/timakademikmim/mim-app/releases/latest/download/app-universal-release.apk'
+  let currentVersion = '0.0.0'
+
+  try {
+    const current = await invokeTauriCommand('get_app_version', {})
+    currentVersion = String(current || '').trim().replace(/^v/i, '') || '0.0.0'
+  } catch (_error) {}
+
+  try {
+    let mobileRes = await fetch(`https://github.com/timakademikmim/mim-app/releases/latest/download/mobile-latest.json?t=${Date.now()}`, { cache: 'no-store' })
+    if (!mobileRes.ok) {
+      mobileRes = await fetch(`https://github.com/timakademikmim/mim-app/releases/latest/download/latest.json?t=${Date.now()}`, { cache: 'no-store' })
+    }
+    if (!mobileRes.ok) throw new Error('mobile latest not available')
+    const latest = await mobileRes.json()
+    const latestVersion = String(latest?.version || '').trim().replace(/^v/i, '') || '-'
+    const mobile = latest?.mobile && typeof latest.mobile === 'object' ? latest.mobile : {}
+    apkUrl = String(mobile?.apk || apkUrl).trim() || apkUrl
+    let notes = String(latest?.notes || '').trim()
+    if (!notes) {
+      try {
+        const rel = await fetch(`https://api.github.com/repos/timakademikmim/mim-app/releases/tags/v${encodeURIComponent(latestVersion)}`, {
+          cache: 'no-store',
+          headers: { Accept: 'application/vnd.github+json' }
+        })
+        if (rel.ok) {
+          const json = await rel.json()
+          notes = String(json?.body || '').trim()
+        }
+      } catch (_error) {}
+    }
+    if (!notes) notes = "What's new in this version:\n- Pembaruan Android tersedia."
+    versionEl.textContent = `Versi Android saat ini: v${currentVersion} | Versi terbaru: v${latestVersion}`
+    notesEl.textContent = notes
+  } catch (_error) {
+    versionEl.textContent = `Versi Android saat ini: v${currentVersion}`
+    notesEl.textContent = "Catatan rilis belum tersedia. Kamu tetap bisa unduh APK terbaru secara manual."
+  }
+
+  if (downloadApkBtn.dataset.boundMobileDownload !== '1') {
+    downloadApkBtn.dataset.boundMobileDownload = '1'
+    downloadApkBtn.addEventListener('click', async () => {
+      try {
+        if (typeof window.openExternalUrl === 'function') {
+          const opened = await window.openExternalUrl(apkUrl)
+          if (opened) return
+        }
+      } catch (_error) {}
+      window.location.href = apkUrl
+    })
+  }
+
+  if (infoBtn.dataset.boundMobileInfo !== '1') {
+    infoBtn.dataset.boundMobileInfo = '1'
+    infoBtn.addEventListener('click', () => {
+      overlay.classList.add('open')
+    })
+  }
 }
 
 async function initWebDesktopInfoPopup() {
