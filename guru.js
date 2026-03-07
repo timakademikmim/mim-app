@@ -4598,6 +4598,15 @@ function validateRange(value, label, maxValue) {
 function renderAbsensiSantriRows() {
   const box = document.getElementById('absensi-santri-list')
   if (!box) return
+  const isAndroidView = document.body?.classList?.contains('platform-android')
+  const noColWidth = isAndroidView ? 42 : 70
+  const statusColWidth = isAndroidView ? 112 : 180
+  const tableMinWidth = isAndroidView ? 0 : 500
+  const containerOverflowX = isAndroidView ? 'hidden' : 'auto'
+  const tableLayout = isAndroidView ? 'fixed' : 'auto'
+  const tableFontSize = isAndroidView ? 12 : 13
+  const cellPadding = isAndroidView ? 6 : 8
+  const nameFontSize = isAndroidView ? 12 : 13
 
   if (!currentAbsensiSantriList.length) {
     box.innerHTML = '<div class="placeholder-card">Belum ada data siswa untuk kelas ini.</div>'
@@ -4605,13 +4614,13 @@ function renderAbsensiSantriRows() {
   }
 
   let html = `
-    <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px; margin-top:10px;">
-      <table style="width:100%; min-width:500px; border-collapse:collapse; font-size:13px;">
+    <div style="overflow-x:${containerOverflowX}; overflow-y:visible; border:1px solid #e2e8f0; border-radius:10px; margin-top:10px;">
+      <table style="width:100%; min-width:${tableMinWidth}px; table-layout:${tableLayout}; border-collapse:collapse; font-size:${tableFontSize}px;">
         <thead>
           <tr style="background:#f8fafc;">
-            <th style="padding:10px; border:1px solid #e2e8f0; width:70px; text-align:center;">No</th>
+            <th style="padding:10px; border:1px solid #e2e8f0; width:${noColWidth}px; text-align:center;">No</th>
             <th style="padding:10px; border:1px solid #e2e8f0; text-align:left;">Nama Siswa</th>
-            <th style="padding:10px; border:1px solid #e2e8f0; width:180px; text-align:left;">Kehadiran</th>
+            <th style="padding:10px; border:1px solid #e2e8f0; width:${statusColWidth}px; text-align:left;">Kehadiran</th>
           </tr>
         </thead>
         <tbody>
@@ -4624,10 +4633,10 @@ function renderAbsensiSantriRows() {
 
     return `
       <tr>
-        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${index + 1}</td>
-        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(santri.nama || '-')}</td>
-        <td style="padding:8px; border:1px solid #e2e8f0;">
-          <select class="guru-field" data-absen-santri-id="${escapeHtml(santri.id)}" style="width:100%;">
+        <td style="padding:${cellPadding}px; border:1px solid #e2e8f0; text-align:center;">${index + 1}</td>
+        <td style="padding:${cellPadding}px; border:1px solid #e2e8f0; font-size:${nameFontSize}px; line-height:1.35; word-break:break-word;">${escapeHtml(santri.nama || '-')}</td>
+        <td style="padding:${cellPadding}px; border:1px solid #e2e8f0;">
+          <select class="guru-field" data-absen-santri-id="${escapeHtml(santri.id)}" style="width:100%; font-size:${isAndroidView ? 11 : 13}px; padding:${isAndroidView ? '6px 8px' : '8px 10px'};">
             ${options}
           </select>
         </td>
@@ -5123,6 +5132,16 @@ function renderInputNilaiSantriRows() {
   if (!container) return
   const jenis = String(document.getElementById('input-nilai-jenis')?.value || '').trim()
   const maxValue = getJenisNilaiMax(jenis)
+  const isAndroidView = document.body?.classList?.contains('platform-android')
+  const noColWidth = isAndroidView ? 42 : 70
+  const nilaiColWidth = isAndroidView ? 96 : 170
+  const inputMaxWidth = isAndroidView ? 72 : 120
+  const tableMinWidth = isAndroidView ? 0 : 520
+  const containerOverflowX = isAndroidView ? 'hidden' : 'auto'
+  const tableLayout = isAndroidView ? 'fixed' : 'auto'
+  const tableFontSize = isAndroidView ? 12 : 13
+  const cellPadding = isAndroidView ? 6 : 8
+  const nameFontSize = isAndroidView ? 12 : 13
 
   if (!currentInputNilaiSantriList.length) {
     container.innerHTML = '<div class="placeholder-card">Belum ada data siswa untuk kelas ini.</div>'
@@ -5130,13 +5149,13 @@ function renderInputNilaiSantriRows() {
   }
 
   let html = `
-    <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px; margin-top:10px;">
-      <table style="width:100%; min-width:520px; border-collapse:collapse; font-size:13px;">
+    <div style="overflow-x:${containerOverflowX}; overflow-y:visible; border:1px solid #e2e8f0; border-radius:10px; margin-top:10px;">
+      <table style="width:100%; min-width:${tableMinWidth}px; table-layout:${tableLayout}; border-collapse:collapse; font-size:${tableFontSize}px;">
         <thead>
           <tr style="background:#f8fafc;">
-            <th style="padding:10px; border:1px solid #e2e8f0; width:70px; text-align:center;">No</th>
+            <th style="padding:10px; border:1px solid #e2e8f0; width:${noColWidth}px; text-align:center;">No</th>
             <th style="padding:10px; border:1px solid #e2e8f0; text-align:left;">Nama Siswa</th>
-            <th style="padding:10px; border:1px solid #e2e8f0; width:170px; text-align:center;">Nilai</th>
+            <th style="padding:10px; border:1px solid #e2e8f0; width:${nilaiColWidth}px; text-align:center;">Nilai</th>
           </tr>
         </thead>
         <tbody>
@@ -5144,10 +5163,10 @@ function renderInputNilaiSantriRows() {
 
   html += currentInputNilaiSantriList.map((santri, index) => `
     <tr>
-      <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${index + 1}</td>
-      <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(santri.nama || '-')}</td>
-      <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">
-        <input type="number" step="1" min="0" ${maxValue !== null ? `max="${maxValue}"` : ''} class="guru-field" style="max-width:120px; text-align:center;" data-input-nilai-santri-id="${escapeHtml(santri.id)}" placeholder="0">
+      <td style="padding:${cellPadding}px; border:1px solid #e2e8f0; text-align:center;">${index + 1}</td>
+      <td style="padding:${cellPadding}px; border:1px solid #e2e8f0; font-size:${nameFontSize}px; line-height:1.35; word-break:break-word;">${escapeHtml(santri.nama || '-')}</td>
+      <td style="padding:${cellPadding}px; border:1px solid #e2e8f0; text-align:center;">
+        <input type="number" step="1" min="0" ${maxValue !== null ? `max="${maxValue}"` : ''} class="guru-field" style="max-width:${inputMaxWidth}px; width:100%; text-align:center;" data-input-nilai-santri-id="${escapeHtml(santri.id)}" placeholder="0">
       </td>
     </tr>
   `).join('')
@@ -7272,7 +7291,9 @@ function printLaporanBulanan() {
 
 async function savePdfDocForCurrentPlatform(doc, fileName) {
   if (!doc || typeof doc.save !== 'function') return
-  const isDesktopApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
+  const isTauriApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
+  const isAndroidApp = /android/i.test(String(navigator.userAgent || ''))
+  const isDesktopApp = isTauriApp && !isAndroidApp
   if (!isDesktopApp) {
     doc.save(fileName)
     return

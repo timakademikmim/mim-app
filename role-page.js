@@ -134,7 +134,7 @@ function applyPlatformUiSkin() {
   const link = document.createElement('link')
   link.id = 'android-ui-css'
   link.rel = 'stylesheet'
-  link.href = 'android-ui.css?v=20260307-android-ui-04'
+  link.href = 'android-ui.css?v=20260307-android-ui-14'
   document.head.appendChild(link)
 
   ensureAndroidBottomNav()
@@ -180,17 +180,40 @@ function ensureAndroidBottomNav() {
     ]
     : [{ key: 'dashboard', label: 'Dashboard', icon: '<path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1V9.5Z"/>' }]
 
+  const renderItem = (item, index) => {
+    if (item.key === 'profil') {
+      const displayName = String(localStorage.getItem('login_name') || '').trim() || String(id || '').trim()
+      const photoUrl = String(localStorage.getItem('login_photo_url') || '').trim()
+      const initials = getInitials(displayName)
+      const imgPart = photoUrl
+        ? `<img class="android-bottom-avatar-img" src="${photoUrl}" alt="Avatar profil">`
+        : ''
+      const initialsPart = photoUrl ? '' : `<span class="android-bottom-avatar-initials">${initials}</span>`
+      return `
+        <button type="button" class="android-bottom-nav-btn ${index === 0 ? 'active' : ''}" data-nav-key="${item.key}">
+          <span class="android-bottom-avatar-wrap">
+            <span class="android-bottom-avatar" id="android-bottom-avatar">
+              ${imgPart}${initialsPart}
+            </span>
+          </span>
+          <span class="android-bottom-nav-label">${item.label}</span>
+        </button>
+      `
+    }
+    return `
+      <button type="button" class="android-bottom-nav-btn ${index === 0 ? 'active' : ''}" data-nav-key="${item.key}">
+        <span class="android-bottom-nav-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${item.icon}</svg>
+        </span>
+        <span class="android-bottom-nav-label">${item.label}</span>
+      </button>
+    `
+  }
+
   const nav = document.createElement('nav')
   nav.id = 'android-bottom-nav'
   nav.className = 'android-bottom-nav'
-  nav.innerHTML = items.map((item, index) => `
-    <button type="button" class="android-bottom-nav-btn ${index === 0 ? 'active' : ''}" data-nav-key="${item.key}">
-      <span class="android-bottom-nav-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${item.icon}</svg>
-      </span>
-      <span class="android-bottom-nav-label">${item.label}</span>
-    </button>
-  `).join('')
+  nav.innerHTML = items.map(renderItem).join('')
   document.body.appendChild(nav)
 
   const setActive = key => {
@@ -200,16 +223,203 @@ function ensureAndroidBottomNav() {
     })
   }
 
-  const runAction = key => {
+  const chooseGuruInputTarget = async () => {
+    const accountMenu = document.getElementById('topbar-user-menu')
+    if (accountMenu) {
+      accountMenu.classList.remove('open')
+      if (accountMenu.dataset.anchorSource === 'android-bottom') {
+        accountMenu.dataset.anchorSource = ''
+        accountMenu.style.position = ''
+        accountMenu.style.left = ''
+        accountMenu.style.top = ''
+        accountMenu.style.right = ''
+        accountMenu.style.bottom = ''
+        accountMenu.style.maxHeight = ''
+        accountMenu.style.overflowY = ''
+        accountMenu.style.zIndex = ''
+      }
+    }
+
+    const existing = document.getElementById('android-input-picker')
+    if (existing) {
+      existing.remove()
+      return ''
+    }
+    const anchorBtn = nav.querySelector('.android-bottom-nav-btn[data-nav-key="input"]')
+    if (!anchorBtn) return ''
+
+    return new Promise(resolve => {
+      const menu = document.createElement('div')
+      menu.id = 'android-input-picker'
+      menu.style.position = 'fixed'
+      menu.style.zIndex = '12130'
+      menu.style.minWidth = '168px'
+      menu.style.maxWidth = '220px'
+      menu.style.background = '#ffffff'
+      menu.style.border = '1px solid #cbd5e1'
+      menu.style.borderRadius = '10px'
+      menu.style.boxShadow = '0 12px 28px rgba(15,23,42,0.18)'
+      menu.style.padding = '6px'
+      menu.style.fontFamily = '"Poppins", Arial, sans-serif'
+
+      const makeRow = (label, value) => {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.textContent = label
+        btn.style.width = '100%'
+        btn.style.border = 'none'
+        btn.style.background = 'transparent'
+        btn.style.color = '#0f172a'
+        btn.style.fontSize = '12px'
+        btn.style.fontWeight = '600'
+        btn.style.fontFamily = '"Poppins", Arial, sans-serif'
+        btn.style.textAlign = 'left'
+        btn.style.padding = '8px 10px'
+        btn.style.borderRadius = '7px'
+        btn.style.cursor = 'pointer'
+        btn.addEventListener('click', event => {
+          event.preventDefault()
+          event.stopPropagation()
+          cleanup()
+          resolve(value)
+        })
+        btn.addEventListener('mouseenter', () => { btn.style.background = '#f1f5f9' })
+        btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent' })
+        return btn
+      }
+
+      const cleanup = () => {
+        document.removeEventListener('click', onOutsideClick, true)
+        window.removeEventListener('resize', onResize)
+        menu.remove()
+      }
+
+      const onOutsideClick = event => {
+        if (menu.contains(event.target) || anchorBtn.contains(event.target)) return
+        cleanup()
+        resolve('')
+      }
+
+      const onResize = () => {
+        cleanup()
+        resolve('')
+      }
+
+      menu.appendChild(makeRow('Input Nilai', 'input-nilai'))
+      menu.appendChild(makeRow('Input Absen', 'input-absensi'))
+      document.body.appendChild(menu)
+
+      const rect = anchorBtn.getBoundingClientRect()
+      const menuW = Math.max(menu.offsetWidth || 168, 168)
+      const menuH = Math.max(menu.offsetHeight || 80, 80)
+      const gap = 8
+      const vw = window.innerWidth || document.documentElement.clientWidth || 360
+      const vh = window.innerHeight || document.documentElement.clientHeight || 640
+
+      let left = rect.left + Math.max(0, Math.round((rect.width - menuW) / 2))
+      if (left < 8) left = 8
+      if (left + menuW > vw - 8) left = vw - menuW - 8
+
+      let top = rect.top - menuH - gap
+      if (top < 8) top = rect.bottom + gap
+      if (top + menuH > vh - 8) top = vh - menuH - 8
+
+      menu.style.left = `${Math.round(left)}px`
+      menu.style.top = `${Math.round(top)}px`
+
+      setTimeout(() => {
+        document.addEventListener('click', onOutsideClick, true)
+        window.addEventListener('resize', onResize)
+      }, 0)
+    })
+  }
+
+  const toggleAndroidBottomProfileMenu = anchorBtn => {
+    const menu = document.getElementById('topbar-user-menu')
+    if (!menu) return
+    const isOpenFromBottom = menu.classList.contains('open') && menu.dataset.anchorSource === 'android-bottom'
+    if (isOpenFromBottom) {
+      menu.classList.remove('open')
+      menu.dataset.anchorSource = ''
+      menu.style.position = ''
+      menu.style.left = ''
+      menu.style.top = ''
+      menu.style.right = ''
+      menu.style.bottom = ''
+      menu.style.maxHeight = ''
+      menu.style.overflowY = ''
+      return
+    }
+
+    menu.dataset.anchorSource = 'android-bottom'
+    menu.classList.add('open')
+
+    const rect = anchorBtn?.getBoundingClientRect?.()
+    if (!rect) return
+
+    menu.style.position = 'fixed'
+    menu.style.zIndex = '12120'
+    menu.style.left = '8px'
+    menu.style.top = '8px'
+    menu.style.right = 'auto'
+    menu.style.bottom = 'auto'
+    menu.style.maxHeight = 'min(62vh, 460px)'
+    menu.style.overflowY = 'auto'
+
+    const menuWidth = Math.max(menu.offsetWidth || 220, 220)
+    const menuHeight = Math.max(menu.offsetHeight || 160, 160)
+    const gap = 8
+    const viewportW = window.innerWidth || document.documentElement.clientWidth || 360
+    const viewportH = window.innerHeight || document.documentElement.clientHeight || 640
+
+    let left = viewportW - menuWidth - 8
+    let top = rect.top - menuHeight - gap
+
+    const isTablet = viewportW >= 821
+    if (isTablet) {
+      left = rect.right + gap
+      top = rect.top - Math.max(8, Math.round((menuHeight - rect.height) / 2))
+      if (left + menuWidth > viewportW - 8) {
+        left = rect.left - menuWidth - gap
+      }
+    }
+
+    if (left < 8) left = 8
+    if (left + menuWidth > viewportW - 8) left = viewportW - menuWidth - 8
+    if (top < 8) top = 8
+    if (top + menuHeight > viewportH - 8) top = viewportH - menuHeight - 8
+
+    menu.style.left = `${Math.round(left)}px`
+    menu.style.top = `${Math.round(top)}px`
+  }
+
+  const runAction = async key => {
     const navKey = String(key || '').trim().toLowerCase()
     try {
       if (role === 'guru' && panel !== 'wakasek-kurikulum' && typeof window.loadGuruPage === 'function') {
         if (navKey === 'dashboard') window.loadGuruPage('dashboard')
-        else if (navKey === 'input') window.loadGuruPage('input-nilai')
+        else if (navKey === 'input') {
+          const target = await chooseGuruInputTarget()
+          if (!target) return
+          window.loadGuruPage(target)
+        }
         else if (navKey === 'tugas') window.loadGuruPage('tugas')
         else if (navKey === 'chat') window.loadGuruPage('chat')
-        else if (navKey === 'profil') window.loadGuruPage('profil')
+        else if (navKey === 'profil') {
+          setActive('profil')
+          const button = nav.querySelector('.android-bottom-nav-btn[data-nav-key="profil"]')
+          if (typeof window.closeTopbarNotifMenu === 'function') {
+            try { window.closeTopbarNotifMenu() } catch (_error) {}
+          }
+          toggleAndroidBottomProfileMenu(button)
+          return
+        }
         else window.loadGuruPage('dashboard')
+        const menu = document.getElementById('topbar-user-menu')
+        if (menu?.dataset?.anchorSource === 'android-bottom') {
+          menu.classList.remove('open')
+          menu.dataset.anchorSource = ''
+        }
         setActive(navKey)
         return
       }
@@ -219,10 +429,45 @@ function ensureAndroidBottomNav() {
   }
 
   nav.querySelectorAll('.android-bottom-nav-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      runAction(btn.getAttribute('data-nav-key') || '')
+    btn.addEventListener('click', event => {
+      event.preventDefault()
+      event.stopPropagation()
+      void runAction(btn.getAttribute('data-nav-key') || '')
     })
   })
+
+  if (!window.__androidBottomProfileMenuOutsideBound) {
+    window.__androidBottomProfileMenuOutsideBound = true
+    document.addEventListener('click', event => {
+      const menu = document.getElementById('topbar-user-menu')
+      if (!menu || menu.dataset.anchorSource !== 'android-bottom') return
+      const profileBtn = document.querySelector('#android-bottom-nav .android-bottom-nav-btn[data-nav-key="profil"]')
+      if (menu.contains(event.target) || profileBtn?.contains(event.target)) return
+      menu.classList.remove('open')
+      menu.dataset.anchorSource = ''
+      menu.style.position = ''
+      menu.style.left = ''
+      menu.style.top = ''
+      menu.style.right = ''
+      menu.style.bottom = ''
+      menu.style.maxHeight = ''
+      menu.style.overflowY = ''
+    })
+  }
+
+  const updateAndroidBottomAvatarStatus = () => {
+    const avatar = document.getElementById('android-bottom-avatar')
+    if (!avatar) return
+    const online = navigator.onLine
+    avatar.classList.toggle('android-online', online)
+    avatar.classList.toggle('android-offline', !online)
+  }
+  updateAndroidBottomAvatarStatus()
+  if (!window.__androidBottomAvatarStatusBound) {
+    window.__androidBottomAvatarStatusBound = true
+    window.addEventListener('online', updateAndroidBottomAvatarStatus)
+    window.addEventListener('offline', updateAndroidBottomAvatarStatus)
+  }
 
   window.updateAndroidBottomNavActive = function updateAndroidBottomNavActive(pageKey) {
     const key = String(pageKey || '').trim().toLowerCase()
@@ -1462,14 +1707,29 @@ window.openExternalUrl = async function openExternalUrl(url) {
   }
   if (isAndroidApp) {
     try {
-      window.location.assign(target)
+      const popup = window.open(target, '_blank', 'noopener,noreferrer')
+      if (popup) return true
+    } catch (_error) {}
+    try {
+      const a = document.createElement('a')
+      a.href = target
+      a.target = '_blank'
+      a.rel = 'noopener noreferrer'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
       return true
     } catch (_error) {
       try {
-        window.location.href = target
+        window.location.assign(target)
         return true
       } catch (__error) {
-        return false
+        try {
+          window.location.href = target
+          return true
+        } catch (___error) {
+          return false
+        }
       }
     }
   }
@@ -1489,6 +1749,7 @@ window.openExternalUrl = async function openExternalUrl(url) {
 
 window.printPdfBlobInPlace = async function printPdfBlobInPlace(blob) {
   if (!(blob instanceof Blob)) return false
+  if (/android/i.test(String(navigator.userAgent || ''))) return false
   try {
     const url = URL.createObjectURL(blob)
     const frame = document.createElement('iframe')
