@@ -959,6 +959,9 @@ async function initWebDesktopInfoPopup() {
   if (!isWebPlatform()) return
   const GENERIC_NOTE = 'desktop release otomatis dengan updater artifacts.'
   const WEB_VERSION_WHATS_NEW = {
+    '0.3.16': `What's new in this version:
+- Perbaikan build Android: path resolver Tauri diperbaiki agar rilis APK tidak gagal compile.
+- Stabilitas proses rilis Android ditingkatkan setelah penyesuaian command native.`,
     '0.3.15': `What's new in this version:
 - Jarak aman topbar Android ditambah agar tombol tidak mepet ke ujung atas layar.
 - Download APK Android diperbarui: file bisa disimpan ke folder lokal aplikasi (AppData/Downloads).
@@ -1359,6 +1362,9 @@ function initDesktopUpdaterUi() {
     'desktop release otomatis dengan updater artifacts.'
   ]
   const VERSION_WHATS_NEW = {
+    '0.3.16': `What's new in this version:
+- Perbaikan build Android: path resolver Tauri diperbaiki agar rilis APK tidak gagal compile.
+- Stabilitas proses rilis Android ditingkatkan setelah penyesuaian command native.`,
     '0.3.15': `What's new in this version:
 - Jarak aman topbar Android ditambah agar tombol tidak mepet ke ujung atas layar.
 - Download APK Android diperbarui: file bisa disimpan ke folder lokal aplikasi (AppData/Downloads).

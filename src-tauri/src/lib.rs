@@ -1,16 +1,12 @@
 use base64::Engine;
 use std::path::PathBuf;
+use tauri::Manager;
 
 #[cfg(all(
   not(debug_assertions),
   any(target_os = "windows", target_os = "macos", target_os = "linux")
 ))]
 use std::sync::{Arc, Mutex};
-#[cfg(all(
-  not(debug_assertions),
-  any(target_os = "windows", target_os = "macos", target_os = "linux")
-))]
-use tauri::Manager;
 #[cfg(all(
   not(debug_assertions),
   any(target_os = "windows", target_os = "macos", target_os = "linux")
@@ -229,11 +225,9 @@ pub fn run() {
     let _ = rustls::crypto::ring::default_provider().install_default();
   }
 
-  let mut builder = tauri::Builder::default();
+  let builder = tauri::Builder::default();
   #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-  {
-    builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
-  }
+  let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
   builder
     .invoke_handler(tauri::generate_handler![
@@ -243,14 +237,14 @@ pub fn run() {
       open_file_path,
       get_app_version
     ])
-    .setup(|app| {
+    .setup(|_app| {
       #[cfg(all(
         not(debug_assertions),
         any(target_os = "windows", target_os = "macos", target_os = "linux")
       ))]
       {
-        let current_version = app.package_info().version.to_string();
-        let app_handle = app.handle().clone();
+        let current_version = _app.package_info().version.to_string();
+        let app_handle = _app.handle().clone();
         tauri::async_runtime::spawn(async move {
           emit_updater_status(
             &app_handle,
