@@ -984,6 +984,9 @@ async function initWebDesktopInfoPopup() {
   if (!isWebPlatform()) return
   const GENERIC_NOTE = 'desktop release otomatis dengan updater artifacts.'
   const WEB_VERSION_WHATS_NEW = {
+    '0.3.19': `What's new in this version:
+- Card agenda dashboard Android diperkecil lagi agar proporsional dengan layar HP.
+- Pembukaan installer APK otomatis diperkuat dengan intent INSTALL_PACKAGE + fallback VIEW.`,
     '0.3.18': `What's new in this version:
 - Setelah unduh APK selesai, aplikasi sekarang otomatis mencoba membuka installer APK.
 - Alur update Android dipercepat agar pengguna tidak perlu cari file manual di File Manager.`,
@@ -1427,6 +1430,9 @@ function initDesktopUpdaterUi() {
     'desktop release otomatis dengan updater artifacts.'
   ]
   const VERSION_WHATS_NEW = {
+    '0.3.19': `What's new in this version:
+- Card agenda dashboard Android diperkecil lagi agar proporsional dengan layar HP.
+- Pembukaan installer APK otomatis diperkuat dengan intent INSTALL_PACKAGE + fallback VIEW.`,
     '0.3.18': `What's new in this version:
 - Setelah unduh APK selesai, aplikasi sekarang otomatis mencoba membuka installer APK.
 - Alur update Android dipercepat agar pengguna tidak perlu cari file manual di File Manager.`,

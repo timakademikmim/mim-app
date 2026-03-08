@@ -3284,6 +3284,7 @@ function getGuruDashboardCalendarRangeLabel(item) {
 async function renderDashboard() {
   const content = document.getElementById('guru-content')
   if (!content) return
+  const isAndroidView = document.body?.classList?.contains('platform-android')
 
   content.innerHTML = '<div class="placeholder-card">Loading agenda kalender akademik...</div>'
 
@@ -3309,16 +3310,22 @@ async function renderDashboard() {
     const bulanIniCount = rows.filter(item => String(getTopbarKalenderDateKey(item?.mulai) || '').startsWith(thisMonthKey)).length
     const hariIniCount = rows.filter(item => getTopbarKalenderRangeKeys(item?.mulai, item?.selesai).includes(todayKey)).length
 
+    const agendaCardMinHeight = isAndroidView ? 92 : 210
+    const agendaInnerMinHeight = isAndroidView ? 62 : 160
+    const agendaTitleFont = isAndroidView ? 16 : 54
+    const agendaDateFont = isAndroidView ? 11 : 24
+    const agendaGridMinWidth = isAndroidView ? 160 : 620
+
     const rowsHtml = rows.map(item => {
       const warna = normalizeTopbarKalenderColor(item?.warna)
       const rentang = getGuruDashboardCalendarRangeLabel(item)
       const itemId = String(item?.id || '')
       return `
-        <button type="button" onclick="openGuruDashboardAgendaPopup('${escapeHtml(itemId)}')" style="text-align:left; width:100%; min-height:210px; position:relative; border:1px solid #e2e8f0; border-radius:16px; background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); box-shadow:0 12px 24px rgba(15,23,42,0.08); padding:22px 20px 18px 22px; overflow:hidden; cursor:pointer;">
+        <button type="button" onclick="openGuruDashboardAgendaPopup('${escapeHtml(itemId)}')" style="text-align:left; width:100%; min-height:${agendaCardMinHeight}px; position:relative; border:1px solid #e2e8f0; border-radius:16px; background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); box-shadow:0 12px 24px rgba(15,23,42,0.08); padding:${isAndroidView ? '14px 12px' : '22px 20px 18px 22px'}; overflow:hidden; cursor:pointer;">
           <span style="pointer-events:none; position:absolute; inset:0; background:linear-gradient(92deg, ${escapeHtml(warna)}0b 0%, ${escapeHtml(warna)}08 20%, rgba(255,255,255,0) 54%), linear-gradient(165deg, rgba(255,255,255,0.42) 0%, rgba(255,255,255,0) 38%); box-shadow:inset 1px 0 8px ${escapeHtml(warna)}1a;"></span>
-          <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; min-height:160px; text-align:center;">
-            <div style="font-family:'Poppins',sans-serif; font-size:54px; font-weight:700; color:#0f172a; line-height:1.2;">${escapeHtml(item?.judul || '-')}</div>
-            <span style="font-family:'Poppins',sans-serif; font-size:24px; font-weight:700; color:#334155; background:#ffffff; border:none; border-radius:999px; padding:6px 12px; white-space:nowrap;">${escapeHtml(rentang)}</span>
+          <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; gap:${isAndroidView ? '6px' : '10px'}; min-height:${agendaInnerMinHeight}px; text-align:center;">
+            <div style="font-family:'Poppins',sans-serif; font-size:${agendaTitleFont}px; font-weight:700; color:#0f172a; line-height:1.2;">${escapeHtml(item?.judul || '-')}</div>
+            <span style="font-family:'Poppins',sans-serif; font-size:${agendaDateFont}px; font-weight:700; color:#334155; background:#ffffff; border:none; border-radius:999px; padding:${isAndroidView ? '4px 10px' : '6px 12px'}; white-space:nowrap;">${escapeHtml(rentang)}</span>
           </div>
         </button>
       `
@@ -3342,7 +3349,7 @@ async function renderDashboard() {
             <div style="font-size:22px; font-weight:700; color:#0f172a; line-height:1.2;">${hariIniCount}</div>
           </div>
         </div>
-        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(620px,1fr)); gap:14px;">
+        <div style="display:grid; grid-template-columns:${isAndroidView ? '1fr' : `repeat(auto-fit,minmax(${agendaGridMinWidth}px,1fr))`}; gap:${isAndroidView ? 8 : 14}px;">
           ${rowsHtml}
         </div>
       </div>
@@ -3361,7 +3368,7 @@ function ensureGuruDashboardAgendaPopup() {
   popup.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.35); display:none; align-items:center; justify-content:center; z-index:10001; padding:16px; box-sizing:border-box;'
   popup.innerHTML = `
     <div style="width:min(680px, calc(100vw - 32px)); max-height:calc(100vh - 32px); overflow:auto; border:1px solid #dbeafe; border-radius:0; background:#fff; box-shadow:0 18px 34px rgba(15,23,42,0.18); padding:14px 16px; position:relative;">
-      <button type="button" onclick="closeGuruDashboardAgendaPopup()" style="position:absolute; right:12px; top:10px; border:1px solid #cbd5e1; background:#fff; border-radius:999px; width:28px; height:28px; cursor:pointer;">Ã—</button>
+      <button type="button" onclick="closeGuruDashboardAgendaPopup()" aria-label="Tutup" style="position:absolute; right:12px; top:10px; border:1px solid #cbd5e1; background:#fff; border-radius:999px; width:30px; height:30px; cursor:pointer; font-size:20px; line-height:1; color:#334155; display:inline-flex; align-items:center; justify-content:center;">&times;</button>
       <div id="guru-dashboard-agenda-popup-body"></div>
     </div>
   `

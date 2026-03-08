@@ -228,7 +228,22 @@ fn open_file_path(path: String) -> Result<(), String> {
       } else {
         format!("file://{target}")
       };
-      return std::process::Command::new("am")
+      if std::process::Command::new("am")
+        .args([
+          "start",
+          "-a",
+          "android.intent.action.INSTALL_PACKAGE",
+          "-d",
+          &uri,
+          "--grant-read-uri-permission",
+          "--activity-new-task",
+        ])
+        .spawn()
+        .is_ok()
+      {
+        return Ok(());
+      }
+      if std::process::Command::new("am")
         .args([
           "start",
           "-a",
@@ -238,10 +253,14 @@ fn open_file_path(path: String) -> Result<(), String> {
           "-t",
           "application/vnd.android.package-archive",
           "--grant-read-uri-permission",
+          "--activity-new-task",
         ])
         .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("Gagal membuka installer APK: {e}"));
+        .is_ok()
+      {
+        return Ok(());
+      }
+      return Err("Gagal membuka installer APK otomatis.".to_string());
     }
     let uri = if target.starts_with("file://") || target.starts_with("content://") {
       target.to_string()
