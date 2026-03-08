@@ -7127,7 +7127,11 @@ async function quickSendLaporanBulananWA(santriId) {
 
   const waUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
   if (typeof window.openExternalUrl === 'function') {
-    const opened = await window.openExternalUrl(waUrl)
+    let opened = await window.openExternalUrl(waUrl)
+    if (!opened && /android/i.test(String(navigator.userAgent || ''))) {
+      const waScheme = `whatsapp://send?phone=${encodeURIComponent(phone)}&text=${encodeURIComponent(message)}`
+      opened = await window.openExternalUrl(waScheme)
+    }
     if (!opened) alert('Tidak bisa membuka WhatsApp otomatis. Silakan coba lagi.')
     return
   }

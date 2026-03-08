@@ -76,6 +76,23 @@ function isWebPlatform() {
   return !hasTauriRuntime()
 }
 
+function normalizeVersionText(version) {
+  return String(version || '').trim().replace(/^v/i, '')
+}
+
+function compareVersionText(a, b) {
+  const pa = normalizeVersionText(a).split('.').map(n => parseInt(n, 10) || 0)
+  const pb = normalizeVersionText(b).split('.').map(n => parseInt(n, 10) || 0)
+  const maxLen = Math.max(pa.length, pb.length)
+  for (let i = 0; i < maxLen; i += 1) {
+    const ai = pa[i] || 0
+    const bi = pb[i] || 0
+    if (ai > bi) return 1
+    if (ai < bi) return -1
+  }
+  return 0
+}
+
 async function fetchLatestAndroidReleaseMeta() {
   const fallback = {
     version: '',
@@ -91,11 +108,33 @@ async function fetchLatestAndroidReleaseMeta() {
     if (!res.ok) return fallback
     const releases = await res.json()
     if (!Array.isArray(releases)) return fallback
-    const androidRelease = releases.find(item => String(item?.tag_name || '').toLowerCase().startsWith('android-v'))
-    if (!androidRelease) return fallback
+
+    const androidReleases = releases
+      .filter(item => String(item?.tag_name || '').toLowerCase().startsWith('android-v'))
+      .map(item => {
+        const tag = String(item?.tag_name || '').trim()
+        return {
+          raw: item,
+          tag,
+          version: normalizeVersionText(tag.replace(/^android-v/i, ''))
+        }
+      })
+      .filter(item => item.version)
+
+    if (androidReleases.length === 0) return fallback
+
+    androidReleases.sort((a, b) => {
+      const byVersion = compareVersionText(b.version, a.version)
+      if (byVersion !== 0) return byVersion
+      const aTime = Date.parse(String(a.raw?.published_at || a.raw?.created_at || '')) || 0
+      const bTime = Date.parse(String(b.raw?.published_at || b.raw?.created_at || '')) || 0
+      return bTime - aTime
+    })
+
+    const androidRelease = androidReleases[0].raw
 
     const tag = String(androidRelease.tag_name || '').trim()
-    const version = String(tag.replace(/^android-v/i, '') || '').trim()
+    const version = normalizeVersionText(tag.replace(/^android-v/i, ''))
     const notes = String(androidRelease.body || '').trim()
     const assets = Array.isArray(androidRelease.assets) ? androidRelease.assets : []
 
@@ -1108,14 +1147,16 @@ async function initAndroidReleaseInfoPopup() {
     let notes = ''
     if (mobileRes.ok) {
       const latest = await mobileRes.json()
-      latestVersion = String(latest?.version || '').trim().replace(/^v/i, '') || ''
+      latestVersion = normalizeVersionText(latest?.version || '')
       const mobile = latest?.mobile && typeof latest.mobile === 'object' ? latest.mobile : {}
       apkUrl = String(mobile?.apk || apkUrl).trim() || apkUrl
       notes = String(latest?.notes || '').trim()
     }
 
     const androidMeta = await fetchLatestAndroidReleaseMeta()
-    if (androidMeta.version) latestVersion = androidMeta.version
+    if (androidMeta.version && compareVersionText(androidMeta.version, latestVersion) > 0) {
+      latestVersion = normalizeVersionText(androidMeta.version)
+    }
     if (androidMeta.apkUrl) apkUrl = androidMeta.apkUrl
     if ((!notes || notes.length < 10) && androidMeta.notes) notes = androidMeta.notes
 
@@ -1413,20 +1454,7 @@ async function initMobileInAppUpdatePrompt() {
   if (!isAndroidPlatform()) return
   if (document.getElementById('mobile-update-overlay')) return
 
-  const compareVersions = (a, b) => {
-    const pa = String(a || '').replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0)
-    const pb = String(b || '').replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0)
-    const maxLen = Math.max(pa.length, pb.length)
-    for (let i = 0; i < maxLen; i += 1) {
-      const ai = pa[i] || 0
-      const bi = pb[i] || 0
-      if (ai > bi) return 1
-      if (ai < bi) return -1
-    }
-    return 0
-  }
-
-  const normalizeVersion = version => String(version || '').trim().replace(/^v/i, '')
+  const normalizeVersion = normalizeVersionText
 
   const getCurrentVersion = async () => {
     try {
@@ -1461,12 +1489,15 @@ async function initMobileInAppUpdatePrompt() {
   }
   const latest = latestRes && latestRes.ok ? await latestRes.json().catch(() => null) : null
   const androidMeta = await fetchLatestAndroidReleaseMeta()
-  const latestVersion = normalizeVersion(androidMeta.version || latest?.version || '')
+  let latestVersion = normalizeVersion(latest?.version || '')
+  if (androidMeta.version && compareVersionText(androidMeta.version, latestVersion) > 0) {
+    latestVersion = normalizeVersion(androidMeta.version)
+  }
   const currentVersion = await getCurrentVersion()
   if (!latestVersion) return
   localStorage.setItem('mobile_app_version', currentVersion)
 
-  if (compareVersions(latestVersion, currentVersion) <= 0) return
+  if (compareVersionText(latestVersion, currentVersion) <= 0) return
 
   let apkUrl = ''
   if (latest?.mobile && typeof latest.mobile === 'object') {
@@ -2080,7 +2111,8 @@ window.openExternalUrl = async function openExternalUrl(url) {
     return !!popup
   }
   try {
-    await invokeTauriCommand('open_external_url', { url: target })
+    const opened = await invokeTauriCommand('open_external_url', { url: target })
+    if (opened === false) throw new Error('Native open_external_url mengembalikan status gagal.')
     return true
   } catch (error) {
     console.error('openExternalUrl invoke failed:', error)

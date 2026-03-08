@@ -45,18 +45,49 @@ fn emit_updater_status(
 }
 
 #[tauri::command]
-fn open_external_url(url: String) -> Result<(), String> {
+fn open_external_url(url: String) -> Result<bool, String> {
   let target = url.trim();
   if target.is_empty() {
     return Err("URL kosong.".to_string());
   }
   #[cfg(target_os = "android")]
   {
-    std::process::Command::new("am")
-      .args(["start", "-a", "android.intent.action.VIEW", "-d", target])
-      .spawn()
-      .map(|_| ())
-      .map_err(|e| format!("Gagal membuka URL eksternal (android): {e}"))
+    let is_whatsapp_target = target.contains("wa.me/")
+      || target.contains("api.whatsapp.com/")
+      || target.starts_with("whatsapp://");
+
+    if is_whatsapp_target {
+      let direct_whatsapp = std::process::Command::new("am")
+        .args([
+          "start",
+          "--activity-new-task",
+          "-a",
+          "android.intent.action.VIEW",
+          "-d",
+          target,
+          "-p",
+          "com.whatsapp",
+        ])
+        .status();
+      if let Ok(status) = direct_whatsapp {
+        if status.success() {
+          return Ok(true);
+        }
+      }
+    }
+
+    let fallback = std::process::Command::new("am")
+      .args([
+        "start",
+        "--activity-new-task",
+        "-a",
+        "android.intent.action.VIEW",
+        "-d",
+        target,
+      ])
+      .status()
+      .map_err(|e| format!("Gagal membuka URL eksternal (android): {e}"))?;
+    Ok(fallback.success())
   }
   #[cfg(target_os = "windows")]
   {
@@ -68,7 +99,7 @@ fn open_external_url(url: String) -> Result<(), String> {
         &format!("Start-Process -FilePath '{}'", escaped),
       ])
       .spawn()
-      .map(|_| ())
+      .map(|_| true)
       .map_err(|e| format!("Gagal membuka URL eksternal: {e}"))
   }
   #[cfg(target_os = "macos")]
@@ -76,7 +107,7 @@ fn open_external_url(url: String) -> Result<(), String> {
     std::process::Command::new("open")
       .arg(target)
       .spawn()
-      .map(|_| ())
+      .map(|_| true)
       .map_err(|e| format!("Gagal membuka URL eksternal: {e}"))
   }
   #[cfg(all(unix, not(target_os = "macos"), not(target_os = "android")))]
@@ -84,7 +115,7 @@ fn open_external_url(url: String) -> Result<(), String> {
     std::process::Command::new("xdg-open")
       .arg(target)
       .spawn()
-      .map(|_| ())
+      .map(|_| true)
       .map_err(|e| format!("Gagal membuka URL eksternal: {e}"))
   }
 }
