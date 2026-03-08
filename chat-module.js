@@ -112,6 +112,11 @@
         window.removeEventListener('popstate', active.popstateHandler)
       } catch (_) {}
     }
+    if (active?.outsideClickHandler) {
+      try {
+        document.removeEventListener('pointerdown', active.outsideClickHandler, true)
+      } catch (_) {}
+    }
     if (document.body?.classList?.contains('platform-android')) {
       document.body.classList.remove('android-chat-open')
     }
@@ -164,7 +169,8 @@
       lastReadWriteByThread: new Map(),
       mobileChatView: 'list',
       popstateHandler: null,
-      mobileThreadHistoryPushed: false
+      mobileThreadHistoryPushed: false,
+      outsideClickHandler: null
     }
 
     function syncAndroidChatOpenClass() {
@@ -1265,13 +1271,20 @@
           await sendMessage()
         })
       }
-      document.addEventListener('click', event => {
-        const picker = document.getElementById('chat-emoji-picker')
-        const trigger = document.getElementById('chat-btn-emoji')
-        if (!picker || !trigger) return
-        if (picker.contains(event.target) || trigger.contains(event.target)) return
-        closeEmojiPicker()
-      }, { once: true })
+      if (!state.outsideClickHandler) {
+        state.outsideClickHandler = event => {
+          if (!state.emojiPickerOpen) return
+          const picker = document.getElementById('chat-emoji-picker')
+          const trigger = document.getElementById('chat-btn-emoji')
+          if (!picker || !trigger) return
+          const path = typeof event.composedPath === 'function' ? event.composedPath() : []
+          const clickedInsidePicker = path.includes(picker) || picker.contains(event.target)
+          const clickedTrigger = path.includes(trigger) || trigger.contains(event.target)
+          if (clickedInsidePicker || clickedTrigger) return
+          closeEmojiPicker()
+        }
+        document.addEventListener('pointerdown', state.outsideClickHandler, true)
+      }
 
       state.uiReady = true
     }

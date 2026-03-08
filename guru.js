@@ -13373,7 +13373,9 @@ function guardGuruPageAccess({ targetPage, isWaliKelas, isWakasekAkademik, isWak
 async function renderGuruChatPage() {
   const content = document.getElementById('guru-content')
   if (!content) return
-  content.innerHTML = 'Loading chat...'
+  const activeChat = window.__chatModuleActiveState
+  const isWarmChat = activeChat && activeChat.containerId === 'guru-content'
+  if (!isWarmChat) content.innerHTML = 'Loading chat...'
   try {
     const guru = await getCurrentGuruRow()
     if (!guru?.id) {
@@ -13547,6 +13549,7 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('popstate', event => {
     const pageFromState = String(event.state?.[GURU_HISTORY_STATE_KEY] || '').trim()
     if (!pageFromState) return
+    if (pageFromState === 'chat' && window.__chatModuleActiveState) return
     loadGuruPage(pageFromState, { updateHistory: false }).catch(error => console.error(error))
   })
 

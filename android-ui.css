@@ -187,13 +187,24 @@ body.platform-android .topbar-notif-menu {
 body.platform-android .topbar-notif-menu.open {
   position: fixed !important;
   left: 50% !important;
-  top: max(58px, calc(env(safe-area-inset-top) + 12px)) !important;
+  top: calc(max(12px, env(safe-area-inset-top)) + 52px) !important;
   right: auto !important;
   bottom: auto !important;
   transform: translateX(-50%) !important;
   width: min(380px, calc(100vw - 24px)) !important;
-  max-height: min(520px, calc(100vh - 88px)) !important;
+  max-height: calc(100dvh - (max(12px, env(safe-area-inset-top)) + 52px) - (max(10px, env(safe-area-inset-bottom)) + 12px)) !important;
   z-index: 12140 !important;
+}
+
+body.platform-android .topbar-notif-menu {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-4px);
+  transition: opacity 140ms ease, transform 160ms ease;
+}
+
+body.platform-android .topbar-notif-menu.open {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 body.platform-android .android-bottom-nav {
@@ -436,6 +447,7 @@ body.platform-android .topbar-calendar-overlay {
   padding-left: 10px !important;
   padding-bottom: calc(max(10px, env(safe-area-inset-bottom)) + 10px) !important;
   box-sizing: border-box !important;
+  transition: opacity 130ms ease;
 }
 
 body.platform-android .topbar-calendar-card {
@@ -444,6 +456,18 @@ body.platform-android .topbar-calendar-card {
   max-height: calc(100dvh - (max(12px, env(safe-area-inset-top)) + 54px) - (max(10px, env(safe-area-inset-bottom)) + 14px)) !important;
   border-radius: 14px !important;
   overflow: auto !important;
+  transform: translateY(0);
+  opacity: 1;
+  transition: transform 140ms ease, opacity 130ms ease;
+}
+
+body.platform-android .topbar-calendar-overlay.calendar-closing {
+  opacity: 0;
+}
+
+body.platform-android .topbar-calendar-overlay.calendar-closing .topbar-calendar-card {
+  transform: translateY(-4px);
+  opacity: 0.92;
 }
 
 body.platform-android .topbar-calendar-grid {

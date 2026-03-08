@@ -134,11 +134,63 @@ function applyPlatformUiSkin() {
   const link = document.createElement('link')
   link.id = 'android-ui-css'
   link.rel = 'stylesheet'
-  link.href = 'android-ui.css?v=20260308-android-ui-22'
+  link.href = 'android-ui.css?v=20260308-android-ui-24'
   document.head.appendChild(link)
 
   ensureAndroidBottomNav()
   ensureAndroidSidebarDrawer()
+  ensureGlobalCalendarAutoClose()
+}
+
+function ensureGlobalCalendarAutoClose() {
+  if (window.__calendarAutoCloseBound) return
+  window.__calendarAutoCloseBound = true
+
+  function closeTopbarCalendarWithAnimation() {
+    const popup = document.getElementById('topbar-calendar-popup')
+    if (!popup || popup.style.display === 'none') return
+    if (popup.dataset.closing === '1') return
+    popup.dataset.closing = '1'
+    popup.classList.add('calendar-closing')
+    window.setTimeout(() => {
+      if (typeof window.closeTopbarCalendarPopup === 'function') {
+        window.closeTopbarCalendarPopup()
+      } else {
+        popup.style.display = 'none'
+      }
+      popup.classList.remove('calendar-closing')
+      popup.dataset.closing = '0'
+    }, 130)
+  }
+
+  document.addEventListener('click', event => {
+    const popup = document.getElementById('topbar-calendar-popup')
+    if (!popup || popup.style.display === 'none') return
+    const card = popup.querySelector('.topbar-calendar-card')
+    const target = event.target instanceof HTMLElement ? event.target : null
+    if (!target) return
+
+    const clickedInsideCard = !!(card && (card.contains(target) || (typeof event.composedPath === 'function' && event.composedPath().includes(card))))
+    if (clickedInsideCard) return
+
+    const clickedDateButton = target.closest('.topbar-title-date-btn')
+    if (clickedDateButton) return
+
+    closeTopbarCalendarWithAnimation()
+  }, true)
+
+  document.addEventListener('click', event => {
+    const popup = document.getElementById('topbar-calendar-popup')
+    if (!popup || popup.style.display === 'none') return
+    const target = event.target instanceof HTMLElement ? event.target : null
+    if (!target) return
+
+    const triggerOtherPopup = target.closest(
+      '.topbar-notif-trigger, .topbar-user-trigger, .topbar-sidebar-toggle, #topbar-chat-trigger, .android-bottom-nav-btn'
+    )
+    if (!triggerOtherPopup) return
+    closeTopbarCalendarWithAnimation()
+  }, true)
 }
 
 function setAndroidSidebarOpen(nextOpen) {

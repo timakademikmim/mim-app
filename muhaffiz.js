@@ -3718,7 +3718,9 @@ async function loadMuhaffizPage(page, options = {}) {
 async function renderMuhaffizChatPage() {
   const content = document.getElementById('muhaffiz-content')
   if (!content) return
-  content.innerHTML = 'Loading chat...'
+  const activeChat = window.__chatModuleActiveState
+  const isWarmChat = activeChat && activeChat.containerId === 'muhaffiz-content'
+  if (!isWarmChat) content.innerHTML = 'Loading chat...'
   try {
     const profile = await getCurrentMuhaffiz()
     if (!profile?.id) {
@@ -3844,6 +3846,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.addEventListener('popstate', event => {
     const pageFromState = String(event.state?.[MUHAFFIZ_HISTORY_STATE_KEY] || '').trim()
     if (!pageFromState) return
+    if (pageFromState === 'chat' && window.__chatModuleActiveState) return
     loadMuhaffizPage(pageFromState, { updateHistory: false }).catch(error => console.error(error))
   })
 

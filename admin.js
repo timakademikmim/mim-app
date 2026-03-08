@@ -323,6 +323,7 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('popstate', event => {
     const pageFromState = String(event.state?.[ADMIN_HISTORY_STATE_PAGE_KEY] || '').trim()
     if (!pageFromState) return
+    if (pageFromState === 'chat' && window.__chatModuleActiveState) return
     const paramsFromState = event.state?.[ADMIN_HISTORY_STATE_PARAMS_KEY] || {}
     loadPage(pageFromState, paramsFromState, { updateHistory: false })
   })
@@ -1466,7 +1467,9 @@ function loadPage(page, params = {}, options = {}) {
 async function renderAdminChatPage() {
   const area = document.getElementById('content-area')
   if (!area) return
-  area.innerHTML = 'Loading chat...'
+  const activeChat = window.__chatModuleActiveState
+  const isWarmChat = activeChat && activeChat.containerId === 'content-area'
+  if (!isWarmChat) area.innerHTML = 'Loading chat...'
   try {
     const { data, error } = await sb
       .from('karyawan')
