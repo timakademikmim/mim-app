@@ -134,10 +134,63 @@ function applyPlatformUiSkin() {
   const link = document.createElement('link')
   link.id = 'android-ui-css'
   link.rel = 'stylesheet'
-  link.href = 'android-ui.css?v=20260308-android-ui-16'
+  link.href = 'android-ui.css?v=20260308-android-ui-20'
   document.head.appendChild(link)
 
   ensureAndroidBottomNav()
+  ensureAndroidSidebarDrawer()
+}
+
+function setAndroidSidebarOpen(nextOpen) {
+  if (!document.body) return
+  document.body.classList.toggle('android-sidebar-open', Boolean(nextOpen))
+}
+
+function ensureAndroidSidebarDrawer() {
+  if (!isAndroidPlatform() || !document.body) return
+  const body = document.body
+  const sidebar = document.querySelector('.sidebar')
+  const layout = document.querySelector('.layout')
+  if (!sidebar) return
+
+  body.classList.add('android-sidebar-drawer-enabled')
+  if (layout) {
+    layout.classList.remove('sidebar-collapsed')
+    layout.classList.remove('sidebar-icons-only')
+  }
+
+  let scrim = document.getElementById('android-sidebar-scrim')
+  if (!scrim) {
+    scrim = document.createElement('div')
+    scrim.id = 'android-sidebar-scrim'
+    scrim.className = 'android-sidebar-scrim'
+    scrim.addEventListener('click', () => setAndroidSidebarOpen(false))
+    body.appendChild(scrim)
+  }
+
+  if (body.dataset.androidSidebarDrawerBound === '1') return
+  body.dataset.androidSidebarDrawerBound = '1'
+
+  document.addEventListener('click', event => {
+    const target = event.target
+    if (!(target instanceof HTMLElement)) return
+    if (target.closest('.topbar-sidebar-toggle')) {
+      event.preventDefault()
+      event.stopPropagation()
+      setAndroidSidebarOpen(!body.classList.contains('android-sidebar-open'))
+      return
+    }
+    const clickedSidebarBtn = target.closest('.sidebar button')
+    if (clickedSidebarBtn) {
+      const isParentToggle = Boolean(
+        clickedSidebarBtn.classList.contains('sidebar-parent-btn')
+        || clickedSidebarBtn.classList.contains('sidebar-submenu-parent-btn')
+        || clickedSidebarBtn.classList.contains('guru-parent-btn')
+      )
+      if (isParentToggle) return
+      setTimeout(() => setAndroidSidebarOpen(false), 50)
+    }
+  }, true)
 }
 
 function goToAndroidDashboard() {
@@ -178,7 +231,11 @@ function ensureAndroidBottomNav() {
       { key: 'chat', label: 'Pesan', icon: '<path d="M5 6.5h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H10l-4.5 3V17.5H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z"/>' },
       { key: 'profil', label: 'Profil', icon: '<circle cx="12" cy="8" r="3.2"/><path d="M5.5 19a6.5 6.5 0 0 1 13 0"/>' }
     ]
-    : [{ key: 'dashboard', label: 'Dashboard', icon: '<path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1V9.5Z"/>' }]
+    : [
+      { key: 'dashboard', label: 'Dashboard', icon: '<path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1V9.5Z"/>' },
+      { key: 'chat', label: 'Pesan', icon: '<path d="M5 6.5h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H10l-4.5 3V17.5H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z"/>' },
+      { key: 'profil', label: 'Profil', icon: '<circle cx="12" cy="8" r="3.2"/><path d="M5.5 19a6.5 6.5 0 0 1 13 0"/>' }
+    ]
 
   const renderItem = (item, index) => {
     if (item.key === 'profil') {
@@ -395,6 +452,15 @@ function ensureAndroidBottomNav() {
 
   const runAction = async key => {
     const navKey = String(key || '').trim().toLowerCase()
+    if (navKey === 'profil') {
+      setActive('profil')
+      const button = nav.querySelector('.android-bottom-nav-btn[data-nav-key="profil"]')
+      if (typeof window.closeTopbarNotifMenu === 'function') {
+        try { window.closeTopbarNotifMenu() } catch (_error) {}
+      }
+      toggleAndroidBottomProfileMenu(button)
+      return
+    }
     try {
       if (role === 'guru' && panel !== 'wakasek-kurikulum' && typeof window.loadGuruPage === 'function') {
         if (navKey === 'dashboard') window.loadGuruPage('dashboard')
@@ -405,15 +471,6 @@ function ensureAndroidBottomNav() {
         }
         else if (navKey === 'tugas') window.loadGuruPage('tugas')
         else if (navKey === 'chat') window.loadGuruPage('chat')
-        else if (navKey === 'profil') {
-          setActive('profil')
-          const button = nav.querySelector('.android-bottom-nav-btn[data-nav-key="profil"]')
-          if (typeof window.closeTopbarNotifMenu === 'function') {
-            try { window.closeTopbarNotifMenu() } catch (_error) {}
-          }
-          toggleAndroidBottomProfileMenu(button)
-          return
-        }
         else window.loadGuruPage('dashboard')
         const menu = document.getElementById('topbar-user-menu')
         if (menu?.dataset?.anchorSource === 'android-bottom') {
@@ -422,6 +479,58 @@ function ensureAndroidBottomNav() {
         }
         setActive(navKey)
         return
+      }
+
+      if (typeof window.loadPage === 'function') {
+        if (navKey === 'chat') {
+          window.loadPage('chat')
+          setActive('chat')
+          return
+        }
+        if (navKey === 'dashboard') {
+          window.loadPage('dashboard')
+          setActive('dashboard')
+          return
+        }
+      }
+
+      if (typeof window.loadMuhaffizPage === 'function') {
+        if (navKey === 'chat') {
+          window.loadMuhaffizPage('chat')
+          setActive('chat')
+          return
+        }
+        if (navKey === 'dashboard') {
+          window.loadMuhaffizPage('dashboard')
+          setActive('dashboard')
+          return
+        }
+      }
+
+      if (typeof window.loadMusyrifPage === 'function') {
+        if (navKey === 'chat') {
+          window.loadMusyrifPage('chat')
+          setActive('chat')
+          return
+        }
+        if (navKey === 'dashboard') {
+          window.loadMusyrifPage('dashboard')
+          setActive('dashboard')
+          return
+        }
+      }
+
+      if (typeof window.loadGuruPage === 'function') {
+        if (navKey === 'chat') {
+          window.loadGuruPage('chat')
+          setActive('chat')
+          return
+        }
+        if (navKey === 'dashboard') {
+          window.loadGuruPage('dashboard')
+          setActive('dashboard')
+          return
+        }
       }
     } catch (_error) {}
     goToAndroidDashboard()
@@ -491,7 +600,15 @@ function ensureAndroidBottomNav() {
       setActive('dashboard')
       return
     }
-    setActive(key === 'dashboard' ? 'dashboard' : 'dashboard')
+    if (key === 'profil') {
+      setActive('profil')
+      return
+    }
+    if (key === 'chat') {
+      setActive('chat')
+      return
+    }
+    setActive('dashboard')
   }
 }
 

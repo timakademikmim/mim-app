@@ -1,9 +1,9 @@
-(function initChatModule() {
+﻿(function initChatModule() {
   const CHAT_THREADS_TABLE = 'chat_threads'
   const CHAT_MEMBERS_TABLE = 'chat_thread_members'
   const CHAT_MESSAGES_TABLE = 'chat_messages'
   const CHAT_RETENTION_HOURS = 24
-  const CHAT_EMOJIS = ['😀', '😁', '😂', '🤣', '😊', '😍', '🥰', '😘', '😎', '🤔', '😭', '😡', '👍', '👏', '🙏', '💪', '🔥', '⭐', '🎉', '✅', '❌', '📚', '📝', '📌', '💯']
+  const CHAT_EMOJIS = ['\u{1F600}', '\u{1F601}', '\u{1F602}', '\u{1F923}', '\u{1F60A}', '\u{1F60D}', '\u{1F970}', '\u{1F618}', '\u{1F60E}', '\u{1F914}', '\u{1F62D}', '\u{1F621}', '\u{1F44D}', '\u{1F44F}', '\u{1F64F}', '\u{1F4AA}', '\u{1F525}', '\u{2B50}', '\u{1F389}', '\u{2705}', '\u{274C}', '\u{1F4DA}', '\u{1F4DD}', '\u{1F4CC}', '\u{1F4AF}']
 
   function escapeHtml(value) {
     return String(value ?? '')
@@ -104,6 +104,12 @@
         active.sb.removeChannel(active.realtimeChannel)
       } catch (_) {}
     }
+    if (active?.content instanceof HTMLElement) {
+      active.content.classList.remove('chat-full-bleed')
+    }
+    if (document.body?.classList?.contains('platform-android')) {
+      document.body.classList.remove('android-chat-open')
+    }
     window.__chatModuleActiveState = null
   }
 
@@ -114,6 +120,10 @@
     const currentUser = options?.currentUser || {}
     const content = document.getElementById(containerId)
     if (!sb || !content || !safeId(currentUser.id)) return
+    content.classList.add('chat-full-bleed')
+    if (document.body?.classList?.contains('platform-android')) {
+      document.body.classList.add('android-chat-open')
+    }
 
     const state = {
       sb,
@@ -858,7 +868,7 @@
           preview: getThreadPreview(thread)
         }))
       })
-      if (renderKey === state.threadListRenderKey) return
+      if (renderKey === state.threadListRenderKey && box.childElementCount > 0) return
       state.threadListRenderKey = renderKey
       if (!state.threads.length) {
         box.innerHTML = '<div style="color:#64748b; font-size:13px;">Belum ada thread chat.</div>'
@@ -955,6 +965,7 @@
     }
 
     function renderUI() {
+      state.threadListRenderKey = ''
       const oldInput = document.getElementById('chat-message-input')
       if (oldInput && state.selectedThreadId) {
         state.draftByThread.set(safeId(state.selectedThreadId), String(oldInput.value || ''))
@@ -980,8 +991,8 @@
       const showListPanel = !isPhone || state.mobileChatView !== 'thread'
 
       content.innerHTML = `
-        <div style="display:grid; grid-template-columns:${isPhone ? '1fr' : 'minmax(150px, 320px) minmax(560px, 1fr)'}; gap:12px; height:${isPhone ? 'calc(100vh - 192px)' : 'calc(100vh - 220px)'}; min-height:${isPhone ? '520px' : '460px'}; overflow:auto;">
-          <div style="display:${showListPanel ? 'flex' : 'none'}; border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:10px; min-height:0; flex-direction:column; overflow:hidden;">
+        <div style="display:grid; width:100%; max-width:100%; grid-template-columns:${isPhone ? '1fr' : 'minmax(220px, 300px) minmax(0, 1fr)'}; gap:12px; height:100%; min-height:0; overflow:hidden;">
+          <div style="display:${showListPanel ? 'flex' : 'none'}; border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:10px; min-height:0; min-width:0; flex-direction:column; overflow:hidden;">
             <div style="display:grid; gap:8px; margin-bottom:10px;">
               <div style="display:flex; gap:8px;">
                 <button type="button" class="modal-btn" id="chat-btn-open-dm-modal" title="Tambah DM" style="min-width:42px; padding:8px 12px; font-weight:700; font-size:18px; line-height:1;">+</button>
@@ -991,7 +1002,7 @@
             <div style="font-size:12px; color:#64748b; margin-bottom:6px;">Thread</div>
             <div id="chat-thread-list" style="flex:1; min-height:0; overflow:auto; padding-right:2px;"></div>
           </div>
-          <div style="display:${showThreadPanel ? 'flex' : 'none'}; border:1px solid #e2e8f0; border-radius:12px; background:#fff; min-height:0; flex-direction:column; overflow:hidden;">
+          <div style="display:${showThreadPanel ? 'flex' : 'none'}; border:${isPhone ? 'none' : '1px solid #e2e8f0'}; border-radius:${isPhone ? '0' : '12px'}; background:${isPhone ? 'transparent' : '#fff'}; min-height:0; min-width:0; flex-direction:column; overflow:hidden;">
             <div style="padding:10px 12px; border-bottom:1px solid #e2e8f0; font-weight:700; color:#0f172a; display:flex; align-items:center; gap:8px;">
               ${isPhone ? '<button type="button" class="modal-btn" id="chat-btn-mobile-back" style="padding:6px 10px; min-width:0; font-size:16px; font-weight:700; line-height:1;">&lt;</button>' : ''}
               <div id="chat-thread-title" style="font-size:${isPhone ? '14px' : '16px'}; line-height:1.2;">${escapeHtml(getThreadTitle(selected))}</div>
@@ -1005,7 +1016,7 @@
             </div>
             <div id="chat-message-list" style="flex:1; min-height:0; overflow:auto; padding:10px;"></div>
             <div style="padding:10px; border-top:1px solid #e2e8f0; display:flex; gap:8px; align-items:center; position:relative;">
-              <button type="button" class="modal-btn" id="chat-btn-emoji" style="min-width:42px; padding:8px 10px;">😊</button>
+              <button type="button" class="modal-btn" id="chat-btn-emoji" style="min-width:42px; padding:8px 10px;">ðŸ˜Š</button>
               <input id="chat-message-input" class="guru-field" type="text" placeholder="Ketik pesan..." style="flex:1;">
               <button type="button" class="modal-btn modal-btn-primary" id="chat-btn-send">Kirim</button>
               <div id="chat-emoji-picker" style="display:none; position:absolute; left:10px; bottom:56px; width:min(360px, 90vw); max-height:340px; overflow:hidden; background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:0; box-shadow:0 8px 24px rgba(15,23,42,0.12); z-index:20;">
@@ -1344,3 +1355,4 @@ create table if not exists public.chat_messages (
     stop
   }
 })()
+

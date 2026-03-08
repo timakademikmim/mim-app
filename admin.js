@@ -79,6 +79,10 @@ function ensureAdminSidebarIcons() {
 function applyAdminSidebarIconsOnlyByViewport() {
   const layout = getAdminLayoutElement()
   if (!layout) return
+  if (document.body?.classList?.contains('platform-android')) {
+    layout.classList.remove('sidebar-icons-only')
+    return
+  }
   layout.classList.toggle('sidebar-icons-only', window.innerWidth <= ADMIN_SIDEBAR_ICON_ONLY_BREAKPOINT)
 }
 
@@ -128,6 +132,7 @@ function removeAdminSidebarTooltip() {
 }
 
 function showAdminSidebarTooltip(btn, options = {}) {
+  if (document.body?.classList?.contains('platform-android')) return
   if (!isAdminSidebarIconsOnlyMode()) return
   removeAdminSidebarTooltip()
   const title = getAdminNavButtonLabel(btn)
@@ -181,6 +186,7 @@ function showAdminSidebarTooltip(btn, options = {}) {
 }
 
 function setupAdminSidebarTooltips() {
+  if (document.body?.classList?.contains('platform-android')) return
   const buttons = document.querySelectorAll('.sidebar-nav-btn, .sidebar-submenu-btn, .sidebar-submenu-btn-nested, .sidebar-submenu-parent-btn')
   buttons.forEach(btn => {
     if (btn.dataset.iconTooltipBound === '1') return
