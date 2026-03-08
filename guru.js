@@ -7126,11 +7126,17 @@ async function quickSendLaporanBulananWA(santriId) {
     .replace(/<link>/gi, publicUrl)
 
   const waUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
+  const waScheme = `whatsapp://send?phone=${phone}&text=${encodeURIComponent(message)}`
   if (typeof window.openExternalUrl === 'function') {
-    let opened = await window.openExternalUrl(waUrl)
-    if (!opened && /android/i.test(String(navigator.userAgent || ''))) {
-      const waScheme = `whatsapp://send?phone=${encodeURIComponent(phone)}&text=${encodeURIComponent(message)}`
+    const isAndroid = /android/i.test(String(navigator.userAgent || ''))
+    let opened = false
+    if (isAndroid) {
+      // On Android, open app scheme first to avoid wa.me 404 pages in browser.
       opened = await window.openExternalUrl(waScheme)
+      if (!opened) opened = await window.openExternalUrl(waUrl)
+    } else {
+      opened = await window.openExternalUrl(waUrl)
+      if (!opened) opened = await window.openExternalUrl(waScheme)
     }
     if (!opened) alert('Tidak bisa membuka WhatsApp otomatis. Silakan coba lagi.')
     return
