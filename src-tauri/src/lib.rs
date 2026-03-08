@@ -101,6 +101,65 @@ fn get_desktop_export_dir() -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
+fn download_url_to_app_storage(
+  app: tauri::AppHandle,
+  url: String,
+  file_name: String,
+) -> Result<String, String> {
+  let target = url.trim();
+  if target.is_empty() {
+    return Err("URL kosong.".to_string());
+  }
+
+  let parsed = reqwest::Url::parse(target).map_err(|e| format!("URL tidak valid: {e}"))?;
+  let fallback_name = parsed
+    .path_segments()
+    .and_then(|mut seg| seg.next_back())
+    .filter(|name| !name.trim().is_empty())
+    .unwrap_or("download.bin")
+    .to_string();
+
+  let requested_name = file_name.trim();
+  let mut final_name = if requested_name.is_empty() {
+    fallback_name
+  } else {
+    requested_name.to_string()
+  };
+
+  final_name = final_name
+    .chars()
+    .map(|c| match c {
+      '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+      _ => c,
+    })
+    .collect::<String>();
+
+  if final_name.trim().is_empty() {
+    final_name = "download.bin".to_string();
+  }
+
+  let app_dir = app
+    .path()
+    .app_data_dir()
+    .map_err(|e| format!("Gagal resolve app data dir: {e}"))?;
+  let download_dir = app_dir.join("Downloads");
+  std::fs::create_dir_all(&download_dir)
+    .map_err(|e| format!("Gagal membuat folder Downloads aplikasi: {e}"))?;
+
+  let output_path = download_dir.join(final_name);
+  let response = reqwest::blocking::get(parsed).map_err(|e| format!("Gagal mengunduh file: {e}"))?;
+  if !response.status().is_success() {
+    return Err(format!("Unduhan gagal. HTTP {}", response.status()));
+  }
+  let bytes = response
+    .bytes()
+    .map_err(|e| format!("Gagal membaca konten unduhan: {e}"))?;
+  std::fs::write(&output_path, &bytes).map_err(|e| format!("Gagal menyimpan file unduhan: {e}"))?;
+
+  Ok(output_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 fn save_pdf_base64(file_name: String, base64_data: String) -> Result<String, String> {
   let clean_name = file_name
     .chars()
@@ -179,6 +238,7 @@ pub fn run() {
   builder
     .invoke_handler(tauri::generate_handler![
       open_external_url,
+      download_url_to_app_storage,
       save_pdf_base64,
       open_file_path,
       get_app_version

@@ -134,7 +134,7 @@ function applyPlatformUiSkin() {
   const link = document.createElement('link')
   link.id = 'android-ui-css'
   link.rel = 'stylesheet'
-  link.href = 'android-ui.css?v=20260308-android-ui-15'
+  link.href = 'android-ui.css?v=20260308-android-ui-16'
   document.head.appendChild(link)
 
   ensureAndroidBottomNav()
@@ -538,6 +538,50 @@ function setTopbarAvatar(name, fotoUrl = '') {
   initialsEl.style.display = 'none'
 }
 
+function syncAndroidBottomAvatar(name, fotoUrl = '') {
+  const avatar = document.getElementById('android-bottom-avatar')
+  if (!avatar) return
+  const safeName = String(name || '').trim() || String(localStorage.getItem('login_name') || '').trim() || 'User'
+  const safeUrl = String(fotoUrl || '').trim()
+
+  let imgEl = avatar.querySelector('.android-bottom-avatar-img')
+  let initialsEl = avatar.querySelector('.android-bottom-avatar-initials')
+
+  if (!safeUrl) {
+    if (imgEl) {
+      imgEl.remove()
+      imgEl = null
+    }
+    if (!initialsEl) {
+      initialsEl = document.createElement('span')
+      initialsEl.className = 'android-bottom-avatar-initials'
+      avatar.appendChild(initialsEl)
+    }
+    initialsEl.textContent = getInitials(safeName)
+    return
+  }
+
+  if (!imgEl) {
+    imgEl = document.createElement('img')
+    imgEl.className = 'android-bottom-avatar-img'
+    imgEl.alt = 'Avatar profil'
+    avatar.appendChild(imgEl)
+  }
+  imgEl.src = safeUrl
+  imgEl.style.display = 'block'
+  imgEl.onerror = () => {
+    imgEl.style.display = 'none'
+    if (!initialsEl) {
+      initialsEl = document.createElement('span')
+      initialsEl.className = 'android-bottom-avatar-initials'
+      avatar.appendChild(initialsEl)
+    }
+    initialsEl.textContent = getInitials(safeName)
+    initialsEl.style.display = 'inline-flex'
+  }
+  if (initialsEl) initialsEl.remove()
+}
+
 function initTopbarAccountMenu() {
   const wrap = document.querySelector('.topbar-user-menu-wrap')
   const trigger = document.querySelector('.topbar-user-trigger')
@@ -883,6 +927,16 @@ async function initAndroidReleaseInfoPopup() {
   if (downloadApkBtn.dataset.boundMobileDownload !== '1') {
     downloadApkBtn.dataset.boundMobileDownload = '1'
     downloadApkBtn.addEventListener('click', async () => {
+      const inferredName = `MIM-App-Android-v${String(versionEl.textContent || '').match(/v([0-9.]+)/)?.[1] || 'latest'}.apk`
+      try {
+        if (typeof window.downloadToAndroidAppStorage === 'function') {
+          const saved = await window.downloadToAndroidAppStorage(apkUrl, inferredName)
+          if (saved?.ok) {
+            alert(`File APK tersimpan di:\n${saved.path}`)
+            return
+          }
+        }
+      } catch (_error) {}
       try {
         if (typeof window.openExternalUrl === 'function') {
           const opened = await window.openExternalUrl(apkUrl)
@@ -905,6 +959,11 @@ async function initWebDesktopInfoPopup() {
   if (!isWebPlatform()) return
   const GENERIC_NOTE = 'desktop release otomatis dengan updater artifacts.'
   const WEB_VERSION_WHATS_NEW = {
+    '0.3.15': `What's new in this version:
+- Jarak aman topbar Android ditambah agar tombol tidak mepet ke ujung atas layar.
+- Download APK Android diperbarui: file bisa disimpan ke folder lokal aplikasi (AppData/Downloads).
+- Sinkron avatar Android diperbaiki agar foto profil ikut tampil di bottom navigation.
+- Deklarasi izin Android untuk instal paket/akses storage kompatibel ditambahkan.`,
     '0.3.14': `What's new in this version:
 - Perbaikan layout Android: topbar menempel di atas dan tidak ikut masuk ke kontainer konten.
 - Perbaikan drawer Android: posisi sidebar/logo lebih stabil agar tidak terpotong.
@@ -1269,6 +1328,17 @@ async function initMobileInAppUpdatePrompt() {
     overlay.remove()
   })
   overlay.querySelector('#mobile-update-install')?.addEventListener('click', async () => {
+    const inferredName = `MIM-App-Android-v${latestVersion}.apk`
+    try {
+      if (typeof window.downloadToAndroidAppStorage === 'function') {
+        const saved = await window.downloadToAndroidAppStorage(apkUrl, inferredName)
+        if (saved?.ok) {
+          alert(`File APK tersimpan di:\n${saved.path}`)
+          overlay.remove()
+          return
+        }
+      }
+    } catch (_error) {}
     try {
       if (typeof window.openExternalUrl === 'function') {
         const opened = await window.openExternalUrl(apkUrl)
@@ -1289,6 +1359,11 @@ function initDesktopUpdaterUi() {
     'desktop release otomatis dengan updater artifacts.'
   ]
   const VERSION_WHATS_NEW = {
+    '0.3.15': `What's new in this version:
+- Jarak aman topbar Android ditambah agar tombol tidak mepet ke ujung atas layar.
+- Download APK Android diperbarui: file bisa disimpan ke folder lokal aplikasi (AppData/Downloads).
+- Sinkron avatar Android diperbaiki agar foto profil ikut tampil di bottom navigation.
+- Deklarasi izin Android untuk instal paket/akses storage kompatibel ditambahkan.`,
     '0.3.14': `What's new in this version:
 - Perbaikan layout Android: topbar menempel di atas dan tidak ikut masuk ke kontainer konten.
 - Perbaikan drawer Android: posisi sidebar/logo lebih stabil agar tidak terpotong.
@@ -1764,6 +1839,22 @@ window.openExternalUrl = async function openExternalUrl(url) {
   }
 }
 
+window.downloadToAndroidAppStorage = async function downloadToAndroidAppStorage(url, fileName = '') {
+  const target = String(url || '').trim()
+  if (!target) return { ok: false, path: '', error: 'URL kosong.' }
+  const isAndroidApp = /android/i.test(String(navigator.userAgent || ''))
+  if (!isAndroidApp) return { ok: false, path: '', error: 'Bukan mode Android.' }
+  try {
+    const savedPath = await invokeTauriCommand('download_url_to_app_storage', {
+      url: target,
+      fileName: String(fileName || '').trim()
+    })
+    return { ok: true, path: String(savedPath || '') }
+  } catch (error) {
+    return { ok: false, path: '', error: String(error?.message || error || 'Gagal menyimpan file.') }
+  }
+}
+
 window.printPdfBlobInPlace = async function printPdfBlobInPlace(blob) {
   if (!(blob instanceof Blob)) return false
   if (/android/i.test(String(navigator.userAgent || ''))) return false
@@ -1851,7 +1942,9 @@ window.setTopbarUserIdentity = function setTopbarUserIdentity(nameOrObject, mayb
 
   const accountNameEl = document.getElementById('topbar-account-name')
   if (accountNameEl && name) accountNameEl.textContent = name
-  setTopbarAvatar(name || String(localStorage.getItem('login_name') || '').trim() || id, fotoUrl)
+  const effectiveName = name || String(localStorage.getItem('login_name') || '').trim() || id
+  setTopbarAvatar(effectiveName, fotoUrl)
+  syncAndroidBottomAvatar(effectiveName, fotoUrl)
 }
 
 applyPlatformUiSkin()
