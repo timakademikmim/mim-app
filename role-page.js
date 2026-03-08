@@ -927,11 +927,25 @@ async function initAndroidReleaseInfoPopup() {
   if (downloadApkBtn.dataset.boundMobileDownload !== '1') {
     downloadApkBtn.dataset.boundMobileDownload = '1'
     downloadApkBtn.addEventListener('click', async () => {
+      const originalLabel = downloadApkBtn.textContent || 'Download APK'
+      let loadingTick = 0
+      downloadApkBtn.disabled = true
+      downloadApkBtn.textContent = 'Mengunduh'
+      const timer = window.setInterval(() => {
+        loadingTick = (loadingTick + 1) % 4
+        downloadApkBtn.textContent = `Mengunduh${'.'.repeat(loadingTick)}`
+      }, 280)
+      const stopLoading = () => {
+        window.clearInterval(timer)
+        downloadApkBtn.disabled = false
+        downloadApkBtn.textContent = originalLabel
+      }
       const inferredName = `MIM-App-Android-v${String(versionEl.textContent || '').match(/v([0-9.]+)/)?.[1] || 'latest'}.apk`
       try {
         if (typeof window.downloadToAndroidAppStorage === 'function') {
           const saved = await window.downloadToAndroidAppStorage(apkUrl, inferredName)
           if (saved?.ok) {
+            stopLoading()
             alert(`File APK tersimpan di:\n${saved.path}`)
             return
           }
@@ -940,9 +954,13 @@ async function initAndroidReleaseInfoPopup() {
       try {
         if (typeof window.openExternalUrl === 'function') {
           const opened = await window.openExternalUrl(apkUrl)
-          if (opened) return
+          if (opened) {
+            stopLoading()
+            return
+          }
         }
       } catch (_error) {}
+      stopLoading()
       window.location.href = apkUrl
     })
   }
@@ -959,6 +977,11 @@ async function initWebDesktopInfoPopup() {
   if (!isWebPlatform()) return
   const GENERIC_NOTE = 'desktop release otomatis dengan updater artifacts.'
   const WEB_VERSION_WHATS_NEW = {
+    '0.3.17': `What's new in this version:
+- Download Android ditingkatkan: prioritas simpan ke folder Download publik, fallback ke folder aplikasi jika diperlukan.
+- Tombol download pada popup info Android kini menampilkan animasi loading agar proses terlihat jelas.
+- Cetak laporan bulanan Android kini disimpan sebagai file PDF ke folder download melalui command native.
+- Sinkron avatar Android diperkuat agar foto profil lebih konsisten tampil.`,
     '0.3.16': `What's new in this version:
 - Perbaikan build Android: path resolver Tauri diperbaiki agar rilis APK tidak gagal compile.
 - Stabilitas proses rilis Android ditingkatkan setelah penyesuaian command native.`,
@@ -1331,11 +1354,32 @@ async function initMobileInAppUpdatePrompt() {
     overlay.remove()
   })
   overlay.querySelector('#mobile-update-install')?.addEventListener('click', async () => {
+    const installBtn = overlay.querySelector('#mobile-update-install')
+    const originalLabel = installBtn?.textContent || 'Install'
+    let loadingTick = 0
+    let timer = 0
+    const startLoading = () => {
+      if (!installBtn) return
+      installBtn.disabled = true
+      installBtn.textContent = 'Mengunduh'
+      timer = window.setInterval(() => {
+        loadingTick = (loadingTick + 1) % 4
+        installBtn.textContent = `Mengunduh${'.'.repeat(loadingTick)}`
+      }, 280)
+    }
+    const stopLoading = () => {
+      if (timer) window.clearInterval(timer)
+      if (!installBtn) return
+      installBtn.disabled = false
+      installBtn.textContent = originalLabel
+    }
+    startLoading()
     const inferredName = `MIM-App-Android-v${latestVersion}.apk`
     try {
       if (typeof window.downloadToAndroidAppStorage === 'function') {
         const saved = await window.downloadToAndroidAppStorage(apkUrl, inferredName)
         if (saved?.ok) {
+          stopLoading()
           alert(`File APK tersimpan di:\n${saved.path}`)
           overlay.remove()
           return
@@ -1345,10 +1389,14 @@ async function initMobileInAppUpdatePrompt() {
     try {
       if (typeof window.openExternalUrl === 'function') {
         const opened = await window.openExternalUrl(apkUrl)
-        if (opened) return
+        if (opened) {
+          stopLoading()
+          return
+        }
       }
       window.location.href = apkUrl
     } catch (_error) {
+      stopLoading()
       window.location.href = apkUrl
     }
   })
@@ -1362,6 +1410,11 @@ function initDesktopUpdaterUi() {
     'desktop release otomatis dengan updater artifacts.'
   ]
   const VERSION_WHATS_NEW = {
+    '0.3.17': `What's new in this version:
+- Download Android ditingkatkan: prioritas simpan ke folder Download publik, fallback ke folder aplikasi jika diperlukan.
+- Tombol download pada popup info Android kini menampilkan animasi loading agar proses terlihat jelas.
+- Cetak laporan bulanan Android kini disimpan sebagai file PDF ke folder download melalui command native.
+- Sinkron avatar Android diperkuat agar foto profil lebih konsisten tampil.`,
     '0.3.16': `What's new in this version:
 - Perbaikan build Android: path resolver Tauri diperbaiki agar rilis APK tidak gagal compile.
 - Stabilitas proses rilis Android ditingkatkan setelah penyesuaian command native.`,
@@ -1854,6 +1907,20 @@ window.downloadToAndroidAppStorage = async function downloadToAndroidAppStorage(
     const savedPath = await invokeTauriCommand('download_url_to_app_storage', {
       url: target,
       fileName: String(fileName || '').trim()
+    })
+    return { ok: true, path: String(savedPath || '') }
+  } catch (error) {
+    return { ok: false, path: '', error: String(error?.message || error || 'Gagal menyimpan file.') }
+  }
+}
+
+window.saveBase64ToAndroidDownloads = async function saveBase64ToAndroidDownloads(fileName, base64Data) {
+  const isAndroidApp = /android/i.test(String(navigator.userAgent || ''))
+  if (!isAndroidApp) return { ok: false, path: '', error: 'Bukan mode Android.' }
+  try {
+    const savedPath = await invokeTauriCommand('save_base64_to_downloads', {
+      fileName: String(fileName || '').trim(),
+      base64Data: String(base64Data || '').trim()
     })
     return { ok: true, path: String(savedPath || '') }
   } catch (error) {

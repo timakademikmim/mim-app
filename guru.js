@@ -7296,6 +7296,25 @@ async function savePdfDocForCurrentPlatform(doc, fileName) {
   const isDesktopApp = isTauriApp && !isAndroidApp
   if (isAndroidApp) {
     try {
+      const blob = doc.output('blob')
+      if (blob instanceof Blob && typeof window.saveBase64ToAndroidDownloads === 'function') {
+        const bytes = new Uint8Array(await blob.arrayBuffer())
+        let binary = ''
+        const chunk = 0x8000
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
+        }
+        const base64Data = btoa(binary)
+        const saved = await window.saveBase64ToAndroidDownloads(fileName, base64Data)
+        if (saved?.ok) {
+          alert(`File PDF tersimpan di:\n${saved.path}`)
+          return
+        }
+      }
+    } catch (error) {
+      console.warn('Android save PDF ke folder download gagal, coba fallback viewer.', error)
+    }
+    try {
       const dataUri = String(doc.output('datauristring') || '')
       if (dataUri && typeof window.openExternalUrl === 'function') {
         const opened = await window.openExternalUrl(dataUri)

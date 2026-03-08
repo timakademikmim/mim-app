@@ -96,6 +96,36 @@ fn get_desktop_export_dir() -> Result<PathBuf, String> {
   Ok(dir)
 }
 
+fn sanitize_file_name(name: &str, fallback: &str) -> String {
+  let mut cleaned = name
+    .chars()
+    .map(|c| match c {
+      '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+      _ => c,
+    })
+    .collect::<String>();
+  if cleaned.trim().is_empty() {
+    cleaned = fallback.to_string();
+  }
+  cleaned
+}
+
+fn resolve_mobile_download_dir(app: &tauri::AppHandle) -> Result<(PathBuf, bool), String> {
+  if let Ok(public_dir) = app.path().download_dir() {
+    if std::fs::create_dir_all(&public_dir).is_ok() {
+      return Ok((public_dir, true));
+    }
+  }
+  let app_dir = app
+    .path()
+    .app_data_dir()
+    .map_err(|e| format!("Gagal resolve app data dir: {e}"))?;
+  let private_dir = app_dir.join("Downloads");
+  std::fs::create_dir_all(&private_dir)
+    .map_err(|e| format!("Gagal membuat folder Downloads aplikasi: {e}"))?;
+  Ok((private_dir, false))
+}
+
 #[tauri::command]
 fn download_url_to_app_storage(
   app: tauri::AppHandle,
@@ -116,31 +146,13 @@ fn download_url_to_app_storage(
     .to_string();
 
   let requested_name = file_name.trim();
-  let mut final_name = if requested_name.is_empty() {
+  let final_name_raw = if requested_name.is_empty() {
     fallback_name
   } else {
     requested_name.to_string()
   };
-
-  final_name = final_name
-    .chars()
-    .map(|c| match c {
-      '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
-      _ => c,
-    })
-    .collect::<String>();
-
-  if final_name.trim().is_empty() {
-    final_name = "download.bin".to_string();
-  }
-
-  let app_dir = app
-    .path()
-    .app_data_dir()
-    .map_err(|e| format!("Gagal resolve app data dir: {e}"))?;
-  let download_dir = app_dir.join("Downloads");
-  std::fs::create_dir_all(&download_dir)
-    .map_err(|e| format!("Gagal membuat folder Downloads aplikasi: {e}"))?;
+  let final_name = sanitize_file_name(&final_name_raw, "download.bin");
+  let (download_dir, _is_public) = resolve_mobile_download_dir(&app)?;
 
   let output_path = download_dir.join(final_name);
   let response = reqwest::blocking::get(parsed).map_err(|e| format!("Gagal mengunduh file: {e}"))?;
@@ -152,6 +164,27 @@ fn download_url_to_app_storage(
     .map_err(|e| format!("Gagal membaca konten unduhan: {e}"))?;
   std::fs::write(&output_path, &bytes).map_err(|e| format!("Gagal menyimpan file unduhan: {e}"))?;
 
+  Ok(output_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn save_base64_to_downloads(
+  app: tauri::AppHandle,
+  file_name: String,
+  base64_data: String,
+) -> Result<String, String> {
+  let clean_name = sanitize_file_name(file_name.trim(), "Dokumen.pdf");
+  let final_name = if clean_name.to_lowercase().ends_with(".pdf") {
+    clean_name
+  } else {
+    format!("{clean_name}.pdf")
+  };
+  let (download_dir, _is_public) = resolve_mobile_download_dir(&app)?;
+  let output_path = download_dir.join(final_name);
+  let bytes = base64::engine::general_purpose::STANDARD
+    .decode(base64_data.trim())
+    .map_err(|e| format!("Gagal decode base64: {e}"))?;
+  std::fs::write(&output_path, bytes).map_err(|e| format!("Gagal menyimpan file: {e}"))?;
   Ok(output_path.to_string_lossy().to_string())
 }
 
@@ -233,6 +266,7 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       open_external_url,
       download_url_to_app_storage,
+      save_base64_to_downloads,
       save_pdf_base64,
       open_file_path,
       get_app_version
