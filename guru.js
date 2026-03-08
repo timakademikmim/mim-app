@@ -7294,6 +7294,17 @@ async function savePdfDocForCurrentPlatform(doc, fileName) {
   const isTauriApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
   const isAndroidApp = /android/i.test(String(navigator.userAgent || ''))
   const isDesktopApp = isTauriApp && !isAndroidApp
+  if (isAndroidApp) {
+    try {
+      const dataUri = String(doc.output('datauristring') || '')
+      if (dataUri && typeof window.openExternalUrl === 'function') {
+        const opened = await window.openExternalUrl(dataUri)
+        if (opened) return
+      }
+    } catch (error) {
+      console.warn('Android open PDF via external viewer gagal, coba fallback download.', error)
+    }
+  }
   if (!isDesktopApp) {
     doc.save(fileName)
     return

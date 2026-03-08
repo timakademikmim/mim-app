@@ -134,7 +134,7 @@ function applyPlatformUiSkin() {
   const link = document.createElement('link')
   link.id = 'android-ui-css'
   link.rel = 'stylesheet'
-  link.href = 'android-ui.css?v=20260307-android-ui-14'
+  link.href = 'android-ui.css?v=20260308-android-ui-15'
   document.head.appendChild(link)
 
   ensureAndroidBottomNav()
@@ -905,6 +905,11 @@ async function initWebDesktopInfoPopup() {
   if (!isWebPlatform()) return
   const GENERIC_NOTE = 'desktop release otomatis dengan updater artifacts.'
   const WEB_VERSION_WHATS_NEW = {
+    '0.3.14': `What's new in this version:
+- Perbaikan layout Android: topbar menempel di atas dan tidak ikut masuk ke kontainer konten.
+- Perbaikan drawer Android: posisi sidebar/logo lebih stabil agar tidak terpotong.
+- Perbaikan buka tautan eksternal Android (download APK) dengan fallback intent.
+- Perbaikan cetak PDF Android dengan fallback buka PDF ke viewer eksternal.`,
     '0.3.8': `What's new in this version:
 - Alur update Android dan Desktop dipisah (Android: mobile-latest.json, Desktop: latest.json).
 - Asset rilis Android kini otomatis terupload bersama metadata mobile-latest.json.
@@ -1284,6 +1289,11 @@ function initDesktopUpdaterUi() {
     'desktop release otomatis dengan updater artifacts.'
   ]
   const VERSION_WHATS_NEW = {
+    '0.3.14': `What's new in this version:
+- Perbaikan layout Android: topbar menempel di atas dan tidak ikut masuk ke kontainer konten.
+- Perbaikan drawer Android: posisi sidebar/logo lebih stabil agar tidak terpotong.
+- Perbaikan buka tautan eksternal Android (download APK) dengan fallback intent.
+- Perbaikan cetak PDF Android dengan fallback buka PDF ke viewer eksternal.`,
     '0.3.8': `What's new in this version:
 - Alur update Android dan Desktop dipisah (Android: mobile-latest.json, Desktop: latest.json).
 - Asset rilis Android kini otomatis terupload bersama metadata mobile-latest.json.
@@ -1705,6 +1715,12 @@ window.openExternalUrl = async function openExternalUrl(url) {
     const popup = window.open(target, '_blank', 'noopener,noreferrer')
     return !!popup
   }
+  try {
+    await invokeTauriCommand('open_external_url', { url: target })
+    return true
+  } catch (error) {
+    console.error('openExternalUrl invoke failed:', error)
+  }
   if (isAndroidApp) {
     try {
       const popup = window.open(target, '_blank', 'noopener,noreferrer')
@@ -1719,25 +1735,26 @@ window.openExternalUrl = async function openExternalUrl(url) {
       a.click()
       a.remove()
       return true
+    } catch (_error) {}
+    try {
+      if (/^https?:\/\//i.test(target)) {
+        const withoutScheme = target.replace(/^https?:\/\//i, '')
+        const scheme = target.toLowerCase().startsWith('https://') ? 'https' : 'http'
+        window.location.href = `intent://${withoutScheme}#Intent;scheme=${scheme};action=android.intent.action.VIEW;end`
+        return true
+      }
+    } catch (_error) {}
+    try {
+      window.location.assign(target)
+      return true
     } catch (_error) {
       try {
-        window.location.assign(target)
+        window.location.href = target
         return true
       } catch (__error) {
-        try {
-          window.location.href = target
-          return true
-        } catch (___error) {
-          return false
-        }
+        return false
       }
     }
-  }
-  try {
-    await invokeTauriCommand('open_external_url', { url: target })
-    return true
-  } catch (error) {
-    console.error('openExternalUrl invoke failed:', error)
   }
   try {
     const popup = window.open(target, '_blank', 'noopener,noreferrer')

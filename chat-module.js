@@ -148,7 +148,8 @@
       pendingRefresh: null
       ,
       threadListRenderKey: '',
-      lastReadWriteByThread: new Map()
+      lastReadWriteByThread: new Map(),
+      mobileChatView: 'list'
     }
 
     function ensureChatVisualStyle() {
@@ -895,9 +896,11 @@
           const tid = safeId(btn.getAttribute('data-chat-thread-id'))
           state.threadMenuOpenId = ''
           state.selectedThreadId = tid
+          if (isPhoneChatMode()) state.mobileChatView = 'thread'
           state.selectedMessageIds.clear()
           state.forceStickBottom = true
-          renderDynamicUI({ threadChanged: true })
+          if (isPhoneChatMode()) renderUI()
+          else renderDynamicUI({ threadChanged: true })
         })
       })
       Array.from(box.querySelectorAll('[data-chat-thread-menu-trigger]')).forEach(btn => {
@@ -935,8 +938,14 @@
       input.value = state.draftByThread.get(safeId(state.selectedThreadId)) || ''
     }
 
+    function isPhoneChatMode() {
+      const width = Number(window.innerWidth || 0)
+      return width > 0 && width <= 820
+    }
+
     function renderDynamicUI(options = {}) {
       const threadChanged = Boolean(options?.threadChanged)
+      if (!isPhoneChatMode()) state.mobileChatView = 'thread'
       const titleEl = document.getElementById('chat-thread-title')
       const selected = getSelectedThread()
       if (titleEl) titleEl.textContent = getThreadTitle(selected)
@@ -966,10 +975,13 @@
       otherUsers.forEach(user => dmOptions.push(`<option value="${escapeHtml(safeId(user.id))}">${escapeHtml(String(user.nama || user.id_karyawan || '-'))}</option>`))
       const selected = getSelectedThread()
       const selectedCount = state.selectedMessageIds.size
+      const isPhone = isPhoneChatMode()
+      const showThreadPanel = !isPhone || state.mobileChatView === 'thread'
+      const showListPanel = !isPhone || state.mobileChatView !== 'thread'
 
       content.innerHTML = `
-        <div style="display:grid; grid-template-columns: minmax(150px, 320px) minmax(560px, 1fr); gap:12px; height:calc(100vh - 220px); min-height:460px; overflow:auto;">
-          <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:10px; min-height:0; display:flex; flex-direction:column; overflow:hidden;">
+        <div style="display:grid; grid-template-columns:${isPhone ? '1fr' : 'minmax(150px, 320px) minmax(560px, 1fr)'}; gap:12px; height:${isPhone ? 'calc(100vh - 192px)' : 'calc(100vh - 220px)'}; min-height:${isPhone ? '520px' : '460px'}; overflow:auto;">
+          <div style="display:${showListPanel ? 'flex' : 'none'}; border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:10px; min-height:0; flex-direction:column; overflow:hidden;">
             <div style="display:grid; gap:8px; margin-bottom:10px;">
               <div style="display:flex; gap:8px;">
                 <button type="button" class="modal-btn" id="chat-btn-open-dm-modal" title="Tambah DM" style="min-width:42px; padding:8px 12px; font-weight:700; font-size:18px; line-height:1;">+</button>
@@ -979,8 +991,11 @@
             <div style="font-size:12px; color:#64748b; margin-bottom:6px;">Thread</div>
             <div id="chat-thread-list" style="flex:1; min-height:0; overflow:auto; padding-right:2px;"></div>
           </div>
-          <div style="border:1px solid #e2e8f0; border-radius:12px; background:#fff; min-height:0; display:flex; flex-direction:column; overflow:hidden;">
-            <div id="chat-thread-title" style="padding:10px 12px; border-bottom:1px solid #e2e8f0; font-weight:700; color:#0f172a;">${escapeHtml(getThreadTitle(selected))}</div>
+          <div style="display:${showThreadPanel ? 'flex' : 'none'}; border:1px solid #e2e8f0; border-radius:12px; background:#fff; min-height:0; flex-direction:column; overflow:hidden;">
+            <div style="padding:10px 12px; border-bottom:1px solid #e2e8f0; font-weight:700; color:#0f172a; display:flex; align-items:center; gap:8px;">
+              ${isPhone ? '<button type="button" class="modal-btn" id="chat-btn-mobile-back" style="padding:6px 10px; min-width:0; font-size:16px; font-weight:700; line-height:1;">&lt;</button>' : ''}
+              <div id="chat-thread-title" style="font-size:${isPhone ? '14px' : '16px'}; line-height:1.2;">${escapeHtml(getThreadTitle(selected))}</div>
+            </div>
             <div id="chat-selection-bar" style="display:${selectedCount > 0 ? 'flex' : 'none'}; align-items:center; justify-content:space-between; gap:8px; padding:8px 12px; border-bottom:1px solid #e2e8f0; background:#f8fafc;">
               <div id="chat-selection-text" style="font-size:12px; color:#334155;">${selectedCount} pesan dipilih</div>
               <div style="display:flex; gap:8px;">
@@ -1119,6 +1134,7 @@
       }
 
       const sendBtn = document.getElementById('chat-btn-send')
+      const mobileBackBtn = document.getElementById('chat-btn-mobile-back')
       const input = document.getElementById('chat-message-input')
       const emojiBtn = document.getElementById('chat-btn-emoji')
       const emojiPicker = document.getElementById('chat-emoji-picker')
@@ -1131,6 +1147,12 @@
       const deleteOverlay = document.getElementById('chat-delete-confirm-overlay')
       if (emojiPicker) emojiPicker.style.display = state.emojiPickerOpen ? 'block' : 'none'
       if (sendBtn) sendBtn.addEventListener('click', sendMessage)
+      if (mobileBackBtn) {
+        mobileBackBtn.addEventListener('click', () => {
+          state.mobileChatView = 'list'
+          renderUI()
+        })
+      }
       if (emojiBtn) {
         emojiBtn.addEventListener('click', event => {
           event.stopPropagation()
@@ -1231,7 +1253,9 @@
       ;[...state.selectedMessageIds].forEach(id => {
         if (!visibleIds.has(String(id))) state.selectedMessageIds.delete(id)
       })
+      if (requestedThreadId && isPhoneChatMode()) state.mobileChatView = 'thread'
       if (!state.uiReady) renderUI()
+      else if (isPhoneChatMode() && requestedThreadId) renderUI()
       else renderDynamicUI({ threadChanged: !!requestedThreadId })
       } finally {
         state.refreshInFlight = false

@@ -54,6 +54,14 @@ fn open_external_url(url: String) -> Result<(), String> {
   if target.is_empty() {
     return Err("URL kosong.".to_string());
   }
+  #[cfg(target_os = "android")]
+  {
+    std::process::Command::new("am")
+      .args(["start", "-a", "android.intent.action.VIEW", "-d", target])
+      .spawn()
+      .map(|_| ())
+      .map_err(|e| format!("Gagal membuka URL eksternal (android): {e}"))
+  }
   #[cfg(target_os = "windows")]
   {
     let escaped = target.replace('\'', "''");
@@ -75,7 +83,7 @@ fn open_external_url(url: String) -> Result<(), String> {
       .map(|_| ())
       .map_err(|e| format!("Gagal membuka URL eksternal: {e}"))
   }
-  #[cfg(all(unix, not(target_os = "macos")))]
+  #[cfg(all(unix, not(target_os = "macos"), not(target_os = "android")))]
   {
     std::process::Command::new("xdg-open")
       .arg(target)
