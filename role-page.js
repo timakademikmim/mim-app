@@ -946,7 +946,14 @@ async function initAndroidReleaseInfoPopup() {
           const saved = await window.downloadToAndroidAppStorage(apkUrl, inferredName)
           if (saved?.ok) {
             stopLoading()
-            alert(`File APK tersimpan di:\n${saved.path}`)
+            let opened = false
+            try {
+              await invokeTauriCommand('open_file_path', { path: String(saved.path || '') })
+              opened = true
+            } catch (_error) {}
+            alert(opened
+              ? `File APK tersimpan. Installer dibuka otomatis.\n\nLokasi:\n${saved.path}`
+              : `File APK tersimpan di:\n${saved.path}`)
             return
           }
         }
@@ -977,6 +984,9 @@ async function initWebDesktopInfoPopup() {
   if (!isWebPlatform()) return
   const GENERIC_NOTE = 'desktop release otomatis dengan updater artifacts.'
   const WEB_VERSION_WHATS_NEW = {
+    '0.3.18': `What's new in this version:
+- Setelah unduh APK selesai, aplikasi sekarang otomatis mencoba membuka installer APK.
+- Alur update Android dipercepat agar pengguna tidak perlu cari file manual di File Manager.`,
     '0.3.17': `What's new in this version:
 - Download Android ditingkatkan: prioritas simpan ke folder Download publik, fallback ke folder aplikasi jika diperlukan.
 - Tombol download pada popup info Android kini menampilkan animasi loading agar proses terlihat jelas.
@@ -1380,7 +1390,14 @@ async function initMobileInAppUpdatePrompt() {
         const saved = await window.downloadToAndroidAppStorage(apkUrl, inferredName)
         if (saved?.ok) {
           stopLoading()
-          alert(`File APK tersimpan di:\n${saved.path}`)
+          let opened = false
+          try {
+            await invokeTauriCommand('open_file_path', { path: String(saved.path || '') })
+            opened = true
+          } catch (_error) {}
+          alert(opened
+            ? `File APK tersimpan. Installer dibuka otomatis.\n\nLokasi:\n${saved.path}`
+            : `File APK tersimpan di:\n${saved.path}`)
           overlay.remove()
           return
         }
@@ -1410,6 +1427,9 @@ function initDesktopUpdaterUi() {
     'desktop release otomatis dengan updater artifacts.'
   ]
   const VERSION_WHATS_NEW = {
+    '0.3.18': `What's new in this version:
+- Setelah unduh APK selesai, aplikasi sekarang otomatis mencoba membuka installer APK.
+- Alur update Android dipercepat agar pengguna tidak perlu cari file manual di File Manager.`,
     '0.3.17': `What's new in this version:
 - Download Android ditingkatkan: prioritas simpan ke folder Download publik, fallback ke folder aplikasi jika diperlukan.
 - Tombol download pada popup info Android kini menampilkan animasi loading agar proses terlihat jelas.

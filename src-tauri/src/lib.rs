@@ -219,6 +219,42 @@ fn open_file_path(path: String) -> Result<(), String> {
     return Err("Path file kosong.".to_string());
   }
 
+  #[cfg(target_os = "android")]
+  {
+    let is_apk = target.to_lowercase().ends_with(".apk");
+    if is_apk {
+      let uri = if target.starts_with("file://") || target.starts_with("content://") {
+        target.to_string()
+      } else {
+        format!("file://{target}")
+      };
+      return std::process::Command::new("am")
+        .args([
+          "start",
+          "-a",
+          "android.intent.action.VIEW",
+          "-d",
+          &uri,
+          "-t",
+          "application/vnd.android.package-archive",
+          "--grant-read-uri-permission",
+        ])
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Gagal membuka installer APK: {e}"));
+    }
+    let uri = if target.starts_with("file://") || target.starts_with("content://") {
+      target.to_string()
+    } else {
+      format!("file://{target}")
+    };
+    return std::process::Command::new("am")
+      .args(["start", "-a", "android.intent.action.VIEW", "-d", &uri])
+      .spawn()
+      .map(|_| ())
+      .map_err(|e| format!("Gagal membuka file: {e}"));
+  }
+
   #[cfg(target_os = "windows")]
   {
     std::process::Command::new("cmd")
@@ -235,7 +271,7 @@ fn open_file_path(path: String) -> Result<(), String> {
       .map(|_| ())
       .map_err(|e| format!("Gagal membuka file: {e}"))
   }
-  #[cfg(all(unix, not(target_os = "macos")))]
+  #[cfg(all(unix, not(target_os = "macos"), not(target_os = "android")))]
   {
     std::process::Command::new("xdg-open")
       .arg(target)
