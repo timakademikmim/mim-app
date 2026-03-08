@@ -107,6 +107,11 @@
     if (active?.content instanceof HTMLElement) {
       active.content.classList.remove('chat-full-bleed')
     }
+    if (active?.popstateHandler) {
+      try {
+        window.removeEventListener('popstate', active.popstateHandler)
+      } catch (_) {}
+    }
     if (document.body?.classList?.contains('platform-android')) {
       document.body.classList.remove('android-chat-open')
     }
@@ -120,10 +125,8 @@
     const currentUser = options?.currentUser || {}
     const content = document.getElementById(containerId)
     if (!sb || !content || !safeId(currentUser.id)) return
-    content.classList.add('chat-full-bleed')
-    if (document.body?.classList?.contains('platform-android')) {
-      document.body.classList.add('android-chat-open')
-    }
+    const isAndroid = document.body?.classList?.contains('platform-android')
+    if (isAndroid) content.classList.add('chat-full-bleed')
 
     const state = {
       sb,
@@ -159,7 +162,37 @@
       ,
       threadListRenderKey: '',
       lastReadWriteByThread: new Map(),
-      mobileChatView: 'list'
+      mobileChatView: 'list',
+      popstateHandler: null,
+      mobileThreadHistoryPushed: false
+    }
+
+    function syncAndroidChatOpenClass() {
+      if (!document.body?.classList?.contains('platform-android')) return
+      const shouldOpen = isPhoneChatMode() && state.mobileChatView === 'thread'
+      document.body.classList.toggle('android-chat-open', shouldOpen)
+    }
+
+    function enterMobileThreadView() {
+      if (!isPhoneChatMode()) {
+        state.mobileChatView = 'thread'
+        syncAndroidChatOpenClass()
+        return
+      }
+      if (state.mobileChatView !== 'thread') {
+        try {
+          window.history.pushState({ chatModuleView: 'thread', at: Date.now() }, '')
+          state.mobileThreadHistoryPushed = true
+        } catch (_) {}
+      }
+      state.mobileChatView = 'thread'
+      syncAndroidChatOpenClass()
+    }
+
+    function openMobileThreadListView() {
+      state.mobileChatView = 'list'
+      state.mobileThreadHistoryPushed = false
+      syncAndroidChatOpenClass()
     }
 
     function ensureChatVisualStyle() {
@@ -906,7 +939,7 @@
           const tid = safeId(btn.getAttribute('data-chat-thread-id'))
           state.threadMenuOpenId = ''
           state.selectedThreadId = tid
-          if (isPhoneChatMode()) state.mobileChatView = 'thread'
+          if (isPhoneChatMode()) enterMobileThreadView()
           state.selectedMessageIds.clear()
           state.forceStickBottom = true
           if (isPhoneChatMode()) renderUI()
@@ -956,6 +989,7 @@
     function renderDynamicUI(options = {}) {
       const threadChanged = Boolean(options?.threadChanged)
       if (!isPhoneChatMode()) state.mobileChatView = 'thread'
+      syncAndroidChatOpenClass()
       const titleEl = document.getElementById('chat-thread-title')
       const selected = getSelectedThread()
       if (titleEl) titleEl.textContent = getThreadTitle(selected)
@@ -989,6 +1023,7 @@
       const isPhone = isPhoneChatMode()
       const showThreadPanel = !isPhone || state.mobileChatView === 'thread'
       const showListPanel = !isPhone || state.mobileChatView !== 'thread'
+      syncAndroidChatOpenClass()
 
       content.innerHTML = `
         <div style="display:grid; width:100%; max-width:100%; grid-template-columns:${isPhone ? '1fr' : 'minmax(220px, 300px) minmax(0, 1fr)'}; gap:12px; height:100%; min-height:0; overflow:hidden;">
@@ -1016,7 +1051,7 @@
             </div>
             <div id="chat-message-list" style="flex:1; min-height:0; overflow:auto; padding:10px;"></div>
             <div style="padding:10px; border-top:1px solid #e2e8f0; display:flex; gap:8px; align-items:center; position:relative;">
-              <button type="button" class="modal-btn" id="chat-btn-emoji" style="min-width:42px; padding:8px 10px;">ðŸ˜Š</button>
+              <button type="button" class="modal-btn" id="chat-btn-emoji" style="min-width:42px; padding:8px 10px;" aria-label="Emoji">&#128522;</button>
               <input id="chat-message-input" class="guru-field" type="text" placeholder="Ketik pesan..." style="flex:1;">
               <button type="button" class="modal-btn modal-btn-primary" id="chat-btn-send">Kirim</button>
               <div id="chat-emoji-picker" style="display:none; position:absolute; left:10px; bottom:56px; width:min(360px, 90vw); max-height:340px; overflow:hidden; background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:0; box-shadow:0 8px 24px rgba(15,23,42,0.12); z-index:20;">
@@ -1160,7 +1195,13 @@
       if (sendBtn) sendBtn.addEventListener('click', sendMessage)
       if (mobileBackBtn) {
         mobileBackBtn.addEventListener('click', () => {
-          state.mobileChatView = 'list'
+          if (isPhoneChatMode() && state.mobileThreadHistoryPushed) {
+            try {
+              window.history.back()
+              return
+            } catch (_) {}
+          }
+          openMobileThreadListView()
           renderUI()
         })
       }
@@ -1264,7 +1305,7 @@
       ;[...state.selectedMessageIds].forEach(id => {
         if (!visibleIds.has(String(id))) state.selectedMessageIds.delete(id)
       })
-      if (requestedThreadId && isPhoneChatMode()) state.mobileChatView = 'thread'
+      if (requestedThreadId && isPhoneChatMode()) enterMobileThreadView()
       if (!state.uiReady) renderUI()
       else if (isPhoneChatMode() && requestedThreadId) renderUI()
       else renderDynamicUI({ threadChanged: !!requestedThreadId })
@@ -1301,6 +1342,13 @@
     }
 
     try {
+      state.popstateHandler = () => {
+        if (!isPhoneChatMode()) return
+        if (state.mobileChatView !== 'thread') return
+        openMobileThreadListView()
+        renderUI()
+      }
+      window.addEventListener('popstate', state.popstateHandler)
       await loadUsers()
       await refresh(false)
       startRealtime()

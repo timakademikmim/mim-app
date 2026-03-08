@@ -134,7 +134,7 @@ function applyPlatformUiSkin() {
   const link = document.createElement('link')
   link.id = 'android-ui-css'
   link.rel = 'stylesheet'
-  link.href = 'android-ui.css?v=20260308-android-ui-20'
+  link.href = 'android-ui.css?v=20260308-android-ui-22'
   document.head.appendChild(link)
 
   ensureAndroidBottomNav()
@@ -564,18 +564,53 @@ function ensureAndroidBottomNav() {
     })
   }
 
-  const updateAndroidBottomAvatarStatus = () => {
+  async function resolveAndroidOnlineStatus() {
+    if (!navigator.onLine) return false
+    // Android WebView kadang mengembalikan onLine=true walau internet putus.
+    // Tambah probe ringan agar status cincin avatar lebih akurat.
+    const probeWithTimeout = async (url, timeoutMs = 2200) => {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), timeoutMs)
+      try {
+        await fetch(url, { method: 'GET', mode: 'no-cors', cache: 'no-store', signal: controller.signal })
+        return true
+      } catch (_error) {
+        return false
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    const ok = await probeWithTimeout('https://www.gstatic.com/generate_204')
+    if (ok) return true
+    return probeWithTimeout('https://api.github.com/')
+  }
+
+  const updateAndroidBottomAvatarStatus = async () => {
     const avatar = document.getElementById('android-bottom-avatar')
     if (!avatar) return
-    const online = navigator.onLine
+    const online = await resolveAndroidOnlineStatus()
     avatar.classList.toggle('android-online', online)
     avatar.classList.toggle('android-offline', !online)
   }
-  updateAndroidBottomAvatarStatus()
+
   if (!window.__androidBottomAvatarStatusBound) {
     window.__androidBottomAvatarStatusBound = true
-    window.addEventListener('online', updateAndroidBottomAvatarStatus)
-    window.addEventListener('offline', updateAndroidBottomAvatarStatus)
+    window.__androidBottomAvatarStatusRefresh = updateAndroidBottomAvatarStatus
+    window.addEventListener('online', () => void updateAndroidBottomAvatarStatus())
+    window.addEventListener('offline', () => void updateAndroidBottomAvatarStatus())
+    window.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') void updateAndroidBottomAvatarStatus()
+    })
+    window.addEventListener('focus', () => void updateAndroidBottomAvatarStatus())
+    window.__androidBottomAvatarStatusInterval = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return
+      void updateAndroidBottomAvatarStatus()
+    }, 8000)
+  }
+  if (typeof window.__androidBottomAvatarStatusRefresh === 'function') {
+    void window.__androidBottomAvatarStatusRefresh()
+  } else {
+    void updateAndroidBottomAvatarStatus()
   }
 
   window.updateAndroidBottomNavActive = function updateAndroidBottomNavActive(pageKey) {

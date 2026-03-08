@@ -46,8 +46,12 @@ android {
         applicationId = "com.mim.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
-        versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+        val envVersionCode = System.getenv("MIM_ANDROID_VERSION_CODE")?.trim()
+        val envVersionName = System.getenv("MIM_ANDROID_VERSION_NAME")?.trim()
+        versionCode = (envVersionCode?.toIntOrNull()
+            ?: tauriProperties.getProperty("tauri.android.versionCode", "1").toInt())
+        versionName = envVersionName
+            ?: tauriProperties.getProperty("tauri.android.versionName", "1.0")
     }
     signingConfigs {
         create("release") {

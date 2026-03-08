@@ -221,20 +221,53 @@ fn open_file_path(path: String) -> Result<(), String> {
 
   #[cfg(target_os = "android")]
   {
+    let strip_file_scheme = |value: &str| -> String {
+      value
+        .strip_prefix("file://")
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| value.to_string())
+    };
+    let to_content_uri = |file_path: &str| -> String {
+      let rel = file_path.trim_start_matches('/').replace('\\', "/");
+      format!("content://com.mim.app.fileprovider/root/{rel}")
+    };
+
     let is_apk = target.to_lowercase().ends_with(".apk");
     if is_apk {
-      let uri = if target.starts_with("file://") || target.starts_with("content://") {
+      let file_path = strip_file_scheme(target);
+      let file_uri = if target.starts_with("file://") || target.starts_with("content://") {
         target.to_string()
       } else {
         format!("file://{target}")
       };
+      let content_uri = if target.starts_with("content://") {
+        target.to_string()
+      } else {
+        to_content_uri(&file_path)
+      };
+
       if std::process::Command::new("am")
         .args([
           "start",
           "-a",
           "android.intent.action.INSTALL_PACKAGE",
           "-d",
-          &uri,
+          &content_uri,
+          "--grant-read-uri-permission",
+          "--activity-new-task",
+        ])
+        .spawn()
+        .is_ok()
+      {
+        return Ok(());
+      }
+      if std::process::Command::new("am")
+        .args([
+          "start",
+          "-a",
+          "android.intent.action.INSTALL_PACKAGE",
+          "-d",
+          &file_uri,
           "--grant-read-uri-permission",
           "--activity-new-task",
         ])
@@ -249,7 +282,24 @@ fn open_file_path(path: String) -> Result<(), String> {
           "-a",
           "android.intent.action.VIEW",
           "-d",
-          &uri,
+          &content_uri,
+          "-t",
+          "application/vnd.android.package-archive",
+          "--grant-read-uri-permission",
+          "--activity-new-task",
+        ])
+        .spawn()
+        .is_ok()
+      {
+        return Ok(());
+      }
+      if std::process::Command::new("am")
+        .args([
+          "start",
+          "-a",
+          "android.intent.action.VIEW",
+          "-d",
+          &file_uri,
           "-t",
           "application/vnd.android.package-archive",
           "--grant-read-uri-permission",

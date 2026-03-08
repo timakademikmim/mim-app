@@ -832,7 +832,6 @@ function ensureTopbarKalenderPopup() {
           <button type="button" class="topbar-calendar-btn topbar-calendar-btn-secondary" onclick="shiftTopbarCalendarMonth(-1)">Bulan Sebelumnya</button>
           <input id="topbar-calendar-month" class="topbar-calendar-month" type="month">
           <button type="button" class="topbar-calendar-btn topbar-calendar-btn-secondary" onclick="shiftTopbarCalendarMonth(1)">Bulan Berikutnya</button>
-          <button type="button" class="topbar-calendar-btn topbar-calendar-btn-secondary topbar-calendar-btn-close" onclick="closeTopbarCalendarPopup()">×</button>
         </div>
       </div>
       <div id="topbar-calendar-title" class="topbar-calendar-title">Loading...</div>

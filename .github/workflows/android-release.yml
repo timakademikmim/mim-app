@@ -14,9 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TAG_NAME: ${{ github.ref_name }}
-      VERSION_NAME: ${{ github.ref_name }}
       APP_DIR: src-tauri/gen/android/app
-      UNSIGNED_APK: src-tauri/gen/android/app/build/outputs/apk/arm64/release/app-arm64-release-unsigned.apk
       OUTPUT_DIR: release-assets/android
     steps:
       - name: Checkout
@@ -52,50 +50,61 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$APP_DIR"
-          if [ -n "${{ secrets.MIM_ANDROID_KEYSTORE_BASE64 }}" ] && [ -n "${{ secrets.MIM_ANDROID_KEYSTORE_PASSWORD }}" ] && [ -n "${{ secrets.MIM_ANDROID_KEY_ALIAS }}" ] && [ -n "${{ secrets.MIM_ANDROID_KEY_PASSWORD }}" ]; then
-            echo "${{ secrets.MIM_ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > "$APP_DIR/mim-release.keystore"
-            {
-              echo "MIM_ANDROID_KEYSTORE=$GITHUB_WORKSPACE/$APP_DIR/mim-release.keystore"
-              echo "MIM_ANDROID_KEYSTORE_PASSWORD=${{ secrets.MIM_ANDROID_KEYSTORE_PASSWORD }}"
-              echo "MIM_ANDROID_KEY_ALIAS=${{ secrets.MIM_ANDROID_KEY_ALIAS }}"
-              echo "MIM_ANDROID_KEY_PASSWORD=${{ secrets.MIM_ANDROID_KEY_PASSWORD }}"
-            } >> "$GITHUB_ENV"
+          if [ -z "${{ secrets.MIM_ANDROID_KEYSTORE_BASE64 }}" ] || [ -z "${{ secrets.MIM_ANDROID_KEYSTORE_PASSWORD }}" ] || [ -z "${{ secrets.MIM_ANDROID_KEY_ALIAS }}" ] || [ -z "${{ secrets.MIM_ANDROID_KEY_PASSWORD }}" ]; then
+            echo "Release signing secret belum lengkap. Build Android release dihentikan agar tidak menghasilkan APK konflik signature."
+            exit 1
           fi
+          echo "${{ secrets.MIM_ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > "$APP_DIR/mim-release.keystore"
+          {
+            echo "MIM_ANDROID_KEYSTORE=$GITHUB_WORKSPACE/$APP_DIR/mim-release.keystore"
+            echo "MIM_ANDROID_KEYSTORE_PASSWORD=${{ secrets.MIM_ANDROID_KEYSTORE_PASSWORD }}"
+            echo "MIM_ANDROID_KEY_ALIAS=${{ secrets.MIM_ANDROID_KEY_ALIAS }}"
+            echo "MIM_ANDROID_KEY_PASSWORD=${{ secrets.MIM_ANDROID_KEY_PASSWORD }}"
+          } >> "$GITHUB_ENV"
+
+      - name: Compute Android version from tag
+        shell: bash
+        run: |
+          VERSION_CLEAN="${TAG_NAME#android-v}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_CLEAN"
+          MAJOR="${MAJOR:-0}"
+          MINOR="${MINOR:-0}"
+          PATCH="${PATCH:-0}"
+          VERSION_CODE=$((MAJOR * 1000000 + MINOR * 1000 + PATCH))
+          {
+            echo "MIM_ANDROID_VERSION_NAME=$VERSION_CLEAN"
+            echo "MIM_ANDROID_VERSION_CODE=$VERSION_CODE"
+          } >> "$GITHUB_ENV"
+          cat > "$APP_DIR/tauri.properties" <<EOF
+          tauri.android.versionName=$VERSION_CLEAN
+          tauri.android.versionCode=$VERSION_CODE
+          EOF
 
       - name: Build Android APK (arm64 release)
         run: npx @tauri-apps/cli@latest android build --apk --target aarch64 --split-per-abi
 
-      - name: Fallback sign APK when release signing is not configured
+      - name: Collect signed APK artifacts
         shell: bash
         run: |
-          if [ ! -f "$UNSIGNED_APK" ]; then
-            echo "Unsigned APK not found at $UNSIGNED_APK"
-            exit 1
-          fi
-
           mkdir -p "$OUTPUT_DIR"
           VERSION_CLEAN="${TAG_NAME#android-v}"
           APK_VERSIONED="$OUTPUT_DIR/MIM.App_${VERSION_CLEAN}_android_arm64.apk"
           APK_UPDATER="$OUTPUT_DIR/app-universal-release.apk"
 
-          cp "$UNSIGNED_APK" "$APK_VERSIONED"
-          cp "$UNSIGNED_APK" "$APK_UPDATER"
-
-          if [ -z "${{ secrets.MIM_ANDROID_KEYSTORE_BASE64 }}" ]; then
-            keytool -genkeypair \
-              -alias androiddebugkey \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -keystore "$OUTPUT_DIR/debug.keystore" \
-              -storepass android \
-              -keypass android \
-              -dname "CN=Android Debug,O=Android,C=US"
-
-            APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -n 1)
-            "$APKSIGNER" sign --ks "$OUTPUT_DIR/debug.keystore" --ks-pass pass:android --key-pass pass:android "$APK_VERSIONED"
-            "$APKSIGNER" sign --ks "$OUTPUT_DIR/debug.keystore" --ks-pass pass:android --key-pass pass:android "$APK_UPDATER"
+          SIGNED_APK=$(find "$APP_DIR/build/outputs/apk/arm64/release" -maxdepth 1 -type f -name "*.apk" ! -name "*-unsigned.apk" | head -n 1)
+          if [ -z "$SIGNED_APK" ]; then
+            echo "Signed APK tidak ditemukan di outputs. Pastikan signing release aktif."
+            exit 1
           fi
+
+          cp "$SIGNED_APK" "$APK_VERSIONED"
+          cp "$SIGNED_APK" "$APK_UPDATER"
+
+      - name: Verify APK signature
+        shell: bash
+        run: |
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -n 1)
+          "$APKSIGNER" verify --verbose "$OUTPUT_DIR/app-universal-release.apk"
 
       - name: Generate mobile-latest.json
         shell: bash
