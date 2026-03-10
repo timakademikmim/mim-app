@@ -93,6 +93,28 @@ function compareVersionText(a, b) {
   return 0
 }
 
+async function getMobileCurrentVersionText() {
+  const candidates = []
+  try {
+    const v = await invokeTauriCommand('get_app_version', {})
+    const n = normalizeVersionText(v)
+    if (n) candidates.push(n)
+  } catch (_error) {}
+  try {
+    if (window.__TAURI__?.app?.getVersion) {
+      const v = await window.__TAURI__.app.getVersion()
+      const n = normalizeVersionText(v)
+      if (n) candidates.push(n)
+    }
+  } catch (_error) {}
+  try {
+    const stored = normalizeVersionText(localStorage.getItem('mobile_app_version') || '')
+    if (stored) candidates.push(stored)
+  } catch (_error) {}
+  if (!candidates.length) return '0.0.0'
+  return candidates.sort((a, b) => compareVersionText(b, a))[0] || '0.0.0'
+}
+
 async function fetchLatestAndroidReleaseMeta() {
   const fallback = {
     version: '',
@@ -1131,12 +1153,7 @@ async function initAndroidReleaseInfoPopup() {
   if (!versionEl || !notesEl || !downloadApkBtn) return
 
   let apkUrl = 'https://github.com/timakademikmim/mim-app/releases/latest/download/app-universal-release.apk'
-  let currentVersion = '0.0.0'
-
-  try {
-    const current = await invokeTauriCommand('get_app_version', {})
-    currentVersion = String(current || '').trim().replace(/^v/i, '') || '0.0.0'
-  } catch (_error) {}
+  let currentVersion = await getMobileCurrentVersionText()
 
   try {
     let mobileRes = await fetch(`https://github.com/timakademikmim/mim-app/releases/latest/download/mobile-latest.json?t=${Date.now()}`, { cache: 'no-store' })
@@ -1457,12 +1474,8 @@ async function initMobileInAppUpdatePrompt() {
   const normalizeVersion = normalizeVersionText
 
   const getCurrentVersion = async () => {
-    try {
-      const version = await invokeTauriCommand('get_app_version', {})
-      const clean = normalizeVersion(version)
-      if (clean) return clean
-    } catch (_error) {}
-    return normalizeVersion(localStorage.getItem('mobile_app_version') || '') || '0.0.0'
+    const current = await getMobileCurrentVersionText()
+    return normalizeVersion(current) || '0.0.0'
   }
 
   const getReleaseBodyByTag = async version => {

@@ -93,6 +93,14 @@ jobs:
           tauri.android.versionCode=$VERSION_CODE
           EOF
 
+      - name: Sync Tauri config version from tag
+        shell: bash
+        run: |
+          VERSION_CLEAN="${TAG_NAME#android-v}"
+          node -e "const fs=require('fs'); const p='src-tauri/tauri.conf.json'; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version=process.env.VERSION; fs.writeFileSync(p, JSON.stringify(j,null,2)+'\n');" 
+        env:
+          VERSION: ${{ env.MIM_ANDROID_VERSION_NAME }}
+
       - name: Build Android APK (arm64 release)
         run: npx @tauri-apps/cli@latest android build --apk --target aarch64 --split-per-abi
 

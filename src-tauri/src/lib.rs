@@ -52,42 +52,57 @@ fn open_external_url(url: String) -> Result<bool, String> {
   }
   #[cfg(target_os = "android")]
   {
+    let try_start = |args: &[&str]| -> bool {
+      std::process::Command::new("am").args(args).spawn().is_ok()
+    };
+
     let is_whatsapp_target = target.contains("wa.me/")
       || target.contains("api.whatsapp.com/")
       || target.starts_with("whatsapp://");
 
     if is_whatsapp_target {
-      let direct_whatsapp = std::process::Command::new("am")
-        .args([
-          "start",
-          "--activity-new-task",
-          "-a",
-          "android.intent.action.VIEW",
-          "-d",
-          target,
-          "-p",
-          "com.whatsapp",
-        ])
-        .status();
-      if let Ok(status) = direct_whatsapp {
-        if status.success() {
-          return Ok(true);
-        }
-      }
-    }
-
-    let fallback = std::process::Command::new("am")
-      .args([
+      if try_start(&[
         "start",
         "--activity-new-task",
         "-a",
         "android.intent.action.VIEW",
         "-d",
         target,
-      ])
-      .status()
-      .map_err(|e| format!("Gagal membuka URL eksternal (android): {e}"))?;
-    Ok(fallback.success())
+        "-p",
+        "com.whatsapp",
+      ]) {
+        return Ok(true);
+      }
+
+      if target.starts_with("whatsapp://send?") {
+        let query = target.trim_start_matches("whatsapp://send?");
+        let https_fallback = format!("https://api.whatsapp.com/send?{query}");
+        if try_start(&[
+          "start",
+          "--activity-new-task",
+          "-a",
+          "android.intent.action.VIEW",
+          "-d",
+          &https_fallback,
+          "-p",
+          "com.whatsapp",
+        ]) {
+          return Ok(true);
+        }
+      }
+    }
+
+    if try_start(&[
+      "start",
+      "--activity-new-task",
+      "-a",
+      "android.intent.action.VIEW",
+      "-d",
+      target,
+    ]) {
+      return Ok(true);
+    }
+    Ok(false)
   }
   #[cfg(target_os = "windows")]
   {
@@ -258,9 +273,26 @@ fn open_file_path(path: String) -> Result<(), String> {
         .map(|v| v.to_string())
         .unwrap_or_else(|| value.to_string())
     };
+    let guess_mime = |file_path: &str| -> &'static str {
+      let p = file_path.to_lowercase();
+      if p.ends_with(".pdf") {
+        "application/pdf"
+      } else if p.ends_with(".apk") {
+        "application/vnd.android.package-archive"
+      } else if p.ends_with(".png") {
+        "image/png"
+      } else if p.ends_with(".jpg") || p.ends_with(".jpeg") {
+        "image/jpeg"
+      } else {
+        "*/*"
+      }
+    };
     let to_content_uri = |file_path: &str| -> String {
       let rel = file_path.trim_start_matches('/').replace('\\', "/");
       format!("content://com.mim.app.fileprovider/root/{rel}")
+    };
+    let try_start = |args: &[&str]| -> bool {
+      std::process::Command::new("am").args(args).spawn().is_ok()
     };
 
     let is_apk = target.to_lowercase().ends_with(".apk");
@@ -343,16 +375,66 @@ fn open_file_path(path: String) -> Result<(), String> {
       }
       return Err("Gagal membuka installer APK otomatis.".to_string());
     }
-    let uri = if target.starts_with("file://") || target.starts_with("content://") {
+    let file_path = strip_file_scheme(target);
+    let file_uri = if target.starts_with("file://") || target.starts_with("content://") {
       target.to_string()
     } else {
       format!("file://{target}")
     };
-    return std::process::Command::new("am")
-      .args(["start", "-a", "android.intent.action.VIEW", "-d", &uri])
-      .spawn()
-      .map(|_| ())
-      .map_err(|e| format!("Gagal membuka file: {e}"));
+    let content_uri = if target.starts_with("content://") {
+      target.to_string()
+    } else {
+      to_content_uri(&file_path)
+    };
+    let mime = guess_mime(&file_path);
+
+    if try_start(&[
+      "start",
+      "--activity-new-task",
+      "-a",
+      "android.intent.action.VIEW",
+      "-d",
+      &content_uri,
+      "-t",
+      mime,
+      "--grant-read-uri-permission",
+    ]) {
+      return Ok(());
+    }
+    if try_start(&[
+      "start",
+      "--activity-new-task",
+      "-a",
+      "android.intent.action.VIEW",
+      "-d",
+      &file_uri,
+      "-t",
+      mime,
+      "--grant-read-uri-permission",
+    ]) {
+      return Ok(());
+    }
+    if try_start(&[
+      "start",
+      "--activity-new-task",
+      "-a",
+      "android.intent.action.VIEW",
+      "-d",
+      &content_uri,
+    ]) {
+      return Ok(());
+    }
+    if try_start(&[
+      "start",
+      "--activity-new-task",
+      "-a",
+      "android.intent.action.VIEW",
+      "-d",
+      &file_uri,
+    ]) {
+      return Ok(());
+    }
+    return Err("Gagal membuka file di Android.".to_string());
   }
 
   #[cfg(target_os = "windows")]
