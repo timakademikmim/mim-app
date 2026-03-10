@@ -5,6 +5,28 @@ const sb = window.createDesktopAwareSupabaseClient
   ? window.createDesktopAwareSupabaseClient(supabaseUrl, supabaseKey)
   : supabase.createClient(supabaseUrl, supabaseKey)
 
+function isAndroidApp() {
+  const hasTauri = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
+  return hasTauri && /android/i.test(String(navigator.userAgent || ''))
+}
+
+function initAndroidColdStart() {
+  if (!isAndroidApp()) return false
+  if (sessionStorage.getItem('android_session_started') === '1') return false
+  sessionStorage.setItem('android_session_started', '1')
+
+  localStorage.removeItem('last_open_page')
+  localStorage.setItem('admin_force_dashboard_once', '1')
+  localStorage.removeItem('admin_last_page')
+  localStorage.removeItem('admin_last_page_params')
+  localStorage.setItem('guru_last_page', 'dashboard')
+  localStorage.setItem('muhaffiz_last_page', 'dashboard')
+  localStorage.setItem('musyrif_last_page', 'dashboard')
+  return true
+}
+
+const ANDROID_COLD_START = initAndroidColdStart()
+
 function parseRoleList(rawRole) {
   if (Array.isArray(rawRole)) {
     return rawRole
@@ -223,7 +245,7 @@ async function login() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  const lastPage = getSavedLastPage()
+  const lastPage = ANDROID_COLD_START ? '' : getSavedLastPage()
   if (lastPage) {
     location.replace(lastPage)
     return

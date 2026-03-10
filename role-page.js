@@ -201,6 +201,92 @@ function applyPlatformUiSkin() {
   ensureAndroidBottomNav()
   ensureAndroidSidebarDrawer()
   ensureGlobalCalendarAutoClose()
+  showAndroidWelcomeScreen()
+}
+
+function showAndroidWelcomeScreen() {
+  if (!isAndroidPlatform()) return
+  if (!document.body) return
+  if (sessionStorage.getItem('android_welcome_seen') === '1') return
+  sessionStorage.setItem('android_welcome_seen', '1')
+
+  if (!document.getElementById('android-welcome-style')) {
+    const style = document.createElement('style')
+    style.id = 'android-welcome-style'
+    style.textContent = `
+      .android-welcome-screen {
+        position: fixed;
+        inset: 0;
+        z-index: 13000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(560px 360px at 50% 20%, rgba(43, 140, 255, 0.18), transparent 60%), #f4f7fb;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 280ms ease;
+      }
+      .android-welcome-screen.show {
+        opacity: 1;
+      }
+      .android-welcome-card {
+        width: min(320px, 78vw);
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.92);
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18);
+        padding: 22px 18px 18px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        text-align: center;
+      }
+      .android-welcome-logo {
+        width: 96px;
+        height: 96px;
+        border-radius: 16px;
+        object-fit: contain;
+      }
+      .android-welcome-title {
+        font-size: 16px;
+        font-weight: 700;
+        color: #0f172a;
+        letter-spacing: 0.2px;
+      }
+      .android-welcome-subtitle {
+        font-size: 12px;
+        color: #5b6b83;
+      }
+    `
+    document.head.appendChild(style)
+  }
+
+  let overlay = document.getElementById('android-welcome-screen')
+  if (!overlay) {
+    overlay = document.createElement('div')
+    overlay.id = 'android-welcome-screen'
+    overlay.className = 'android-welcome-screen'
+    overlay.innerHTML = `
+      <div class="android-welcome-card">
+        <img class="android-welcome-logo" src="00%20Logo%20MIM%20.png" alt="Logo MIM">
+        <div class="android-welcome-title">MIM App</div>
+        <div class="android-welcome-subtitle">Memuat dashboard...</div>
+      </div>
+    `
+    document.body.appendChild(overlay)
+  }
+
+  requestAnimationFrame(() => overlay.classList.add('show'))
+  const minShowMs = 900
+  window.setTimeout(() => {
+    overlay.classList.remove('show')
+    window.setTimeout(() => {
+      try {
+        overlay.remove()
+      } catch (_error) {}
+    }, 320)
+  }, minShowMs)
 }
 
 function ensureGlobalCalendarAutoClose() {
