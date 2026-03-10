@@ -387,15 +387,7 @@ fn get_app_version(app: tauri::AppHandle) -> String {
   {
     let identifier = app.config().identifier.clone();
 
-    let read_version_from_pm = |cmd: &str| -> Option<String> {
-      let output = std::process::Command::new("sh")
-        .args(["-c", cmd])
-        .output()
-        .ok()?;
-      if !output.status.success() {
-        return None;
-      }
-      let text = String::from_utf8_lossy(&output.stdout);
+    let parse_version_name = |text: &str| -> Option<String> {
       let line = text.lines().find(|ln| ln.contains("versionName="))?;
       let version = line.split('=').nth(1).map(|v| v.trim()).unwrap_or("");
       if version.is_empty() {
@@ -405,17 +397,28 @@ fn get_app_version(app: tauri::AppHandle) -> String {
       }
     };
 
-    if let Some(version) = read_version_from_pm(&format!(
-      "dumpsys package {} | grep versionName | head -n 1",
-      identifier
-    )) {
-      return version;
+    if let Ok(output) = std::process::Command::new("dumpsys")
+      .args(["package", &identifier])
+      .output()
+    {
+      if output.status.success() {
+        let text = String::from_utf8_lossy(&output.stdout);
+        if let Some(version) = parse_version_name(&text) {
+          return version;
+        }
+      }
     }
-    if let Some(version) = read_version_from_pm(&format!(
-      "pm dump {} | grep versionName | head -n 1",
-      identifier
-    )) {
-      return version;
+
+    if let Ok(output) = std::process::Command::new("pm")
+      .args(["dump", &identifier])
+      .output()
+    {
+      if output.status.success() {
+        let text = String::from_utf8_lossy(&output.stdout);
+        if let Some(version) = parse_version_name(&text) {
+          return version;
+        }
+      }
     }
   }
   app.package_info().version.to_string()

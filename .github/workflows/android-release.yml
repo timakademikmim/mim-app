@@ -41,14 +41,17 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Regenerate app icons from iconMIM.png
+      - name: Regenerate app icons from source image
         shell: bash
         run: |
-          if [ -f "iconMIM.png" ]; then
+          if [ -f "iconMIM-android.png" ]; then
+            cp "iconMIM-android.png" "src-tauri/icons/icon.png"
+            npx @tauri-apps/cli@latest icon "src-tauri/icons/icon.png"
+          elif [ -f "iconMIM.png" ]; then
             cp "iconMIM.png" "src-tauri/icons/icon.png"
             npx @tauri-apps/cli@latest icon "src-tauri/icons/icon.png"
           else
-            echo "iconMIM.png tidak ditemukan, memakai icon yang sudah ada."
+            echo "Sumber icon tidak ditemukan, memakai icon yang sudah ada."
           fi
 
       - name: Sync Android launcher icons

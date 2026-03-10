@@ -2106,6 +2106,43 @@ function renderGuruPerizinanOwnRows() {
     return
   }
 
+  const isAndroidPhoneView = document.body?.classList?.contains('platform-android')
+    && window.matchMedia('(max-width: 768px)').matches
+
+  if (isAndroidPhoneView) {
+    const compactRows = rows.map((item, index) => `
+      <tr>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${index + 1}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">
+          <button
+            type="button"
+            onclick="openGuruPerizinanOwnDetail('${escapeHtml(String(item.id || ''))}')"
+            style="border:none; background:transparent; padding:0; margin:0; color:inherit; font:inherit; cursor:pointer; text-align:left;"
+          >
+            ${escapeHtml(formatGuruPerizinanDate(item.created_at))}
+          </button>
+        </td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(getGuruPerizinanStatusLabel(item.status))}</td>
+      </tr>
+    `).join('')
+
+    box.innerHTML = `
+      <div style="overflow:auto;">
+        <table style="width:100%; border-collapse:collapse; font-size:12px;">
+          <thead>
+            <tr style="background:#f8fafc;">
+              <th style="padding:8px; border:1px solid #e2e8f0; width:44px;">No</th>
+              <th style="padding:8px; border:1px solid #e2e8f0;">Tanggal Ajukan</th>
+              <th style="padding:8px; border:1px solid #e2e8f0; width:98px;">Status</th>
+            </tr>
+          </thead>
+          <tbody>${compactRows}</tbody>
+        </table>
+      </div>
+    `
+    return
+  }
+
   const htmlRows = rows.map((item, index) => `
     <tr>
       <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${index + 1}</td>
@@ -2656,6 +2693,51 @@ function renderGuruEkskulMonthlyInputRows() {
       </table>
     </div>
   `
+}
+
+function openGuruPerizinanOwnDetail(id) {
+  const sid = String(id || '').trim()
+  if (!sid) return
+  const item = (guruPerizinanState.ownRows || []).find(row => String(row?.id || '').trim() === sid)
+  if (!item) return
+
+  let overlay = document.getElementById('guru-perizinan-own-detail-overlay')
+  if (!overlay) {
+    overlay = document.createElement('div')
+    overlay.id = 'guru-perizinan-own-detail-overlay'
+    overlay.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.42); display:flex; align-items:center; justify-content:center; z-index:12060; padding:14px; box-sizing:border-box;'
+    overlay.innerHTML = `
+      <div style="width:min(460px, calc(100vw - 22px)); max-height:min(82vh, 680px); overflow:auto; border-radius:14px; border:1px solid #cbd5e1; background:#fff; box-shadow:0 18px 38px rgba(15,23,42,0.24); padding:14px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;">
+          <div style="font-size:15px; font-weight:700; color:#0f172a;">Detail Pengajuan Izin</div>
+          <button type="button" class="modal-btn modal-btn-secondary" onclick="closeGuruPerizinanOwnDetail()">Tutup</button>
+        </div>
+        <div id="guru-perizinan-own-detail-body"></div>
+      </div>
+    `
+    overlay.addEventListener('click', event => {
+      if (event.target === overlay) closeGuruPerizinanOwnDetail()
+    })
+    document.body.appendChild(overlay)
+  }
+
+  const body = document.getElementById('guru-perizinan-own-detail-body')
+  if (!body) return
+  body.innerHTML = `
+    <div style="display:grid; grid-template-columns: 130px 1fr; gap:8px 10px; font-size:13px; color:#0f172a;">
+      <div style="color:#64748b;">Tanggal Ajukan</div><div>${escapeHtml(formatGuruPerizinanDate(item.created_at))}</div>
+      <div style="color:#64748b;">Rentang Izin</div><div>${escapeHtml(formatGuruPerizinanDate(item.tanggal_mulai))} s.d. ${escapeHtml(formatGuruPerizinanDate(item.tanggal_selesai))}</div>
+      <div style="color:#64748b;">Durasi</div><div>${Number(item.durasi_hari || 0)} hari</div>
+      <div style="color:#64748b;">Status</div><div>${escapeHtml(getGuruPerizinanStatusLabel(item.status))}</div>
+      <div style="color:#64748b;">Keperluan</div><div>${escapeHtml(String(item.keperluan || '-'))}</div>
+      <div style="color:#64748b;">Catatan Wakasek</div><div>${escapeHtml(String(item.catatan_wakasek || '-'))}</div>
+    </div>
+  `
+}
+
+function closeGuruPerizinanOwnDetail() {
+  const overlay = document.getElementById('guru-perizinan-own-detail-overlay')
+  if (overlay) overlay.remove()
 }
 
 async function onGuruEkskulMonthlyPeriodeChange() {
@@ -7323,7 +7405,15 @@ async function savePdfDocForCurrentPlatform(doc, fileName) {
         const base64Data = btoa(binary)
         const saved = await window.saveBase64ToAndroidDownloads(fileName, base64Data)
         if (saved?.ok) {
-          alert(`File PDF tersimpan di:\n${saved.path}`)
+          if (typeof window.showSavedFilePopup === 'function') {
+            await window.showSavedFilePopup({
+              title: 'File PDF tersimpan',
+              message: 'Klik Buka untuk langsung melihat file.',
+              path: String(saved.path || '')
+            })
+          } else {
+            alert(`File PDF tersimpan di:\n${saved.path}`)
+          }
           return
         }
       }
@@ -7349,7 +7439,15 @@ async function savePdfDocForCurrentPlatform(doc, fileName) {
     if (typeof window.savePdfDesktopAndOpen === 'function') {
       const result = await window.savePdfDesktopAndOpen(blob, fileName)
       if (result?.ok) {
-        alert(`File disimpan di:\n${result.path}`)
+        if (typeof window.showSavedFilePopup === 'function') {
+          await window.showSavedFilePopup({
+            title: 'File PDF tersimpan',
+            message: 'Klik Buka untuk langsung melihat file.',
+            path: String(result.path || '')
+          })
+        } else {
+          alert(`File disimpan di:\n${result.path}`)
+        }
         return
       }
     }
@@ -13516,6 +13614,8 @@ window.reloadGuruDailyTask = reloadGuruDailyTask
 window.submitGuruDailyTask = submitGuruDailyTask
 window.renderGuruPerizinanPage = renderGuruPerizinanPage
 window.submitGuruPerizinanForm = submitGuruPerizinanForm
+window.openGuruPerizinanOwnDetail = openGuruPerizinanOwnDetail
+window.closeGuruPerizinanOwnDetail = closeGuruPerizinanOwnDetail
 window.saveGuruPerizinanApproval = saveGuruPerizinanApproval
 window.deleteGuruPerizinanApproval = deleteGuruPerizinanApproval
 window.saveGuruSantriPerizinanApproval = saveGuruSantriPerizinanApproval

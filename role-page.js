@@ -173,7 +173,7 @@ function applyPlatformUiSkin() {
   const link = document.createElement('link')
   link.id = 'android-ui-css'
   link.rel = 'stylesheet'
-  link.href = 'android-ui.css?v=20260308-android-ui-24'
+  link.href = 'android-ui.css?v=20260310-android-perizinan-fit-02'
   document.head.appendChild(link)
 
   ensureAndroidBottomNav()
@@ -2117,6 +2117,11 @@ window.openExternalUrl = async function openExternalUrl(url) {
   } catch (error) {
     console.error('openExternalUrl invoke failed:', error)
   }
+  if (isTauriApp && isAndroidApp) {
+    // On Android Tauri, avoid WebView fallback for custom schemes (e.g. whatsapp://),
+    // because it can trigger ERR_UNKNOWN_URL_SCHEME in-app.
+    return false
+  }
   if (isAndroidApp) {
     try {
       const popup = window.open(target, '_blank', 'noopener,noreferrer')
@@ -2258,6 +2263,130 @@ window.savePdfDesktopAndOpen = async function savePdfDesktopAndOpen(blob, fileNa
   } catch (error) {
     console.error('savePdfDesktopAndOpen failed:', error)
     return { ok: false, path: '', error: String(error?.message || error || 'Unknown error') }
+  }
+}
+
+window.showSavedFilePopup = async function showSavedFilePopup(options = {}) {
+  const filePath = String(options.path || '').trim()
+  const title = String(options.title || 'File berhasil disimpan')
+  const message = String(options.message || 'Pilih aksi untuk file yang baru disimpan.')
+  if (!filePath) return
+
+  if (!document.getElementById('saved-file-popup-style')) {
+    const style = document.createElement('style')
+    style.id = 'saved-file-popup-style'
+    style.textContent = `
+      .saved-file-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 14000;
+        background: rgba(15, 23, 42, 0.38);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+      }
+      .saved-file-overlay.open {
+        display: flex;
+      }
+      .saved-file-card {
+        width: min(460px, calc(100vw - 24px));
+        background: #fff;
+        border: 1px solid #cbd5e1;
+        border-radius: 14px;
+        box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+        padding: 14px;
+      }
+      .saved-file-title {
+        margin: 0 0 6px;
+        font-size: 16px;
+        font-weight: 700;
+        color: #0f172a;
+      }
+      .saved-file-message {
+        margin: 0 0 8px;
+        font-size: 13px;
+        color: #334155;
+      }
+      .saved-file-path {
+        margin: 0;
+        font-size: 12px;
+        color: #0f172a;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 8px;
+        word-break: break-word;
+      }
+      .saved-file-actions {
+        margin-top: 12px;
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+      .saved-file-actions button {
+        border: 1px solid #cbd5e1;
+        border-radius: 9px;
+        padding: 6px 12px;
+        background: #fff;
+        color: #0f172a;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .saved-file-actions .saved-file-open-btn {
+        border-color: #0ea5e9;
+        background: #e0f2fe;
+        color: #075985;
+      }
+    `
+    document.head.appendChild(style)
+  }
+
+  let overlay = document.getElementById('saved-file-overlay')
+  if (!overlay) {
+    overlay = document.createElement('div')
+    overlay.id = 'saved-file-overlay'
+    overlay.className = 'saved-file-overlay'
+    overlay.innerHTML = `
+      <div class="saved-file-card">
+        <h3 class="saved-file-title" id="saved-file-title"></h3>
+        <p class="saved-file-message" id="saved-file-message"></p>
+        <p class="saved-file-path" id="saved-file-path"></p>
+        <div class="saved-file-actions">
+          <button type="button" class="saved-file-close-btn" id="saved-file-close-btn">Tutup</button>
+          <button type="button" class="saved-file-open-btn" id="saved-file-open-btn">Buka</button>
+        </div>
+      </div>
+    `
+    document.body.appendChild(overlay)
+    overlay.addEventListener('click', event => {
+      if (event.target === overlay) overlay.classList.remove('open')
+    })
+  }
+
+  const titleEl = overlay.querySelector('#saved-file-title')
+  const messageEl = overlay.querySelector('#saved-file-message')
+  const pathEl = overlay.querySelector('#saved-file-path')
+  const closeBtn = overlay.querySelector('#saved-file-close-btn')
+  const openBtn = overlay.querySelector('#saved-file-open-btn')
+  if (!titleEl || !messageEl || !pathEl || !closeBtn || !openBtn) return
+
+  titleEl.textContent = title
+  messageEl.textContent = message
+  pathEl.textContent = filePath
+  overlay.classList.add('open')
+
+  const close = () => overlay.classList.remove('open')
+  closeBtn.onclick = close
+  openBtn.onclick = async () => {
+    try {
+      await invokeTauriCommand('open_file_path', { path: filePath })
+      close()
+      return
+    } catch (_error) {}
+    alert(`File tersimpan di:\n${filePath}`)
+    close()
   }
 }
 

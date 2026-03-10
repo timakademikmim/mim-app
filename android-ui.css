@@ -207,6 +207,72 @@ body.platform-android .topbar-notif-menu.open {
   transform: translateX(-50%) translateY(0);
 }
 
+/* Perizinan pages (Guru/Musyrif) - keep content inside phone viewport */
+body.platform-android #guru-perizinan-own-list,
+body.platform-android #guru-perizinan-approval-list,
+body.platform-android #guru-perizinan-santri-approval-list,
+body.platform-android #musyrif-perizinan-own-list,
+body.platform-android #musyrif-perizinan-review-list {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+body.platform-android #guru-perizinan-own-list table,
+body.platform-android #musyrif-perizinan-own-list table {
+  min-width: 100% !important;
+  width: 100% !important;
+  table-layout: fixed !important;
+}
+
+body.platform-android #guru-perizinan-approval-list table {
+  min-width: 100% !important;
+  width: 100% !important;
+  table-layout: fixed !important;
+}
+
+body.platform-android #guru-perizinan-santri-approval-list table,
+body.platform-android #musyrif-perizinan-review-list table {
+  min-width: 100% !important;
+  width: 100% !important;
+  table-layout: fixed !important;
+}
+
+body.platform-android #guru-perizinan-own-list th,
+body.platform-android #guru-perizinan-own-list td,
+body.platform-android #guru-perizinan-approval-list th,
+body.platform-android #guru-perizinan-approval-list td,
+body.platform-android #guru-perizinan-santri-approval-list th,
+body.platform-android #guru-perizinan-santri-approval-list td,
+body.platform-android #musyrif-perizinan-own-list th,
+body.platform-android #musyrif-perizinan-own-list td,
+body.platform-android #musyrif-perizinan-review-list th,
+body.platform-android #musyrif-perizinan-review-list td {
+  font-size: 11px !important;
+  padding: 6px !important;
+  white-space: normal !important;
+  word-break: break-word !important;
+  vertical-align: top;
+}
+
+body.platform-android #guru-perizinan-approval-list .guru-field,
+body.platform-android #guru-perizinan-santri-approval-list .guru-field,
+body.platform-android #musyrif-perizinan-review-list .guru-field {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box;
+}
+
+body.platform-android #guru-perizinan-approval-list .modal-btn,
+body.platform-android #guru-perizinan-santri-approval-list .modal-btn,
+body.platform-android #musyrif-perizinan-review-list .modal-btn {
+  padding: 6px 10px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 body.platform-android .android-bottom-nav {
   position: fixed;
   left: 10px;
