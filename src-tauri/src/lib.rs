@@ -53,7 +53,10 @@ fn open_external_url(url: String) -> Result<bool, String> {
   #[cfg(target_os = "android")]
   {
     let try_start = |args: &[&str]| -> bool {
-      std::process::Command::new("am").args(args).spawn().is_ok()
+      match std::process::Command::new("am").args(args).status() {
+        Ok(status) => status.success(),
+        Err(_) => false,
+      }
     };
 
     let is_whatsapp_target = target.contains("wa.me/")
@@ -66,6 +69,8 @@ fn open_external_url(url: String) -> Result<bool, String> {
         "--activity-new-task",
         "-a",
         "android.intent.action.VIEW",
+        "-c",
+        "android.intent.category.BROWSABLE",
         "-d",
         target,
         "-p",
@@ -82,6 +87,8 @@ fn open_external_url(url: String) -> Result<bool, String> {
           "--activity-new-task",
           "-a",
           "android.intent.action.VIEW",
+          "-c",
+          "android.intent.category.BROWSABLE",
           "-d",
           &https_fallback,
           "-p",
@@ -90,6 +97,20 @@ fn open_external_url(url: String) -> Result<bool, String> {
           return Ok(true);
         }
       }
+
+      // Generic whatsapp URL without forcing package (lets Android resolve handler).
+      if try_start(&[
+        "start",
+        "--activity-new-task",
+        "-a",
+        "android.intent.action.VIEW",
+        "-c",
+        "android.intent.category.BROWSABLE",
+        "-d",
+        target,
+      ]) {
+        return Ok(true);
+      }
     }
 
     if try_start(&[
@@ -97,6 +118,8 @@ fn open_external_url(url: String) -> Result<bool, String> {
       "--activity-new-task",
       "-a",
       "android.intent.action.VIEW",
+      "-c",
+      "android.intent.category.BROWSABLE",
       "-d",
       target,
     ]) {

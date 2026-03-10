@@ -7207,16 +7207,16 @@ async function quickSendLaporanBulananWA(santriId) {
     .replace(/<nama santri>/gi, String(detail.nama || '-'))
     .replace(/<link>/gi, publicUrl)
 
-  const waUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
   const waApiUrl = `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`
+  const waUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
   const waScheme = `whatsapp://send?phone=${phone}&text=${encodeURIComponent(message)}`
   if (typeof window.openExternalUrl === 'function') {
     const isAndroid = /android/i.test(String(navigator.userAgent || ''))
     let opened = false
     if (isAndroid) {
-      // On Android, open app scheme first to avoid wa.me 404 pages in browser.
-      opened = await window.openExternalUrl(waScheme)
-      if (!opened) opened = await window.openExternalUrl(waApiUrl)
+      // Android WebView is more reliable with https intent, then deep-link fallback.
+      opened = await window.openExternalUrl(waApiUrl)
+      if (!opened) opened = await window.openExternalUrl(waScheme)
       if (!opened) opened = await window.openExternalUrl(waUrl)
     } else {
       opened = await window.openExternalUrl(waUrl)
