@@ -27,6 +27,45 @@ function initAndroidColdStart() {
 
 const ANDROID_COLD_START = initAndroidColdStart()
 
+function showAndroidLoginSplashIfLoggedIn() {
+  if (!isAndroidApp()) return
+  const loginId = String(localStorage.getItem('login_id') || '').trim()
+  if (!loginId) return
+  if (!document.body) return
+  if (document.getElementById('android-login-splash')) return
+
+  if (!document.getElementById('android-login-splash-style')) {
+    const style = document.createElement('style')
+    style.id = 'android-login-splash-style'
+    style.textContent = `
+      .login-page { visibility: hidden; }
+      .android-login-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 12000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(560px 360px at 50% 20%, rgba(43, 140, 255, 0.18), transparent 60%), #f4f7fb;
+      }
+      .android-login-splash img {
+        width: 116px;
+        height: 116px;
+        object-fit: contain;
+      }
+    `
+    document.head.appendChild(style)
+  }
+
+  const splash = document.createElement('div')
+  splash.id = 'android-login-splash'
+  splash.className = 'android-login-splash'
+  splash.innerHTML = `<img src="00%20Logo%20MIM%20.png" alt="Logo MIM">`
+  document.body.appendChild(splash)
+}
+
+showAndroidLoginSplashIfLoggedIn()
+
 function parseRoleList(rawRole) {
   if (Array.isArray(rawRole)) {
     return rawRole

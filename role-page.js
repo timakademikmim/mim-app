@@ -229,34 +229,10 @@ function showAndroidWelcomeScreen() {
       .android-welcome-screen.show {
         opacity: 1;
       }
-      .android-welcome-card {
-        width: min(320px, 78vw);
-        border-radius: 18px;
-        background: rgba(255, 255, 255, 0.92);
-        border: 1px solid rgba(148, 163, 184, 0.28);
-        box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18);
-        padding: 22px 18px 18px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 12px;
-        text-align: center;
-      }
       .android-welcome-logo {
-        width: 96px;
-        height: 96px;
-        border-radius: 16px;
+        width: 116px;
+        height: 116px;
         object-fit: contain;
-      }
-      .android-welcome-title {
-        font-size: 16px;
-        font-weight: 700;
-        color: #0f172a;
-        letter-spacing: 0.2px;
-      }
-      .android-welcome-subtitle {
-        font-size: 12px;
-        color: #5b6b83;
       }
     `
     document.head.appendChild(style)
@@ -268,11 +244,7 @@ function showAndroidWelcomeScreen() {
     overlay.id = 'android-welcome-screen'
     overlay.className = 'android-welcome-screen'
     overlay.innerHTML = `
-      <div class="android-welcome-card">
-        <img class="android-welcome-logo" src="00%20Logo%20MIM%20.png" alt="Logo MIM">
-        <div class="android-welcome-title">MIM App</div>
-        <div class="android-welcome-subtitle">Memuat dashboard...</div>
-      </div>
+      <img class="android-welcome-logo" src="00%20Logo%20MIM%20.png" alt="Logo MIM">
     `
     document.body.appendChild(overlay)
   }
