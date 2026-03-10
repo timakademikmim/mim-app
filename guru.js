@@ -7214,8 +7214,15 @@ async function quickSendLaporanBulananWA(santriId) {
     const isAndroid = /android/i.test(String(navigator.userAgent || ''))
     let opened = false
     if (isAndroid) {
+      try {
+        if (window.__TAURI__?.core?.invoke) {
+          opened = await window.__TAURI__.core.invoke('open_whatsapp_message', { phone, message }) === true
+        } else if (window.__TAURI_INTERNALS__?.invoke) {
+          opened = await window.__TAURI_INTERNALS__.invoke('open_whatsapp_message', { phone, message }) === true
+        }
+      } catch (_error) {}
       // Android WebView is more reliable with https intent, then deep-link fallback.
-      opened = await window.openExternalUrl(waApiUrl)
+      if (!opened) opened = await window.openExternalUrl(waApiUrl)
       if (!opened) opened = await window.openExternalUrl(waScheme)
       if (!opened) opened = await window.openExternalUrl(waUrl)
     } else {

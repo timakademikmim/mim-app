@@ -158,6 +158,118 @@ fn open_external_url(url: String) -> Result<bool, String> {
   }
 }
 
+#[tauri::command]
+fn open_whatsapp_message(phone: String, message: String) -> Result<bool, String> {
+  #[cfg(target_os = "android")]
+  {
+    let normalized_phone = phone
+      .chars()
+      .filter(|c| c.is_ascii_digit())
+      .collect::<String>();
+    if normalized_phone.is_empty() {
+      return Ok(false);
+    }
+
+    let encoded_message = urlencoding::encode(message.trim()).to_string();
+    let wa_api = format!(
+      "https://api.whatsapp.com/send?phone={}&text={}",
+      normalized_phone, encoded_message
+    );
+    let wa_me = format!(
+      "https://wa.me/{}?text={}",
+      normalized_phone, encoded_message
+    );
+    let wa_scheme = format!(
+      "whatsapp://send?phone={}&text={}",
+      normalized_phone, encoded_message
+    );
+
+    let try_start = |args: &[&str]| -> bool {
+      match std::process::Command::new("am").args(args).status() {
+        Ok(status) => status.success(),
+        Err(_) => false,
+      }
+    };
+
+    if try_start(&[
+      "start",
+      "--activity-new-task",
+      "-a",
+      "android.intent.action.VIEW",
+      "-c",
+      "android.intent.category.BROWSABLE",
+      "-d",
+      &wa_api,
+      "-p",
+      "com.whatsapp",
+    ]) {
+      return Ok(true);
+    }
+
+    if try_start(&[
+      "start",
+      "--activity-new-task",
+      "-a",
+      "android.intent.action.VIEW",
+      "-c",
+      "android.intent.category.BROWSABLE",
+      "-d",
+      &wa_me,
+      "-p",
+      "com.whatsapp",
+    ]) {
+      return Ok(true);
+    }
+
+    if try_start(&[
+      "start",
+      "--activity-new-task",
+      "-a",
+      "android.intent.action.VIEW",
+      "-d",
+      &wa_scheme,
+      "-p",
+      "com.whatsapp",
+    ]) {
+      return Ok(true);
+    }
+
+    if try_start(&[
+      "start",
+      "--activity-new-task",
+      "-a",
+      "android.intent.action.VIEW",
+      "-c",
+      "android.intent.category.BROWSABLE",
+      "-d",
+      &wa_api,
+    ]) {
+      return Ok(true);
+    }
+
+    if try_start(&[
+      "start",
+      "--activity-new-task",
+      "-a",
+      "android.intent.action.VIEW",
+      "-c",
+      "android.intent.category.BROWSABLE",
+      "-d",
+      &wa_me,
+    ]) {
+      return Ok(true);
+    }
+    return Ok(false);
+  }
+
+  #[cfg(not(target_os = "android"))]
+  {
+    let _ = phone;
+    let _ = message;
+    Ok(false)
+  }
+}
+
 fn get_desktop_export_dir() -> Result<PathBuf, String> {
   let user = std::env::var("USERPROFILE").map_err(|e| format!("USERPROFILE tidak tersedia: {e}"))?;
   let dir = PathBuf::from(user).join("Documents").join("MIM App").join("Cetak");
@@ -544,6 +656,7 @@ pub fn run() {
   builder
     .invoke_handler(tauri::generate_handler![
       open_external_url,
+      open_whatsapp_message,
       download_url_to_app_storage,
       save_base64_to_downloads,
       save_pdf_base64,
