@@ -7407,11 +7407,13 @@ async function savePdfDocForCurrentPlatform(doc, fileName) {
         const base64Data = btoa(binary)
         const saved = await window.saveBase64ToAndroidDownloads(fileName, base64Data)
         if (saved?.ok) {
+          const fallbackDataUri = String(doc.output('datauristring') || '')
           if (typeof window.showSavedFilePopup === 'function') {
             await window.showSavedFilePopup({
               title: 'File PDF tersimpan',
               message: 'Klik Buka untuk langsung melihat file.',
-              path: String(saved.path || '')
+              path: String(saved.path || ''),
+              fallbackUrl: fallbackDataUri
             })
           } else {
             alert(`File PDF tersimpan di:\n${saved.path}`)

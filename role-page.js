@@ -2283,6 +2283,7 @@ window.showSavedFilePopup = async function showSavedFilePopup(options = {}) {
   const filePath = String(options.path || '').trim()
   const title = String(options.title || 'File berhasil disimpan')
   const message = String(options.message || 'Pilih aksi untuk file yang baru disimpan.')
+  const fallbackUrl = String(options.fallbackUrl || '').trim()
   if (!filePath) return
 
   if (!document.getElementById('saved-file-popup-style')) {
@@ -2398,6 +2399,15 @@ window.showSavedFilePopup = async function showSavedFilePopup(options = {}) {
       close()
       return
     } catch (_error) {}
+    if (fallbackUrl && typeof window.openExternalUrl === 'function') {
+      try {
+        const opened = await window.openExternalUrl(fallbackUrl)
+        if (opened) {
+          close()
+          return
+        }
+      } catch (_error) {}
+    }
     alert(`File tersimpan di:\n${filePath}`)
     close()
   }
