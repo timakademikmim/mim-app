@@ -210,7 +210,8 @@ fn open_whatsapp_message(phone: String, message: String) -> Result<bool, String>
       return Ok(false);
     }
 
-    let encoded_message = urlencoding::encode(message.trim()).to_string();
+    let plain_message = message.trim();
+    let encoded_message = urlencoding::encode(plain_message).to_string();
     let wa_api = format!(
       "https://api.whatsapp.com/send?phone={}&text={}",
       normalized_phone, encoded_message
@@ -306,6 +307,41 @@ fn open_whatsapp_message(phone: String, message: String) -> Result<bool, String>
       "android.intent.category.BROWSABLE",
       "-d",
       &wa_me,
+    ]) {
+      return Ok(true);
+    }
+
+    // Fallback: use SEND intent with extras (shorter than URL encoding).
+    let jid = format!("{}@s.whatsapp.net", normalized_phone);
+    if try_start(&[
+      "start",
+      "--activity-new-task",
+      "-a",
+      "android.intent.action.SEND",
+      "-t",
+      "text/plain",
+      "--es",
+      "android.intent.extra.TEXT",
+      plain_message,
+      "--es",
+      "jid",
+      &jid,
+      "-p",
+      "com.whatsapp",
+    ]) {
+      return Ok(true);
+    }
+
+    if try_start(&[
+      "start",
+      "--activity-new-task",
+      "-a",
+      "android.intent.action.SEND",
+      "-t",
+      "text/plain",
+      "--es",
+      "android.intent.extra.TEXT",
+      plain_message,
     ]) {
       return Ok(true);
     }

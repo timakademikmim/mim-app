@@ -60,7 +60,15 @@ function showAndroidLoginSplashIfLoggedIn() {
   const splash = document.createElement('div')
   splash.id = 'android-login-splash'
   splash.className = 'android-login-splash'
-  splash.innerHTML = `<img src="00%20Logo%20MIM%20.png" alt="Logo MIM">`
+  const logo = document.createElement('img')
+  logo.alt = 'Logo MIM'
+  logo.src = 'iconMIM-android.png'
+  logo.addEventListener('error', () => {
+    if (logo.dataset.fallback === '1') return
+    logo.dataset.fallback = '1'
+    logo.src = 'iconMIM.png'
+  })
+  splash.appendChild(logo)
   document.body.appendChild(splash)
 }
 

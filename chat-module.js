@@ -184,6 +184,7 @@
       groupMembersScrollTop: 0,
       messageListAtBottom: true,
       forceStickBottom: false,
+      keepMessageFocus: false,
       realtimeChannel: null,
       refreshTimer: null,
       uiReady: false,
@@ -1112,6 +1113,7 @@
       if (customText === null) {
         if (textEl) textEl.value = ''
         state.draftByThread.set(threadId, '')
+        state.keepMessageFocus = true
       }
       state.forceStickBottom = true
       await refresh(false, threadId)
@@ -1545,6 +1547,20 @@
       }
     }
 
+    function restoreMessageFocus() {
+      if (!state.keepMessageFocus) return
+      state.keepMessageFocus = false
+      const input = document.getElementById('chat-message-input')
+      if (!input) return
+      window.setTimeout(() => {
+        try {
+          input.focus()
+          const len = input.value.length
+          input.setSelectionRange(len, len)
+        } catch (_error) {}
+      }, 0)
+    }
+
     function renderDynamicUI(options = {}) {
       const threadChanged = Boolean(options?.threadChanged)
       if (!isPhoneChatMode()) state.mobileChatView = 'thread'
@@ -1557,6 +1573,7 @@
       renderStickerResults()
       syncComposerForSelectedThread(threadChanged)
       updateMediaPanels()
+      restoreMessageFocus()
     }
 
     function renderUI() {
@@ -1640,20 +1657,20 @@
               </div>
             </div>
             <div id="chat-emoji-bar" style="display:none; border-top:1px solid #e2e8f0; background:#fff; padding:0; flex:0 0 auto;">
-              <div id="chat-emoji-picker-bar" style="display:none; position:static; width:100%; max-height:280px; overflow:hidden; background:#fff; border:none; border-radius:0; padding:0; box-shadow:none;">
+              <div id="chat-emoji-picker-bar" style="display:none; position:static; width:100%; max-height:340px; overflow:hidden; background:#fff; border:none; border-radius:0; padding:0; box-shadow:none;">
                 <div class="chat-media-tabs">
                   <button type="button" class="chat-media-tab" data-chat-media-tab="emoji">Emoji</button>
                   <button type="button" class="chat-media-tab" data-chat-media-tab="sticker">Sticker</button>
                 </div>
                 <div id="chat-emoji-panel-bar">
-                  <emoji-picker id="chat-emoji-picker-el-bar" style="width:100%; height:220px;"></emoji-picker>
-                  <div id="chat-emoji-fallback-bar" style="display:none; padding:8px; max-height:220px; overflow:auto;">
+                  <emoji-picker id="chat-emoji-picker-el-bar" style="width:100%; height:300px;"></emoji-picker>
+                  <div id="chat-emoji-fallback-bar" style="display:none; padding:8px; max-height:300px; overflow:auto;">
                     <div style="display:grid; grid-template-columns:repeat(8, 1fr); gap:6px;">
                       ${CHAT_EMOJIS.map(item => `<button type="button" data-chat-emoji="${escapeHtml(item)}" style="border:1px solid #e2e8f0; background:#fff; border-radius:8px; height:32px; cursor:pointer; font-size:18px;">${item}</button>`).join('')}
                     </div>
                   </div>
                 </div>
-                <div id="chat-sticker-panel-bar" style="display:none; height:220px; flex-direction:column;">
+                <div id="chat-sticker-panel-bar" style="display:none; height:300px; flex-direction:column;">
                   <div class="chat-sticker-controls" style="flex:0 0 auto;">
                     <button type="button" class="chat-sticker-btn primary" id="chat-sticker-upload-bar">Upload</button>
                     <button type="button" class="chat-sticker-btn" id="chat-sticker-refresh-bar">Refresh</button>
@@ -1937,6 +1954,7 @@
         document.addEventListener('pointerdown', state.outsideClickHandler, true)
       }
 
+      restoreMessageFocus()
       state.uiReady = true
     }
 

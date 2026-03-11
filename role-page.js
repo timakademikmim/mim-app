@@ -2223,14 +2223,6 @@ window.openExternalUrl = async function openExternalUrl(url) {
       return true
     } catch (_error) {}
     try {
-      if (/^https?:\/\//i.test(target)) {
-        const withoutScheme = target.replace(/^https?:\/\//i, '')
-        const scheme = target.toLowerCase().startsWith('https://') ? 'https' : 'http'
-        window.location.href = `intent://${withoutScheme}#Intent;scheme=${scheme};action=android.intent.action.VIEW;end`
-        return true
-      }
-    } catch (_error) {}
-    try {
       window.location.assign(target)
       return true
     } catch (_error) {
