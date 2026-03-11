@@ -3,12 +3,27 @@
 <head>
   
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <script>
+    (function () {
+      try {
+        const params = new URLSearchParams(window.location.search || '');
+        const isAndroidPreview = params.get('preview') === 'android';
+        const isAndroidUA = /android/i.test(String(navigator.userAgent || ''));
+        if (isAndroidPreview || isAndroidUA) {
+          document.documentElement.classList.add('android-preboot');
+        }
+      } catch (e) {}
+    })();
+  </script>
+  <style>
+    html.android-preboot body { opacity: 0; }
+  </style>
   <title>Panel Wakasek Kurikulum</title>
   <link rel="icon" type="image/png" href="00%20Logo%20MIM%20.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="guru.css?v=20260305-sidebar-transition-01">
+  <link rel="stylesheet" href="guru.css?v=20260311-laporan-bulanan-android-01">
 </head>
 <body data-role="guru" data-panel="wakasek-kurikulum">
   <div class="layout">
@@ -85,7 +100,7 @@
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
   <script src="chat-module.js?v=20260311-chat-time-outside-01"></script>
-  <script src="role-page.js?v=20260311-android-welcome-03"></script>
+  <script src="role-page.js?v=20260311-android-welcome-04"></script>
   <script src="guru.js?v=20260310-android-wa-native-05"></script>
 
   <div id="app-popup-overlay" class="app-popup-overlay" aria-hidden="true">

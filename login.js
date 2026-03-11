@@ -290,8 +290,11 @@ document.addEventListener('DOMContentLoaded', () => {
     return
   }
   const target = getSavedLandingPage()
-  if (!target) return
-  location.replace(target)
+  if (target) {
+    location.replace(target)
+    return
+  }
+  document.documentElement.classList.remove('android-preboot')
 })
 
 

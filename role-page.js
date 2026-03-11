@@ -207,7 +207,10 @@ function applyPlatformUiSkin() {
 function showAndroidWelcomeScreen() {
   if (!isAndroidPlatform()) return
   if (!document.body) return
-  if (sessionStorage.getItem('android_welcome_seen') === '1') return
+  if (sessionStorage.getItem('android_welcome_seen') === '1') {
+    document.documentElement.classList.remove('android-preboot')
+    return
+  }
   sessionStorage.setItem('android_welcome_seen', '1')
   document.body.classList.add('android-welcome-active')
 
@@ -267,6 +270,7 @@ function showAndroidWelcomeScreen() {
         overlay.remove()
       } catch (_error) {}
       document.body.classList.remove('android-welcome-active')
+      document.documentElement.classList.remove('android-preboot')
     }, 320)
   }, minShowMs)
 }
