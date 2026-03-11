@@ -4,6 +4,10 @@
   const CHAT_MESSAGES_TABLE = 'chat_messages'
   const CHAT_RETENTION_HOURS = 24
   const CHAT_EMOJIS = ['\u{1F600}', '\u{1F601}', '\u{1F602}', '\u{1F923}', '\u{1F60A}', '\u{1F60D}', '\u{1F970}', '\u{1F618}', '\u{1F60E}', '\u{1F914}', '\u{1F62D}', '\u{1F621}', '\u{1F44D}', '\u{1F44F}', '\u{1F64F}', '\u{1F4AA}', '\u{1F525}', '\u{2B50}', '\u{1F389}', '\u{2705}', '\u{274C}', '\u{1F4DA}', '\u{1F4DD}', '\u{1F4CC}', '\u{1F4AF}']
+  const STICKER_PREFIX = '[[sticker]]'
+  const CHAT_STICKER_BUCKET = 'chat-stickers'
+  const CHAT_STICKER_MAX_DIM = 512
+  const CHAT_STICKER_MAX_PER_USER = 40
 
   function escapeHtml(value) {
     return String(value ?? '')
@@ -12,6 +16,21 @@
       .replaceAll('>', '&gt;')
       .replaceAll('"', '&quot;')
       .replaceAll("'", '&#39;')
+  }
+
+  function buildStickerMessage(url) {
+    const clean = String(url || '').trim()
+    return clean ? `${STICKER_PREFIX}${clean}` : ''
+  }
+
+  function parseStickerMessage(text) {
+    const raw = String(text || '').trim()
+    if (!raw.startsWith(STICKER_PREFIX)) return ''
+    return raw.slice(STICKER_PREFIX.length).trim()
+  }
+
+  function isStickerMessage(text) {
+    return !!parseStickerMessage(text)
   }
 
   function getCutoffIso() {
@@ -72,6 +91,7 @@
   }
 
   function getEmojiOnlyCount(text) {
+    if (isStickerMessage(text)) return 0
     const raw = String(text || '').trim()
     if (!raw) return 0
     if (/\s/.test(raw)) return 0
@@ -150,6 +170,11 @@
       draftByThread: new Map(),
       selectedMessageIds: new Set(),
       emojiPickerOpen: false,
+      mediaTab: 'emoji',
+      stickerLibrary: [],
+      stickerLoading: false,
+      stickerStatus: '',
+      stickerError: '',
       dmModalOpen: false,
       dmDraftUserId: '',
       threadMenuOpenId: '',
@@ -295,6 +320,23 @@
           transform: scale(1.04);
           box-shadow: 0 8px 20px rgba(15,23,42,0.12);
         }
+        .chat-thread-badge {
+          position: absolute;
+          top: 8px;
+          right: 36px;
+          min-width: 18px;
+          height: 18px;
+          padding: 0 5px;
+          border-radius: 999px;
+          background: #2563eb;
+          color: #fff;
+          font-size: 10px;
+          font-weight: 700;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          box-shadow: 0 6px 16px rgba(37,99,235,0.35);
+        }
         .chat-thread-menu {
           position: absolute;
           top: 36px;
@@ -312,6 +354,81 @@
         #chat-btn-open-group-modal,
         #chat-btn-create-group {
           font-family: 'Poppins', 'Segoe UI', sans-serif;
+        }
+        .chat-media-tabs {
+          display: flex;
+          gap: 6px;
+          padding: 6px;
+          border-bottom: 1px solid #e2e8f0;
+          background: #f8fafc;
+        }
+        .chat-media-tab {
+          flex: 1;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          background: #fff;
+          color: #475569;
+          font-size: 12px;
+          font-weight: 600;
+          padding: 6px 8px;
+          cursor: pointer;
+        }
+        .chat-media-tab.active {
+          background: #2563eb;
+          color: #fff;
+          border-color: #2563eb;
+        }
+        .chat-sticker-controls {
+          display: flex;
+          gap: 6px;
+          padding: 8px;
+          flex-wrap: wrap;
+          align-items: center;
+        }
+        .chat-sticker-btn {
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          background: #fff;
+          color: #0f172a;
+          font-size: 12px;
+          font-weight: 600;
+          padding: 6px 10px;
+          cursor: pointer;
+        }
+        .chat-sticker-btn.primary {
+          background: #2563eb;
+          color: #fff;
+          border-color: #2563eb;
+        }
+        .chat-sticker-status {
+          padding: 6px 8px;
+          font-size: 12px;
+          color: #64748b;
+        }
+        .chat-sticker-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 6px;
+          padding: 0 8px 8px;
+          overflow: auto;
+          flex: 1;
+          min-height: 0;
+        }
+        .chat-sticker-item {
+          border: 1px solid #e2e8f0;
+          border-radius: 10px;
+          padding: 4px;
+          background: #fff;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .chat-sticker-item img {
+          width: 100%;
+          height: auto;
+          display: block;
+          border-radius: 8px;
         }
       `
       document.head.appendChild(style)
@@ -334,7 +451,28 @@
     function getThreadPreview(thread) {
       const list = state.messagesByThread.get(safeId(thread?.id)) || []
       const last = list[list.length - 1]
-      return String(last?.message_text || '-').trim() || '-'
+      const raw = String(last?.message_text || '').trim()
+      const stickerUrl = parseStickerMessage(raw)
+      if (stickerUrl) return 'Sticker'
+      return raw || '-'
+    }
+
+    function getThreadUnreadCount(thread) {
+      const tid = safeId(thread?.id)
+      if (!tid) return 0
+      const selected = safeId(state.selectedThreadId)
+      if (selected === tid && isThreadPanelVisible()) return 0
+      const list = state.messagesByThread.get(tid) || []
+      if (!list.length) return 0
+      const member = (state.members || []).find(item => safeId(item?.thread_id) === tid && safeId(item?.karyawan_id) === state.currentUser.id)
+      const readMs = member?.last_read_at ? getTimestampMs(member.last_read_at) : 0
+      let count = 0
+      list.forEach(msg => {
+        if (safeId(msg?.sender_id) === state.currentUser.id) return
+        const msgMs = getTimestampMs(msg?.created_at)
+        if (!readMs || msgMs > readMs) count += 1
+      })
+      return count
     }
 
     function getInitials(name) {
@@ -619,17 +757,30 @@
     }
 
     function closeEmojiPicker() {
-      const picker = document.getElementById('chat-emoji-picker')
-      if (picker) picker.style.display = 'none'
       state.emojiPickerOpen = false
+      updateMediaPanels()
     }
 
-    function toggleEmojiPicker() {
-      const picker = document.getElementById('chat-emoji-picker')
-      if (!picker) return
-      const willOpen = picker.style.display === 'none' || !picker.style.display
-      picker.style.display = willOpen ? 'block' : 'none'
-      state.emojiPickerOpen = willOpen
+    function setMediaTab(tab) {
+      if (tab !== 'emoji' && tab !== 'sticker') return
+      state.mediaTab = tab
+      updateMediaPanels()
+      if (tab === 'sticker') ensureStickerLoaded()
+    }
+
+    function openMediaPicker(tab) {
+      if (tab) state.mediaTab = tab
+      state.emojiPickerOpen = true
+      updateMediaPanels()
+      if (state.mediaTab === 'sticker') ensureStickerLoaded()
+    }
+
+    function toggleEmojiPicker(tab = 'emoji') {
+      if (state.emojiPickerOpen && state.mediaTab === tab) {
+        closeEmojiPicker()
+        return
+      }
+      openMediaPicker(tab)
     }
 
     function insertEmojiToInput(emoji) {
@@ -646,10 +797,295 @@
       state.draftByThread.set(safeId(state.selectedThreadId), next)
     }
 
-    async function sendMessage() {
+    function getStickerFolder() {
+      const rawId = safeId(state.currentUser.id)
+      if (!rawId) return ''
+      const safe = String(rawId).replaceAll('/', '-').replaceAll('\\', '-')
+      return `users/${safe}`
+    }
+
+    function formatStickerError(prefix, error) {
+      const message = String(error?.message || error || '').trim()
+      if (!message) return prefix
+      return `${prefix}: ${message}`
+    }
+
+    function buildStickerStorageErrorMessage(error) {
+      const message = String(error?.message || '').trim()
+      const lower = message.toLowerCase()
+      if (lower.includes('bucket') && lower.includes('not')) {
+        return 'Bucket stiker belum tersedia. Buat bucket "chat-stickers" dan set Public.'
+      }
+      if (lower.includes('permission') || lower.includes('policy') || lower.includes('jwt')) {
+        return 'Akses stiker ditolak. Periksa policy Supabase Storage.'
+      }
+      return formatStickerError('Gagal memuat stiker', message || 'Unknown error')
+    }
+
+    function getStickerCreatedAt(item) {
+      const createdAt = String(item?.created_at || item?.updated_at || '').trim()
+      if (createdAt) {
+        const ms = Date.parse(createdAt)
+        if (!Number.isNaN(ms)) return ms
+      }
+      const name = String(item?.name || '')
+      const match = name.match(/(\d{13})/)
+      if (match) {
+        const ms = Number(match[1])
+        if (Number.isFinite(ms)) return ms
+      }
+      return 0
+    }
+
+    function loadImageFromFile(file) {
+      return new Promise((resolve, reject) => {
+        if (!file) {
+          reject(new Error('File kosong.'))
+          return
+        }
+        const url = URL.createObjectURL(file)
+        const img = new Image()
+        img.onload = () => {
+          URL.revokeObjectURL(url)
+          resolve(img)
+        }
+        img.onerror = () => {
+          URL.revokeObjectURL(url)
+          reject(new Error('File gambar tidak bisa dibaca.'))
+        }
+        img.src = url
+      })
+    }
+
+    function canvasToBlob(canvas, type, quality) {
+      return new Promise(resolve => {
+        canvas.toBlob(blob => resolve(blob), type, quality)
+      })
+    }
+
+    async function compressImageToWebp(file) {
+      const img = await loadImageFromFile(file)
+      const width = Number(img.naturalWidth || img.width || 0)
+      const height = Number(img.naturalHeight || img.height || 0)
+      if (!width || !height) throw new Error('Ukuran gambar tidak valid.')
+      const maxDim = CHAT_STICKER_MAX_DIM
+      const scale = Math.min(1, maxDim / Math.max(width, height))
+      const targetWidth = Math.max(1, Math.round(width * scale))
+      const targetHeight = Math.max(1, Math.round(height * scale))
+      const canvas = document.createElement('canvas')
+      canvas.width = targetWidth
+      canvas.height = targetHeight
+      const ctx = canvas.getContext('2d')
+      if (!ctx) throw new Error('Gagal memproses gambar.')
+      ctx.drawImage(img, 0, 0, targetWidth, targetHeight)
+      const webpBlob = await canvasToBlob(canvas, 'image/webp', 0.82)
+      if (webpBlob) return { blob: webpBlob, ext: 'webp' }
+      const pngBlob = await canvasToBlob(canvas, 'image/png', 0.92)
+      if (!pngBlob) throw new Error('Gagal mengubah gambar.')
+      return { blob: pngBlob, ext: 'png' }
+    }
+
+    async function refreshStickerLibrary() {
+      if (state.stickerLoading) return
+      const folder = getStickerFolder()
+      if (!folder) return
+      state.stickerLoading = true
+      state.stickerStatus = 'Memuat stiker...'
+      state.stickerError = ''
+      renderStickerResults()
+      try {
+        const { data, error } = await sb.storage
+          .from(CHAT_STICKER_BUCKET)
+          .list(folder, { limit: 200 })
+        if (error) throw error
+        const files = Array.isArray(data) ? data.filter(item => item?.name && !String(item.name).endsWith('/')) : []
+        const mapped = files.map(item => {
+          const path = `${folder}/${item.name}`
+          const { data: publicData } = sb.storage.from(CHAT_STICKER_BUCKET).getPublicUrl(path)
+          return {
+            name: String(item.name),
+            path,
+            url: String(publicData?.publicUrl || ''),
+            createdAt: getStickerCreatedAt(item)
+          }
+        }).filter(item => item.url)
+        mapped.sort((a, b) => (b.createdAt - a.createdAt) || b.name.localeCompare(a.name))
+        const limited = mapped.slice(0, CHAT_STICKER_MAX_PER_USER)
+        state.stickerLibrary = limited
+        if (mapped.length > CHAT_STICKER_MAX_PER_USER) {
+          const excess = mapped.slice(CHAT_STICKER_MAX_PER_USER)
+          void cleanupOldStickers(excess)
+        }
+      } catch (error) {
+        state.stickerLibrary = []
+        state.stickerError = buildStickerStorageErrorMessage(error)
+      } finally {
+        state.stickerLoading = false
+        state.stickerStatus = ''
+        renderStickerResults()
+      }
+    }
+
+    async function cleanupOldStickers(list) {
+      if (!Array.isArray(list) || list.length === 0) return
+      const paths = list.map(item => item?.path).filter(Boolean)
+      if (!paths.length) return
+      try {
+        await sb.storage.from(CHAT_STICKER_BUCKET).remove(paths)
+      } catch (_error) {}
+    }
+
+    async function uploadStickerFromFile(file) {
+      if (!file) return
+      const folder = getStickerFolder()
+      if (!folder) return
+      state.stickerLoading = true
+      state.stickerStatus = 'Mengompres stiker...'
+      state.stickerError = ''
+      renderStickerResults()
+      try {
+        const { blob, ext } = await compressImageToWebp(file)
+        const stamp = Date.now()
+        const random = Math.random().toString(36).slice(2, 8)
+        const fileName = `sticker-${stamp}-${random}.${ext}`
+        const path = `${folder}/${fileName}`
+        state.stickerStatus = 'Mengunggah stiker...'
+        renderStickerResults()
+        const { error } = await sb.storage
+          .from(CHAT_STICKER_BUCKET)
+          .upload(path, blob, {
+            contentType: blob.type || 'image/webp',
+            upsert: false
+          })
+        if (error) throw error
+        const { data: publicData } = sb.storage.from(CHAT_STICKER_BUCKET).getPublicUrl(path)
+        const publicUrl = String(publicData?.publicUrl || '')
+        if (!publicUrl) throw new Error('URL stiker tidak ditemukan. Pastikan bucket public.')
+        await sendStickerMessage(publicUrl)
+        state.stickerLoading = false
+        state.stickerStatus = ''
+        await refreshStickerLibrary()
+      } catch (error) {
+        state.stickerError = formatStickerError('Gagal mengunggah stiker', error)
+      } finally {
+        state.stickerLoading = false
+        state.stickerStatus = ''
+        renderStickerResults()
+      }
+    }
+
+    async function deleteStickerByPath(path) {
+      const cleanPath = String(path || '').trim()
+      if (!cleanPath) return
+      const confirmDelete = window.confirm('Hapus stiker ini?')
+      if (!confirmDelete) return
+      state.stickerLoading = true
+      state.stickerStatus = 'Menghapus stiker...'
+      state.stickerError = ''
+      renderStickerResults()
+      try {
+        const { error } = await sb.storage.from(CHAT_STICKER_BUCKET).remove([cleanPath])
+        if (error) throw error
+      } catch (error) {
+        state.stickerError = formatStickerError('Gagal menghapus stiker', error)
+      } finally {
+        state.stickerLoading = false
+        state.stickerStatus = ''
+      }
+      await refreshStickerLibrary()
+    }
+
+    function renderStickerResults() {
+      const gridEls = [
+        document.getElementById('chat-sticker-grid-popover'),
+        document.getElementById('chat-sticker-grid-bar')
+      ].filter(Boolean)
+      const statusEls = [
+        document.getElementById('chat-sticker-status-popover'),
+        document.getElementById('chat-sticker-status-bar')
+      ].filter(Boolean)
+      const hasResults = state.stickerLibrary.length > 0
+      const statusText = state.stickerLoading
+        ? (state.stickerStatus || 'Memuat stiker...')
+        : state.stickerError
+          ? state.stickerError
+          : !hasResults
+            ? 'Belum ada stiker. Klik Upload untuk menambahkan.'
+            : ''
+      statusEls.forEach(el => {
+        el.textContent = statusText
+        el.style.display = statusText ? 'block' : 'none'
+      })
+      gridEls.forEach(grid => {
+        if (!hasResults) {
+          grid.innerHTML = ''
+          return
+        }
+        grid.innerHTML = state.stickerLibrary.map(item => `
+          <button type="button" class="chat-sticker-item" data-sticker-url="${escapeHtml(item.url)}" data-sticker-path="${escapeHtml(item.path)}" title="Sticker">
+            <img src="${escapeHtml(item.url)}" alt="Sticker">
+          </button>
+        `).join('')
+        Array.from(grid.querySelectorAll('[data-sticker-url]')).forEach(btn => {
+          let pressTimer = null
+          let longPressTriggered = false
+          let startX = 0
+          let startY = 0
+          const clearTimer = () => {
+            if (pressTimer) {
+              window.clearTimeout(pressTimer)
+              pressTimer = null
+            }
+          }
+          btn.addEventListener('pointerdown', event => {
+            if (event.button && event.button !== 0) return
+            longPressTriggered = false
+            startX = Number(event.clientX || 0)
+            startY = Number(event.clientY || 0)
+            clearTimer()
+            pressTimer = window.setTimeout(async () => {
+              longPressTriggered = true
+              btn.dataset.longpressBlock = '1'
+              const path = String(btn.getAttribute('data-sticker-path') || '')
+              await deleteStickerByPath(path)
+              window.setTimeout(() => {
+                delete btn.dataset.longpressBlock
+              }, 0)
+            }, 600)
+          })
+          btn.addEventListener('pointerup', clearTimer)
+          btn.addEventListener('pointerleave', clearTimer)
+          btn.addEventListener('pointercancel', clearTimer)
+          btn.addEventListener('pointermove', event => {
+            if (!pressTimer) return
+            const dx = Math.abs(Number(event.clientX || 0) - startX)
+            const dy = Math.abs(Number(event.clientY || 0) - startY)
+            if (dx > 8 || dy > 8) clearTimer()
+          })
+          btn.addEventListener('click', async event => {
+            if (btn.dataset.longpressBlock === '1' || longPressTriggered) {
+              event.preventDefault()
+              event.stopPropagation()
+              return
+            }
+            event.stopPropagation()
+            const url = String(btn.getAttribute('data-sticker-url') || '')
+            await sendStickerMessage(url)
+          })
+        })
+      })
+    }
+
+    function ensureStickerLoaded() {
+      if (state.stickerLoading) return
+      if (state.stickerLibrary.length) return
+      refreshStickerLibrary()
+    }
+
+    async function sendMessage(customText = null) {
       const threadId = safeId(state.selectedThreadId)
       const textEl = document.getElementById('chat-message-input')
-      const messageText = String(textEl?.value || '').trim()
+      const messageText = String(customText !== null ? customText : (textEl?.value || '')).trim()
       if (!threadId) {
         alert('Pilih chat terlebih dahulu.')
         return
@@ -673,10 +1109,21 @@
         .update({ last_message_at: new Date().toISOString() })
         .eq('id', threadId)
 
-      if (textEl) textEl.value = ''
-      state.draftByThread.set(threadId, '')
+      if (customText === null) {
+        if (textEl) textEl.value = ''
+        state.draftByThread.set(threadId, '')
+      }
       state.forceStickBottom = true
       await refresh(false, threadId)
+    }
+
+    async function sendStickerMessage(url) {
+      const stickerUrl = String(url || '').trim()
+      if (!stickerUrl) return
+      const payload = buildStickerMessage(stickerUrl)
+      if (!payload) return
+      await sendMessage(payload)
+      closeEmojiPicker()
     }
 
     async function markThreadAsRead(threadId) {
@@ -816,7 +1263,7 @@
         box.innerHTML = '<div style="color:#64748b;">Pilih thread untuk mulai chat.</div>'
         return
       }
-      markThreadAsRead(thread.id)
+      if (isThreadPanelVisible()) markThreadAsRead(thread.id)
       const list = state.messagesByThread.get(safeId(thread.id)) || []
       const selectionBar = document.getElementById('chat-selection-bar')
       const selectionText = document.getElementById('chat-selection-text')
@@ -840,7 +1287,10 @@
         const sender = state.users.find(user => safeId(user.id) === senderId)
         const msgId = String(item.id || '')
         const selected = state.selectedMessageIds.has(msgId)
-        const emojiOnlyCount = getEmojiOnlyCount(item.message_text)
+        const rawMessage = String(item.message_text || '')
+        const stickerUrl = parseStickerMessage(rawMessage)
+        const isSticker = !!stickerUrl
+        const emojiOnlyCount = getEmojiOnlyCount(rawMessage)
         const isStickerEmoji = emojiOnlyCount === 1
         const mineStatus = getMyMessageReadStatus(item)
         const dateKey = getLocalDateKey(item.created_at)
@@ -859,12 +1309,19 @@
           prevMinuteStamp = null
         }
 
+        const bubbleStyle = isSticker
+          ? `max-width:75%; background:transparent; border:${selected ? '1px solid #16a34a' : '1px solid transparent'}; border-radius:12px; padding:2px; ${mine ? 'cursor:pointer;' : ''}`
+          : `max-width:75%; background:${mine ? (selected ? '#bbf7d0' : '#dcfce7') : '#f1f5f9'}; border:1px solid ${selected ? '#16a34a' : '#e2e8f0'}; border-radius:10px; padding:8px 10px; ${mine ? 'cursor:pointer;' : ''}`
+        const messageBody = isSticker
+          ? `<img src="${escapeHtml(stickerUrl)}" alt="Sticker" style="max-width:220px; width:100%; height:auto; display:block; border-radius:10px;">`
+          : `<div style="${isStickerEmoji ? 'font-size:52px; line-height:1.05; text-align:center; padding:6px 0;' : 'font-size:13px; color:#0f172a; white-space:pre-wrap;'}">${escapeHtml(rawMessage)}</div>`
+
         rowsHtml.push(`
           <div style="display:flex; justify-content:${mine ? 'flex-end' : 'flex-start'}; margin-bottom:8px;" data-chat-row-id="${escapeHtml(msgId)}">
             <div style="display:flex; align-items:flex-end; gap:6px; ${mine ? 'flex-direction:row-reverse;' : ''}">
-              <div data-chat-own-click="${mine ? '1' : '0'}" data-chat-message-id="${escapeHtml(msgId)}" style="max-width:75%; background:${mine ? (selected ? '#bbf7d0' : '#dcfce7') : '#f1f5f9'}; border:1px solid ${selected ? '#16a34a' : '#e2e8f0'}; border-radius:10px; padding:8px 10px; ${mine ? 'cursor:pointer;' : ''}">
+              <div data-chat-own-click="${mine ? '1' : '0'}" data-chat-message-id="${escapeHtml(msgId)}" style="${bubbleStyle}">
                 ${showSender ? `<div style="font-size:11px; color:#64748b; margin-bottom:2px;">${escapeHtml(String(sender?.nama || 'User'))}</div>` : ''}
-                <div style="${isStickerEmoji ? 'font-size:52px; line-height:1.05; text-align:center; padding:6px 0;' : 'font-size:13px; color:#0f172a; white-space:pre-wrap;'}">${escapeHtml(item.message_text || '')}</div>
+                ${messageBody}
                 ${mine ? `<div style="font-size:10px; color:${mineStatus === 'Sudah dibaca' ? '#16a34a' : '#64748b'}; margin-top:4px; text-align:right;">${escapeHtml(mineStatus || 'Terkirim')}</div>` : ''}
               </div>
               <div style="font-size:10px; color:#94a3b8; margin-bottom:2px; white-space:nowrap;">${escapeHtml(formatTimeOnly(item.created_at))}</div>
@@ -945,6 +1402,7 @@
       const box = document.getElementById('chat-thread-list')
       if (!box) return
       ensureChatVisualStyle()
+      const isAndroid = document.body?.classList?.contains('platform-android')
       const selectedId = safeId(state.selectedThreadId)
       const renderKey = JSON.stringify({
         selectedId,
@@ -952,7 +1410,8 @@
         threads: state.threads.map(thread => ({
           id: safeId(thread.id),
           title: getThreadTitle(thread),
-          preview: getThreadPreview(thread)
+          preview: getThreadPreview(thread),
+          unread: getThreadUnreadCount(thread)
         }))
       })
       if (renderKey === state.threadListRenderKey && box.childElementCount > 0) return
@@ -961,16 +1420,27 @@
         box.innerHTML = '<div style="color:#64748b; font-size:13px;">Belum ada thread chat.</div>'
         return
       }
+      const unreadByThread = new Map()
+      state.threads.forEach(thread => {
+        const tid = safeId(thread?.id)
+        if (!tid) return
+        unreadByThread.set(tid, getThreadUnreadCount(thread))
+      })
       box.innerHTML = state.threads.map(thread => {
         const tid = safeId(thread.id)
         const active = tid === selectedId
+        const activeBorderColor = isAndroid ? '#dbe4ef' : '#86efac'
         const menuOpen = tid === safeId(state.threadMenuOpenId)
         const preview = getThreadPreview(thread)
         const title = getThreadTitle(thread)
         const avatar = getThreadAvatarInfo(thread)
+        const unreadCount = unreadByThread.get(tid) || 0
+        const badgeHtml = unreadCount > 0
+          ? `<span class="chat-thread-badge">${unreadCount > 99 ? '99+' : unreadCount}</span>`
+          : ''
         return `
           <div class="chat-thread-wrap">
-            <button type="button" class="chat-thread-btn" data-chat-thread-id="${escapeHtml(tid)}" style="--chat-thread-border:${active ? '#86efac' : '#dbe4ef'};">
+            <button type="button" class="chat-thread-btn" data-chat-thread-id="${escapeHtml(tid)}" style="--chat-thread-border:${active ? activeBorderColor : '#dbe4ef'};">
               <div class="chat-thread-head">
                 <span class="chat-thread-avatar" title="${escapeHtml(avatar.label)}">
                   ${avatar.fotoUrl ? `<img src="${escapeHtml(avatar.fotoUrl)}" alt="${escapeHtml(avatar.label)}">` : escapeHtml(avatar.initials)}
@@ -981,6 +1451,7 @@
                 </div>
               </div>
             </button>
+            ${badgeHtml}
             <button type="button" class="chat-thread-menu-trigger" data-chat-thread-menu-trigger="${escapeHtml(tid)}" title="Aksi thread">&#8942;</button>
             <div class="chat-thread-menu" data-chat-thread-menu="${escapeHtml(tid)}" style="display:${menuOpen ? 'block' : 'none'};">
               <button type="button" data-chat-thread-delete="${escapeHtml(tid)}" style="width:100%; border:none; background:transparent; text-align:left; padding:7px 8px; border-radius:8px; color:#dc2626; cursor:pointer; font-size:12px; font-weight:600;">Hapus Chat</button>
@@ -1040,6 +1511,40 @@
       return width > 0 && width <= 820
     }
 
+    function isThreadPanelVisible() {
+      const panel = document.getElementById('chat-thread-panel')
+      if (!panel) return true
+      return panel.style.display !== 'none'
+    }
+
+    function updateMediaPanels() {
+      const isAndroid = document.body?.classList?.contains('platform-android')
+      const popover = document.getElementById('chat-emoji-picker-popover')
+      const bar = document.getElementById('chat-emoji-picker-bar')
+      const barWrap = document.getElementById('chat-emoji-bar')
+      const emojiPanelPopover = document.getElementById('chat-emoji-panel-popover')
+      const stickerPanelPopover = document.getElementById('chat-sticker-panel-popover')
+      const emojiPanelBar = document.getElementById('chat-emoji-panel-bar')
+      const stickerPanelBar = document.getElementById('chat-sticker-panel-bar')
+      if (popover) popover.style.display = state.emojiPickerOpen && !isAndroid ? 'block' : 'none'
+      if (bar) bar.style.display = state.emojiPickerOpen && isAndroid ? 'block' : 'none'
+      if (barWrap) barWrap.style.display = state.emojiPickerOpen && isAndroid ? 'block' : 'none'
+      const showEmoji = state.mediaTab === 'emoji'
+      if (emojiPanelPopover) emojiPanelPopover.style.display = showEmoji ? 'block' : 'none'
+      if (stickerPanelPopover) stickerPanelPopover.style.display = showEmoji ? 'none' : 'flex'
+      if (emojiPanelBar) emojiPanelBar.style.display = showEmoji ? 'block' : 'none'
+      if (stickerPanelBar) stickerPanelBar.style.display = showEmoji ? 'none' : 'flex'
+      const tabs = Array.from(document.querySelectorAll('[data-chat-media-tab]'))
+      tabs.forEach(btn => {
+        const tab = btn.getAttribute('data-chat-media-tab')
+        btn.classList.toggle('active', tab === state.mediaTab)
+      })
+      if (state.emojiPickerOpen && isAndroid && barWrap) {
+        const list = document.getElementById('chat-message-list')
+        if (list) list.scrollTop = list.scrollHeight
+      }
+    }
+
     function renderDynamicUI(options = {}) {
       const threadChanged = Boolean(options?.threadChanged)
       if (!isPhoneChatMode()) state.mobileChatView = 'thread'
@@ -1049,7 +1554,9 @@
       if (titleEl) titleEl.textContent = getThreadTitle(selected)
       renderThreadList()
       renderMessagesPanel()
+      renderStickerResults()
       syncComposerForSelectedThread(threadChanged)
+      updateMediaPanels()
     }
 
     function renderUI() {
@@ -1091,7 +1598,7 @@
             <div style="font-size:12px; color:#64748b; margin-bottom:6px;">Thread</div>
             <div id="chat-thread-list" style="flex:1; min-height:0; overflow:auto; padding-right:2px;"></div>
           </div>
-          <div style="display:${showThreadPanel ? 'flex' : 'none'}; border:${isPhone ? 'none' : '1px solid #e2e8f0'}; border-radius:${isPhone ? '0' : '12px'}; background:${isPhone ? 'transparent' : '#fff'}; min-height:0; min-width:0; flex-direction:column; overflow:hidden;">
+          <div id="chat-thread-panel" style="display:${showThreadPanel ? 'flex' : 'none'}; border:${isPhone ? 'none' : '1px solid #e2e8f0'}; border-radius:${isPhone ? '0' : '12px'}; background:${isPhone ? 'transparent' : '#fff'}; min-height:0; min-width:0; flex-direction:column; overflow:hidden;">
             <div style="padding:10px 12px; border-bottom:1px solid #e2e8f0; font-weight:700; color:#0f172a; display:flex; align-items:center; gap:8px;">
               ${isPhone ? '<button type="button" class="modal-btn" id="chat-btn-mobile-back" style="padding:6px 10px; min-width:0; font-size:16px; font-weight:700; line-height:1;">&lt;</button>' : ''}
               <div id="chat-thread-title" style="font-size:${isPhone ? '14px' : '16px'}; line-height:1.2;">${escapeHtml(getThreadTitle(selected))}</div>
@@ -1108,12 +1615,52 @@
               <button type="button" class="modal-btn" id="chat-btn-emoji" style="min-width:42px; padding:8px 10px;" aria-label="Emoji">&#128522;</button>
               <input id="chat-message-input" class="guru-field" type="text" placeholder="Ketik pesan..." style="flex:1;">
               <button type="button" class="modal-btn modal-btn-primary" id="chat-btn-send">Kirim</button>
-              <div id="chat-emoji-picker" style="display:none; position:absolute; left:10px; bottom:56px; width:min(360px, 90vw); max-height:340px; overflow:hidden; background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:0; box-shadow:0 8px 24px rgba(15,23,42,0.12); z-index:20;">
-                <emoji-picker id="chat-emoji-picker-el" style="width:100%; height:320px;"></emoji-picker>
-                <div id="chat-emoji-fallback" style="display:none; padding:8px; max-height:180px; overflow:auto;">
-                  <div style="display:grid; grid-template-columns:repeat(8, 1fr); gap:6px;">
-                    ${CHAT_EMOJIS.map(item => `<button type="button" data-chat-emoji="${escapeHtml(item)}" style="border:1px solid #e2e8f0; background:#fff; border-radius:8px; height:32px; cursor:pointer; font-size:18px;">${item}</button>`).join('')}
+              <div id="chat-emoji-picker-popover" style="display:none; position:absolute; left:10px; bottom:56px; width:min(360px, 90vw); max-height:360px; overflow:hidden; background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:0; box-shadow:0 8px 24px rgba(15,23,42,0.12); z-index:20;">
+                <div class="chat-media-tabs">
+                  <button type="button" class="chat-media-tab" data-chat-media-tab="emoji">Emoji</button>
+                  <button type="button" class="chat-media-tab" data-chat-media-tab="sticker">Sticker</button>
+                </div>
+                <div id="chat-emoji-panel-popover">
+                  <emoji-picker id="chat-emoji-picker-el-popover" style="width:100%; height:300px;"></emoji-picker>
+                  <div id="chat-emoji-fallback-popover" style="display:none; padding:8px; max-height:200px; overflow:auto;">
+                    <div style="display:grid; grid-template-columns:repeat(8, 1fr); gap:6px;">
+                      ${CHAT_EMOJIS.map(item => `<button type="button" data-chat-emoji="${escapeHtml(item)}" style="border:1px solid #e2e8f0; background:#fff; border-radius:8px; height:32px; cursor:pointer; font-size:18px;">${item}</button>`).join('')}
+                    </div>
                   </div>
+                </div>
+                <div id="chat-sticker-panel-popover" style="display:none; height:300px; flex-direction:column;">
+                  <div class="chat-sticker-controls" style="flex:0 0 auto;">
+                    <button type="button" class="chat-sticker-btn primary" id="chat-sticker-upload-popover">Upload</button>
+                    <button type="button" class="chat-sticker-btn" id="chat-sticker-refresh-popover">Refresh</button>
+                    <input id="chat-sticker-file-popover" type="file" accept="image/*" style="display:none;">
+                  </div>
+                  <div id="chat-sticker-status-popover" class="chat-sticker-status" style="flex:0 0 auto;"></div>
+                  <div id="chat-sticker-grid-popover" class="chat-sticker-grid"></div>
+                </div>
+              </div>
+            </div>
+            <div id="chat-emoji-bar" style="display:none; border-top:1px solid #e2e8f0; background:#fff; padding:0; flex:0 0 auto;">
+              <div id="chat-emoji-picker-bar" style="display:none; position:static; width:100%; max-height:280px; overflow:hidden; background:#fff; border:none; border-radius:0; padding:0; box-shadow:none;">
+                <div class="chat-media-tabs">
+                  <button type="button" class="chat-media-tab" data-chat-media-tab="emoji">Emoji</button>
+                  <button type="button" class="chat-media-tab" data-chat-media-tab="sticker">Sticker</button>
+                </div>
+                <div id="chat-emoji-panel-bar">
+                  <emoji-picker id="chat-emoji-picker-el-bar" style="width:100%; height:220px;"></emoji-picker>
+                  <div id="chat-emoji-fallback-bar" style="display:none; padding:8px; max-height:220px; overflow:auto;">
+                    <div style="display:grid; grid-template-columns:repeat(8, 1fr); gap:6px;">
+                      ${CHAT_EMOJIS.map(item => `<button type="button" data-chat-emoji="${escapeHtml(item)}" style="border:1px solid #e2e8f0; background:#fff; border-radius:8px; height:32px; cursor:pointer; font-size:18px;">${item}</button>`).join('')}
+                    </div>
+                  </div>
+                </div>
+                <div id="chat-sticker-panel-bar" style="display:none; height:220px; flex-direction:column;">
+                  <div class="chat-sticker-controls" style="flex:0 0 auto;">
+                    <button type="button" class="chat-sticker-btn primary" id="chat-sticker-upload-bar">Upload</button>
+                    <button type="button" class="chat-sticker-btn" id="chat-sticker-refresh-bar">Refresh</button>
+                    <input id="chat-sticker-file-bar" type="file" accept="image/*" style="display:none;">
+                  </div>
+                  <div id="chat-sticker-status-bar" class="chat-sticker-status" style="flex:0 0 auto;"></div>
+                  <div id="chat-sticker-grid-bar" class="chat-sticker-grid"></div>
                 </div>
               </div>
             </div>
@@ -1167,6 +1714,7 @@
 
       renderThreadList()
       renderMessagesPanel()
+      renderStickerResults()
 
       const openDmBtn = document.getElementById('chat-btn-open-dm-modal')
       const closeDmBtn = document.getElementById('chat-btn-close-dm-modal')
@@ -1237,15 +1785,28 @@
       const mobileBackBtn = document.getElementById('chat-btn-mobile-back')
       const input = document.getElementById('chat-message-input')
       const emojiBtn = document.getElementById('chat-btn-emoji')
-      const emojiPicker = document.getElementById('chat-emoji-picker')
-      const emojiPickerEl = document.getElementById('chat-emoji-picker-el')
-      const emojiFallback = document.getElementById('chat-emoji-fallback')
+      const emojiPickerPopover = document.getElementById('chat-emoji-picker-popover')
+      const emojiPickerBar = document.getElementById('chat-emoji-picker-bar')
+      const emojiPickerElPopover = document.getElementById('chat-emoji-picker-el-popover')
+      const emojiPickerElBar = document.getElementById('chat-emoji-picker-el-bar')
+      const emojiFallbackPopover = document.getElementById('chat-emoji-fallback-popover')
+      const emojiFallbackBar = document.getElementById('chat-emoji-fallback-bar')
+      const emojiBar = document.getElementById('chat-emoji-bar')
+      const emojiPickerEls = [emojiPickerElPopover, emojiPickerElBar].filter(Boolean)
+      const emojiFallbacks = [emojiFallbackPopover, emojiFallbackBar].filter(Boolean)
+      const stickerUploadBtnPopover = document.getElementById('chat-sticker-upload-popover')
+      const stickerUploadBtnBar = document.getElementById('chat-sticker-upload-bar')
+      const stickerRefreshBtnPopover = document.getElementById('chat-sticker-refresh-popover')
+      const stickerRefreshBtnBar = document.getElementById('chat-sticker-refresh-bar')
+      const stickerFilePopover = document.getElementById('chat-sticker-file-popover')
+      const stickerFileBar = document.getElementById('chat-sticker-file-bar')
+      state.emojiBarEl = emojiBar
       const clearSelectionBtn = document.getElementById('chat-btn-clear-selection')
       const deleteSelectedBtn = document.getElementById('chat-btn-delete-selected')
       const cancelDeleteBtn = document.getElementById('chat-btn-cancel-delete')
       const confirmDeleteBtn = document.getElementById('chat-btn-confirm-delete')
       const deleteOverlay = document.getElementById('chat-delete-confirm-overlay')
-      if (emojiPicker) emojiPicker.style.display = state.emojiPickerOpen ? 'block' : 'none'
+      updateMediaPanels()
       if (sendBtn) sendBtn.addEventListener('click', sendMessage)
       if (mobileBackBtn) {
         mobileBackBtn.addEventListener('click', () => {
@@ -1262,31 +1823,66 @@
       if (emojiBtn) {
         emojiBtn.addEventListener('click', event => {
           event.stopPropagation()
-          toggleEmojiPicker()
+          toggleEmojiPicker('emoji')
         })
       }
-      if (emojiPickerEl) {
-        if (typeof customElements !== 'undefined' && customElements.get('emoji-picker')) {
-          emojiPickerEl.style.display = 'block'
-          if (emojiFallback) emojiFallback.style.display = 'none'
-        } else {
-          emojiPickerEl.style.display = 'none'
-          if (emojiFallback) emojiFallback.style.display = 'block'
-        }
-        emojiPickerEl.addEventListener('emoji-click', event => {
+      Array.from(document.querySelectorAll('[data-chat-media-tab]')).forEach(btn => {
+        btn.addEventListener('click', event => {
+          event.stopPropagation()
+          const tab = String(btn.getAttribute('data-chat-media-tab') || '').trim()
+          if (tab) openMediaPicker(tab)
+        })
+      })
+      emojiPickerEls.forEach(pickerEl => {
+        const usePicker = typeof customElements !== 'undefined' && customElements.get('emoji-picker')
+        pickerEl.style.display = usePicker ? 'block' : 'none'
+        const fallback =
+          pickerEl === emojiPickerElPopover
+            ? emojiFallbackPopover
+            : pickerEl === emojiPickerElBar
+              ? emojiFallbackBar
+              : null
+        if (fallback) fallback.style.display = usePicker ? 'none' : 'block'
+        pickerEl.addEventListener('emoji-click', event => {
           const emoji = String(event?.detail?.unicode || '').trim()
           if (!emoji) return
           insertEmojiToInput(emoji)
         })
-      }
-      if (emojiFallback) {
-        Array.from(emojiFallback.querySelectorAll('[data-chat-emoji]')).forEach(btn => {
+      })
+      emojiFallbacks.forEach(fallback => {
+        Array.from(fallback.querySelectorAll('[data-chat-emoji]')).forEach(btn => {
           btn.addEventListener('click', event => {
             event.stopPropagation()
             const emoji = String(btn.getAttribute('data-chat-emoji') || '')
             if (!emoji) return
             insertEmojiToInput(emoji)
           })
+        })
+      })
+      if (stickerUploadBtnPopover && stickerFilePopover) {
+        stickerUploadBtnPopover.addEventListener('click', () => {
+          stickerFilePopover.click()
+        })
+      }
+      if (stickerUploadBtnBar && stickerFileBar) {
+        stickerUploadBtnBar.addEventListener('click', () => {
+          stickerFileBar.click()
+        })
+      }
+      if (stickerRefreshBtnPopover) stickerRefreshBtnPopover.addEventListener('click', refreshStickerLibrary)
+      if (stickerRefreshBtnBar) stickerRefreshBtnBar.addEventListener('click', refreshStickerLibrary)
+      if (stickerFilePopover) {
+        stickerFilePopover.addEventListener('change', async () => {
+          const file = stickerFilePopover.files?.[0] || null
+          stickerFilePopover.value = ''
+          if (file) await uploadStickerFromFile(file)
+        })
+      }
+      if (stickerFileBar) {
+        stickerFileBar.addEventListener('change', async () => {
+          const file = stickerFileBar.files?.[0] || null
+          stickerFileBar.value = ''
+          if (file) await uploadStickerFromFile(file)
         })
       }
       if (clearSelectionBtn) {
@@ -1322,12 +1918,17 @@
       if (!state.outsideClickHandler) {
         state.outsideClickHandler = event => {
           if (!state.emojiPickerOpen) return
-          const picker = document.getElementById('chat-emoji-picker')
-          const trigger = document.getElementById('chat-btn-emoji')
-          if (!picker || !trigger) return
+          const pickerPopover = document.getElementById('chat-emoji-picker-popover')
+          const pickerBar = document.getElementById('chat-emoji-picker-bar')
+          const emojiBar = document.getElementById('chat-emoji-bar')
+          const emojiTrigger = document.getElementById('chat-btn-emoji')
           const path = typeof event.composedPath === 'function' ? event.composedPath() : []
-          const clickedInsidePicker = path.includes(picker) || picker.contains(event.target)
-          const clickedTrigger = path.includes(trigger) || trigger.contains(event.target)
+          const clickedInsidePicker =
+            (pickerPopover && (path.includes(pickerPopover) || pickerPopover.contains(event.target))) ||
+            (pickerBar && (path.includes(pickerBar) || pickerBar.contains(event.target))) ||
+            (emojiBar && (path.includes(emojiBar) || emojiBar.contains(event.target)))
+          const clickedTrigger =
+            (emojiTrigger && (path.includes(emojiTrigger) || emojiTrigger.contains(event.target)))
           if (clickedInsidePicker || clickedTrigger) return
           closeEmojiPicker()
         }
@@ -1354,18 +1955,25 @@
       await loadThreadsAndMessages()
 
       // Prefer explicit target thread. If absent, keep latest user selection at decision time.
+      const hasActiveSelection = state.selectedMessageIds.size > 0
       const desiredSelection = requestedThreadId || (keepSelection ? safeId(state.selectedThreadId) : '')
       if (desiredSelection && state.threads.some(item => safeId(item.id) === desiredSelection)) {
+        if (!hasActiveSelection || safeId(state.selectedThreadId) !== desiredSelection) {
+          state.selectedMessageIds.clear()
+        }
         state.selectedThreadId = desiredSelection
-        state.selectedMessageIds.clear()
       } else {
         state.selectedThreadId = safeId(state.threads[0]?.id)
-        state.selectedMessageIds.clear()
+        if (!hasActiveSelection) {
+          state.selectedMessageIds.clear()
+        }
       }
-      const visibleIds = new Set((state.messagesByThread.get(safeId(state.selectedThreadId)) || []).map(item => String(item.id || '')))
-      ;[...state.selectedMessageIds].forEach(id => {
-        if (!visibleIds.has(String(id))) state.selectedMessageIds.delete(id)
-      })
+      if (!hasActiveSelection) {
+        const visibleIds = new Set((state.messagesByThread.get(safeId(state.selectedThreadId)) || []).map(item => String(item.id || '')))
+        ;[...state.selectedMessageIds].forEach(id => {
+          if (!visibleIds.has(String(id))) state.selectedMessageIds.delete(id)
+        })
+      }
       if (requestedThreadId && isPhoneChatMode()) enterMobileThreadView()
       if (!state.uiReady) renderUI()
       else if (isPhoneChatMode() && requestedThreadId) renderUI()
