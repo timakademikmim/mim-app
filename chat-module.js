@@ -1807,7 +1807,9 @@
       const confirmDeleteBtn = document.getElementById('chat-btn-confirm-delete')
       const deleteOverlay = document.getElementById('chat-delete-confirm-overlay')
       updateMediaPanels()
-      if (sendBtn) sendBtn.addEventListener('click', sendMessage)
+      if (sendBtn) sendBtn.addEventListener('click', () => {
+        sendMessage()
+      })
       if (mobileBackBtn) {
         mobileBackBtn.addEventListener('click', () => {
           if (isPhoneChatMode() && state.mobileThreadHistoryPushed) {
