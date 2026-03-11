@@ -214,6 +214,7 @@
           width: 100%;
           text-align: left;
           border: 1px solid var(--chat-thread-border, #dbe6f5);
+          font-family: 'Poppins', 'Segoe UI', sans-serif;
           background:
             linear-gradient(135deg, rgba(255,255,255,0.68) 0%, rgba(241,245,249,0.52) 100%);
           backdrop-filter: blur(10px);
@@ -262,6 +263,7 @@
           font-size: 13px;
           font-weight: 600;
           color: #0f172a;
+          font-family: 'Poppins', 'Segoe UI', sans-serif;
         }
         .chat-thread-preview {
           font-size: 12px;
@@ -270,6 +272,7 @@
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
+          font-family: 'Poppins', 'Segoe UI', sans-serif;
         }
         .chat-thread-menu-trigger {
           position: absolute;
@@ -305,6 +308,10 @@
           box-shadow: 0 12px 28px rgba(15,23,42,0.14);
           z-index: 25;
           padding: 6px;
+        }
+        #chat-btn-open-group-modal,
+        #chat-btn-create-group {
+          font-family: 'Poppins', 'Segoe UI', sans-serif;
         }
       `
       document.head.appendChild(style)
@@ -854,13 +861,13 @@
 
         rowsHtml.push(`
           <div style="display:flex; justify-content:${mine ? 'flex-end' : 'flex-start'}; margin-bottom:8px;" data-chat-row-id="${escapeHtml(msgId)}">
-            <div data-chat-own-click="${mine ? '1' : '0'}" data-chat-message-id="${escapeHtml(msgId)}" style="max-width:75%; background:${mine ? (selected ? '#bbf7d0' : '#dcfce7') : '#f1f5f9'}; border:1px solid ${selected ? '#16a34a' : '#e2e8f0'}; border-radius:10px; padding:8px 10px; ${mine ? 'cursor:pointer;' : ''}">
-              ${showSender ? `<div style="font-size:11px; color:#64748b; margin-bottom:2px;">${escapeHtml(String(sender?.nama || 'User'))}</div>` : ''}
-              <div style="${isStickerEmoji ? 'font-size:52px; line-height:1.05; text-align:center; padding:6px 0;' : 'font-size:13px; color:#0f172a; white-space:pre-wrap;'}">${escapeHtml(item.message_text || '')}</div>
-              <div style="font-size:10px; color:#64748b; margin-top:4px; text-align:right;">
-                <span>${escapeHtml(formatTimeOnly(item.created_at))}</span>
-                ${mine ? `<span style="margin-left:6px; color:${mineStatus === 'Sudah dibaca' ? '#16a34a' : '#64748b'};">${escapeHtml(mineStatus || 'Terkirim')}</span>` : ''}
+            <div style="display:flex; align-items:flex-end; gap:6px; ${mine ? 'flex-direction:row-reverse;' : ''}">
+              <div data-chat-own-click="${mine ? '1' : '0'}" data-chat-message-id="${escapeHtml(msgId)}" style="max-width:75%; background:${mine ? (selected ? '#bbf7d0' : '#dcfce7') : '#f1f5f9'}; border:1px solid ${selected ? '#16a34a' : '#e2e8f0'}; border-radius:10px; padding:8px 10px; ${mine ? 'cursor:pointer;' : ''}">
+                ${showSender ? `<div style="font-size:11px; color:#64748b; margin-bottom:2px;">${escapeHtml(String(sender?.nama || 'User'))}</div>` : ''}
+                <div style="${isStickerEmoji ? 'font-size:52px; line-height:1.05; text-align:center; padding:6px 0;' : 'font-size:13px; color:#0f172a; white-space:pre-wrap;'}">${escapeHtml(item.message_text || '')}</div>
+                ${mine ? `<div style="font-size:10px; color:${mineStatus === 'Sudah dibaca' ? '#16a34a' : '#64748b'}; margin-top:4px; text-align:right;">${escapeHtml(mineStatus || 'Terkirim')}</div>` : ''}
               </div>
+              <div style="font-size:10px; color:#94a3b8; margin-bottom:2px; white-space:nowrap;">${escapeHtml(formatTimeOnly(item.created_at))}</div>
             </div>
           </div>
         `)

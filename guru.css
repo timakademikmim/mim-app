@@ -1353,6 +1353,52 @@ body {
   background: #1d4ed8;
 }
 
+.app-popup-overlay.app-popup-anchored {
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+
+.app-popup-overlay.app-popup-anchored .app-popup-card {
+  position: absolute;
+  margin: 0;
+}
+
+.app-popup-overlay.app-popup-compact .app-popup-card {
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 8px;
+  border-radius: 10px;
+}
+
+.app-popup-overlay.app-popup-compact .app-popup-actions {
+  margin-top: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.app-popup-overlay.app-popup-compact .app-popup-actions button {
+  width: max-content;
+  max-width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.app-popup-overlay.app-popup-compact .app-popup-actions .app-popup-primary {
+  background: #f1f5f9;
+  color: #0f172a;
+  border-color: #e2e8f0;
+}
+
+.app-popup-overlay.app-popup-compact .app-popup-actions .app-popup-primary:hover {
+  background: #e2e8f0;
+}
+
 .nilai-detail-overlay {
   position: fixed;
   inset: 0;

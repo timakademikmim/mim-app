@@ -3544,7 +3544,7 @@ async function openLaporanBulananBulkInputModal() {
   const reportMap = new Map()
   const reportRes = await sb
     .from(MONTHLY_REPORT_TABLE)
-    .select('santri_id, nilai_akhlak, predikat, catatan_wali')
+    .select('*')
     .eq('periode', periode)
     .eq('guru_id', String(guru.id))
     .in('santri_id', santriIds)
@@ -3855,11 +3855,53 @@ function loadGuruNotifPrefs() {
   }
 
   window.showPopupChoices = function showPopupChoices(message, choices = []) {
-    return new Promise(resolve => {
-      messageEl.textContent = String(message ?? '')
-      actionsEl.innerHTML = ''
+    const overlayEl = document.getElementById('app-popup-overlay')
+    const messageEl = document.getElementById('app-popup-message')
+    const actionsEl = document.getElementById('app-popup-actions')
+    const list = Array.isArray(choices) ? choices : []
 
-      const list = Array.isArray(choices) ? choices : []
+    if (!overlayEl || !messageEl || !actionsEl) {
+      if (list.length === 2) {
+        const ok = confirm(`${String(message ?? '')}\n\nOK = ${String(list[0]?.label || 'Opsi 1')}\nCancel = ${String(list[1]?.label || 'Opsi 2')}`)
+        return Promise.resolve(String(ok ? (list[0]?.value || '') : (list[1]?.value || '')))
+      }
+      alert(String(message ?? ''))
+      return Promise.resolve('')
+    }
+
+    let overlayClickGuard = null
+    const closePopup = () => {
+      overlayEl.classList.remove('open')
+      overlayEl.classList.remove('app-popup-compact')
+      overlayEl.classList.remove('app-popup-anchored')
+      overlayEl.classList.remove('app-popup-choices-open')
+      overlayEl.setAttribute('aria-hidden', 'true')
+      actionsEl.innerHTML = ''
+      messageEl.style.display = ''
+      const card = overlayEl.querySelector('.app-popup-card')
+      if (card) {
+        card.style.left = ''
+        card.style.top = ''
+        card.style.position = ''
+      }
+      if (overlayClickGuard) {
+        overlayEl.removeEventListener('click', overlayClickGuard, true)
+        overlayClickGuard = null
+      }
+      window.__popupAnchorEl = null
+    }
+
+    return new Promise(resolve => {
+      const msgText = String(message ?? '')
+      const isCompact = !msgText && list.length <= 3
+      messageEl.textContent = msgText
+      messageEl.style.display = msgText ? '' : 'none'
+      actionsEl.innerHTML = ''
+      overlayEl.classList.toggle('app-popup-compact', isCompact)
+      const anchorEl = window.__popupAnchorEl instanceof HTMLElement ? window.__popupAnchorEl : null
+      overlayEl.classList.toggle('app-popup-anchored', Boolean(anchorEl))
+      overlayEl.classList.add('app-popup-choices-open')
+
       if (!list.length) {
         const btn = document.createElement('button')
         btn.type = 'button'
@@ -3884,10 +3926,39 @@ function loadGuruNotifPrefs() {
         })
       }
 
-      overlay.classList.add('open')
-      overlay.setAttribute('aria-hidden', 'false')
+      overlayEl.classList.add('open')
+      overlayEl.setAttribute('aria-hidden', 'false')
       const focusBtn = actionsEl.querySelector('button.app-popup-primary') || actionsEl.querySelector('button')
       if (focusBtn) focusBtn.focus()
+      const openedAt = Date.now()
+      overlayClickGuard = event => {
+        if (event.target !== overlayEl) return
+        event.stopImmediatePropagation()
+        event.preventDefault()
+        if (Date.now() - openedAt < 200) return
+        closePopup()
+        resolve('')
+      }
+      overlayEl.addEventListener('click', overlayClickGuard, true)
+      if (anchorEl) {
+        requestAnimationFrame(() => {
+          const card = overlayEl.querySelector('.app-popup-card')
+          if (!card) return
+          const rect = anchorEl.getBoundingClientRect()
+          const cardRect = card.getBoundingClientRect()
+          const margin = 8
+          let top = rect.bottom + 6
+          if (top + cardRect.height > window.innerHeight - margin) {
+            top = rect.top - cardRect.height - 6
+          }
+          top = Math.max(margin, Math.min(top, window.innerHeight - cardRect.height - margin))
+          let left = rect.right - cardRect.width
+          left = Math.max(margin, Math.min(left, window.innerWidth - cardRect.width - margin))
+          card.style.position = 'absolute'
+          card.style.top = `${top}px`
+          card.style.left = `${left}px`
+        })
+      }
     })
   }
   const rangeRaw = Number(localStorage.getItem(TOPBAR_NOTIF_RANGE_KEY) || '3')
@@ -5865,6 +5936,7 @@ async function renderLaporanBulananPage(forceReload = false) {
   const isTemplateEditing = laporanBulananState.waTemplateEditing === true
 
   const santriIds = santriList.map(item => String(item.id))
+  const hasValue = value => value !== null && value !== undefined && String(value).trim() !== ''
   const monthlyReportMap = new Map()
   const reportRes = await sb
     .from(MONTHLY_REPORT_TABLE)
@@ -5879,36 +5951,123 @@ async function renderLaporanBulananPage(forceReload = false) {
     }
   } else {
     ;(reportRes.data || []).forEach(row => {
-      monthlyReportMap.set(String(row.santri_id), row)
+      const sid = String(row.santri_id || '')
+      if (!sid) return
+      const kid = String(row.kelas_id || '')
+      monthlyReportMap.set(sid, row)
+      if (kid) monthlyReportMap.set(`${sid}|${kid}`, row)
+    })
+  }
+
+  const muhaffizPresenceBySantri = new Map()
+  const musyrifPresenceBySantri = new Map()
+  const ekskulMemberSet = new Set()
+  const ekskulCatatanSet = new Set()
+  const presenceRes = await sb
+    .from(MONTHLY_REPORT_TABLE)
+    .select('santri_id, muhaffiz, catatan_muhaffiz, nilai_kehadiran_halaqah, nilai_akhlak_halaqah, nilai_ujian_bulanan, nilai_target_hafalan, nilai_capaian_hafalan_bulanan, nilai_jumlah_hafalan_halaman, nilai_jumlah_hafalan_juz, musyrif, catatan_musyrif, nilai_kehadiran_liqa_muhasabah, nilai_ibadah, nilai_kedisiplinan, nilai_kebersihan, nilai_adab')
+    .eq('periode', periode)
+    .in('santri_id', santriIds)
+  if (!presenceRes.error) {
+    ;(presenceRes.data || []).forEach(row => {
+      const sid = String(row?.santri_id || '')
+      if (!sid) return
+      const muhaffizFilled = (
+        hasValue(row?.catatan_muhaffiz) ||
+        hasValue(row?.muhaffiz) ||
+        hasValue(row?.nilai_kehadiran_halaqah) ||
+        hasValue(row?.nilai_akhlak_halaqah) ||
+        hasValue(row?.nilai_ujian_bulanan) ||
+        hasValue(row?.nilai_target_hafalan) ||
+        hasValue(row?.nilai_capaian_hafalan_bulanan) ||
+        hasValue(row?.nilai_jumlah_hafalan_halaman) ||
+        hasValue(row?.nilai_jumlah_hafalan_juz)
+      )
+      const musyrifFilled = (
+        hasValue(row?.catatan_musyrif) ||
+        hasValue(row?.musyrif) ||
+        hasValue(row?.nilai_kehadiran_liqa_muhasabah) ||
+        hasValue(row?.nilai_ibadah) ||
+        hasValue(row?.nilai_kedisiplinan) ||
+        hasValue(row?.nilai_kebersihan) ||
+        hasValue(row?.nilai_adab)
+      )
+      if (muhaffizFilled) muhaffizPresenceBySantri.set(sid, true)
+      if (musyrifFilled) musyrifPresenceBySantri.set(sid, true)
+    })
+  }
+  const ekskulMemberRes = await sb
+    .from(EKSKUL_MEMBER_TABLE)
+    .select('santri_id')
+    .in('santri_id', santriIds)
+  if (!ekskulMemberRes.error) {
+    ;(ekskulMemberRes.data || []).forEach(row => {
+      const sid = String(row?.santri_id || '')
+      if (sid) ekskulMemberSet.add(sid)
+    })
+  }
+  const ekskulMonthlyRes = await sb
+    .from(EKSKUL_MONTHLY_TABLE)
+    .select('santri_id, catatan_pj')
+    .eq('periode', periode)
+    .in('santri_id', santriIds)
+  if (!ekskulMonthlyRes.error) {
+    ;(ekskulMonthlyRes.data || []).forEach(row => {
+      const sid = String(row?.santri_id || '')
+      if (!sid) return
+      if (hasValue(row?.catatan_pj)) ekskulCatatanSet.add(sid)
     })
   }
 
   const rowsHtml = santriList.map((item, index) => {
     const kelasNama = kelasMap.get(String(item.kelas_id || ''))?.nama_kelas || '-'
-    const reportRow = monthlyReportMap.get(String(item.id))
+    const reportRow = monthlyReportMap.get(`${String(item.id)}|${String(item.kelas_id || '')}`) || monthlyReportMap.get(String(item.id))
     const gradeAkhlak = reportRow?.nilai_akhlak === null || reportRow?.nilai_akhlak === undefined
       ? ''
       : normalizeAkhlakGrade(reportRow.nilai_akhlak)
     const keteranganAkhlak = gradeAkhlak ? getAkhlakKeteranganByGrade(gradeAkhlak) : ''
     const missing = []
-    if (!gradeAkhlak) missing.push('Nilai akhlak')
-    if (!keteranganAkhlak) missing.push('Keterangan')
-    if (!reportRow || String(reportRow.catatan_wali || '').trim() === '') missing.push('Catatan wali kelas')
-    const isLengkap = missing.length === 0
-    const keterangan = isLengkap ? 'Lengkap' : `Belum lengkap: ${missing.join(', ')}`
-    const keteranganStyle = isLengkap ? 'color:#166534; font-weight:600;' : 'color:#991b1b;'
+    const waliMissing = !gradeAkhlak || !keteranganAkhlak || !reportRow || String(reportRow.catatan_wali || '').trim() === ''
+    const muhaffizFilled = reportRow && (
+      hasValue(reportRow.catatan_muhaffiz) ||
+      hasValue(reportRow.muhaffiz) ||
+      hasValue(reportRow.nilai_kehadiran_halaqah) ||
+      hasValue(reportRow.nilai_akhlak_halaqah) ||
+      hasValue(reportRow.nilai_ujian_bulanan) ||
+      hasValue(reportRow.nilai_target_hafalan) ||
+      hasValue(reportRow.nilai_capaian_hafalan_bulanan) ||
+      hasValue(reportRow.nilai_jumlah_hafalan_halaman) ||
+      hasValue(reportRow.nilai_jumlah_hafalan_juz)
+    ) || muhaffizPresenceBySantri.get(String(item.id)) === true
+    const musyrifFilled = reportRow && (
+      hasValue(reportRow.catatan_musyrif) ||
+      hasValue(reportRow.musyrif) ||
+      hasValue(reportRow.nilai_kehadiran_liqa_muhasabah) ||
+      hasValue(reportRow.nilai_ibadah) ||
+      hasValue(reportRow.nilai_kedisiplinan) ||
+      hasValue(reportRow.nilai_kebersihan) ||
+      hasValue(reportRow.nilai_adab)
+    ) || musyrifPresenceBySantri.get(String(item.id)) === true
+    const muhaffizMissing = !muhaffizFilled
+    const musyrifMissing = !musyrifFilled
+    const ekskulMissing = ekskulMemberSet.has(String(item.id)) && !ekskulCatatanSet.has(String(item.id))
+    if (waliMissing) missing.push('Wali Kelas')
+    if (muhaffizMissing) missing.push('Muhaffiz')
+    if (musyrifMissing) missing.push('Musyrif')
+    if (ekskulMissing) missing.push('Ekskul')
+    const keteranganHtml = missing.length
+      ? `Belum lengkap: ${missing.map(label => `<span style="color:#b91c1c; font-weight:600;">${escapeHtml(label)}</span>`).join(', ')}`
+      : '<span style="color:#166534; font-weight:600;">Sudah lengkap</span>'
     return `
       <tr>
-        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${index + 1}</td>
-        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.nama || '-')}</td>
-        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(kelasNama)}</td>
-        <td style="padding:8px; border:1px solid #e2e8f0; ${keteranganStyle}">${escapeHtml(keterangan)}</td>
-        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">
-          <div style="display:flex; gap:6px; justify-content:center; flex-wrap:nowrap; white-space:nowrap;">
-            <button type="button" class="modal-btn modal-btn-primary" style="padding:6px 10px; font-size:12px;" onclick="openLaporanBulananDetail('${escapeHtml(String(item.id))}')">Detail</button>
-            <button type="button" class="modal-btn" style="padding:6px 10px; font-size:12px;" onclick="quickPrintLaporanBulanan('${escapeHtml(String(item.id))}')">Cetak</button>
-            <button type="button" class="modal-btn" style="padding:6px 10px; font-size:12px;" onclick="quickSendLaporanBulananWA('${escapeHtml(String(item.id))}')">Kirim</button>
-          </div>
+        <td class="lap-bulanan-col-no" style="padding:6px; border:1px solid #e2e8f0; text-align:center; width:36px;">${index + 1}</td>
+        <td class="lap-bulanan-col-nama" style="padding:8px; border:1px solid #e2e8f0;">
+          <button type="button" style="border:none; background:transparent; padding:0; margin:0; font-size:13px; color:#0f172a; cursor:pointer; text-align:left;" onclick="openLaporanBulananDetail('${escapeHtml(String(item.id))}')">${escapeHtml(item.nama || '-')}</button>
+        </td>
+        <td class="lap-bulanan-col-kelas" style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(kelasNama)}</td>
+        <td class="lap-bulanan-col-ket" style="padding:8px; border:1px solid #e2e8f0;">${keteranganHtml}</td>
+        <td class="lap-bulanan-col-aksi" style="padding:4px; border:1px solid #e2e8f0; text-align:center; width:36px;">
+          <button type="button" style="border:none; background:transparent; padding:0; font-size:18px; line-height:1; width:20px; height:20px; cursor:pointer; color:#0f172a;" onclick="openLaporanBulananActions('${escapeHtml(String(item.id))}', this)">&#8942;</button>
         </td>
       </tr>
     `
@@ -5935,19 +6094,19 @@ async function renderLaporanBulananPage(forceReload = false) {
       </div>
       <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
         <button type="button" class="modal-btn modal-btn-primary" onclick="openLaporanBulananBulkInputModal()">Input Massal</button>
-        <div style="font-size:13px; color:#475569;">Klik detail untuk melihat laporan bulanan per santri.</div>
+        <div style="font-size:13px; color:#475569;">Klik nama santri untuk melihat detail laporan.</div>
       </div>
     </div>
 
     <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px;">
-      <table style="width:100%; min-width:980px; border-collapse:collapse; font-size:13px;">
+      <table class="laporan-bulanan-table" style="width:100%; min-width:980px; border-collapse:collapse; font-size:13px;">
         <thead>
           <tr style="background:#f8fafc;">
-            <th style="padding:8px; border:1px solid #e2e8f0; width:44px;">No</th>
-            <th style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Nama</th>
-            <th style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Kelas</th>
-            <th style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Keterangan</th>
-            <th style="padding:8px; border:1px solid #e2e8f0; width:260px;">Aksi</th>
+            <th class="lap-bulanan-col-no" style="padding:6px; border:1px solid #e2e8f0; width:36px;">No</th>
+            <th class="lap-bulanan-col-nama" style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Nama</th>
+            <th class="lap-bulanan-col-kelas" style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Kelas</th>
+            <th class="lap-bulanan-col-ket" style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Keterangan</th>
+            <th class="lap-bulanan-col-aksi" style="padding:4px; border:1px solid #e2e8f0; width:36px;">Aksi</th>
           </tr>
         </thead>
         <tbody>
@@ -7138,6 +7297,31 @@ async function quickPrintLaporanBulanan(santriId) {
   if (!detailData) return
   laporanBulananState.currentDetail = detailData.currentDetail
   printLaporanBulanan()
+}
+
+async function openLaporanBulananActions(santriId, triggerEl = null) {
+  const sid = String(santriId || '').trim()
+  if (!sid) return
+  const santri = (laporanBulananState.santriList || []).find(item => String(item.id) === sid)
+  const label = santri?.nama || 'santri'
+  if (triggerEl instanceof HTMLElement) {
+    window.__popupAnchorEl = triggerEl
+  } else {
+    window.__popupAnchorEl = null
+  }
+  if (typeof window.showPopupChoices !== 'function') {
+    const ok = confirm(`Cetak laporan bulanan ${label}? Tekan OK untuk Cetak, Cancel untuk Kirim.`)
+    if (ok) await quickPrintLaporanBulanan(sid)
+    else await quickSendLaporanBulananWA(sid)
+    window.__popupAnchorEl = null
+    return
+  }
+  const choice = await window.showPopupChoices('', [
+    { label: 'Cetak', value: 'print', primary: true },
+    { label: 'Kirim', value: 'send' }
+  ])
+  if (choice === 'print') await quickPrintLaporanBulanan(sid)
+  if (choice === 'send') await quickSendLaporanBulananWA(sid)
 }
 
 async function quickSendLaporanBulananWA(santriId) {
@@ -13336,7 +13520,7 @@ async function loadGuruPage(page, options = {}) {
   }
   closeTopbarUserMenu()
 
-  const allowPageCache = targetPage !== 'monitoring'
+  const allowPageCache = targetPage !== 'monitoring' && targetPage !== 'laporan-bulanan'
   const cachedHtml = allowPageCache ? getGuruPageCache(targetPage) : ''
   if (allowPageCache && cachedHtml) {
     const content = document.getElementById('guru-content')
@@ -13382,7 +13566,7 @@ async function loadGuruPage(page, options = {}) {
     case 'laporan-absensi':
       return renderGuruPageAndHandleCache({ pageKey: targetPage, renderFn: renderLaporanAbsensiPage })
     case 'laporan-bulanan':
-      return renderGuruPageAndHandleCache({ pageKey: targetPage, renderFn: renderLaporanBulananPage })
+      return renderGuruPageAndHandleCache({ pageKey: targetPage, renderFn: renderLaporanBulananPage, cacheAction: 'clear' })
     case 'rapor':
       return renderGuruPageAndHandleCache({ pageKey: targetPage, renderFn: renderRaporPage })
     case 'profil':
@@ -13565,6 +13749,7 @@ window.saveMonthlyWaTemplate = saveMonthlyWaTemplate
 window.startMonthlyWaTemplateEdit = startMonthlyWaTemplateEdit
 window.cancelMonthlyWaTemplateEdit = cancelMonthlyWaTemplateEdit
 window.openLaporanBulananDetail = openLaporanBulananDetail
+window.openLaporanBulananActions = openLaporanBulananActions
 window.openLaporanAbsensiSantriDetail = openLaporanAbsensiSantriDetail
 window.quickPrintLaporanBulanan = quickPrintLaporanBulanan
 window.quickSendLaporanBulananWA = quickSendLaporanBulananWA

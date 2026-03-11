@@ -195,7 +195,7 @@ function applyPlatformUiSkin() {
   const link = document.createElement('link')
   link.id = 'android-ui-css'
   link.rel = 'stylesheet'
-  link.href = 'android-ui.css?v=20260310-android-perizinan-fit-02'
+  link.href = 'android-ui.css?v=20260311-android-laporan-bulanan-01'
   document.head.appendChild(link)
 
   ensureAndroidBottomNav()
@@ -209,11 +209,20 @@ function showAndroidWelcomeScreen() {
   if (!document.body) return
   if (sessionStorage.getItem('android_welcome_seen') === '1') return
   sessionStorage.setItem('android_welcome_seen', '1')
+  document.body.classList.add('android-welcome-active')
 
   if (!document.getElementById('android-welcome-style')) {
     const style = document.createElement('style')
     style.id = 'android-welcome-style'
     style.textContent = `
+      body.android-welcome-active .layout {
+        opacity: 0;
+        pointer-events: none;
+      }
+      body.android-welcome-active #android-bottom-nav {
+        opacity: 0;
+        pointer-events: none;
+      }
       .android-welcome-screen {
         position: fixed;
         inset: 0;
@@ -249,7 +258,7 @@ function showAndroidWelcomeScreen() {
     document.body.appendChild(overlay)
   }
 
-  requestAnimationFrame(() => overlay.classList.add('show'))
+  overlay.classList.add('show')
   const minShowMs = 900
   window.setTimeout(() => {
     overlay.classList.remove('show')
@@ -257,6 +266,7 @@ function showAndroidWelcomeScreen() {
       try {
         overlay.remove()
       } catch (_error) {}
+      document.body.classList.remove('android-welcome-active')
     }, 320)
   }, minShowMs)
 }

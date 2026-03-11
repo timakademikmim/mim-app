@@ -239,6 +239,45 @@ body.platform-android #musyrif-perizinan-review-list table {
   table-layout: fixed !important;
 }
 
+body.platform-android .laporan-bulanan-table {
+  min-width: 680px !important;
+  table-layout: fixed !important;
+}
+
+body.platform-android .laporan-bulanan-table th,
+body.platform-android .laporan-bulanan-table td {
+  padding: 6px 6px !important;
+  font-size: 12px !important;
+}
+
+body.platform-android .lap-bulanan-col-nama {
+  width: 160px;
+}
+
+body.platform-android .lap-bulanan-col-kelas {
+  width: 48px;
+}
+
+body.platform-android .lap-bulanan-col-ket {
+  width: 180px;
+}
+
+body.platform-android .lap-bulanan-col-nama,
+body.platform-android .lap-bulanan-col-kelas,
+body.platform-android .lap-bulanan-col-ket {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body.platform-android .lap-bulanan-col-no {
+  width: 10px;
+}
+
+body.platform-android .lap-bulanan-col-nama button {
+  font-size: 12px !important;
+}
+
 body.platform-android #guru-perizinan-own-list th,
 body.platform-android #guru-perizinan-own-list td,
 body.platform-android #guru-perizinan-approval-list th,
