@@ -2203,7 +2203,26 @@ window.openExternalUrl = async function openExternalUrl(url) {
     console.error('openExternalUrl invoke failed:', error)
   }
   if (isTauriApp && isAndroidApp) {
-    // On Android Tauri, avoid WebView fallback for custom schemes (e.g. whatsapp://),
+    const isWhatsappTarget =
+      /wa\.me\//i.test(target) ||
+      /api\.whatsapp\.com\//i.test(target) ||
+      /^whatsapp:\/\//i.test(target)
+    if (isWhatsappTarget) {
+      let httpsTarget = target
+      if (/^whatsapp:\/\/send\?/i.test(target)) {
+        const query = target.replace(/^whatsapp:\/\/send\?/i, '')
+        httpsTarget = `https://api.whatsapp.com/send?${query}`
+      }
+      if (/^https?:\/\//i.test(httpsTarget)) {
+        try {
+          const withoutScheme = httpsTarget.replace(/^https?:\/\//i, '')
+          const scheme = httpsTarget.toLowerCase().startsWith('https://') ? 'https' : 'http'
+          window.location.href = `intent://${withoutScheme}#Intent;scheme=${scheme};package=com.whatsapp;action=android.intent.action.VIEW;end`
+          return true
+        } catch (_error) {}
+      }
+    }
+    // On Android Tauri, avoid generic WebView fallback for custom schemes
     // because it can trigger ERR_UNKNOWN_URL_SCHEME in-app.
     return false
   }
@@ -2248,6 +2267,86 @@ window.openExternalUrl = async function openExternalUrl(url) {
   } catch (_error) {
     return false
   }
+}
+
+function safeChatId(value) {
+  return String(value || '').trim()
+}
+
+function getChatNotifyStorageKey(userId) {
+  return `chat_notify_state:${userId}`
+}
+
+function loadChatNotifyState(userId) {
+  const key = getChatNotifyStorageKey(userId)
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return { lastTs: 0, lastId: '' }
+    const parsed = JSON.parse(raw)
+    return {
+      lastTs: Number(parsed?.lastTs || 0) || 0,
+      lastId: String(parsed?.lastId || '')
+    }
+  } catch (_error) {
+    return { lastTs: 0, lastId: '' }
+  }
+}
+
+function saveChatNotifyState(userId, nextState) {
+  const key = getChatNotifyStorageKey(userId)
+  try {
+    localStorage.setItem(key, JSON.stringify(nextState || {}))
+  } catch (_error) {}
+}
+
+window.showLocalNotification = async function showLocalNotification(title, body) {
+  const isTauriApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
+  const isAndroidApp = /android/i.test(String(navigator.userAgent || ''))
+  if (!isTauriApp || !isAndroidApp) return false
+  try {
+    const result = await invokeTauriCommand('show_local_notification', {
+      title: String(title || '').trim(),
+      body: String(body || '').trim()
+    })
+    return result === true
+  } catch (error) {
+    console.error('showLocalNotification failed:', error)
+    return false
+  }
+}
+
+window.maybeNotifyChatMessage = async function maybeNotifyChatMessage({ userId, latestIncoming }) {
+  const uid = safeChatId(userId)
+  if (!uid || !latestIncoming) return false
+  const messageId = safeChatId(latestIncoming.id || latestIncoming.message_id)
+  const threadId = safeChatId(latestIncoming.thread_id || latestIncoming.threadId)
+  const messageText = String(latestIncoming.message_text || latestIncoming.text || '').trim()
+  const createdAt = String(latestIncoming.created_at || latestIncoming.createdAt || '').trim()
+  const ts = Number.isFinite(latestIncoming.ts)
+    ? Number(latestIncoming.ts)
+    : Date.parse(createdAt)
+  if (!Number.isFinite(ts) || ts <= 0) return false
+
+  const state = loadChatNotifyState(uid)
+  if ((state.lastTs || 0) >= ts) return false
+  if (state.lastId && messageId && state.lastId === messageId) return false
+
+  const chatState = window.__chatModuleActiveState
+  const isViewingThread = !!(
+    chatState &&
+    safeChatId(chatState.selectedThreadId) === threadId &&
+    (!chatState.mobileChatView || chatState.mobileChatView === 'thread')
+  )
+
+  saveChatNotifyState(uid, { lastTs: ts, lastId: messageId || state.lastId || '' })
+
+  if (document.hidden) return false
+  if (isViewingThread) return false
+
+  const title = 'Pesan baru'
+  const body = messageText || 'Anda menerima pesan baru.'
+  await window.showLocalNotification(title, body)
+  return true
 }
 
 window.downloadToAndroidAppStorage = async function downloadToAndroidAppStorage(url, fileName = '') {

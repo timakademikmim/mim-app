@@ -1,6 +1,7 @@
 use base64::Engine;
 use std::path::PathBuf;
 use tauri::Manager;
+use tauri_plugin_notification::NotificationExt;
 
 #[cfg(all(
   not(debug_assertions),
@@ -44,6 +45,18 @@ fn emit_updater_status(
   }
 }
 
+#[cfg(target_os = "android")]
+fn run_android_am(args: &[&str]) -> bool {
+  let bins = ["am", "/system/bin/am"];
+  for bin in bins {
+    match std::process::Command::new(bin).args(args).status() {
+      Ok(status) if status.success() => return true,
+      _ => {}
+    }
+  }
+  false
+}
+
 #[tauri::command]
 fn open_external_url(url: String) -> Result<bool, String> {
   let target = url.trim();
@@ -52,12 +65,7 @@ fn open_external_url(url: String) -> Result<bool, String> {
   }
   #[cfg(target_os = "android")]
   {
-    let try_start = |args: &[&str]| -> bool {
-      match std::process::Command::new("am").args(args).status() {
-        Ok(status) => status.success(),
-        Err(_) => false,
-      }
-    };
+    let try_start = |args: &[&str]| -> bool { run_android_am(args) };
 
     let is_whatsapp_target = target.contains("wa.me/")
       || target.contains("api.whatsapp.com/")
@@ -96,6 +104,38 @@ fn open_external_url(url: String) -> Result<bool, String> {
         ]) {
           return Ok(true);
         }
+      }
+
+      // Intent URL fallback (bypasses custom scheme errors on some Android builds).
+      let intent_url = if target.starts_with("whatsapp://send?") {
+        let query = target.trim_start_matches("whatsapp://send?");
+        format!(
+          "intent://api.whatsapp.com/send?{}#Intent;scheme=https;package=com.whatsapp;action=android.intent.action.VIEW;end",
+          query
+        )
+      } else if target.starts_with("https://") || target.starts_with("http://") {
+        let without_scheme = target
+          .trim_start_matches("https://")
+          .trim_start_matches("http://");
+        let scheme = if target.starts_with("https://") { "https" } else { "http" };
+        format!(
+          "intent://{}#Intent;scheme={};package=com.whatsapp;action=android.intent.action.VIEW;end",
+          without_scheme, scheme
+        )
+      } else {
+        String::new()
+      };
+      if !intent_url.is_empty()
+        && try_start(&[
+          "start",
+          "--activity-new-task",
+          "-a",
+          "android.intent.action.VIEW",
+          "-d",
+          &intent_url,
+        ])
+      {
+        return Ok(true);
       }
 
       // Generic whatsapp URL without forcing package (lets Android resolve handler).
@@ -184,12 +224,7 @@ fn open_whatsapp_message(phone: String, message: String) -> Result<bool, String>
       normalized_phone, encoded_message
     );
 
-    let try_start = |args: &[&str]| -> bool {
-      match std::process::Command::new("am").args(args).status() {
-        Ok(status) => status.success(),
-        Err(_) => false,
-      }
-    };
+    let try_start = |args: &[&str]| -> bool { run_android_am(args) };
 
     if try_start(&[
       "start",
@@ -202,6 +237,21 @@ fn open_whatsapp_message(phone: String, message: String) -> Result<bool, String>
       &wa_api,
       "-p",
       "com.whatsapp",
+    ]) {
+      return Ok(true);
+    }
+
+    let intent_url = format!(
+      "intent://api.whatsapp.com/send?phone={}&text={}#Intent;scheme=https;package=com.whatsapp;action=android.intent.action.VIEW;end",
+      normalized_phone, encoded_message
+    );
+    if try_start(&[
+      "start",
+      "--activity-new-task",
+      "-a",
+      "android.intent.action.VIEW",
+      "-d",
+      &intent_url,
     ]) {
       return Ok(true);
     }
@@ -268,6 +318,26 @@ fn open_whatsapp_message(phone: String, message: String) -> Result<bool, String>
     let _ = message;
     Ok(false)
   }
+}
+
+#[tauri::command]
+fn show_local_notification(app: tauri::AppHandle, title: String, body: String) -> Result<bool, String> {
+  let title = title.trim();
+  let body = body.trim();
+  if title.is_empty() && body.is_empty() {
+    return Ok(false);
+  }
+  let mut builder = app.notification().builder();
+  if !title.is_empty() {
+    builder = builder.title(title);
+  }
+  if !body.is_empty() {
+    builder = builder.body(body);
+  }
+  builder
+    .show()
+    .map(|_| true)
+    .map_err(|e| format!("Gagal menampilkan notifikasi: {e}"))
 }
 
 fn get_desktop_export_dir() -> Result<PathBuf, String> {
@@ -649,7 +719,7 @@ pub fn run() {
     let _ = rustls::crypto::ring::default_provider().install_default();
   }
 
-  let builder = tauri::Builder::default();
+  let builder = tauri::Builder::default().plugin(tauri_plugin_notification::init());
   #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
   let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
@@ -657,6 +727,7 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       open_external_url,
       open_whatsapp_message,
+      show_local_notification,
       download_url_to_app_storage,
       save_base64_to_downloads,
       save_pdf_base64,

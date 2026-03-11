@@ -848,7 +848,7 @@ function getChatTimestampMs(value) {
 
 async function fetchMuhaffizUnreadChatThreadCount() {
   const userId = String(muhaffizState?.profile?.id || '').trim()
-  if (!userId) return 0
+  if (!userId) return { unreadCount: 0, latestIncoming: null, userId: '' }
 
   let hasLastReadColumn = true
   let membersRes = await sb
@@ -867,17 +867,18 @@ async function fetchMuhaffizUnreadChatThreadCount() {
 
   const members = Array.isArray(membersRes.data) ? membersRes.data : []
   const threadIds = [...new Set(members.map(item => String(item?.thread_id || '').trim()).filter(Boolean))]
-  if (!threadIds.length) return 0
+  if (!threadIds.length) return { unreadCount: 0, latestIncoming: null, userId }
 
   const { data: msgRows, error: msgErr } = await sb
     .from(CHAT_MESSAGES_TABLE)
-    .select('thread_id, sender_id, created_at')
+    .select('id, thread_id, sender_id, message_text, created_at')
     .in('thread_id', threadIds)
     .order('created_at', { ascending: false })
     .limit(1000)
   if (msgErr) throw msgErr
 
   const latestIncomingMsByThread = new Map()
+  let latestIncoming = null
   ;(msgRows || []).forEach(row => {
     const threadId = String(row?.thread_id || '').trim()
     if (!threadId) return
@@ -885,6 +886,16 @@ async function fetchMuhaffizUnreadChatThreadCount() {
     const currentMs = latestIncomingMsByThread.get(threadId) || 0
     const nextMs = getChatTimestampMs(row?.created_at)
     if (nextMs > currentMs) latestIncomingMsByThread.set(threadId, nextMs)
+    if (!latestIncoming || nextMs > (latestIncoming.ts || 0)) {
+      latestIncoming = {
+        id: row?.id,
+        thread_id: threadId,
+        sender_id: row?.sender_id,
+        message_text: row?.message_text,
+        created_at: row?.created_at,
+        ts: nextMs
+      }
+    }
   })
 
   let unread = 0
@@ -900,7 +911,7 @@ async function fetchMuhaffizUnreadChatThreadCount() {
     const readMs = getChatTimestampMs(member?.last_read_at)
     if (!readMs || incomingMs > readMs) unread += 1
   })
-  return unread
+  return { unreadCount: unread, latestIncoming, userId }
 }
 
 async function refreshMuhaffizTopbarChatBadge() {
@@ -908,8 +919,11 @@ async function refreshMuhaffizTopbarChatBadge() {
   if (topbarChatBadgeState.refreshInFlight) return
   topbarChatBadgeState.refreshInFlight = true
   try {
-    const unreadCount = await fetchMuhaffizUnreadChatThreadCount()
-    setTopbarChatBadge(unreadCount)
+    const result = await fetchMuhaffizUnreadChatThreadCount()
+    setTopbarChatBadge(result.unreadCount || 0)
+    if (result.latestIncoming && typeof window.maybeNotifyChatMessage === 'function') {
+      window.maybeNotifyChatMessage({ userId: result.userId, latestIncoming: result.latestIncoming })
+    }
   } catch (error) {
     console.error(error)
   } finally {
