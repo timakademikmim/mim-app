@@ -876,14 +876,55 @@
         prevMinuteStamp = minuteStamp
       })
       box.innerHTML = rowsHtml.join('')
+      const toggleMessageSelection = targetId => {
+        if (!targetId) return
+        if (state.selectedMessageIds.has(targetId)) state.selectedMessageIds.delete(targetId)
+        else state.selectedMessageIds.add(targetId)
+        renderMessagesPanel()
+      }
       Array.from(box.querySelectorAll('[data-chat-own-click="1"]')).forEach(el => {
-        el.addEventListener('click', event => {
-          const targetId = String(el.getAttribute('data-chat-message-id') || '')
+        let longPressTimer = null
+        let longPressTriggered = false
+        const targetId = String(el.getAttribute('data-chat-message-id') || '')
+        const clearLongPress = () => {
+          if (longPressTimer) clearTimeout(longPressTimer)
+          longPressTimer = null
+        }
+        const handlePointerDown = event => {
           if (!targetId) return
-          if (state.selectedMessageIds.has(targetId)) state.selectedMessageIds.delete(targetId)
-          else state.selectedMessageIds.add(targetId)
-          renderMessagesPanel()
-          event.stopPropagation()
+          if (state.selectedMessageIds.size > 0) return
+          if (event.pointerType === 'mouse') return
+          longPressTriggered = false
+          clearLongPress()
+          longPressTimer = setTimeout(() => {
+            longPressTriggered = true
+            toggleMessageSelection(targetId)
+          }, 450)
+        }
+        const handlePointerUp = () => {
+          clearLongPress()
+        }
+        el.addEventListener('pointerdown', handlePointerDown)
+        el.addEventListener('pointerup', handlePointerUp)
+        el.addEventListener('pointerleave', handlePointerUp)
+        el.addEventListener('pointercancel', handlePointerUp)
+        el.addEventListener('click', event => {
+          if (!targetId) return
+          if (longPressTriggered) {
+            longPressTriggered = false
+            event.preventDefault()
+            event.stopPropagation()
+            return
+          }
+          if (state.selectedMessageIds.size > 0) {
+            toggleMessageSelection(targetId)
+            event.stopPropagation()
+            return
+          }
+          if (event.ctrlKey || event.metaKey) {
+            toggleMessageSelection(targetId)
+            event.stopPropagation()
+          }
         })
       })
       box.onscroll = () => {
