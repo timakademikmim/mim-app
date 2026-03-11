@@ -2203,27 +2203,8 @@ window.openExternalUrl = async function openExternalUrl(url) {
     console.error('openExternalUrl invoke failed:', error)
   }
   if (isTauriApp && isAndroidApp) {
-    const isWhatsappTarget =
-      /wa\.me\//i.test(target) ||
-      /api\.whatsapp\.com\//i.test(target) ||
-      /^whatsapp:\/\//i.test(target)
-    if (isWhatsappTarget) {
-      let httpsTarget = target
-      if (/^whatsapp:\/\/send\?/i.test(target)) {
-        const query = target.replace(/^whatsapp:\/\/send\?/i, '')
-        httpsTarget = `https://api.whatsapp.com/send?${query}`
-      }
-      if (/^https?:\/\//i.test(httpsTarget)) {
-        try {
-          const withoutScheme = httpsTarget.replace(/^https?:\/\//i, '')
-          const scheme = httpsTarget.toLowerCase().startsWith('https://') ? 'https' : 'http'
-          window.location.href = `intent://${withoutScheme}#Intent;scheme=${scheme};package=com.whatsapp;action=android.intent.action.VIEW;end`
-          return true
-        } catch (_error) {}
-      }
-    }
-    // On Android Tauri, avoid generic WebView fallback for custom schemes
-    // because it can trigger ERR_UNKNOWN_URL_SCHEME in-app.
+    // Avoid WebView intent navigation on Android Tauri because it triggers
+    // ERR_UNKNOWN_URL_SCHEME. Rely on native open_external_url instead.
     return false
   }
   if (isAndroidApp) {
