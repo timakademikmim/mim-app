@@ -150,6 +150,12 @@
     const currentUser = options?.currentUser || {}
     const content = document.getElementById(containerId)
     if (!sb || !content || !safeId(currentUser.id)) return
+    const requestedThreadId = safeId(options?.openThreadId || localStorage.getItem('chat_open_thread_id') || '')
+    if (requestedThreadId) {
+      try {
+        localStorage.removeItem('chat_open_thread_id')
+      } catch (_error) {}
+    }
     const isAndroid = document.body?.classList?.contains('platform-android')
     if (isAndroid) content.classList.add('chat-full-bleed')
 
@@ -2050,10 +2056,16 @@
       }
       window.addEventListener('popstate', state.popstateHandler)
       await loadUsers()
-      await refresh(false)
+      await refresh(false, requestedThreadId)
       startRealtime()
       startPolling()
       window.__chatModuleActiveState = state
+      window.ChatModule.openThread = async function openThread(threadId) {
+        const tid = safeId(threadId)
+        if (!tid) return false
+        await refresh(true, tid)
+        return true
+      }
     } catch (error) {
       console.error('Chat init error:', error)
       const msg = String(error?.message || '').toLowerCase()

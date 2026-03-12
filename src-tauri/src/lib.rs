@@ -719,14 +719,14 @@ pub fn run() {
       open_file_path,
       get_app_version
     ])
-    .setup(|_app| {
+    .setup(|app| {
       #[cfg(all(
         not(debug_assertions),
         any(target_os = "windows", target_os = "macos", target_os = "linux")
       ))]
       {
-        let current_version = _app.package_info().version.to_string();
-        let app_handle = _app.handle().clone();
+        let current_version = app.package_info().version.to_string();
+        let app_handle = app.handle().clone();
         tauri::async_runtime::spawn(async move {
           emit_updater_status(
             &app_handle,

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "88144820220",
+    "project_id": "mim-app-da11d",
+    "storage_bucket": "mim-app-da11d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:88144820220:android:e9a46ea26df72316eba479",
+        "android_client_info": {
+          "package_name": "com.mim.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDEJp-DaXdfGHOkNd9YUFZ-R9zG3aZ-cus"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -58,6 +58,69 @@ function hasTauriRuntime() {
   return !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
 }
 
+const FCM_FUNCTION_BASE = 'https://optucpelkueqmlhwlbej.supabase.co/functions/v1'
+
+function isAndroidRuntime() {
+  return hasTauriRuntime() && /android/i.test(String(navigator.userAgent || ''))
+}
+
+function getOrCreateDeviceId() {
+  try {
+    const existing = localStorage.getItem('mim_device_id')
+    if (existing) return existing
+    const next = (crypto?.randomUUID ? crypto.randomUUID() : `mim-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    localStorage.setItem('mim_device_id', next)
+    return next
+  } catch (_error) {
+    return ''
+  }
+}
+
+async function getAppVersionSafe() {
+  try {
+    if (!hasTauriRuntime()) return ''
+    const invoke = window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke
+    if (typeof invoke !== 'function') return ''
+    const version = await invoke('get_app_version')
+    return String(version || '').trim()
+  } catch (_error) {
+    return ''
+  }
+}
+
+async function registerFcmToken(token) {
+  const clean = String(token || '').trim()
+  if (!clean || !isAndroidRuntime() || !id) return
+  try {
+    const cached = localStorage.getItem('mim_fcm_token')
+    if (cached === clean) return
+    const payload = {
+      user_id: String(id || '').trim(),
+      token: clean,
+      platform: 'android',
+      device_id: getOrCreateDeviceId(),
+      app_version: await getAppVersionSafe()
+    }
+    await fetch(`${FCM_FUNCTION_BASE}/register-push-token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    localStorage.setItem('mim_fcm_token', clean)
+  } catch (error) {
+    console.warn('Gagal register FCM token:', error)
+  }
+}
+
+if (isAndroidRuntime()) {
+  window.addEventListener('mim-fcm-token', event => {
+    registerFcmToken(event?.detail?.token)
+  })
+  if (window.__mimLastFcmToken) {
+    registerFcmToken(window.__mimLastFcmToken)
+  }
+}
+
 function isAndroidPlatform() {
   if (PREVIEW_PLATFORM === 'android') return true
   if (PREVIEW_PLATFORM === 'desktop' || PREVIEW_PLATFORM === 'web') return false
@@ -2305,7 +2368,7 @@ function clearChatNotifyOpen(userId) {
   } catch (_error) {}
 }
 
-function openChatPageFromNotification() {
+function openChatPageFromNotification(forcedThreadId = '') {
   const uid = safeChatId(id)
   if (!uid) return false
   const pending = loadChatNotifyOpen(uid)
@@ -2315,7 +2378,13 @@ function openChatPageFromNotification() {
     clearChatNotifyOpen(uid)
     return false
   }
+  const threadId = safeChatId(forcedThreadId || pending.threadId || '')
   clearChatNotifyOpen(uid)
+  if (threadId) {
+    try {
+      localStorage.setItem('chat_open_thread_id', threadId)
+    } catch (_error) {}
+  }
   const role = getActiveRole()
   if (role === 'admin' && typeof window.loadPage === 'function') {
     window.loadPage('chat')
@@ -2345,6 +2414,17 @@ if (!window.__chatNotifyOpenHandlerBound) {
     openChatPageFromNotification()
   })
 }
+
+window.addEventListener('mim-open-chat-thread', event => {
+  const tid = safeChatId(event?.detail?.threadId || '')
+  if (!tid) return
+  if (window.ChatModule && typeof window.ChatModule.openThread === 'function') {
+    window.ChatModule.openThread(tid)
+    return
+  }
+  saveChatNotifyOpen(id, tid)
+  openChatPageFromNotification(tid)
+})
 
 window.showLocalNotification = async function showLocalNotification(title, body) {
   const isTauriApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
