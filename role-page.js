@@ -59,6 +59,7 @@ function hasTauriRuntime() {
 }
 
 const FCM_FUNCTION_BASE = 'https://optucpelkueqmlhwlbej.supabase.co/functions/v1'
+const CHAT_OPEN_STORAGE_KEY = 'chat_open_thread_id'
 
 function isAndroidRuntime() {
   return hasTauriRuntime() && /android/i.test(String(navigator.userAgent || ''))
@@ -119,6 +120,44 @@ if (isAndroidRuntime()) {
   if (window.__mimLastFcmToken) {
     registerFcmToken(window.__mimLastFcmToken)
   }
+}
+
+let chatOpenRetryCount = 0
+const MAX_CHAT_OPEN_RETRY = 8
+const CHAT_OPEN_RETRY_DELAY = 450
+
+function tryOpenChatRoute() {
+  const role = getActiveRole()
+  if (role === 'admin' && typeof window.loadPage === 'function') {
+    window.loadPage('chat')
+    return true
+  }
+  if (role === 'guru' && typeof window.loadGuruPage === 'function') {
+    window.loadGuruPage('chat')
+    return true
+  }
+  if (role === 'muhaffiz' && typeof window.loadMuhaffizPage === 'function') {
+    window.loadMuhaffizPage('chat')
+    return true
+  }
+  if (role === 'musyrif' && typeof window.loadMusyrifPage === 'function') {
+    window.loadMusyrifPage('chat')
+    return true
+  }
+  if (typeof window.loadPage === 'function') {
+    window.loadPage('chat')
+    return true
+  }
+  return false
+}
+
+function scheduleChatOpenRetry(threadId) {
+  if (chatOpenRetryCount >= MAX_CHAT_OPEN_RETRY) return false
+  chatOpenRetryCount += 1
+  window.setTimeout(() => {
+    openChatPageFromNotification(threadId)
+  }, CHAT_OPEN_RETRY_DELAY)
+  return true
 }
 
 function isAndroidPlatform() {
@@ -2372,31 +2411,24 @@ function openChatPageFromNotification(forcedThreadId = '') {
   const uid = safeChatId(id)
   if (!uid) return false
   const pending = loadChatNotifyOpen(uid)
-  if (!pending || !pending.ts) return false
-  const ageMs = Date.now() - pending.ts
-  if (ageMs > 10 * 60 * 1000) {
-    clearChatNotifyOpen(uid)
+  const threadId = safeChatId(forcedThreadId || pending?.threadId || '')
+  if (!threadId) return false
+  if (pending?.ts) {
+    const ageMs = Date.now() - pending.ts
+    if (ageMs > 10 * 60 * 1000) {
+      clearChatNotifyOpen(uid)
+      return false
+    }
+  }
+  try {
+    localStorage.setItem(CHAT_OPEN_STORAGE_KEY, threadId)
+  } catch (_error) {}
+  const opened = tryOpenChatRoute()
+  if (!opened) {
+    scheduleChatOpenRetry(threadId)
     return false
   }
-  const threadId = safeChatId(forcedThreadId || pending.threadId || '')
   clearChatNotifyOpen(uid)
-  if (threadId) {
-    try {
-      localStorage.setItem('chat_open_thread_id', threadId)
-    } catch (_error) {}
-  }
-  const role = getActiveRole()
-  if (role === 'admin' && typeof window.loadPage === 'function') {
-    window.loadPage('chat')
-  } else if (role === 'guru' && typeof window.loadGuruPage === 'function') {
-    window.loadGuruPage('chat')
-  } else if (role === 'muhaffiz' && typeof window.loadMuhaffizPage === 'function') {
-    window.loadMuhaffizPage('chat')
-  } else if (role === 'musyrif' && typeof window.loadMusyrifPage === 'function') {
-    window.loadMusyrifPage('chat')
-  } else if (typeof window.loadPage === 'function') {
-    window.loadPage('chat')
-  }
   if (typeof window.updateAndroidBottomNavActive === 'function') {
     window.updateAndroidBottomNavActive('chat')
   }
@@ -2418,12 +2450,22 @@ if (!window.__chatNotifyOpenHandlerBound) {
 window.addEventListener('mim-open-chat-thread', event => {
   const tid = safeChatId(event?.detail?.threadId || '')
   if (!tid) return
+  try {
+    localStorage.setItem(CHAT_OPEN_STORAGE_KEY, tid)
+  } catch (_error) {}
   if (window.ChatModule && typeof window.ChatModule.openThread === 'function') {
     window.ChatModule.openThread(tid)
     return
   }
   saveChatNotifyOpen(id, tid)
   openChatPageFromNotification(tid)
+})
+
+window.addEventListener('load', () => {
+  const pendingThread = safeChatId(localStorage.getItem(CHAT_OPEN_STORAGE_KEY) || '')
+  if (pendingThread) {
+    openChatPageFromNotification(pendingThread)
+  }
 })
 
 window.showLocalNotification = async function showLocalNotification(title, body) {

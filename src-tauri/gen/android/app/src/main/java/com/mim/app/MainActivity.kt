@@ -95,6 +95,7 @@ class MainActivity : TauriActivity() {
       }
       val safeThread = JSONObject.quote(threadId)
       val script =
+        "try { window.__mimPendingOpenThread = $safeThread; localStorage.setItem('chat_open_thread_id', $safeThread); } catch (e) {}" +
         "window.dispatchEvent(new CustomEvent('mim-open-chat-thread', { detail: { threadId: $safeThread } }));"
       emitScript(script)
     }
