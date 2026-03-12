@@ -64,6 +64,9 @@ class MainActivity : TauriActivity() {
     private var pendingFcmToken: String? = null
     @Volatile
     private var pendingThreadId: String? = null
+    @Volatile
+    private var pendingThreadAttempts: Int = 0
+    private const val MAX_PENDING_THREAD_ATTEMPTS = 10
 
     fun setWebView(webView: WebView) {
       webViewRef = webView
@@ -72,7 +75,6 @@ class MainActivity : TauriActivity() {
         emitFcmToken(token)
       }
       pendingThreadId?.let { tid ->
-        pendingThreadId = null
         emitChatOpen(tid)
       }
     }
@@ -89,10 +91,22 @@ class MainActivity : TauriActivity() {
     }
 
     fun emitChatOpen(threadId: String) {
-      if (webViewRef == null) {
+      val webView = webViewRef
+      if (webView == null) {
         pendingThreadId = threadId
+        pendingThreadAttempts = 0
         return
       }
+      val currentUrl = webView.url ?: ""
+      if ((currentUrl.isBlank() || currentUrl == "about:blank") &&
+          pendingThreadAttempts < MAX_PENDING_THREAD_ATTEMPTS) {
+        pendingThreadId = threadId
+        pendingThreadAttempts += 1
+        webView.postDelayed({ emitChatOpen(threadId) }, 450L)
+        return
+      }
+      pendingThreadId = null
+      pendingThreadAttempts = 0
       val safeThread = JSONObject.quote(threadId)
       val script =
         "try { window.__mimPendingOpenThread = $safeThread; localStorage.setItem('chat_open_thread_id', $safeThread); } catch (e) {}" +
