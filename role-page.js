@@ -2250,6 +2250,10 @@ function getChatNotifyStorageKey(userId) {
   return `chat_notify_state:${userId}`
 }
 
+function getChatNotifyOpenKey(userId) {
+  return `chat_notify_open:${userId}`
+}
+
 function loadChatNotifyState(userId) {
   const key = getChatNotifyStorageKey(userId)
   try {
@@ -2270,6 +2274,76 @@ function saveChatNotifyState(userId, nextState) {
   try {
     localStorage.setItem(key, JSON.stringify(nextState || {}))
   } catch (_error) {}
+}
+
+function loadChatNotifyOpen(userId) {
+  const key = getChatNotifyOpenKey(userId)
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    return {
+      threadId: safeChatId(parsed?.threadId || ''),
+      ts: Number(parsed?.ts || 0) || 0
+    }
+  } catch (_error) {
+    return null
+  }
+}
+
+function saveChatNotifyOpen(userId, threadId) {
+  const key = getChatNotifyOpenKey(userId)
+  try {
+    localStorage.setItem(key, JSON.stringify({ threadId: safeChatId(threadId), ts: Date.now() }))
+  } catch (_error) {}
+}
+
+function clearChatNotifyOpen(userId) {
+  const key = getChatNotifyOpenKey(userId)
+  try {
+    localStorage.removeItem(key)
+  } catch (_error) {}
+}
+
+function openChatPageFromNotification() {
+  const uid = safeChatId(id)
+  if (!uid) return false
+  const pending = loadChatNotifyOpen(uid)
+  if (!pending || !pending.ts) return false
+  const ageMs = Date.now() - pending.ts
+  if (ageMs > 10 * 60 * 1000) {
+    clearChatNotifyOpen(uid)
+    return false
+  }
+  clearChatNotifyOpen(uid)
+  const role = getActiveRole()
+  if (role === 'admin' && typeof window.loadPage === 'function') {
+    window.loadPage('chat')
+  } else if (role === 'guru' && typeof window.loadGuruPage === 'function') {
+    window.loadGuruPage('chat')
+  } else if (role === 'muhaffiz' && typeof window.loadMuhaffizPage === 'function') {
+    window.loadMuhaffizPage('chat')
+  } else if (role === 'musyrif' && typeof window.loadMusyrifPage === 'function') {
+    window.loadMusyrifPage('chat')
+  } else if (typeof window.loadPage === 'function') {
+    window.loadPage('chat')
+  }
+  if (typeof window.updateAndroidBottomNavActive === 'function') {
+    window.updateAndroidBottomNavActive('chat')
+  }
+  return true
+}
+
+if (!window.__chatNotifyOpenHandlerBound) {
+  window.__chatNotifyOpenHandlerBound = true
+  window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      openChatPageFromNotification()
+    }
+  })
+  window.addEventListener('focus', () => {
+    openChatPageFromNotification()
+  })
 }
 
 window.showLocalNotification = async function showLocalNotification(title, body) {
@@ -2313,11 +2387,15 @@ window.maybeNotifyChatMessage = async function maybeNotifyChatMessage({ userId, 
 
   saveChatNotifyState(uid, { lastTs: ts, lastId: messageId || state.lastId || '' })
 
-  if (document.hidden) return false
   if (isViewingThread) return false
 
   const title = 'Pesan baru'
-  const body = messageText || 'Anda menerima pesan baru.'
+  let body = messageText || 'Anda menerima pesan baru.'
+  if (body.startsWith('[[sticker]]')) body = 'Sticker'
+  if (body.length > 160) body = `${body.slice(0, 157)}...`
+  if (document.hidden) {
+    saveChatNotifyOpen(uid, threadId)
+  }
   await window.showLocalNotification(title, body)
   return true
 }

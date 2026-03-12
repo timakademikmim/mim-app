@@ -1928,6 +1928,14 @@
         input.addEventListener('input', () => {
           state.draftByThread.set(safeId(state.selectedThreadId), String(input.value || ''))
         })
+        input.addEventListener('focus', () => {
+          const isAndroid = document.body?.classList?.contains('platform-android')
+          if (!isAndroid) return
+          if (!state.emojiPickerOpen) return
+          window.setTimeout(() => {
+            if (state.emojiPickerOpen) closeEmojiPicker()
+          }, 120)
+        })
         input.addEventListener('keydown', async event => {
           if (event.key !== 'Enter' || event.shiftKey) return
           event.preventDefault()
@@ -1941,6 +1949,7 @@
           const pickerBar = document.getElementById('chat-emoji-picker-bar')
           const emojiBar = document.getElementById('chat-emoji-bar')
           const emojiTrigger = document.getElementById('chat-btn-emoji')
+          const messageInput = document.getElementById('chat-message-input')
           const path = typeof event.composedPath === 'function' ? event.composedPath() : []
           const clickedInsidePicker =
             (pickerPopover && (path.includes(pickerPopover) || pickerPopover.contains(event.target))) ||
@@ -1948,7 +1957,9 @@
             (emojiBar && (path.includes(emojiBar) || emojiBar.contains(event.target)))
           const clickedTrigger =
             (emojiTrigger && (path.includes(emojiTrigger) || emojiTrigger.contains(event.target)))
-          if (clickedInsidePicker || clickedTrigger) return
+          const clickedInput =
+            (messageInput && (path.includes(messageInput) || messageInput.contains(event.target)))
+          if (clickedInsidePicker || clickedTrigger || clickedInput) return
           closeEmojiPicker()
         }
         document.addEventListener('pointerdown', state.outsideClickHandler, true)
