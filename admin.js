@@ -301,6 +301,15 @@ document.addEventListener('DOMContentLoaded', () => {
   refreshAdminTopbarChatBadge().catch(error => console.error(error))
   startAdminTopbarChatBadgeTicker()
 
+  const pendingChatThread = localStorage.getItem('chat_open_thread_id')
+  if (pendingChatThread) {
+    if (typeof openChatPageFromNotification === 'function') {
+      if (openChatPageFromNotification(pendingChatThread)) return
+    }
+    loadPage('chat', {}, { updateHistory: true, replaceHistory: true })
+    return
+  }
+
   const forceDashboardOnce = localStorage.getItem('admin_force_dashboard_once') === '1'
 
   if (forceDashboardOnce) {

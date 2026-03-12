@@ -13914,6 +13914,14 @@ document.addEventListener('DOMContentLoaded', () => {
     .catch(error => console.error(error))
   setupEkskulAccess(true).catch(error => console.error(error))
   setGuruWelcomeName()
+  const pendingChatThread = localStorage.getItem('chat_open_thread_id')
+  if (pendingChatThread) {
+    if (typeof openChatPageFromNotification === 'function') {
+      if (openChatPageFromNotification(pendingChatThread)) return
+    }
+    loadGuruPage('chat', { updateHistory: true, replaceHistory: true })
+    return
+  }
   const lastPage = localStorage.getItem(GURU_LAST_PAGE_KEY) || DEFAULT_GURU_PAGE
   loadGuruPage(lastPage, { updateHistory: true, replaceHistory: true })
 

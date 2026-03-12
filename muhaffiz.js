@@ -3851,6 +3851,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     return
   }
 
+  const pendingChatThread = localStorage.getItem('chat_open_thread_id')
+  if (pendingChatThread) {
+    if (typeof openChatPageFromNotification === 'function') {
+      if (openChatPageFromNotification(pendingChatThread)) return
+    }
+    await loadMuhaffizPage('chat', { updateHistory: true, replaceHistory: true })
+    return
+  }
+
   const lastPage = localStorage.getItem(MUHAFFIZ_LAST_PAGE_KEY) || 'dashboard'
   await loadMuhaffizPage(lastPage, { updateHistory: true, replaceHistory: true })
   refreshMuhaffizTopbarNotifications().catch(error => console.error(error))

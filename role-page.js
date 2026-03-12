@@ -2408,10 +2408,10 @@ function clearChatNotifyOpen(userId) {
 }
 
 function openChatPageFromNotification(forcedThreadId = '') {
+  const directThreadId = safeChatId(forcedThreadId || '')
   const uid = safeChatId(id)
-  if (!uid) return false
-  const pending = loadChatNotifyOpen(uid)
-  const threadId = safeChatId(forcedThreadId || pending?.threadId || '')
+  const pending = uid ? loadChatNotifyOpen(uid) : null
+  const threadId = safeChatId(directThreadId || pending?.threadId || '')
   if (!threadId) return false
   if (pending?.ts) {
     const ageMs = Date.now() - pending.ts
@@ -2428,7 +2428,7 @@ function openChatPageFromNotification(forcedThreadId = '') {
     scheduleChatOpenRetry(threadId)
     return false
   }
-  clearChatNotifyOpen(uid)
+  if (uid) clearChatNotifyOpen(uid)
   if (typeof window.updateAndroidBottomNavActive === 'function') {
     window.updateAndroidBottomNavActive('chat')
   }
