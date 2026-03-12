@@ -212,106 +212,9 @@ fn open_whatsapp_message(phone: String, message: String) -> Result<bool, String>
 
     let plain_message = message.trim();
     let encoded_message = urlencoding::encode(plain_message).to_string();
-    let wa_api = format!(
-      "https://api.whatsapp.com/send?phone={}&text={}",
-      normalized_phone, encoded_message
-    );
-    let wa_me = format!(
-      "https://wa.me/{}?text={}",
-      normalized_phone, encoded_message
-    );
-    let wa_scheme = format!(
-      "whatsapp://send?phone={}&text={}",
-      normalized_phone, encoded_message
-    );
-
     let try_start = |args: &[&str]| -> bool { run_android_am(args) };
 
-    if try_start(&[
-      "start",
-      "--activity-new-task",
-      "-a",
-      "android.intent.action.VIEW",
-      "-c",
-      "android.intent.category.BROWSABLE",
-      "-d",
-      &wa_api,
-      "-p",
-      "com.whatsapp",
-    ]) {
-      return Ok(true);
-    }
-
-    let intent_url = format!(
-      "intent://api.whatsapp.com/send?phone={}&text={}#Intent;scheme=https;package=com.whatsapp;action=android.intent.action.VIEW;end",
-      normalized_phone, encoded_message
-    );
-    if try_start(&[
-      "start",
-      "--activity-new-task",
-      "-a",
-      "android.intent.action.VIEW",
-      "-d",
-      &intent_url,
-    ]) {
-      return Ok(true);
-    }
-
-    if try_start(&[
-      "start",
-      "--activity-new-task",
-      "-a",
-      "android.intent.action.VIEW",
-      "-c",
-      "android.intent.category.BROWSABLE",
-      "-d",
-      &wa_me,
-      "-p",
-      "com.whatsapp",
-    ]) {
-      return Ok(true);
-    }
-
-    if try_start(&[
-      "start",
-      "--activity-new-task",
-      "-a",
-      "android.intent.action.VIEW",
-      "-d",
-      &wa_scheme,
-      "-p",
-      "com.whatsapp",
-    ]) {
-      return Ok(true);
-    }
-
-    if try_start(&[
-      "start",
-      "--activity-new-task",
-      "-a",
-      "android.intent.action.VIEW",
-      "-c",
-      "android.intent.category.BROWSABLE",
-      "-d",
-      &wa_api,
-    ]) {
-      return Ok(true);
-    }
-
-    if try_start(&[
-      "start",
-      "--activity-new-task",
-      "-a",
-      "android.intent.action.VIEW",
-      "-c",
-      "android.intent.category.BROWSABLE",
-      "-d",
-      &wa_me,
-    ]) {
-      return Ok(true);
-    }
-
-    // Fallback: use SEND intent with extras (shorter than URL encoding).
+    // Prefer ACTION_SEND to avoid long URL issues. User will pick the contact.
     let jid = format!("{}@s.whatsapp.net", normalized_phone);
     if try_start(&[
       "start",
@@ -332,6 +235,7 @@ fn open_whatsapp_message(phone: String, message: String) -> Result<bool, String>
       return Ok(true);
     }
 
+    // Fallback: send without forcing package.
     if try_start(&[
       "start",
       "--activity-new-task",
