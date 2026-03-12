@@ -7408,6 +7408,33 @@ async function quickSendLaporanBulananWA(santriId) {
   const waApiUrl = `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`
   const waUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
   const waScheme = `whatsapp://send?phone=${phone}&text=${encodeURIComponent(message)}`
+  const waShortUrl = `https://wa.me/${phone}`
+  const waShortApi = `https://api.whatsapp.com/send?phone=${phone}`
+  const copyTextToClipboard = async text => {
+    const payload = String(text || '')
+    if (!payload) return false
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(payload)
+        return true
+      }
+    } catch (_error) {}
+    try {
+      const textarea = document.createElement('textarea')
+      textarea.value = payload
+      textarea.style.position = 'fixed'
+      textarea.style.left = '-9999px'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.focus()
+      textarea.select()
+      const ok = document.execCommand('copy')
+      textarea.remove()
+      return ok
+    } catch (_error) {
+      return false
+    }
+  }
   if (typeof window.openExternalUrl === 'function') {
     const isAndroid = /android/i.test(String(navigator.userAgent || ''))
     let opened = false
@@ -7423,6 +7450,21 @@ async function quickSendLaporanBulananWA(santriId) {
       if (!opened) opened = await window.openExternalUrl(waApiUrl)
       if (!opened) opened = await window.openExternalUrl(waScheme)
       if (!opened) opened = await window.openExternalUrl(waUrl)
+      if (!opened) {
+        const copied = await copyTextToClipboard(message)
+        let openedShort = await window.openExternalUrl(waShortUrl)
+        if (!openedShort) openedShort = await window.openExternalUrl(waShortApi)
+        if (openedShort) {
+          alert(copied
+            ? 'Pesan disalin ke clipboard. Tempelkan di WhatsApp.'
+            : 'WhatsApp terbuka. Tempelkan pesan secara manual.')
+          return
+        }
+        if (copied) {
+          alert('Pesan disalin ke clipboard. Buka WhatsApp dan tempelkan secara manual.')
+          return
+        }
+      }
     } else {
       opened = await window.openExternalUrl(waUrl)
       if (!opened) opened = await window.openExternalUrl(waScheme)
