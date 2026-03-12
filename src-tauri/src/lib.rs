@@ -57,6 +57,18 @@ fn run_android_am(args: &[&str]) -> bool {
   false
 }
 
+#[cfg(target_os = "android")]
+fn run_android_monkey(args: &[&str]) -> bool {
+  let bins = ["monkey", "/system/bin/monkey"];
+  for bin in bins {
+    match std::process::Command::new(bin).args(args).status() {
+      Ok(status) if status.success() => return true,
+      _ => {}
+    }
+  }
+  false
+}
+
 #[tauri::command]
 fn open_external_url(url: String) -> Result<bool, String> {
   let target = url.trim();
@@ -256,6 +268,29 @@ fn open_whatsapp_message(phone: String, message: String) -> Result<bool, String>
       "android.intent.action.SEND",
       "-t",
       "text/plain",
+    ]) {
+      return Ok(true);
+    }
+    // Last fallback: open WhatsApp app directly so user can paste message.
+    if try_start(&[
+      "start",
+      "--activity-new-task",
+      "-a",
+      "android.intent.action.MAIN",
+      "-c",
+      "android.intent.category.LAUNCHER",
+      "-p",
+      "com.whatsapp",
+    ]) {
+      return Ok(true);
+    }
+
+    if run_android_monkey(&[
+      "-p",
+      "com.whatsapp",
+      "-c",
+      "android.intent.category.LAUNCHER",
+      "1",
     ]) {
       return Ok(true);
     }
