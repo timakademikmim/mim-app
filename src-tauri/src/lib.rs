@@ -235,7 +235,7 @@ fn open_whatsapp_message(phone: String, message: String) -> Result<bool, String>
       return Ok(true);
     }
 
-    // Fallback: send without forcing package.
+    // Fallback: open WhatsApp share sheet without text to avoid long argument limits.
     if try_start(&[
       "start",
       "--activity-new-task",
@@ -243,9 +243,19 @@ fn open_whatsapp_message(phone: String, message: String) -> Result<bool, String>
       "android.intent.action.SEND",
       "-t",
       "text/plain",
-      "--es",
-      "android.intent.extra.TEXT",
-      plain_message,
+      "-p",
+      "com.whatsapp",
+    ]) {
+      return Ok(true);
+    }
+
+    if try_start(&[
+      "start",
+      "--activity-new-task",
+      "-a",
+      "android.intent.action.SEND",
+      "-t",
+      "text/plain",
     ]) {
       return Ok(true);
     }

@@ -7410,6 +7410,7 @@ async function quickSendLaporanBulananWA(santriId) {
   const waScheme = `whatsapp://send?phone=${phone}&text=${encodeURIComponent(message)}`
   const waShortUrl = `https://wa.me/${phone}`
   const waShortApi = `https://api.whatsapp.com/send?phone=${phone}`
+  const shouldCopyClipboard = message.length > 700
   const copyTextToClipboard = async text => {
     const payload = String(text || '')
     if (!payload) return false
@@ -7438,7 +7439,11 @@ async function quickSendLaporanBulananWA(santriId) {
   if (typeof window.openExternalUrl === 'function') {
     const isAndroid = /android/i.test(String(navigator.userAgent || ''))
     let opened = false
+    let copied = false
     if (isAndroid) {
+      if (shouldCopyClipboard) {
+        copied = await copyTextToClipboard(message)
+      }
       try {
         if (window.__TAURI__?.core?.invoke) {
           opened = await window.__TAURI__.core.invoke('open_whatsapp_message', { phone, message }) === true
@@ -7446,12 +7451,16 @@ async function quickSendLaporanBulananWA(santriId) {
           opened = await window.__TAURI_INTERNALS__.invoke('open_whatsapp_message', { phone, message }) === true
         }
       } catch (_error) {}
+      if (opened && shouldCopyClipboard && copied) {
+        alert('Pesan disalin ke clipboard. Tempelkan di WhatsApp.')
+        return
+      }
       // Android WebView is more reliable with https intent, then deep-link fallback.
       if (!opened) opened = await window.openExternalUrl(waApiUrl)
       if (!opened) opened = await window.openExternalUrl(waScheme)
       if (!opened) opened = await window.openExternalUrl(waUrl)
       if (!opened) {
-        const copied = await copyTextToClipboard(message)
+        copied = copied || await copyTextToClipboard(message)
         let openedShort = await window.openExternalUrl(waShortUrl)
         if (!openedShort) openedShort = await window.openExternalUrl(waShortApi)
         if (openedShort) {
