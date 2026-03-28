@@ -400,6 +400,58 @@ fn show_local_notification(app: tauri::AppHandle, title: String, body: String) -
     .map_err(|e| format!("Gagal menampilkan notifikasi: {e}"))
 }
 
+#[tauri::command]
+fn show_chat_notification(
+  title: String,
+  body: String,
+  thread_id: String,
+  user_id: String,
+) -> Result<bool, String> {
+  #[cfg(target_os = "android")]
+  {
+    let title = title.trim();
+    let body = body.trim();
+    let thread_id = thread_id.trim();
+    let user_id = user_id.trim();
+
+    if thread_id.is_empty() {
+      return Ok(false);
+    }
+
+    let mut args = vec![
+      "broadcast",
+      "-a",
+      "com.mim.app.SHOW_CHAT_NOTIFICATION",
+      "--es",
+      "title",
+      if title.is_empty() { "Pesan baru" } else { title },
+      "--es",
+      "body",
+      if body.is_empty() {
+        "Anda menerima pesan baru."
+      } else {
+        body
+      },
+      "--es",
+      "open_chat_thread_id",
+      thread_id,
+    ];
+    if !user_id.is_empty() {
+      args.extend_from_slice(&["--es", "notify_user_id", user_id]);
+    }
+    return Ok(run_android_am(&args));
+  }
+
+  #[cfg(not(target_os = "android"))]
+  {
+    let _ = title;
+    let _ = body;
+    let _ = thread_id;
+    let _ = user_id;
+    Ok(false)
+  }
+}
+
 fn get_desktop_export_dir() -> Result<PathBuf, String> {
   let user = std::env::var("USERPROFILE").map_err(|e| format!("USERPROFILE tidak tersedia: {e}"))?;
   let dir = PathBuf::from(user).join("Documents").join("MIM App").join("Cetak");
@@ -930,6 +982,7 @@ pub fn run() {
       open_external_url,
       open_whatsapp_message,
       show_local_notification,
+      show_chat_notification,
       download_url_to_app_storage,
       save_base64_to_downloads,
       save_pdf_base64,

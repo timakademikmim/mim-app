@@ -2486,11 +2486,22 @@ window.addEventListener('load', () => {
   }
 })
 
-window.showLocalNotification = async function showLocalNotification(title, body) {
+window.showLocalNotification = async function showLocalNotification(title, body, options = {}) {
   const isTauriApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
   const isAndroidApp = /android/i.test(String(navigator.userAgent || ''))
   if (!isTauriApp || !isAndroidApp) return false
+  const threadId = safeChatId(options?.threadId || '')
+  const userId = safeChatId(options?.userId || '')
   try {
+    if (threadId) {
+      const chatResult = await invokeTauriCommand('show_chat_notification', {
+        title: String(title || '').trim(),
+        body: String(body || '').trim(),
+        threadId,
+        userId
+      })
+      if (chatResult === true) return true
+    }
     const result = await invokeTauriCommand('show_local_notification', {
       title: String(title || '').trim(),
       body: String(body || '').trim()
@@ -2536,7 +2547,7 @@ window.maybeNotifyChatMessage = async function maybeNotifyChatMessage({ userId, 
   if (document.hidden) {
     saveChatNotifyOpen(uid, threadId)
   }
-  await window.showLocalNotification(title, body)
+  await window.showLocalNotification(title, body, { threadId, userId: uid })
   return true
 }
 
