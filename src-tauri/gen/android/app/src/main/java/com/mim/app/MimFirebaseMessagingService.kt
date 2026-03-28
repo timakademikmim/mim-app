@@ -24,7 +24,9 @@ class MimFirebaseMessagingService : FirebaseMessagingService() {
     val body = remoteMessage.notification?.body
       ?: remoteMessage.data["body"]
       ?: "Anda menerima pesan baru."
-    val threadId = remoteMessage.data["thread_id"] ?: ""
+    val threadId = remoteMessage.data["open_chat_thread_id"]
+      ?: remoteMessage.data["thread_id"]
+      ?: ""
     showNotification(title, body, threadId)
   }
 

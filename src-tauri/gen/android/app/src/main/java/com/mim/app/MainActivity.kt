@@ -23,6 +23,7 @@ class MainActivity : TauriActivity() {
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
+    setIntent(intent)
     handleIntent(intent)
   }
 
@@ -52,9 +53,38 @@ class MainActivity : TauriActivity() {
 
   private fun handleIntent(intent: Intent?) {
     if (intent == null) return
-    val threadId = intent.getStringExtra("open_chat_thread_id") ?: return
+    val threadId = extractThreadId(intent) ?: return
     if (threadId.isBlank()) return
     emitChatOpen(threadId)
+  }
+
+  private fun extractThreadId(intent: Intent): String? {
+    val direct = intent.getStringExtra("open_chat_thread_id")
+      ?: intent.getStringExtra("thread_id")
+    if (!direct.isNullOrBlank()) return direct
+
+    val extras = intent.extras
+    if (extras != null) {
+      val candidates = arrayOf(
+        "open_chat_thread_id",
+        "thread_id",
+        "gcm.notification.open_chat_thread_id",
+        "gcm.notification.thread_id",
+        "google.c.a.c_l"
+      )
+      for (key in candidates) {
+        val value = extras.getString(key)
+        if (!value.isNullOrBlank()) return value
+      }
+    }
+
+    val data = intent.data
+    if (data != null) {
+      val fromUri = data.getQueryParameter("open_chat_thread_id")
+        ?: data.getQueryParameter("thread_id")
+      if (!fromUri.isNullOrBlank()) return fromUri
+    }
+    return null
   }
 
   companion object {

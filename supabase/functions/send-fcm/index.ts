@@ -123,7 +123,17 @@ serve(async req => {
   const { access_token, project_id } = await getAccessToken(serviceAccount)
   const title = String(payload.title || "Pesan baru")
   const body = String(payload.body || "Anda menerima pesan baru.")
-  const data = payload.data || {}
+  const rawData = payload.data || {}
+  const data: Record<string, string> = {}
+  for (const [key, value] of Object.entries(rawData)) {
+    data[key] = String(value ?? "")
+  }
+  if (!data.open_chat_thread_id && data.thread_id) {
+    data.open_chat_thread_id = data.thread_id
+  }
+  if (!data.route && data.open_chat_thread_id) {
+    data.route = "chat"
+  }
 
   let tokens: string[] = []
   const explicitToken = String(payload.token || "").trim()
