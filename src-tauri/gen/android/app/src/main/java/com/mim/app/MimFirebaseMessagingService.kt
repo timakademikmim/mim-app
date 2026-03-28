@@ -32,6 +32,8 @@ class MimFirebaseMessagingService : FirebaseMessagingService() {
       ?: ""
     val notifyUserId = remoteMessage.data["notify_user_id"]
       ?: remoteMessage.data["user_id"]
+      ?: remoteMessage.data["receiver_id"]
+      ?: remoteMessage.data["karyawan_id"]
       ?: ""
     showNotification(title, body, threadId, notifyUserId)
   }

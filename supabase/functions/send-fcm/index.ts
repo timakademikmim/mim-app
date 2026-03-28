@@ -146,6 +146,17 @@ serve(async req => {
   const explicitToken = String(payload.token || "").trim()
   if (explicitToken) {
     tokens = [explicitToken]
+    if (!data.notify_user_id) {
+      const { data: tokenRow } = await supabase
+        .from("push_tokens")
+        .select("user_id")
+        .eq("token", explicitToken)
+        .maybeSingle()
+      const tokenUserId = String(tokenRow?.user_id || "").trim()
+      if (tokenUserId) {
+        data.notify_user_id = tokenUserId
+      }
+    }
   } else {
     const userId = targetUserId
     if (!userId) {
