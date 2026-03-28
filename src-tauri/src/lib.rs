@@ -1,4 +1,5 @@
 use base64::Engine;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use tauri::Manager;
 use tauri_plugin_notification::NotificationExt;
@@ -67,6 +68,80 @@ fn run_android_monkey(args: &[&str]) -> bool {
     }
   }
   false
+}
+
+#[cfg(target_os = "android")]
+fn guess_mime_from_path(path: &str) -> &'static str {
+  let lower = path.to_lowercase();
+  if lower.ends_with(".apk") {
+    "application/vnd.android.package-archive"
+  } else if lower.ends_with(".pdf") {
+    "application/pdf"
+  } else if lower.ends_with(".png") {
+    "image/png"
+  } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+    "image/jpeg"
+  } else {
+    "*/*"
+  }
+}
+
+#[cfg(target_os = "android")]
+fn download_notification_id(seed: &str) -> i32 {
+  use std::collections::hash_map::DefaultHasher;
+  use std::hash::{Hash, Hasher};
+  let mut hasher = DefaultHasher::new();
+  seed.hash(&mut hasher);
+  let value = hasher.finish();
+  30_000 + (value % 9_000) as i32
+}
+
+#[cfg(target_os = "android")]
+fn broadcast_download_notification(
+  stage: &str,
+  id: i32,
+  title: &str,
+  progress: Option<u32>,
+  path: Option<&str>,
+  mime: Option<&str>,
+  error: Option<&str>,
+) {
+  let mut args = vec![
+    "broadcast".to_string(),
+    "-a".to_string(),
+    "com.mim.app.DOWNLOAD_STATUS".to_string(),
+    "--es".to_string(),
+    "stage".to_string(),
+    stage.to_string(),
+    "--ei".to_string(),
+    "id".to_string(),
+    id.to_string(),
+    "--es".to_string(),
+    "title".to_string(),
+    title.to_string(),
+  ];
+  if let Some(p) = progress {
+    args.push("--ei".to_string());
+    args.push("progress".to_string());
+    args.push(p.to_string());
+  }
+  if let Some(p) = path {
+    args.push("--es".to_string());
+    args.push("path".to_string());
+    args.push(p.to_string());
+  }
+  if let Some(m) = mime {
+    args.push("--es".to_string());
+    args.push("mime".to_string());
+    args.push(m.to_string());
+  }
+  if let Some(e) = error {
+    args.push("--es".to_string());
+    args.push("error".to_string());
+    args.push(e.to_string());
+  }
+  let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+  let _ = run_android_am(&refs);
 }
 
 #[tauri::command]
@@ -391,16 +466,126 @@ fn download_url_to_app_storage(
   let (download_dir, _is_public) = resolve_mobile_download_dir(&app)?;
 
   let output_path = download_dir.join(final_name);
-  let response = reqwest::blocking::get(parsed).map_err(|e| format!("Gagal mengunduh file: {e}"))?;
+  #[cfg(target_os = "android")]
+  let notif_id = download_notification_id(&output_path.to_string_lossy());
+  #[cfg(target_os = "android")]
+  broadcast_download_notification("progress", notif_id, "Mengunduh file", Some(0), None, None, None);
+
+  let mut response = reqwest::blocking::Client::new()
+    .get(parsed)
+    .send()
+    .map_err(|e| {
+      #[cfg(target_os = "android")]
+      broadcast_download_notification(
+        "error",
+        notif_id,
+        "Unduhan gagal",
+        None,
+        None,
+        None,
+        Some("Gagal memulai unduhan."),
+      );
+      format!("Gagal mengunduh file: {e}")
+    })?;
   if !response.status().is_success() {
+    #[cfg(target_os = "android")]
+    broadcast_download_notification(
+      "error",
+      notif_id,
+      "Unduhan gagal",
+      None,
+      None,
+      None,
+      Some(&format!("HTTP {}", response.status())),
+    );
     return Err(format!("Unduhan gagal. HTTP {}", response.status()));
   }
-  let bytes = response
-    .bytes()
-    .map_err(|e| format!("Gagal membaca konten unduhan: {e}"))?;
-  std::fs::write(&output_path, &bytes).map_err(|e| format!("Gagal menyimpan file unduhan: {e}"))?;
 
-  Ok(output_path.to_string_lossy().to_string())
+  let total_size = response.content_length().unwrap_or(0);
+  let mut file = std::fs::File::create(&output_path).map_err(|e| {
+    #[cfg(target_os = "android")]
+    broadcast_download_notification(
+      "error",
+      notif_id,
+      "Unduhan gagal",
+      None,
+      None,
+      None,
+      Some("Gagal membuat file unduhan."),
+    );
+    format!("Gagal menyiapkan file unduhan: {e}")
+  })?;
+
+  let mut downloaded: u64 = 0;
+  let mut last_progress: u32 = 0;
+  let mut buffer = [0_u8; 64 * 1024];
+  loop {
+    let read = response.read(&mut buffer).map_err(|e| {
+      #[cfg(target_os = "android")]
+      broadcast_download_notification(
+        "error",
+        notif_id,
+        "Unduhan gagal",
+        None,
+        None,
+        None,
+        Some("Gagal membaca data unduhan."),
+      );
+      format!("Gagal membaca konten unduhan: {e}")
+    })?;
+    if read == 0 {
+      break;
+    }
+    file.write_all(&buffer[..read]).map_err(|e| {
+      #[cfg(target_os = "android")]
+      broadcast_download_notification(
+        "error",
+        notif_id,
+        "Unduhan gagal",
+        None,
+        None,
+        None,
+        Some("Gagal menulis file unduhan."),
+      );
+      format!("Gagal menyimpan file unduhan: {e}")
+    })?;
+    downloaded += read as u64;
+
+    #[cfg(target_os = "android")]
+    if total_size > 0 {
+      let progress = ((downloaded.saturating_mul(100)) / total_size).min(100) as u32;
+      if progress >= last_progress.saturating_add(5) || progress == 100 {
+        last_progress = progress;
+        broadcast_download_notification(
+          "progress",
+          notif_id,
+          "Mengunduh file",
+          Some(progress),
+          None,
+          None,
+          None,
+        );
+      }
+    }
+  }
+  file.flush()
+    .map_err(|e| format!("Gagal menyelesaikan file unduhan: {e}"))?;
+
+  let saved_path = output_path.to_string_lossy().to_string();
+  #[cfg(target_os = "android")]
+  {
+    let mime = guess_mime_from_path(&saved_path);
+    broadcast_download_notification(
+      "complete",
+      notif_id,
+      "Unduhan selesai",
+      Some(100),
+      Some(&saved_path),
+      Some(mime),
+      None,
+    );
+  }
+  Ok(saved_path)
 }
 
 #[tauri::command]
@@ -417,11 +602,43 @@ fn save_base64_to_downloads(
   };
   let (download_dir, _is_public) = resolve_mobile_download_dir(&app)?;
   let output_path = download_dir.join(final_name);
+
+  #[cfg(target_os = "android")]
+  let notif_id = download_notification_id(&output_path.to_string_lossy());
+  #[cfg(target_os = "android")]
+  broadcast_download_notification("progress", notif_id, "Menyimpan file", Some(10), None, None, None);
+
   let bytes = base64::engine::general_purpose::STANDARD
     .decode(base64_data.trim())
     .map_err(|e| format!("Gagal decode base64: {e}"))?;
-  std::fs::write(&output_path, bytes).map_err(|e| format!("Gagal menyimpan file: {e}"))?;
-  Ok(output_path.to_string_lossy().to_string())
+  std::fs::write(&output_path, bytes).map_err(|e| {
+    #[cfg(target_os = "android")]
+    broadcast_download_notification(
+      "error",
+      notif_id,
+      "Gagal menyimpan file",
+      None,
+      None,
+      None,
+      Some("Tidak bisa menulis file hasil unduhan."),
+    );
+    format!("Gagal menyimpan file: {e}")
+  })?;
+  let saved_path = output_path.to_string_lossy().to_string();
+  #[cfg(target_os = "android")]
+  {
+    let mime = guess_mime_from_path(&saved_path);
+    broadcast_download_notification(
+      "complete",
+      notif_id,
+      "File tersimpan",
+      Some(100),
+      Some(&saved_path),
+      Some(mime),
+      None,
+    );
+  }
+  Ok(saved_path)
 }
 
 #[tauri::command]
