@@ -131,8 +131,15 @@ serve(async req => {
   if (!data.open_chat_thread_id && data.thread_id) {
     data.open_chat_thread_id = data.thread_id
   }
+  if (!data.thread_id && data.open_chat_thread_id) {
+    data.thread_id = data.open_chat_thread_id
+  }
   if (!data.route && data.open_chat_thread_id) {
     data.route = "chat"
+  }
+  const targetUserId = String(payload.user_id || "").trim()
+  if (targetUserId && !data.notify_user_id) {
+    data.notify_user_id = targetUserId
   }
 
   let tokens: string[] = []
@@ -140,7 +147,7 @@ serve(async req => {
   if (explicitToken) {
     tokens = [explicitToken]
   } else {
-    const userId = String(payload.user_id || "").trim()
+    const userId = targetUserId
     if (!userId) {
       return jsonResponse(400, { ok: false, error: "token atau user_id wajib diisi" })
     }
