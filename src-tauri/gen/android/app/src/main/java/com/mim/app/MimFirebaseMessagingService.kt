@@ -21,9 +21,11 @@ class MimFirebaseMessagingService : FirebaseMessagingService() {
 
   override fun onMessageReceived(remoteMessage: RemoteMessage) {
     super.onMessageReceived(remoteMessage)
-    val title = remoteMessage.notification?.title ?: "Pesan baru"
-    val body = remoteMessage.notification?.body
-      ?: remoteMessage.data["body"]
+    val title = remoteMessage.data["title"]
+      ?: remoteMessage.notification?.title
+      ?: "Pesan baru"
+    val body = remoteMessage.data["body"]
+      ?: remoteMessage.notification?.body
       ?: "Anda menerima pesan baru."
     val threadId = remoteMessage.data["open_chat_thread_id"]
       ?: remoteMessage.data["thread_id"]

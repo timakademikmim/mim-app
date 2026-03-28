@@ -168,11 +168,18 @@ serve(async req => {
   const results: Array<{ token: string; ok: boolean; error?: string }> = []
 
   for (const token of tokens) {
+    const payloadData: Record<string, string> = {
+      ...data,
+      title,
+      body
+    }
     const messageBody = {
       message: {
         token,
-        notification: { title, body },
-        data
+        data: payloadData,
+        android: {
+          priority: "HIGH"
+        }
       }
     }
     const fcmRes = await fetch(`https://fcm.googleapis.com/v1/projects/${project_id}/messages:send`, {
