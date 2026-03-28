@@ -23,13 +23,13 @@ class DownloadNotificationReceiver : BroadcastReceiver() {
   }
 
   private fun handleStatus(context: Context, intent: Intent) {
-    val stage = String(intent.getStringExtra(EXTRA_STAGE) ?: "").trim().lowercase()
+    val stage = intent.getStringExtra(EXTRA_STAGE).orEmpty().trim().lowercase()
     val id = intent.getIntExtra(EXTRA_ID, 3001)
-    val title = String(intent.getStringExtra(EXTRA_TITLE) ?: "Unduhan").trim()
+    val title = intent.getStringExtra(EXTRA_TITLE).orEmpty().trim().ifBlank { "Unduhan" }
     val progress = intent.getIntExtra(EXTRA_PROGRESS, 0).coerceIn(0, 100)
-    val path = String(intent.getStringExtra(EXTRA_PATH) ?: "").trim()
-    val mime = String(intent.getStringExtra(EXTRA_MIME) ?: "").trim()
-    val error = String(intent.getStringExtra(EXTRA_ERROR) ?: "").trim()
+    val path = intent.getStringExtra(EXTRA_PATH).orEmpty().trim()
+    val mime = intent.getStringExtra(EXTRA_MIME).orEmpty().trim()
+    val error = intent.getStringExtra(EXTRA_ERROR).orEmpty().trim()
 
     ensureChannel(context)
 
@@ -82,9 +82,9 @@ class DownloadNotificationReceiver : BroadcastReceiver() {
   }
 
   private fun handleOpen(context: Context, intent: Intent) {
-    val path = String(intent.getStringExtra(EXTRA_PATH) ?: "").trim()
+    val path = intent.getStringExtra(EXTRA_PATH).orEmpty().trim()
     if (path.isBlank()) return
-    val mimeRaw = String(intent.getStringExtra(EXTRA_MIME) ?: "").trim()
+    val mimeRaw = intent.getStringExtra(EXTRA_MIME).orEmpty().trim()
     val mime = if (mimeRaw.isBlank()) guessMime(path) else mimeRaw
     val id = intent.getIntExtra(EXTRA_ID, 3001)
 

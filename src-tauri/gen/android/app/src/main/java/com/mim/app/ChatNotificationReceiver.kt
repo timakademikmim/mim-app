@@ -8,10 +8,10 @@ class ChatNotificationReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
     if (intent.action != ACTION_SHOW) return
 
-    val title = String(intent.getStringExtra(EXTRA_TITLE) ?: "").trim()
-    val body = String(intent.getStringExtra(EXTRA_BODY) ?: "").trim()
-    val threadId = String(intent.getStringExtra(EXTRA_THREAD_ID) ?: "").trim()
-    val notifyUserId = String(intent.getStringExtra(EXTRA_USER_ID) ?: "").trim()
+    val title = intent.getStringExtra(EXTRA_TITLE).orEmpty().trim()
+    val body = intent.getStringExtra(EXTRA_BODY).orEmpty().trim()
+    val threadId = intent.getStringExtra(EXTRA_THREAD_ID).orEmpty().trim()
+    val notifyUserId = intent.getStringExtra(EXTRA_USER_ID).orEmpty().trim()
 
     ChatNotificationHelper.show(
       context,
