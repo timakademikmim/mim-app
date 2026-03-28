@@ -2435,6 +2435,20 @@ function openChatPageFromNotification(forcedThreadId = '') {
   return true
 }
 
+function openChatPanelFromNotification() {
+  const opened = tryOpenChatRoute()
+  if (!opened) {
+    window.setTimeout(() => {
+      tryOpenChatRoute()
+    }, CHAT_OPEN_RETRY_DELAY)
+    return false
+  }
+  if (typeof window.updateAndroidBottomNavActive === 'function') {
+    window.updateAndroidBottomNavActive('chat')
+  }
+  return true
+}
+
 if (!window.__chatNotifyOpenHandlerBound) {
   window.__chatNotifyOpenHandlerBound = true
   window.addEventListener('visibilitychange', () => {
@@ -2459,6 +2473,10 @@ window.addEventListener('mim-open-chat-thread', event => {
   }
   saveChatNotifyOpen(id, tid)
   openChatPageFromNotification(tid)
+})
+
+window.addEventListener('mim-open-chat-panel', () => {
+  openChatPanelFromNotification()
 })
 
 window.addEventListener('load', () => {

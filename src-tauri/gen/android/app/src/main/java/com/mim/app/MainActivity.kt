@@ -53,9 +53,14 @@ class MainActivity : TauriActivity() {
 
   private fun handleIntent(intent: Intent?) {
     if (intent == null) return
-    val threadId = extractThreadId(intent) ?: return
-    if (threadId.isBlank()) return
-    emitChatOpen(threadId)
+    val threadId = extractThreadId(intent)
+    if (!threadId.isNullOrBlank()) {
+      emitChatOpen(threadId)
+      return
+    }
+    if (extractRoute(intent) == "chat") {
+      emitChatPanelOpen()
+    }
   }
 
   private fun extractThreadId(intent: Intent): String? {
@@ -87,6 +92,28 @@ class MainActivity : TauriActivity() {
     return null
   }
 
+  private fun extractRoute(intent: Intent): String {
+    val direct = intent.getStringExtra("route")
+      ?: intent.getStringExtra("gcm.notification.route")
+    if (!direct.isNullOrBlank()) return direct.trim().lowercase()
+
+    val extras = intent.extras
+    if (extras != null) {
+      val candidates = arrayOf("route", "gcm.notification.route")
+      for (key in candidates) {
+        val value = extras.getString(key)
+        if (!value.isNullOrBlank()) return value.trim().lowercase()
+      }
+    }
+
+    val data = intent.data
+    if (data != null) {
+      val fromUri = data.getQueryParameter("route")
+      if (!fromUri.isNullOrBlank()) return fromUri.trim().lowercase()
+    }
+    return ""
+  }
+
   companion object {
     @Volatile
     private var webViewRef: WebView? = null
@@ -94,6 +121,8 @@ class MainActivity : TauriActivity() {
     private var pendingFcmToken: String? = null
     @Volatile
     private var pendingThreadId: String? = null
+    @Volatile
+    private var pendingOpenChatPanel: Boolean = false
     @Volatile
     private var pendingThreadAttempts: Int = 0
     private const val MAX_PENDING_THREAD_ATTEMPTS = 10
@@ -106,6 +135,9 @@ class MainActivity : TauriActivity() {
       }
       pendingThreadId?.let { tid ->
         emitChatOpen(tid)
+      }
+      if (pendingOpenChatPanel) {
+        emitChatPanelOpen()
       }
     }
 
@@ -141,6 +173,23 @@ class MainActivity : TauriActivity() {
       val script =
         "try { window.__mimPendingOpenThread = $safeThread; localStorage.setItem('chat_open_thread_id', $safeThread); } catch (e) {}" +
         "window.dispatchEvent(new CustomEvent('mim-open-chat-thread', { detail: { threadId: $safeThread } }));"
+      emitScript(script)
+    }
+
+    fun emitChatPanelOpen() {
+      val webView = webViewRef
+      if (webView == null) {
+        pendingOpenChatPanel = true
+        return
+      }
+      val currentUrl = webView.url ?: ""
+      if (currentUrl.isBlank() || currentUrl == "about:blank") {
+        pendingOpenChatPanel = true
+        webView.postDelayed({ emitChatPanelOpen() }, 450L)
+        return
+      }
+      pendingOpenChatPanel = false
+      val script = "window.dispatchEvent(new CustomEvent('mim-open-chat-panel'));"
       emitScript(script)
     }
 

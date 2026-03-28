@@ -13,6 +13,11 @@ function isAndroidApp() {
 function initAndroidColdStart() {
   if (!isAndroidApp()) return false
   if (sessionStorage.getItem('android_session_started') === '1') return false
+  const hasPendingChatOpen = !!String(localStorage.getItem('chat_open_thread_id') || '').trim()
+  if (hasPendingChatOpen) {
+    sessionStorage.setItem('android_session_started', '1')
+    return false
+  }
   sessionStorage.setItem('android_session_started', '1')
 
   localStorage.removeItem('last_open_page')
