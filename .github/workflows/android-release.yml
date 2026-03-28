@@ -35,6 +35,16 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Install required Android SDK components
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;35.0.0" \
+            "ndk;29.0.14206865"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -46,10 +56,10 @@ jobs:
         run: |
           if [ -f "iconMIM-android.png" ]; then
             cp "iconMIM-android.png" "src-tauri/icons/icon.png"
-            npx @tauri-apps/cli@latest icon "src-tauri/icons/icon.png"
+            npx @tauri-apps/cli@2.10.1 icon "src-tauri/icons/icon.png"
           elif [ -f "iconMIM.png" ]; then
             cp "iconMIM.png" "src-tauri/icons/icon.png"
-            npx @tauri-apps/cli@latest icon "src-tauri/icons/icon.png"
+            npx @tauri-apps/cli@2.10.1 icon "src-tauri/icons/icon.png"
           else
             echo "Sumber icon tidak ditemukan, memakai icon yang sudah ada."
           fi
@@ -102,7 +112,7 @@ jobs:
           VERSION: ${{ env.MIM_ANDROID_VERSION_NAME }}
 
       - name: Build Android APK (arm64 release)
-        run: npx @tauri-apps/cli@latest android build --apk --target aarch64 --split-per-abi
+        run: npx @tauri-apps/cli@2.10.1 android build --apk --target aarch64 --split-per-abi
 
       - name: Collect signed APK artifacts
         shell: bash
