@@ -9,7 +9,8 @@
         const params = new URLSearchParams(window.location.search || '');
         const isAndroidPreview = params.get('preview') === 'android';
         const isAndroidUA = /android/i.test(String(navigator.userAgent || ''));
-        if (isAndroidPreview || isAndroidUA) {
+        const hasTauriRuntime = !!(window.__TAURI__ || window.__TAURI_INTERNALS__);
+        if (isAndroidPreview || (isAndroidUA && hasTauriRuntime)) {
           document.documentElement.classList.add('android-preboot');
         }
       } catch (e) {}

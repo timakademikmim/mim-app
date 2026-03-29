@@ -300,6 +300,7 @@ function applyPlatformUiSkin() {
   if (!body) return
 
   body.classList.remove('platform-android', 'platform-desktop', 'platform-web', 'platform-mobile-web')
+  document.documentElement.classList.remove('android-preboot')
   if (isAndroidPlatform()) body.classList.add('platform-android')
   else if (isDesktopPlatform()) body.classList.add('platform-desktop')
   else body.classList.add('platform-web')
