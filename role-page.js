@@ -65,6 +65,21 @@ function isAndroidRuntime() {
   return hasTauriRuntime() && /android/i.test(String(navigator.userAgent || ''))
 }
 
+function isMobileWebPlatform() {
+  if (PREVIEW_PLATFORM === 'android') return true
+  if (PREVIEW_PLATFORM === 'desktop' || PREVIEW_PLATFORM === 'web') return false
+  if (hasTauriRuntime()) return false
+
+  const ua = String(navigator.userAgent || '').toLowerCase()
+  const isMobileUa = /(android|iphone|ipad|ipod|mobile)/i.test(ua)
+  const maxTouch = Number(navigator.maxTouchPoints || 0)
+  const hasTouch = maxTouch > 0 || 'ontouchstart' in window
+  const vw = Number(window.innerWidth || document.documentElement?.clientWidth || 0)
+  const byViewport = vw > 0 && vw <= 1024
+
+  return Boolean(hasTouch && (isMobileUa || byViewport))
+}
+
 function getOrCreateDeviceId() {
   try {
     const existing = localStorage.getItem('mim_device_id')
@@ -161,9 +176,7 @@ function scheduleChatOpenRetry(threadId) {
 }
 
 function isAndroidPlatform() {
-  if (PREVIEW_PLATFORM === 'android') return true
-  if (PREVIEW_PLATFORM === 'desktop' || PREVIEW_PLATFORM === 'web') return false
-  return hasTauriRuntime() && /android/i.test(String(navigator.userAgent || ''))
+  return isAndroidRuntime() || isMobileWebPlatform()
 }
 
 function isDesktopPlatform() {
@@ -286,10 +299,11 @@ function applyPlatformUiSkin() {
   const body = document.body
   if (!body) return
 
-  body.classList.remove('platform-android', 'platform-desktop', 'platform-web')
+  body.classList.remove('platform-android', 'platform-desktop', 'platform-web', 'platform-mobile-web')
   if (isAndroidPlatform()) body.classList.add('platform-android')
   else if (isDesktopPlatform()) body.classList.add('platform-desktop')
   else body.classList.add('platform-web')
+  if (isMobileWebPlatform() && !isAndroidRuntime()) body.classList.add('platform-mobile-web')
 
   if (!isAndroidPlatform()) return
   if (document.getElementById('android-ui-css')) return
@@ -307,7 +321,7 @@ function applyPlatformUiSkin() {
 }
 
 function showAndroidWelcomeScreen() {
-  if (!isAndroidPlatform()) return
+  if (!isAndroidRuntime()) return
   if (!document.body) return
   if (sessionStorage.getItem('android_welcome_seen') === '1') {
     document.documentElement.classList.remove('android-preboot')
@@ -544,6 +558,17 @@ function ensureAndroidBottomNav() {
         </button>
       `
     }
+    if (item.key === 'chat') {
+      return `
+      <button type="button" class="android-bottom-nav-btn ${index === 0 ? 'active' : ''}" data-nav-key="${item.key}">
+        <span class="android-bottom-nav-icon android-bottom-nav-icon-chat" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${item.icon}</svg>
+          <span id="android-bottom-chat-badge" class="android-bottom-chat-badge hidden">0</span>
+        </span>
+        <span class="android-bottom-nav-label">${item.label}</span>
+      </button>
+    `
+    }
     return `
       <button type="button" class="android-bottom-nav-btn ${index === 0 ? 'active' : ''}" data-nav-key="${item.key}">
         <span class="android-bottom-nav-icon" aria-hidden="true">
@@ -559,6 +584,31 @@ function ensureAndroidBottomNav() {
   nav.className = 'android-bottom-nav'
   nav.innerHTML = items.map(renderItem).join('')
   document.body.appendChild(nav)
+
+  const setAndroidBottomChatBadge = count => {
+    const badge = nav.querySelector('#android-bottom-chat-badge')
+    if (!badge) return
+    const total = Number.isFinite(Number(count)) ? Number(count) : 0
+    if (total <= 0) {
+      badge.textContent = '0'
+      badge.classList.add('hidden')
+      return
+    }
+    badge.classList.remove('hidden')
+    badge.textContent = total > 99 ? '99+' : String(total)
+  }
+  window.setAndroidBottomChatBadge = setAndroidBottomChatBadge
+
+  const pendingCount = Number(window.__androidBottomPendingChatBadgeCount || 0) || 0
+  if (pendingCount > 0) {
+    setAndroidBottomChatBadge(pendingCount)
+  } else {
+    const topbarBadge = document.getElementById('topbar-chat-badge')
+    const fromTopbar = topbarBadge && !topbarBadge.classList.contains('hidden')
+      ? Number(String(topbarBadge.textContent || '').replace('+', '').trim()) || 0
+      : 0
+    setAndroidBottomChatBadge(fromTopbar)
+  }
 
   const setActive = key => {
     const buttons = nav.querySelectorAll('.android-bottom-nav-btn')
@@ -1642,7 +1692,7 @@ async function initWebDesktopInfoPopup() {
 }
 
 async function initMobileInAppUpdatePrompt() {
-  if (!isAndroidPlatform()) return
+  if (!isAndroidRuntime()) return
   if (document.getElementById('mobile-update-overlay')) return
 
   const normalizeVersion = normalizeVersionText
@@ -2561,9 +2611,22 @@ window.downloadToAndroidAppStorage = async function downloadToAndroidAppStorage(
       url: target,
       fileName: String(fileName || '').trim()
     })
+    try {
+      const pathText = String(savedPath || '').trim()
+      if (pathText && typeof window.showLocalNotification === 'function') {
+        const fileLabel = pathText.split(/[/\\]/).pop() || 'File'
+        await window.showLocalNotification('Unduhan selesai', `${fileLabel} berhasil disimpan.`)
+      }
+    } catch (_error) {}
     return { ok: true, path: String(savedPath || '') }
   } catch (error) {
-    return { ok: false, path: '', error: String(error?.message || error || 'Gagal menyimpan file.') }
+    const message = String(error?.message || error || 'Gagal menyimpan file.')
+    try {
+      if (typeof window.showLocalNotification === 'function') {
+        await window.showLocalNotification('Unduhan gagal', message)
+      }
+    } catch (_error) {}
+    return { ok: false, path: '', error: message }
   }
 }
 
@@ -2575,9 +2638,22 @@ window.saveBase64ToAndroidDownloads = async function saveBase64ToAndroidDownload
       fileName: String(fileName || '').trim(),
       base64Data: String(base64Data || '').trim()
     })
+    try {
+      const pathText = String(savedPath || '').trim()
+      if (pathText && typeof window.showLocalNotification === 'function') {
+        const fileLabel = pathText.split(/[/\\]/).pop() || 'File'
+        await window.showLocalNotification('File tersimpan', `${fileLabel} berhasil disimpan.`)
+      }
+    } catch (_error) {}
     return { ok: true, path: String(savedPath || '') }
   } catch (error) {
-    return { ok: false, path: '', error: String(error?.message || error || 'Gagal menyimpan file.') }
+    const message = String(error?.message || error || 'Gagal menyimpan file.')
+    try {
+      if (typeof window.showLocalNotification === 'function') {
+        await window.showLocalNotification('Simpan file gagal', message)
+      }
+    } catch (_error) {}
+    return { ok: false, path: '', error: message }
   }
 }
 

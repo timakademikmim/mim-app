@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.Person
 import androidx.core.app.RemoteInput
 
 object ChatNotificationHelper {
@@ -35,15 +36,24 @@ object ChatNotificationHelper {
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
 
+    val sender = Person.Builder()
+      .setName(safeTitle)
+      .build()
+
+    val messagingStyle = NotificationCompat.MessagingStyle(sender)
+      .setConversationTitle("Pesan")
+      .addMessage(safeBody, System.currentTimeMillis(), sender)
+
     val builder = NotificationCompat.Builder(context, CHANNEL_ID)
       .setSmallIcon(R.mipmap.ic_launcher)
       .setContentTitle(safeTitle)
       .setContentText(safeBody)
-      .setStyle(NotificationCompat.BigTextStyle().bigText(safeBody))
+      .setStyle(messagingStyle)
       .setAutoCancel(true)
       .setContentIntent(openPendingIntent)
       .setPriority(NotificationCompat.PRIORITY_HIGH)
       .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+      .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
 
     if (threadId.isNotBlank()) {
       val replyPendingIntent = PendingIntent.getBroadcast(
@@ -67,6 +77,8 @@ object ChatNotificationHelper {
         replyPendingIntent
       ).addRemoteInput(remoteInput)
         .setAllowGeneratedReplies(true)
+        .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
+        .setShowsUserInterface(false)
         .build()
       builder.addAction(replyAction)
     }

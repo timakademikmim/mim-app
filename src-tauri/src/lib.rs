@@ -48,9 +48,33 @@ fn emit_updater_status(
 
 #[cfg(target_os = "android")]
 fn run_android_am(args: &[&str]) -> bool {
-  let bins = ["am", "/system/bin/am"];
+  let bins = ["/system/bin/am", "am"];
   for bin in bins {
     match std::process::Command::new(bin).args(args).status() {
+      Ok(status) if status.success() => return true,
+      _ => {}
+    }
+  }
+
+  let quoted = args
+    .iter()
+    .map(|arg| {
+      let escaped = arg.replace('\\', "\\\\").replace('"', "\\\"");
+      format!("\"{escaped}\"")
+    })
+    .collect::<Vec<_>>()
+    .join(" ");
+  let shell_cmd = if quoted.is_empty() {
+    "am".to_string()
+  } else {
+    format!("am {quoted}")
+  };
+  let shells = ["/system/bin/sh", "sh"];
+  for shell in shells {
+    match std::process::Command::new(shell)
+      .args(["-c", &shell_cmd])
+      .status()
+    {
       Ok(status) if status.success() => return true,
       _ => {}
     }
