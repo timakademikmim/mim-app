@@ -2458,6 +2458,90 @@ function clearChatNotifyOpen(userId) {
   } catch (_error) {}
 }
 
+const WEB_NOTIFY_MAX_TRACKED_IDS = 120
+let browserNotifPermissionRequest = null
+let browserNotifPermissionAsked = false
+
+function browserNotificationSupported() {
+  return typeof window !== 'undefined' && typeof window.Notification === 'function'
+}
+
+async function ensureBrowserNotificationPermission() {
+  if (!browserNotificationSupported()) return 'denied'
+  const currentPermission = String(window.Notification.permission || 'default')
+  if (currentPermission !== 'default') return currentPermission
+  if (browserNotifPermissionAsked) return currentPermission
+  if (document.visibilityState !== 'visible') return currentPermission
+  browserNotifPermissionAsked = true
+  if (browserNotifPermissionRequest) return browserNotifPermissionRequest
+  browserNotifPermissionRequest = (async () => {
+    try {
+      const requestResult = window.Notification.requestPermission()
+      if (requestResult && typeof requestResult.then === 'function') {
+        return String(await requestResult)
+      }
+      return String(requestResult || window.Notification.permission || 'default')
+    } catch (_error) {
+      return 'denied'
+    } finally {
+      browserNotifPermissionRequest = null
+    }
+  })()
+  return browserNotifPermissionRequest
+}
+
+function getActivityNotifyStorageKey(scope, userId) {
+  return `activity_notify_state:${safeChatId(scope)}:${safeChatId(userId)}`
+}
+
+function loadActivityNotifyState(scope, userId) {
+  const key = getActivityNotifyStorageKey(scope, userId)
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return { ids: [] }
+    const parsed = JSON.parse(raw)
+    const ids = Array.isArray(parsed?.ids) ? parsed.ids.map(item => safeChatId(item)).filter(Boolean) : []
+    return { ids: ids.slice(-WEB_NOTIFY_MAX_TRACKED_IDS) }
+  } catch (_error) {
+    return { ids: [] }
+  }
+}
+
+function saveActivityNotifyState(scope, userId, nextState) {
+  const key = getActivityNotifyStorageKey(scope, userId)
+  try {
+    localStorage.setItem(key, JSON.stringify(nextState || {}))
+  } catch (_error) {}
+}
+
+function buildBrowserNotificationTag(options = {}) {
+  const explicitTag = safeChatId(options?.tag || '')
+  if (explicitTag) return explicitTag
+  const threadId = safeChatId(options?.threadId || '')
+  if (threadId) return `mim-chat-${threadId}`
+  const scope = safeChatId(options?.scope || '')
+  if (scope) return `mim-${scope}`
+  return 'mim-notification'
+}
+
+function handleBrowserNotificationClick(options = {}) {
+  const threadId = safeChatId(options?.threadId || '')
+  if (threadId) {
+    try {
+      localStorage.setItem(CHAT_OPEN_STORAGE_KEY, threadId)
+    } catch (_error) {}
+    try {
+      window.dispatchEvent(new CustomEvent('mim-open-chat-thread', { detail: { threadId } }))
+    } catch (_error) {}
+    openChatPageFromNotification(threadId)
+    return
+  }
+  const route = String(options?.route || '').trim().toLowerCase()
+  if (route === 'chat') {
+    openChatPanelFromNotification()
+  }
+}
+
 function openChatPageFromNotification(forcedThreadId = '') {
   const directThreadId = safeChatId(forcedThreadId || '')
   const uid = safeChatId(id)
@@ -2540,28 +2624,98 @@ window.addEventListener('load', () => {
 window.showLocalNotification = async function showLocalNotification(title, body, options = {}) {
   const isTauriApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
   const isAndroidApp = /android/i.test(String(navigator.userAgent || ''))
-  if (!isTauriApp || !isAndroidApp) return false
+  const titleText = String(title || '').trim() || 'Notifikasi'
+  const bodyText = String(body || '').trim()
   const threadId = safeChatId(options?.threadId || '')
   const userId = safeChatId(options?.userId || '')
-  try {
-    if (threadId) {
-      const chatResult = await invokeTauriCommand('show_chat_notification', {
-        title: String(title || '').trim(),
-        body: String(body || '').trim(),
-        threadId,
-        userId
+  if (isTauriApp && isAndroidApp) {
+    try {
+      if (threadId) {
+        const chatResult = await invokeTauriCommand('show_chat_notification', {
+          title: titleText,
+          body: bodyText,
+          threadId,
+          userId
+        })
+        if (chatResult === true) return true
+      }
+      const result = await invokeTauriCommand('show_local_notification', {
+        title: titleText,
+        body: bodyText
       })
-      if (chatResult === true) return true
+      return result === true
+    } catch (error) {
+      console.error('showLocalNotification failed:', error)
+      return false
     }
-    const result = await invokeTauriCommand('show_local_notification', {
-      title: String(title || '').trim(),
-      body: String(body || '').trim()
+  }
+
+  if (!isWebPlatform() || !browserNotificationSupported()) return false
+  const permission = await ensureBrowserNotificationPermission()
+  if (permission !== 'granted') return false
+  try {
+    const notif = new window.Notification(titleText, {
+      body: bodyText,
+      tag: buildBrowserNotificationTag(options)
     })
-    return result === true
+    notif.onclick = () => {
+      try {
+        window.focus()
+      } catch (_error) {}
+      handleBrowserNotificationClick(options)
+      try {
+        notif.close()
+      } catch (_error) {}
+    }
+    return true
   } catch (error) {
-    console.error('showLocalNotification failed:', error)
+    console.error('showLocalNotification (web) failed:', error)
     return false
   }
+}
+
+window.maybeNotifyActivityItems = async function maybeNotifyActivityItems({
+  scope = 'activity',
+  userId = '',
+  items = [],
+  readMap = {}
+} = {}) {
+  if (!isWebPlatform()) return false
+  if (!Array.isArray(items) || !items.length) return false
+  const uid = safeChatId(userId)
+  if (!uid) return false
+  const scopeText = safeChatId(scope || 'activity') || 'activity'
+  const readState = readMap && typeof readMap === 'object' ? readMap : {}
+  const state = loadActivityNotifyState(scopeText, uid)
+  const knownIds = new Set(Array.isArray(state.ids) ? state.ids : [])
+  const unreadItems = items
+    .filter(item => item && !readState[String(item.id || '')])
+    .map(item => ({
+      id: safeChatId(item.id || ''),
+      type: String(item.type || 'Aktivitas').trim(),
+      title: String(item.title || '-').trim(),
+      sortKey: String(item.sortKey || '').trim()
+    }))
+    .filter(item => item.id)
+    .sort((a, b) => String(b.sortKey || '').localeCompare(String(a.sortKey || '')))
+  if (!unreadItems.length) return false
+  const freshItems = unreadItems.filter(item => !knownIds.has(item.id))
+  if (!freshItems.length) return false
+
+  const mergedIds = [...(state.ids || []), ...freshItems.map(item => item.id)].slice(-WEB_NOTIFY_MAX_TRACKED_IDS)
+  saveActivityNotifyState(scopeText, uid, { ids: mergedIds })
+
+  const newest = freshItems[0]
+  const total = freshItems.length
+  const titleText = total > 1 ? `${total} aktivitas baru` : 'Aktivitas baru'
+  const bodyText = total > 1
+    ? `Terbaru: ${newest.type} - ${newest.title}`
+    : `${newest.type} - ${newest.title}`
+  await window.showLocalNotification(titleText, bodyText, {
+    scope: `activity-${scopeText}`,
+    tag: `mim-activity-${scopeText}-${uid}`
+  })
+  return true
 }
 
 window.maybeNotifyChatMessage = async function maybeNotifyChatMessage({ userId, latestIncoming }) {

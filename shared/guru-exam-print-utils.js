@@ -1,4 +1,4 @@
-;(function initGuruExamPrintUtils() {
+﻿;(function initGuruExamPrintUtils() {
   if (window.guruExamPrintUtils) return
 
   function parseExamInstruksiMeta(value) {
@@ -24,16 +24,16 @@
     const lang = String(langCode || 'ID').toUpperCase()
     if (lang === 'AR') {
       return {
-        title: 'Ø£Ø³Ø¦Ù„Ø© Ø§Ù„Ø§Ù…ØªØ­Ø§Ù†',
-        jenis: 'Ø§Ù„Ù†ÙˆØ¹',
-        namaUjian: 'Ø§Ø³Ù… Ø§Ù„Ø§Ø®ØªØ¨Ø§Ø±',
-        kelasMapel: 'Ø§Ù„ØµÙ',
-        mapel: 'Ø§Ù„Ù…Ø§Ø¯Ø©',
-        tanggalWaktu: 'Ø§Ù„ØªØ§Ø±ÙŠØ®',
-        waktu: 'Ø§Ù„ÙˆÙ‚Øª',
-        guru: 'Ø§Ù„Ù…Ø¹Ù„Ù…',
-        instruksiUmum: 'ØªØ¹Ù„ÙŠÙ…Ø§Øª Ø¹Ø§Ù…Ø©',
-        modelSoal: 'Ù†Ù…ÙˆØ°Ø¬ Ø§Ù„Ø£Ø³Ø¦Ù„Ø©'
+        title: 'أسئلة الامتحان',
+        jenis: 'النوع',
+        namaUjian: 'اسم الاختبار',
+        kelasMapel: 'الصف',
+        mapel: 'المادة',
+        tanggalWaktu: 'التاريخ',
+        waktu: 'الوقت',
+        guru: 'المعلم',
+        instruksiUmum: 'تعليمات عامة',
+        modelSoal: 'نموذج الأسئلة'
       }
     }
     return {
@@ -51,7 +51,7 @@
   }
 
   function toArabicIndicDigits(value) {
-    const map = ['Ù ', 'Ù¡', 'Ù¢', 'Ù£', 'Ù¤', 'Ù¥', 'Ù¦', 'Ù§', 'Ù¨', 'Ù©']
+    const map = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩']
     return String(value == null ? '' : value).replace(/\d/g, d => map[Number(d)] || d)
   }
 
@@ -72,7 +72,7 @@
   }
 
   function getArabicLetterByIndex(index) {
-    const letters = ['Ø£', 'Ø¨', 'Ø¬', 'Ø¯', 'Ù‡Ù€', 'Ùˆ', 'Ø²', 'Ø­', 'Ø·', 'ÙŠ', 'Ùƒ', 'Ù„', 'Ù…', 'Ù†', 'Ø³', 'Ø¹', 'Ù', 'Øµ', 'Ù‚', 'Ø±', 'Ø´', 'Øª', 'Ø«', 'Ø®', 'Ø°', 'Ø¶']
+    const letters = ['أ', 'ب', 'ج', 'د', 'هـ', 'و', 'ز', 'ح', 'ط', 'ي', 'ك', 'ل', 'م', 'ن', 'س', 'ع', 'ف', 'ص', 'ق', 'ر', 'ش', 'ت', 'ث', 'خ', 'ذ', 'ض']
     return letters[Number(index || 0) % letters.length]
   }
 
@@ -94,37 +94,84 @@
     const sections = []
     let currentType = ''
     let currentItems = []
+    let currentSectionKey = ''
+    let currentInstruction = ''
     rows.forEach((item, idx) => {
       const qType = normalizeExamQuestionType(item?.type, fallbackType)
+      const sectionKey = String(item?.sectionKey || item?.section_key || '').trim()
+      const sectionInstruction = String(item?.sectionInstruction || item?.section_instruction || '').trim()
       const numbered = {
         ...item,
         no: Number(item?.no || (idx + 1))
       }
       if (!currentType) {
         currentType = qType
+        currentSectionKey = sectionKey
+        currentInstruction = sectionInstruction
         currentItems.push(numbered)
         return
       }
-      if (qType !== currentType) {
-        sections.push({ type: currentType, items: currentItems })
+      const sectionChanged = sectionKey
+        ? sectionKey !== currentSectionKey
+        : (Boolean(currentSectionKey) || qType !== currentType)
+      if (sectionChanged || qType !== currentType) {
+        const firstItem = currentItems[0] || {}
+        sections.push({
+          type: currentType,
+          items: currentItems,
+          instruction: currentInstruction,
+          score: firstItem?.sectionScore ?? firstItem?.section_score ?? null
+        })
         currentType = qType
+        currentSectionKey = sectionKey
+        currentInstruction = sectionInstruction
         currentItems = [numbered]
         return
       }
       currentItems.push(numbered)
     })
-    if (currentItems.length) sections.push({ type: currentType || 'pilihan-ganda', items: currentItems })
+    if (currentItems.length) {
+      const firstItem = currentItems[0] || {}
+      sections.push({
+        type: currentType || 'pilihan-ganda',
+        items: currentItems,
+        instruction: currentInstruction,
+        score: firstItem?.sectionScore ?? firstItem?.section_score ?? null
+      })
+    }
     return sections
+  }
+
+  function buildExamMatchingColumns(items) {
+    const columnA = []
+    const columnB = []
+    ;(Array.isArray(items) ? items : []).forEach(item => {
+      const leftList = Array.isArray(item?.columnA)
+        ? item.columnA
+        : (Array.isArray(item?.pairs) ? item.pairs.map(pair => String(pair?.a || '').trim()) : [])
+      const rightList = Array.isArray(item?.columnB)
+        ? item.columnB
+        : (Array.isArray(item?.pairs) ? item.pairs.map(pair => String(pair?.b || '').trim()) : [])
+      leftList.forEach(entry => {
+        const value = String(entry || '').trim()
+        if (value) columnA.push(value)
+      })
+      rightList.forEach(entry => {
+        const value = String(entry || '').trim()
+        if (value) columnB.push(value)
+      })
+    })
+    return { columnA, columnB }
   }
 
   function getExamPrintTypeParts(type, index, langCode = 'ID') {
     const lang = String(langCode || 'ID').toUpperCase()
     let label = 'Pilihan Ganda'
     if (lang === 'AR') {
-      if (type === 'esai') label = 'Ù…Ù‚Ø§Ù„'
-      else if (type === 'pasangkan-kata') label = 'ÙˆØµÙ„ Ø§Ù„ÙƒÙ„Ù…Ø§Øª'
-      else if (type === 'isi-titik') label = 'Ø§Ù…Ù„Ø£ Ø§Ù„ÙØ±Ø§Øº'
-      else label = 'Ø§Ø®ØªÙŠØ§Ø± Ù…Ù† Ù…ØªØ¹Ø¯Ø¯'
+      if (type === 'esai') label = 'مقال'
+      else if (type === 'pasangkan-kata') label = 'وصل الكلمات'
+      else if (type === 'isi-titik') label = 'املأ الفراغ'
+      else label = 'اختيار من متعدد'
     } else {
       if (type === 'esai') label = 'Esai'
       else if (type === 'pasangkan-kata') label = 'Pasangkan Kata'
@@ -145,10 +192,10 @@
   function getExamPrintTypeInstruction(type, langCode = 'ID') {
     const lang = String(langCode || 'ID').toUpperCase()
     if (lang === 'AR') {
-      if (type === 'esai') return 'Ø£Ø¬Ø¨ Ø¹Ù† Ø§Ù„Ø£Ø³Ø¦Ù„Ø© Ø§Ù„ØªØ§Ù„ÙŠØ© Ø¨ÙˆØ¶ÙˆØ­ ÙˆØµØ­Ø©.'
-      if (type === 'pasangkan-kata') return 'ØµÙÙ„ ÙƒÙ„Ù…Ø§Øª Ø§Ù„Ø¹Ù…ÙˆØ¯ (Ø£) Ø¨Ù…Ø§ ÙŠÙ†Ø§Ø³Ø¨Ù‡Ø§ ÙÙŠ Ø§Ù„Ø¹Ù…ÙˆØ¯ (Ø¨).'
-      if (type === 'isi-titik') return 'Ø£ÙƒÙ…Ù„ Ø§Ù„ÙØ±Ø§Øº Ø¨Ø§Ù„ÙƒÙ„Ù…Ø© Ø§Ù„Ù…Ù†Ø§Ø³Ø¨Ø© Ù…Ù† Ø§Ù„ÙƒÙ„Ù…Ø§Øª Ø§Ù„Ù…Ø¹Ø·Ø§Ø©.'
-      return 'Ø§Ø®ØªØ± Ø¥Ø¬Ø§Ø¨Ø© ÙˆØ§Ø­Ø¯Ø© ØµØ­ÙŠØ­Ø©.'
+      if (type === 'esai') return 'أجب عن الأسئلة التالية بوضوح وصحة.'
+      if (type === 'pasangkan-kata') return 'صل كلمات العمود (أ) بما يناسبها في العمود (ب).'
+      if (type === 'isi-titik') return 'أكمل الفراغ بالكلمة المناسبة من الكلمات المعطاة.'
+      return 'اختر إجابة واحدة صحيحة.'
     }
     if (type === 'esai') return 'Jawablah soal berikut dengan jelas dan benar.'
     if (type === 'pasangkan-kata') return 'Pasangkan kata pada baris A dengan pasangan yang tepat pada baris B.'
@@ -158,6 +205,74 @@
 
   function deriveExamSectionsFromQuestions(questions, fallbackType = 'pilihan-ganda', totalCount = 0) {
     const rows = Array.isArray(questions) ? questions : []
+    const hasSectionKeys = rows.some(item => String(item?.sectionKey || item?.section_key || '').trim())
+    if (hasSectionKeys) {
+      const orderedRows = rows
+        .map((item, idx) => ({
+          ...item,
+          no: Number(item?.no || (idx + 1))
+        }))
+        .filter(item => Number.isFinite(item.no) && item.no > 0)
+        .sort((a, b) => a.no - b.no)
+      const sections = []
+      let currentItems = []
+      let currentKey = ''
+      orderedRows.forEach(item => {
+        const key = String(item?.sectionKey || item?.section_key || `auto-${item.no}`).trim()
+        if (!currentItems.length) {
+          currentKey = key
+          currentItems = [item]
+          return
+        }
+        if (key !== currentKey) {
+          const first = currentItems[0] || {}
+          const last = currentItems[currentItems.length - 1] || first
+          const fragSet = new Set()
+          currentItems.forEach(entry => {
+            const frags = Array.isArray(entry?.fragments) ? entry.fragments : []
+            frags.forEach(f => {
+              const txt = String(f || '').trim()
+              if (txt) fragSet.add(txt)
+            })
+          })
+          sections.push({
+            type: normalizeExamQuestionType(first?.type, fallbackType),
+            start: Number(first?.no || 1),
+            end: Number(last?.no || first?.no || 1),
+            wordPool: [...fragSet].join(', '),
+            blankCount: Math.max(1, Number(last?.no || first?.no || 1) - Number(first?.no || 1) + 1),
+            instruction: String(first?.sectionInstruction || first?.section_instruction || '').trim(),
+            score: first?.sectionScore ?? first?.section_score ?? null
+          })
+          currentKey = key
+          currentItems = [item]
+          return
+        }
+        currentItems.push(item)
+      })
+      if (currentItems.length) {
+        const first = currentItems[0] || {}
+        const last = currentItems[currentItems.length - 1] || first
+        const fragSet = new Set()
+        currentItems.forEach(entry => {
+          const frags = Array.isArray(entry?.fragments) ? entry.fragments : []
+          frags.forEach(f => {
+            const txt = String(f || '').trim()
+            if (txt) fragSet.add(txt)
+          })
+        })
+        sections.push({
+          type: normalizeExamQuestionType(first?.type, fallbackType),
+          start: Number(first?.no || 1),
+          end: Number(last?.no || first?.no || 1),
+          wordPool: [...fragSet].join(', '),
+          blankCount: Math.max(1, Number(last?.no || first?.no || 1) - Number(first?.no || 1) + 1),
+          instruction: String(first?.sectionInstruction || first?.section_instruction || '').trim(),
+          score: first?.sectionScore ?? first?.section_score ?? null
+        })
+      }
+      return sections
+    }
     let maxNo = 0
     rows.forEach((item, idx) => {
       const no = Number(item?.no || (idx + 1))
@@ -187,7 +302,16 @@
           if (txt) fragSet.add(txt)
         })
       })
-      sections.push({ type: current, start, end: i - 1, wordPool: [...fragSet].join(', '), blankCount: (i - 1) - start + 1 })
+      const firstItem = segmentItems[0] || {}
+      sections.push({
+        type: current,
+        start,
+        end: i - 1,
+        wordPool: [...fragSet].join(', '),
+        blankCount: (i - 1) - start + 1,
+        instruction: String(firstItem?.sectionInstruction || firstItem?.section_instruction || '').trim(),
+        score: firstItem?.sectionScore ?? firstItem?.section_score ?? null
+      })
       start = i
       current = typeMap[i]
     }
@@ -204,7 +328,16 @@
           if (txt) fragSet.add(txt)
         })
       })
-      sections.push({ type: current, start, end: safeCount, wordPool: [...fragSet].join(', '), blankCount: safeCount - start + 1 })
+      const firstItem = segmentItems[0] || {}
+      sections.push({
+        type: current,
+        start,
+        end: safeCount,
+        wordPool: [...fragSet].join(', '),
+        blankCount: safeCount - start + 1,
+        instruction: String(firstItem?.sectionInstruction || firstItem?.section_instruction || '').trim(),
+        score: firstItem?.sectionScore ?? firstItem?.section_score ?? null
+      })
     }
     return sections
   }
@@ -221,6 +354,7 @@
     getExamPrintTypeTitle,
     getExamPrintTypeParts,
     getExamPrintTypeInstruction,
+    buildExamMatchingColumns,
     normalizeExamQuestionType,
     deriveExamSectionsFromQuestions
   }

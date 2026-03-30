@@ -42,6 +42,7 @@ const MONTHLY_REPORT_SELECT_NEW = 'id, nilai_akhlak, predikat, catatan_wali, muh
 const MONTHLY_REPORT_SELECT_LEGACY = 'id, nilai_akhlak, predikat, catatan_wali'
 const EXAM_SCHEDULE_TABLE = 'jadwal_ujian'
 const EXAM_QUESTION_TABLE = 'soal_ujian'
+const EXAM_PARTICIPANT_TABLE = 'peserta_ujian'
 const EXAM_ARABIC_FONT_FILE = 'Traditional Arabic Regular.ttf'
 const EXAM_ARABIC_FONT_NAME = 'TraditionalArabic'
 const EXAM_ARABIC_FONT_BOLD_FILE = 'Arial Bold.ttf'
@@ -198,7 +199,7 @@ let topbarKalenderState = {
 let topbarNotifState = {
   items: [],
   loaded: false,
-  rangeDays: 3,
+  rangeDays: 1,
   readMap: {}
 }
 let topbarChatBadgeState = {
@@ -232,7 +233,10 @@ let ujianGuruState = {
   activeJadwal: null,
   activeKelasName: '',
   sectionDefs: [],
-  activeSoal: null
+  sectionScoreDrafts: {},
+  activeSoal: null,
+  activeScanData: null,
+  scanUploadsByRow: {}
 }
 let examArabicFontBase64 = ''
 let examArabicFontBoldBase64 = ''
@@ -3961,8 +3965,8 @@ function loadGuruNotifPrefs() {
       }
     })
   }
-  const rangeRaw = Number(localStorage.getItem(TOPBAR_NOTIF_RANGE_KEY) || '3')
-  topbarNotifState.rangeDays = [1, 3, 7].includes(rangeRaw) ? rangeRaw : 3
+  const rangeRaw = Number(localStorage.getItem(TOPBAR_NOTIF_RANGE_KEY) || '1')
+  topbarNotifState.rangeDays = [1, 3, 7].includes(rangeRaw) ? rangeRaw : 1
 }
 
 function saveGuruNotifReadMap() {
@@ -3973,7 +3977,7 @@ function saveGuruNotifReadMap() {
 
 function setGuruNotifRangeDays(days) {
   const value = Number(days)
-  topbarNotifState.rangeDays = [1, 3, 7].includes(value) ? value : 3
+  topbarNotifState.rangeDays = [1, 3, 7].includes(value) ? value : 1
   localStorage.setItem(TOPBAR_NOTIF_RANGE_KEY, String(topbarNotifState.rangeDays))
 }
 
@@ -4048,6 +4052,12 @@ function getGuruNotifId(item) {
   return String(item?.id || `${item?.type || ''}|${item?.title || ''}|${item?.meta || ''}|${item?.sortKey || ''}`)
 }
 
+function findGuruNotifItemById(id) {
+  const key = String(id || '').trim()
+  if (!key) return null
+  return (topbarNotifState.items || []).find(item => getGuruNotifId(item) === key) || null
+}
+
 function isGuruNotifRead(item) {
   return topbarNotifState.readMap?.[getGuruNotifId(item)] === true
 }
@@ -4060,10 +4070,70 @@ function markGuruNotifRead(id) {
   saveGuruNotifReadMap()
 }
 
-function markGuruNotifItemRead(id) {
+function findJamIdByTimeRange(ctx, jamMulai, jamSelesai) {
+  const startText = toTimeLabel(jamMulai)
+  const endText = toTimeLabel(jamSelesai)
+  if (!startText || !endText) return ''
+  const jam = (ctx?.jamList || []).find(item => {
+    return toTimeLabel(item?.jam_mulai) === startText && toTimeLabel(item?.jam_selesai) === endText
+  })
+  return String(jam?.id || '').trim()
+}
+
+async function openGuruAbsensiFromNotifAction(action = {}) {
+  const tanggal = String(action?.tanggal || '').trim()
+  const kelasId = String(action?.kelasId || '').trim()
+  const mapelId = String(action?.mapelId || '').trim()
+  if (!tanggal || !kelasId || !mapelId) return false
+
+  const ctx = await getGuruContext()
+  await loadGuruPage('input-absensi')
+
+  const tanggalEl = document.getElementById('absensi-tanggal')
+  const kelasEl = document.getElementById('absensi-kelas')
+  const mapelEl = document.getElementById('absensi-mapel')
+  const jam1El = document.getElementById('absensi-jam-1')
+  const jam2El = document.getElementById('absensi-jam-2')
+  if (!tanggalEl || !kelasEl || !mapelEl) return false
+
+  tanggalEl.value = tanggal
+  kelasEl.value = kelasId
+  await onAbsensiKelasChange()
+
+  if (Array.from(mapelEl.options || []).some(opt => String(opt.value || '') === mapelId)) {
+    mapelEl.value = mapelId
+  }
+  await onAbsensiMapelChange()
+
+  const jamId = findJamIdByTimeRange(ctx, action?.jamMulai, action?.jamSelesai)
+  if (jamId && jam1El && Array.from(jam1El.options || []).some(opt => String(opt.value || '') === jamId)) {
+    jam1El.value = jamId
+  }
+  if (jam2El) jam2El.value = ''
+  return true
+}
+
+async function handleGuruNotifItemAction(item) {
+  const actionType = String(item?.action?.type || '').trim()
+  if (!actionType) return false
+  if (actionType === 'input-absensi') {
+    return await openGuruAbsensiFromNotifAction(item.action)
+  }
+  return false
+}
+
+async function markGuruNotifItemRead(id) {
   markGuruNotifRead(id)
   renderTopbarNotifMenu(topbarNotifState.items)
   setTopbarNotifBadge((topbarNotifState.items || []).filter(item => !isGuruNotifRead(item)).length)
+  closeTopbarNotifMenu()
+  const item = findGuruNotifItemById(id)
+  if (!item) return
+  try {
+    await handleGuruNotifItemAction(item)
+  } catch (error) {
+    console.error(error)
+  }
 }
 
 function markAllGuruNotifRead() {
@@ -4319,7 +4389,17 @@ async function fetchGuruTopbarNotifications() {
           title: `${getMapelLabel(mapel)} - ${String(kelas?.nama_kelas || '-')}`,
           meta: `${formatNotifDateLabel(dateKey)} | ${toTimeLabel(item?.jam_mulai)}-${toTimeLabel(item?.jam_selesai)}`,
           desc: '',
-          sortKey: `${dateKey} ${String(item?.jam_mulai || '00:00')}`
+          sortKey: `${dateKey} ${String(item?.jam_mulai || '00:00')}`,
+          action: {
+            type: 'input-absensi',
+            tanggal: dateKey,
+            kelasId: String(distribusi?.kelas_id || ''),
+            mapelId: String(distribusi?.mapel_id || ''),
+            distribusiId: String(distribusi?.id || ''),
+            jadwalId: String(item?.id || ''),
+            jamMulai: String(item?.jam_mulai || ''),
+            jamSelesai: String(item?.jam_selesai || '')
+          }
         })
       })
     })
@@ -4336,6 +4416,14 @@ async function refreshGuruTopbarNotifications(forceReload = false) {
   if (!forceReload && topbarNotifState.loaded) {
     renderTopbarNotifMenu(topbarNotifState.items)
     setTopbarNotifBadge((topbarNotifState.items || []).filter(item => !isGuruNotifRead(item)).length)
+    if (typeof window.maybeNotifyActivityItems === 'function') {
+      window.maybeNotifyActivityItems({
+        scope: 'guru',
+        userId: String(localStorage.getItem('login_id') || '').trim(),
+        items: topbarNotifState.items,
+        readMap: topbarNotifState.readMap
+      })
+    }
     return
   }
   const items = await fetchGuruTopbarNotifications()
@@ -4343,6 +4431,14 @@ async function refreshGuruTopbarNotifications(forceReload = false) {
   topbarNotifState.loaded = true
   renderTopbarNotifMenu(items)
   setTopbarNotifBadge(items.filter(item => !isGuruNotifRead(item)).length)
+  if (typeof window.maybeNotifyActivityItems === 'function') {
+    window.maybeNotifyActivityItems({
+      scope: 'guru',
+      userId: String(localStorage.getItem('login_id') || '').trim(),
+      items,
+      readMap: topbarNotifState.readMap
+    })
+  }
 }
 
 async function toggleTopbarNotifMenu() {
@@ -11222,16 +11318,31 @@ function buildExamQuestionMissingTableMessage() {
   return `Tabel '${EXAM_QUESTION_TABLE}' belum ada.\n\nJalankan SQL:\ncreate table if not exists public.${EXAM_QUESTION_TABLE} (\n  id uuid primary key default gen_random_uuid(),\n  jadwal_id uuid not null,\n  guru_id text not null,\n  guru_nama text,\n  bentuk_soal text,\n  jumlah_nomor integer,\n  instruksi text,\n  questions_json text,\n  status text not null default 'draft',\n  created_at timestamptz not null default now(),\n  updated_at timestamptz not null default now()\n);\n\ncreate unique index if not exists soal_ujian_jadwal_guru_uidx on public.${EXAM_QUESTION_TABLE}(jadwal_id, guru_id);`
 }
 
-function parseExamQuestions(value) {
-  if (Array.isArray(value)) return value
+function buildExamParticipantMissingTableMessage() {
+  return `Tabel '${EXAM_PARTICIPANT_TABLE}' belum ada.\n\nJalankan SQL:\ncreate table if not exists public.${EXAM_PARTICIPANT_TABLE} (\n  id uuid primary key default gen_random_uuid(),\n  jadwal_id uuid not null,\n  santri_id text not null,\n  nama_santri text not null,\n  kelas_id text not null,\n  kelas_nama text not null,\n  nomor_urut integer not null,\n  nomor_urut_label text not null,\n  exam_code text not null,\n  sheet_code text not null,\n  released_at timestamptz null default now(),\n  created_at timestamptz not null default now(),\n  updated_at timestamptz not null default now(),\n  unique (jadwal_id, santri_id),\n  unique (jadwal_id, kelas_id, nomor_urut)\n);`
+}
+
+function parseExamQuestionPayload(value) {
+  if (Array.isArray(value)) return { questions: value, sections: [] }
   const raw = String(value || '').trim()
-  if (!raw) return []
+  if (!raw) return { questions: [], sections: [] }
   try {
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
+    if (Array.isArray(parsed)) return { questions: parsed, sections: [] }
+    if (parsed && typeof parsed === 'object') {
+      return {
+        questions: Array.isArray(parsed.questions) ? parsed.questions : [],
+        sections: Array.isArray(parsed.sections) ? parsed.sections : []
+      }
+    }
+    return { questions: [], sections: [] }
   } catch (_err) {
-    return []
+    return { questions: [], sections: [] }
   }
+}
+
+function parseExamQuestions(value) {
+  return parseExamQuestionPayload(value).questions
 }
 
 async function ensureExamArabicFontLoaded() {
@@ -11372,6 +11483,23 @@ function buildExamPrintSections(questions, fallbackType = 'pilihan-ganda') {
   return [{ type: fallbackType || 'pilihan-ganda', items: Array.isArray(questions) ? questions : [] }]
 }
 
+function buildExamMatchingColumns(items) {
+  const utils = getGuruExamPrintUtils()
+  if (typeof utils.buildExamMatchingColumns === 'function') return utils.buildExamMatchingColumns(items)
+  const columnA = []
+  const columnB = []
+  ;(Array.isArray(items) ? items : []).forEach(item => {
+    const pairs = Array.isArray(item?.pairs) ? item.pairs : []
+    pairs.forEach(pair => {
+      const a = String(pair?.a || '').trim()
+      const b = String(pair?.b || '').trim()
+      if (a) columnA.push(a)
+      if (b) columnB.push(b)
+    })
+  })
+  return { columnA, columnB }
+}
+
 function getExamPrintTypeTitle(type, index, langCode = 'ID') {
   const utils = getGuruExamPrintUtils()
   if (typeof utils.getExamPrintTypeTitle === 'function') return utils.getExamPrintTypeTitle(type, index, langCode)
@@ -11494,6 +11622,199 @@ function parseGuruUjianRangeValue(value, maxCount) {
   return Math.max(1, Math.min(Math.max(1, maxCount), rounded))
 }
 
+function parseGuruUjianScoreValue(value, maxScore = null) {
+  const raw = String(value ?? '').trim()
+  if (!raw) return null
+  const normalized = raw.replace(/,/g, '.')
+  const num = Number(normalized)
+  if (!Number.isFinite(num)) return null
+  const limited = Number.isFinite(Number(maxScore))
+    ? Math.min(Math.max(0, num), Number(maxScore))
+    : Math.max(0, num)
+  return round2(limited)
+}
+
+function formatGuruUjianScoreValue(value) {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return '0'
+  const rounded = round2(num)
+  const text = String(rounded)
+  return text.includes('.') ? text.replace(/\.0+$/, '').replace(/(\.\d*[1-9])0+$/, '$1') : text
+}
+
+function getGuruUjianScoreMeta(jadwal) {
+  const raw = `${String(jadwal?.jenis || '')} ${String(jadwal?.nama || '')}`.toUpperCase()
+  if (/UTS|PTS|TENGAH/.test(raw)) {
+    return { code: raw.includes('UTS') ? 'uts' : 'pts', label: raw.includes('UTS') ? 'Nilai Maksimal UTS' : 'Nilai Maksimal PTS', maxScore: 25 }
+  }
+  if (/UAS|PAS|AKHIR/.test(raw)) {
+    return { code: raw.includes('UAS') ? 'uas' : 'pas', label: raw.includes('UAS') ? 'Nilai Maksimal UAS' : 'Nilai Maksimal PAS', maxScore: 50 }
+  }
+  if (/ULANGAN HARIAN|\bUH\b/.test(raw)) {
+    return { code: 'uh', label: 'Nilai Maksimal Ulangan Harian', maxScore: 10 }
+  }
+  if (/TUGAS/.test(raw)) {
+    return { code: 'tugas', label: 'Nilai Maksimal Tugas', maxScore: 5 }
+  }
+  if (/KETERAMPILAN|PRAKTIK|PRAKTEK/.test(raw)) {
+    return { code: 'keterampilan', label: 'Nilai Maksimal Keterampilan', maxScore: 10 }
+  }
+  return { code: 'ujian', label: 'Skema Nilai', maxScore: null }
+}
+
+function getGuruUjianSectionQuestionCount(section) {
+  if (!section || typeof section !== 'object') return 1
+  if (String(section.type || '') === 'pasangkan-kata') return 1
+  const count = Number(section.count || (Number(section.end || 1) - Number(section.start || 1) + 1))
+  return Number.isFinite(count) ? Math.max(1, Math.round(count)) : 1
+}
+
+function buildGuruUjianScorePlan(sections, jadwal) {
+  const scoreMeta = getGuruUjianScoreMeta(jadwal)
+  const maxScore = Number(scoreMeta.maxScore)
+  const safeSections = Array.isArray(sections) ? sections : []
+  const planItems = safeSections.map((section, idx) => ({
+    idx,
+    start: Number(section?.start || (idx + 1)),
+    questionCount: getGuruUjianSectionQuestionCount(section),
+    explicitScore: parseGuruUjianScoreValue(section?.score, Number.isFinite(maxScore) ? maxScore : null)
+  }))
+  const explicitTotal = round2(planItems.reduce((sum, item) => sum + Number(item.explicitScore || 0), 0))
+  const unresolved = planItems.filter(item => item.explicitScore === null)
+  let remaining = Number.isFinite(maxScore) ? round2(maxScore - explicitTotal) : null
+  if (Number.isFinite(remaining) && remaining < 0) remaining = round2(remaining)
+  if (Number.isFinite(remaining) && remaining < 0) {
+    unresolved.forEach(item => {
+      item.recommendedScore = 0
+      item.effectiveScore = item.explicitScore
+      item.perQuestionScore = item.explicitScore === null ? null : round2(item.explicitScore / item.questionCount)
+    })
+  } else if (Number.isFinite(maxScore) && unresolved.length) {
+    const totalWeight = unresolved.reduce((sum, item) => sum + item.questionCount, 0) || unresolved.length
+    let allocated = 0
+    unresolved.forEach((item, idx) => {
+      const isLast = idx === (unresolved.length - 1)
+      const share = isLast
+        ? round2(Math.max(0, Number(remaining || 0) - allocated))
+        : round2((Number(remaining || 0) * item.questionCount) / totalWeight)
+      allocated = round2(allocated + share)
+      item.recommendedScore = share
+      item.effectiveScore = share
+      item.perQuestionScore = round2(share / item.questionCount)
+    })
+  } else {
+    unresolved.forEach(item => {
+      item.recommendedScore = null
+      item.effectiveScore = null
+      item.perQuestionScore = null
+    })
+  }
+  planItems.forEach(item => {
+    if (item.explicitScore !== null) {
+      item.effectiveScore = item.explicitScore
+      item.perQuestionScore = round2(item.explicitScore / item.questionCount)
+      item.recommendedScore = item.recommendedScore ?? null
+    }
+  })
+  const totalProjected = round2(planItems.reduce((sum, item) => sum + Number(item.explicitScore ?? item.recommendedScore ?? 0), 0))
+  return {
+    scoreMeta,
+    maxScore: Number.isFinite(maxScore) ? maxScore : null,
+    explicitTotal,
+    totalProjected,
+    remaining: Number.isFinite(maxScore) ? round2(maxScore - explicitTotal) : null,
+    overAllocated: Number.isFinite(maxScore) ? explicitTotal > maxScore : false,
+    unresolvedCount: unresolved.length,
+    items: planItems,
+    byStart: new Map(planItems.map(item => [item.start, item]))
+  }
+}
+
+function renderGuruUjianScoreSummary(scorePlan) {
+  const summaryEl = document.getElementById('guru-ujian-score-summary')
+  const hintEl = document.getElementById('guru-ujian-score-hint')
+  if (!summaryEl && !hintEl) return
+  const maxScore = Number(scorePlan?.maxScore)
+  if (!Number.isFinite(maxScore)) {
+    if (summaryEl) summaryEl.textContent = 'Belum ada batas nilai otomatis'
+    if (hintEl) hintEl.textContent = 'Nilai per bagian soal tetap bisa diisi manual. Rekomendasi otomatis aktif jika jenis ujian memiliki nilai maksimal.'
+    return
+  }
+  const explicit = formatGuruUjianScoreValue(scorePlan?.explicitTotal || 0)
+  const maxText = formatGuruUjianScoreValue(maxScore)
+  const remaining = formatGuruUjianScoreValue(scorePlan?.remaining || 0)
+  if (summaryEl) {
+    summaryEl.innerHTML = scorePlan?.overAllocated
+      ? `<span style="color:#b91c1c; font-weight:700;">${explicit} / ${maxText} poin</span>`
+      : `<span style="font-weight:700;">${explicit} / ${maxText} poin</span>`
+  }
+  if (hintEl) {
+    if (scorePlan?.overAllocated) {
+      hintEl.innerHTML = `<span style="color:#b91c1c;">Total nilai bagian soal melebihi batas maksimal ujian. Kurangi sebagian alokasi sebelum simpan.</span>`
+    } else if (Number(scorePlan?.unresolvedCount || 0) > 0) {
+      hintEl.textContent = `Sisa ${remaining} poin belum dibagikan. Rekomendasi otomatis ditampilkan pada bagian soal yang belum diberi nilai.`
+    } else {
+      hintEl.textContent = `Alokasi nilai bagian soal sudah lengkap. Sisa ${remaining} poin.`
+    }
+  }
+}
+
+function setGuruUjianSectionScoreDraft(index, value) {
+  const key = String(Number(index))
+  if (!Number.isFinite(Number(index))) return
+  if (!ujianGuruState.sectionScoreDrafts || typeof ujianGuruState.sectionScoreDrafts !== 'object') {
+    ujianGuruState.sectionScoreDrafts = {}
+  }
+  ujianGuruState.sectionScoreDrafts[key] = String(value ?? '')
+}
+
+function getGuruUjianSectionScoreDraft(index) {
+  const key = String(Number(index))
+  if (!Number.isFinite(Number(index))) return undefined
+  if (!ujianGuruState.sectionScoreDrafts || typeof ujianGuruState.sectionScoreDrafts !== 'object') return undefined
+  return Object.prototype.hasOwnProperty.call(ujianGuruState.sectionScoreDrafts, key)
+    ? ujianGuruState.sectionScoreDrafts[key]
+    : undefined
+}
+
+function applyGuruUjianScoreDrafts(sections = []) {
+  return (Array.isArray(sections) ? sections : []).map((section, idx) => {
+    const draftValue = getGuruUjianSectionScoreDraft(idx)
+    if (draftValue === undefined) return section
+    return {
+      ...section,
+      score: draftValue
+    }
+  })
+}
+
+function onGuruUjianSectionScoreInput(index, value) {
+  setGuruUjianSectionScoreDraft(index, value)
+}
+
+function onGuruUjianSectionScoreKeydown(event, index, inputEl) {
+  if (String(event?.key || '') !== 'Enter') return
+  event.preventDefault()
+  setGuruUjianSectionScoreDraft(index, inputEl?.value ?? '')
+  onGuruUjianSectionChange()
+  inputEl?.blur?.()
+}
+
+function validateGuruUjianScorePlan() {
+  const baseSections = getGuruUjianSectionsSource()
+  const fallbackTotal = Number(document.getElementById('guru-ujian-jumlah')?.value || 0)
+  const totalCount = estimateGuruUjianTotalFromSections(baseSections, fallbackTotal)
+  const normalized = applyGuruUjianScoreDrafts(normalizeGuruUjianSections(totalCount, baseSections))
+  const scorePlan = buildGuruUjianScorePlan(normalized, ujianGuruState.activeJadwal)
+  renderGuruUjianScoreSummary(scorePlan)
+  if (scorePlan.overAllocated) {
+    const maxText = formatGuruUjianScoreValue(scorePlan.maxScore || 0)
+    alert(`Total nilai bagian soal melebihi batas maksimal ${maxText} poin. Kurangi sebagian alokasi sebelum melanjutkan.`)
+    return null
+  }
+  return { sections: normalized, scorePlan }
+}
+
 function estimateGuruUjianTotalFromSections(rawSections = [], fallbackTotal = 1) {
   const source = Array.isArray(rawSections) ? rawSections : []
   let cursor = 1
@@ -11528,6 +11849,8 @@ function normalizeGuruUjianSections(totalCount, rawSections = []) {
     let wordPool = ''
     let blankCount = null
     let countHint = null
+    const instruction = String(item?.instruction || item?.instruksi || '').trim()
+    const score = parseGuruUjianScoreValue(item?.score, null)
     const parsedCount = parseGuruUjianRangeValue(item?.count, safeCount)
     if (type === 'isi-titik') {
       wordPool = String(item?.wordPool || item?.words || '').trim()
@@ -11545,7 +11868,7 @@ function normalizeGuruUjianSections(totalCount, rawSections = []) {
         end = parsedEnd === null ? cursor : Math.max(cursor, parsedEnd)
       }
     }
-    list.push({ type, start: cursor, end, wordPool, blankCount, countHint })
+    list.push({ type, start: cursor, end, wordPool, blankCount, countHint, instruction, score })
     cursor = end + 1
   })
   if (!list.length) return []
@@ -11556,7 +11879,9 @@ function normalizeGuruUjianSections(totalCount, rawSections = []) {
     wordPool: String(item.wordPool || '').trim(),
     blankCount: Number.isFinite(Number(item.blankCount)) ? Math.max(1, Math.min(Math.max(1, safeCount), Math.round(Number(item.blankCount)))) : null,
     count: Number.isFinite(Number(item.countHint)) ? Math.max(1, Math.min(Math.max(1, safeCount), Math.round(Number(item.countHint)))) : Math.max(1, Math.min(Math.max(1, safeCount), Number(item.end || 1) - Number(item.start || 1) + 1)),
-    wordList: String(item.wordPool || '').split(',').map(x => String(x || '').trim()).filter(Boolean)
+    wordList: String(item.wordPool || '').split(',').map(x => String(x || '').trim()).filter(Boolean),
+    instruction: String(item.instruction || '').trim(),
+    score: parseGuruUjianScoreValue(item.score, null)
   }))
 }
 
@@ -11569,7 +11894,11 @@ function readGuruUjianSectionsFromDom() {
     const end = document.getElementById(`guru-ujian-section-end-${dataIndex}`)?.value
     const words = String(document.getElementById(`guru-ujian-section-words-${dataIndex}`)?.value || '')
     const count = document.getElementById(`guru-ujian-section-count-${dataIndex}`)?.value
-    rows.push({ type, end, words, count })
+    const scoreInput = document.getElementById(`guru-ujian-section-score-${dataIndex}`)
+    const draftScore = getGuruUjianSectionScoreDraft(dataIndex)
+    const score = draftScore !== undefined ? draftScore : scoreInput?.value
+    const instruction = String(document.getElementById(`guru-ujian-section-instruction-${dataIndex}`)?.value || '').trim()
+    rows.push({ type, end, words, count, score, instruction })
   })
   return rows
 }
@@ -11584,16 +11913,38 @@ function getGuruUjianSectionsSource(preferred = null) {
 
 function renderGuruUjianSectionRows(sourceSections = null) {
   const wrap = document.getElementById('guru-ujian-sections')
+  const scoreWrap = document.getElementById('guru-ujian-score-wrap')
   if (!wrap) return
   const baseSections = getGuruUjianSectionsSource(sourceSections)
   const totalCount = estimateGuruUjianTotalFromSections(baseSections, Number(document.getElementById('guru-ujian-jumlah')?.value || 0))
   const safeCount = Math.max(0, Math.min(200, totalCount))
-  const normalized = normalizeGuruUjianSections(safeCount, baseSections)
-  ujianGuruState.sectionDefs = normalized.map(item => ({ type: item.type, end: item.end, words: item.wordPool, count: item.count }))
+  const normalized = applyGuruUjianScoreDrafts(normalizeGuruUjianSections(safeCount, baseSections))
+  const scorePlan = buildGuruUjianScorePlan(normalized, ujianGuruState.activeJadwal)
+  ujianGuruState.sectionDefs = normalized.map(item => ({
+    type: item.type,
+    end: item.end,
+    words: item.wordPool,
+    count: item.count,
+    score: item.score,
+    instruction: item.instruction
+  }))
   const totalEl = document.getElementById('guru-ujian-jumlah')
   if (totalEl) totalEl.value = String(normalized[normalized.length - 1]?.end || 0)
+  if (scoreWrap) {
+    scoreWrap.innerHTML = `
+      <div class="placeholder-card" style="border-color:${scorePlan.overAllocated ? '#fecaca' : '#bfdbfe'}; background:${scorePlan.overAllocated ? '#fff1f2' : '#eff6ff'};">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+          <div>
+            <div style="font-size:12px; color:#475569; margin-bottom:4px;">${escapeHtml(String(scorePlan?.scoreMeta?.label || 'Skema Nilai'))}</div>
+            <div id="guru-ujian-score-summary" style="font-size:18px; font-weight:800; color:#0f172a;">${Number.isFinite(Number(scorePlan?.maxScore)) ? `${escapeHtml(formatGuruUjianScoreValue(scorePlan.maxScore))} poin` : 'Belum ada batas otomatis'}</div>
+          </div>
+          <div style="font-size:12px; color:#475569; max-width:520px; text-align:left;" id="guru-ujian-score-hint"></div>
+        </div>
+      </div>
+    `
+  }
   wrap.innerHTML = `
-    <div style="border:1px dashed #cbd5e1; border-radius:10px; padding:10px; display:grid; grid-template-columns:1fr 180px auto; gap:8px; align-items:end;">
+    <div style="border:1px dashed #cbd5e1; border-radius:10px; padding:10px; display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; align-items:end;">
       <div>
         <label class="guru-label">Tambah Model Soal</label>
         <select id="guru-ujian-new-section-type" class="guru-field">
@@ -11607,11 +11958,12 @@ function renderGuruUjianSectionRows(sourceSections = null) {
         <label class="guru-label">Jumlah Soal</label>
         <input id="guru-ujian-new-section-count" class="guru-field" type="number" min="1" max="200" value="1">
       </div>
-      <div>
-        <button type="button" class="modal-btn" onclick="addGuruUjianSection()">Tambahkan</button>
+      <div style="display:flex; align-items:end;">
+        <button type="button" class="modal-btn" onclick="addGuruUjianSection()" style="width:100%;">Tambahkan</button>
       </div>
     </div>
   `
+  renderGuruUjianScoreSummary(scorePlan)
 }
 
 function getGuruUjianTypeMap(totalCount, options = {}) {
@@ -11626,6 +11978,81 @@ function getGuruUjianTypeMap(totalCount, options = {}) {
   })
   if (!sections.length) errors.push('Tambahkan minimal 1 model soal.')
   return { typeMap, errors, safeCount, sections }
+}
+
+function readGuruUjianMatchingColumn(no, side) {
+  const wrap = document.getElementById(`guru-ujian-q-${no}-col-${side}`)
+  if (!wrap) return []
+  return [...wrap.querySelectorAll('.guru-ujian-match-input')]
+    .map(input => String(input?.value || '').trim())
+    .filter(Boolean)
+}
+
+function createGuruUjianMatchingInput(no, side, value = '') {
+  const input = document.createElement('input')
+  input.type = 'text'
+  input.className = 'guru-field guru-ujian-match-input'
+  input.dataset.side = side
+  input.placeholder = `Masukkan pilihan Qoimah ${String(side || '').toUpperCase()}`
+  input.value = String(value || '')
+  input.oninput = () => ensureGuruUjianMatchingTrailingInput(no, side)
+  return input
+}
+
+function ensureGuruUjianMatchingTrailingInput(no, side) {
+  const wrap = document.getElementById(`guru-ujian-q-${no}-col-${side}`)
+  if (!wrap) return
+  const inputs = [...wrap.querySelectorAll('.guru-ujian-match-input')]
+  if (!inputs.length) {
+    wrap.appendChild(createGuruUjianMatchingInput(no, side, ''))
+    return
+  }
+  const last = inputs[inputs.length - 1]
+  if (String(last?.value || '').trim()) {
+    wrap.appendChild(createGuruUjianMatchingInput(no, side, ''))
+    return
+  }
+  const trailingBlankInputs = [...inputs].reverse().filter(input => !String(input?.value || '').trim())
+  if (trailingBlankInputs.length <= 1) return
+  trailingBlankInputs.slice(1).forEach(input => {
+    if (input && input.parentNode === wrap) wrap.removeChild(input)
+  })
+}
+
+function buildGuruUjianMatchingQuestionDraft(sectionForNo, draftByNo, existingByNo) {
+  const start = Number(sectionForNo?.start || 0)
+  const end = Number(sectionForNo?.end || start)
+  const sectionRows = []
+  for (let no = start; no <= end; no += 1) {
+    const row = draftByNo.get(no) || existingByNo.get(no)
+    if (!row) continue
+    sectionRows.push(row)
+  }
+  const columnA = []
+  const columnB = []
+  sectionRows.forEach(row => {
+    const leftList = Array.isArray(row?.columnA)
+      ? row.columnA
+      : (Array.isArray(row?.pairs) ? row.pairs.map(item => String(item?.a || '').trim()).filter(Boolean) : [])
+    const rightList = Array.isArray(row?.columnB)
+      ? row.columnB
+      : (Array.isArray(row?.pairs) ? row.pairs.map(item => String(item?.b || '').trim()).filter(Boolean) : [])
+    leftList.forEach(item => {
+      const text = String(item || '').trim()
+      if (text) columnA.push(text)
+    })
+    rightList.forEach(item => {
+      const text = String(item || '').trim()
+      if (text) columnB.push(text)
+    })
+  })
+  return {
+    no: start || 1,
+    type: 'pasangkan-kata',
+    text: '',
+    columnA,
+    columnB
+  }
 }
 
 function getGuruUjianDraftByNumber() {
@@ -11650,11 +12077,13 @@ function getGuruUjianDraftByNumber() {
         answer: String(document.getElementById(`guru-ujian-q-${no}-answer`)?.value || '')
       })
     } else if (type === 'pasangkan-kata') {
-      const pairs = [1, 2, 3, 4].map(n => ({
-        a: String(document.getElementById(`guru-ujian-q-${no}-a${n}`)?.value || ''),
-        b: String(document.getElementById(`guru-ujian-q-${no}-b${n}`)?.value || '')
-      }))
-      map.set(no, { no, type, text, pairs })
+      map.set(no, {
+        no,
+        type,
+        text: '',
+        columnA: readGuruUjianMatchingColumn(no, 'a'),
+        columnB: readGuruUjianMatchingColumn(no, 'b')
+      })
     } else if (type === 'isi-titik') {
       const answer = String(document.getElementById(`guru-ujian-q-${no}-answer`)?.value || '')
       map.set(no, { no, type, text, answer })
@@ -11776,44 +12205,44 @@ async function createExamPdfDoc(jadwal, soal) {
     const textIndent = dotIndent + minTextGap
     return { dotIndent, textIndent }
   }
-  const drawArabicHeadingRow = (marker, label, markerIndent = 0, _dotIndent = 1.6, _labelIndent = 6.2) => {
-    const markerText = toRtl(String(marker || '').trim())
-    const dotText = toRtl('.')
-    const labelText = toRtl(String(label || '').trim())
-    const markerX = lineX(markerIndent)
-    const layout = getArabicMarkerLayout(marker, markerIndent, 0.8, 2.5)
-    const dotX = lineX(layout.dotIndent)
-    const labelX = lineX(layout.textIndent)
-    // Marker, titik, dan label dipisah kolom (tanpa border) agar stabil di RTL.
+  const drawArabicHeadingRow = (marker, label, markerIndent = 0) => {
+    const markerRaw = String(marker || '').trim().replace(/\.+$/, '')
+    const labelRaw = String(label || '').trim()
+    const headingRaw = markerRaw
+      ? `${markerRaw}. ${labelRaw}`
+      : labelRaw
+    const lines = safeSplit(headingRaw, Math.max(24, usableWidth - markerIndent))
+    if (!lines.length) return
     setNormal()
-    doc.text(markerText, markerX, y, { align: 'right' })
-    doc.text(dotText, dotX, y, { align: 'right' })
-    // Teknik draw kedua (offset tipis) agar terlihat bold tanpa ganti font.
-    doc.text(labelText, labelX, y, { align: 'right' })
-    doc.text(labelText, labelX - 0.18, y, { align: 'right' })
-  }
-  const drawArabicMarkerTextBlock = (marker, text, markerIndent = 0, _dotIndent = 1.6, _textIndent = 6.2, wrapWidth = usableWidth - _textIndent) => {
-    const markerText = toRtl(String(marker || '').trim())
-    const dotText = toRtl('.')
-    const layout = getArabicMarkerLayout(marker, markerIndent, 0.75, 2.3)
-    const dynamicWrapWidth = Math.max(24, usableWidth - layout.textIndent)
-    const lines = safeSplit(String(text || '-'), dynamicWrapWidth)
     if (y > 285) {
       doc.addPage()
       y = margin
     }
-    doc.text(markerText, lineX(markerIndent), y, { align: 'right' })
-    doc.text(dotText, lineX(layout.dotIndent), y, { align: 'right' })
-    doc.text(toRtl(String(lines[0] || '-')), lineX(layout.textIndent), y, { align: 'right' })
-    y += lineStep
+    doc.text(toRtl(String(lines[0] || '')), lineX(markerIndent), y, { align: 'right' })
     for (let li = 1; li < lines.length; li += 1) {
+      y += lineStep
       if (y > 285) {
         doc.addPage()
         y = margin
       }
-      doc.text(toRtl(String(lines[li] || '')), lineX(layout.textIndent), y, { align: 'right' })
-      y += lineStep
+      doc.text(toRtl(String(lines[li] || '')), lineX(markerIndent), y, { align: 'right' })
     }
+  }
+  const drawArabicMarkerTextBlock = (marker, text, markerIndent = 0, _dotIndent = 1.6, _textIndent = 6.2, wrapWidth = usableWidth - _textIndent) => {
+    const markerRaw = String(marker || '').trim().replace(/\.+$/, '')
+    const textRaw = String(text || '-').trim() || '-'
+    const rowRaw = markerRaw ? `${markerRaw}. ${textRaw}` : textRaw
+    const dynamicWrapWidth = Math.max(24, Number(wrapWidth) || (usableWidth - markerIndent))
+    const lines = safeSplit(rowRaw, dynamicWrapWidth)
+    if (!lines.length) return
+    lines.forEach(line => {
+      if (y > 285) {
+        doc.addPage()
+        y = margin
+      }
+      doc.text(toRtl(String(line || '')), lineX(markerIndent), y, { align: 'right' })
+      y += lineStep
+    })
   }
   const drawWrapped = (text, wrapWidth, indent = 0) => {
     const lines = safeSplit(text, wrapWidth)
@@ -11941,6 +12370,7 @@ async function createExamPdfDoc(jadwal, soal) {
   doc.text(toRtl('NAMA :'), margin + 8, metaStartY + rowGap + 15)
   setNormal()
   y = metaStartY + rowGap + 22
+  doc.setFontSize(bodyFontSize)
 
   const instruksi = instruksiMeta.text
   if (instruksi) {
@@ -12009,7 +12439,7 @@ async function createExamPdfDoc(jadwal, soal) {
   sections.forEach((section, sectionIndex) => {
     const headingParts = getExamPrintTypeParts(section.type, sectionIndex, lang)
     const heading = `${headingParts.marker} ${headingParts.label}`
-    const instruksiModel = getExamPrintTypeInstruction(section.type, lang)
+    const sectionInstruction = String(section?.instruction || '').trim()
     if (y + 12 > 285) {
       doc.addPage()
       y = margin
@@ -12022,9 +12452,11 @@ async function createExamPdfDoc(jadwal, soal) {
       drawLine(heading)
     }
     y += lineStep
-    setNormal()
-    drawWrapped(instruksiModel, usableWidth - 4, 4)
-    y += blockGap
+    if (sectionInstruction) {
+      setNormal()
+      drawWrapped(sectionInstruction, usableWidth - 4, 4)
+      y += blockGap
+    }
 
     const sectionItems = section.items || []
     if (section.type === 'isi-titik') {
@@ -12042,6 +12474,47 @@ async function createExamPdfDoc(jadwal, soal) {
         drawWrapped(fragLine, usableWidth - optionIndent, optionIndent)
         y += blockGap
       }
+    }
+
+    if (section.type === 'pasangkan-kata') {
+      const matchingCols = buildExamMatchingColumns(sectionItems)
+      const maxRows = Math.max(matchingCols.columnA.length, matchingCols.columnB.length)
+      if (maxRows) {
+        if (y > 282) {
+          doc.addPage()
+          y = margin
+        }
+        setBold()
+        const colA = isAr ? 'القائمة أ' : 'Qoimah A'
+        const colB = isAr ? 'القائمة ب' : 'Qoimah B'
+        if (isAr) {
+          doc.text(colA, lineX(optionIndent), y, { align: 'right' })
+          doc.text(colB, lineX(optionIndent + 60), y, { align: 'right' })
+        } else {
+          doc.text(colA, margin + optionIndent, y)
+          doc.text(colB, margin + optionIndent + 60, y)
+        }
+        y += lineStep
+        setNormal()
+        for (let idxPair = 0; idxPair < maxRows; idxPair += 1) {
+          if (y > 285) {
+            doc.addPage()
+            y = margin
+          }
+          const left = String(matchingCols.columnA[idxPair] || '-')
+          const right = String(matchingCols.columnB[idxPair] || '-')
+          if (isAr) {
+            doc.text(left, lineX(optionIndent), y, { align: 'right' })
+            doc.text(right, lineX(optionIndent + 60), y, { align: 'right' })
+          } else {
+            doc.text(left, margin + optionIndent, y)
+            doc.text(right, margin + optionIndent + 60, y)
+          }
+          y += lineStep
+        }
+      }
+      y += blockGap
+      return
     }
 
     sectionItems.forEach((q, idx) => {
@@ -12110,12 +12583,12 @@ async function createExamPdfDoc(jadwal, soal) {
           }
         } else {
           const arOptions = [
-            { marker: getArabicLetterByIndex(0), text: String(opts.a || '-') },
-            { marker: getArabicLetterByIndex(1), text: String(opts.b || '-') },
-            { marker: getArabicLetterByIndex(2), text: String(opts.c || '-') },
-            { marker: getArabicLetterByIndex(3), text: String(opts.d || '-') }
+            `${getArabicLetterByIndex(0)}. ${String(opts.a || '-')}`,
+            `${getArabicLetterByIndex(1)}. ${String(opts.b || '-')}`,
+            `${getArabicLetterByIndex(2)}. ${String(opts.c || '-')}`,
+            `${getArabicLetterByIndex(3)}. ${String(opts.d || '-')}`
           ]
-          const arRawLabels = arOptions.map(item => `${String(item.marker || '')}. ${String(item.text || '-')}`)
+          const xRight = lineX(optionIndent)
           const col4 = pgOptionLayout.col4
           const col2 = pgOptionLayout.col2
           if (pgOptionLayout.mode === 'one-line') {
@@ -12123,30 +12596,30 @@ async function createExamPdfDoc(jadwal, soal) {
               doc.addPage()
               y = margin
             }
-            doc.text(toRtl(arRawLabels[0]), lineX(optionIndent), y, { align: 'right' })
-            doc.text(toRtl(arRawLabels[1]), lineX(optionIndent + col4), y, { align: 'right' })
-            doc.text(toRtl(arRawLabels[2]), lineX(optionIndent + (col4 * 2)), y, { align: 'right' })
-            doc.text(toRtl(arRawLabels[3]), lineX(optionIndent + (col4 * 3)), y, { align: 'right' })
+            doc.text(toRtl(arOptions[0]), xRight, y, { align: 'right' })
+            doc.text(toRtl(arOptions[1]), xRight - col4, y, { align: 'right' })
+            doc.text(toRtl(arOptions[2]), xRight - (col4 * 2), y, { align: 'right' })
+            doc.text(toRtl(arOptions[3]), xRight - (col4 * 3), y, { align: 'right' })
             y += optionLineStep
           } else if (pgOptionLayout.mode === 'two-rows') {
             if (y > 285) {
               doc.addPage()
               y = margin
             }
-            doc.text(toRtl(arRawLabels[0]), lineX(optionIndent), y, { align: 'right' })
-            doc.text(toRtl(arRawLabels[1]), lineX(optionIndent + col2), y, { align: 'right' })
+            doc.text(toRtl(arOptions[0]), xRight, y, { align: 'right' })
+            doc.text(toRtl(arOptions[1]), xRight - col2, y, { align: 'right' })
             y += optionLineStep
             if (y > 285) {
               doc.addPage()
               y = margin
             }
-            doc.text(toRtl(arRawLabels[2]), lineX(optionIndent), y, { align: 'right' })
-            doc.text(toRtl(arRawLabels[3]), lineX(optionIndent + col2), y, { align: 'right' })
+            doc.text(toRtl(arOptions[2]), xRight, y, { align: 'right' })
+            doc.text(toRtl(arOptions[3]), xRight - col2, y, { align: 'right' })
             y += optionLineStep
           } else {
             arOptions.forEach(line => {
-              const marker = String(line.marker || '')
-              const val = String(line.text || '-')
+              const marker = String(line.split('.')[0] || '')
+              const val = String(line.slice(line.indexOf('.') + 1) || '-').trim()
               drawArabicMarkerTextBlock(
                 marker,
                 val,
@@ -12157,42 +12630,6 @@ async function createExamPdfDoc(jadwal, soal) {
               )
             })
           }
-        }
-      } else if (section.type === 'pasangkan-kata') {
-        const pairs = Array.isArray(q?.pairs) ? q.pairs : []
-        if (pairs.length) {
-          if (y > 282) {
-            doc.addPage()
-            y = margin
-          }
-          setBold()
-          const colA = isAr ? 'Ø§Ù„Ø¹Ù…ÙˆØ¯ Ø£' : 'Baris A'
-          const colB = isAr ? 'Ø§Ù„Ø¹Ù…ÙˆØ¯ Ø¨' : 'Baris B'
-          if (isAr) {
-            doc.text(colA, lineX(optionIndent), y, { align: 'right' })
-            doc.text(colB, lineX(optionIndent + 60), y, { align: 'right' })
-          } else {
-            doc.text(colA, margin + optionIndent, y)
-            doc.text(colB, margin + optionIndent + 60, y)
-          }
-          y += lineStep
-          setNormal()
-          pairs.forEach((pair, idxPair) => {
-            if (y > 285) {
-              doc.addPage()
-              y = margin
-            }
-            const left = `${formatExamMarker(formatExamNumber(idxPair + 1, lang), lang)} ${String(pair?.a || '-')}`
-            const right = `${formatExamMarker((isAr ? getArabicLetterByIndex(idxPair) : String.fromCharCode(65 + idxPair)), lang)} ${String(pair?.b || '-')}`
-            if (isAr) {
-              doc.text(left, lineX(optionIndent), y, { align: 'right' })
-              doc.text(right, lineX(optionIndent + 60), y, { align: 'right' })
-            } else {
-              doc.text(left, margin + optionIndent, y)
-              doc.text(right, margin + optionIndent + 60, y)
-            }
-            y += lineStep
-          })
         }
       }
       y += blockGap
@@ -12452,6 +12889,1683 @@ async function loadGuruExamSoalMap(guruId, jadwalIds) {
   return { soalMap, error: null }
 }
 
+async function loadGuruExamParticipantsByRow(jadwalId, kelasNama) {
+  const sid = String(jadwalId || '').trim()
+  if (!sid) return []
+  const normalizedClass = normalizeExamLookup(kelasNama)
+  const res = await sb
+    .from(EXAM_PARTICIPANT_TABLE)
+    .select('id, jadwal_id, santri_id, nama_santri, kelas_id, kelas_nama, nomor_urut, nomor_urut_label, exam_code, sheet_code, released_at, created_at, updated_at')
+    .eq('jadwal_id', sid)
+    .order('nomor_urut', { ascending: true })
+
+  if (res.error) {
+    if (isExamTableMissingError(res.error) || String(res.error?.message || '').toLowerCase().includes(EXAM_PARTICIPANT_TABLE)) {
+      alert(buildExamParticipantMissingTableMessage())
+      return null
+    }
+    throw res.error
+  }
+
+  return (res.data || []).filter(item => {
+    if (!normalizedClass) return true
+    return normalizeExamLookup(item?.kelas_nama) === normalizedClass
+  })
+}
+
+function countGuruExamMultipleChoiceQuestions(soalRow) {
+  const payload = parseExamQuestionPayload(soalRow?.questions_json)
+  let sectionTotal = 0
+  ;(Array.isArray(payload.sections) ? payload.sections : []).forEach(item => {
+    const qType = normalizeExamQuestionType(item?.type, soalRow?.bentuk_soal)
+    if (qType !== 'pilihan-ganda') return
+    const start = Number(item?.start || 0)
+    const end = Number(item?.end || 0)
+    let count = 0
+    if (Number.isFinite(start) && Number.isFinite(end) && end >= start) count = Math.max(0, end - start + 1)
+    if (!count) {
+      const explicitCount = Number(item?.count || 0)
+      if (Number.isFinite(explicitCount) && explicitCount > 0) count = Math.round(explicitCount)
+    }
+    sectionTotal += count
+  })
+  if (sectionTotal > 0) return sectionTotal
+
+  const questionTotal = (payload.questions || []).filter(item => {
+    return normalizeExamQuestionType(item?.type, soalRow?.bentuk_soal) === 'pilihan-ganda'
+  }).length
+  if (questionTotal > 0) return questionTotal
+
+  const bentuk = normalizeExamQuestionType('', soalRow?.bentuk_soal)
+  const jumlah = Number(soalRow?.jumlah_nomor || 0)
+  if (bentuk === 'pilihan-ganda' && Number.isFinite(jumlah) && jumlah > 0) return Math.round(jumlah)
+  return 0
+}
+
+function extractGuruExamMultipleChoiceAnswerKey(soalRow) {
+  const payload = parseExamQuestionPayload(soalRow?.questions_json)
+  return (payload.questions || [])
+    .filter(item => normalizeExamQuestionType(item?.type, soalRow?.bentuk_soal) === 'pilihan-ganda')
+    .map((item, idx) => {
+      const no = Number(item?.no || (idx + 1))
+      const answer = String(item?.answer || '').trim().toUpperCase()
+      if (!Number.isFinite(no) || no <= 0 || !/^[ABCD]$/.test(answer)) return null
+      return { no, answer }
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.no - b.no)
+}
+
+function buildGuruExamPgScoreMap(soalRow, jadwal, pgCount) {
+  const payload = parseExamQuestionPayload(soalRow?.questions_json)
+  const fallbackType = String(soalRow?.bentuk_soal || 'pilihan-ganda')
+  const totalCount = Math.max(1, Number(pgCount || 0) || Number(soalRow?.jumlah_nomor || 0) || (payload.questions || []).length || 1)
+  const rawSections = Array.isArray(payload.sections) && payload.sections.length
+    ? payload.sections
+    : deriveExamSectionsFromQuestions(payload.questions || [], fallbackType, totalCount)
+  const normalized = normalizeGuruUjianSections(totalCount, rawSections)
+  const plan = buildGuruUjianScorePlan(normalized, jadwal)
+  const scoreMap = new Map()
+  normalized.forEach(section => {
+    if (normalizeExamQuestionType(section?.type, fallbackType) !== 'pilihan-ganda') return
+    const start = Number(section?.start || 1)
+    const end = Number(section?.end || start)
+    const perQuestion = Number(plan?.byStart?.get(start)?.perQuestionScore || 0)
+    for (let no = start; no <= end; no += 1) {
+      scoreMap.set(no, perQuestion)
+    }
+  })
+  return scoreMap
+}
+
+function buildGuruExamScanMetricStyles() {
+  return `
+    .scan-sheet {
+      position: relative;
+      width: 190mm;
+      min-height: 277mm;
+      padding: 6mm 4mm 5mm;
+      border: 1px solid #111;
+      box-sizing: border-box;
+      background: #fff;
+      color: #111;
+      font-family: "Times New Roman", serif;
+      font-size: 12px;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .scan-corner {
+      position: absolute;
+      width: 22px;
+      height: 22px;
+      box-sizing: border-box;
+      display: block;
+      line-height: 0;
+    }
+    .scan-corner svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    .scan-corner.tl { top: 0; left: 0; }
+    .scan-corner.tr { top: 0; right: 0; }
+    .scan-corner.bl { bottom: 0; left: 0; }
+    .scan-corner.br { bottom: 0; right: 0; }
+    .scan-sheet-header h2 {
+      margin: 0 0 8px;
+      text-align: center;
+      font-size: 20px;
+      letter-spacing: .2px;
+    }
+    .scan-meta-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 5px 12px;
+      margin-bottom: 8px;
+    }
+    .scan-instruction-box {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding: 2px 0 8px;
+      margin-bottom: 8px;
+      font-size: 12px;
+    }
+    .scan-sheet-frame {
+      position: relative;
+      min-height: calc(297mm - 20mm - 34px);
+      margin: 16px 16px 18px;
+      border: 1px solid #111;
+      padding: 6mm 4mm 5mm;
+      box-sizing: border-box;
+    }
+    .scan-identity-grid {
+      display: grid;
+      grid-template-columns: 1.15fr .95fr;
+      gap: 18px;
+      margin-bottom: 10px;
+      align-items: start;
+      min-height: 520px;
+    }
+    .scan-identity-card {
+      padding: 4px 6px 6px 0;
+      min-height: 100%;
+      box-sizing: border-box;
+    }
+    .scan-digit-stage {
+      position: relative;
+      justify-self: end;
+      padding: 4px 0 0 0;
+      box-sizing: border-box;
+    }
+    .scan-digit-card {
+      padding: 0;
+      min-height: 100%;
+      box-sizing: border-box;
+    }
+    .scan-identity-title {
+      font-weight: 700;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      font-size: 12px;
+      letter-spacing: .4px;
+    }
+    .scan-identity-line {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .scan-identity-line .line {
+      display: inline-block;
+      flex: 1;
+      border-bottom: 1px solid #111;
+      height: 16px;
+    }
+    .scan-identity-line .line.short {
+      max-width: 80px;
+    }
+    .scan-identity-code {
+      margin-top: 12px;
+    }
+    .scan-identity-foot {
+      margin-top: 10px;
+      font-size: 11px;
+      color: #475569;
+    }
+    .scan-digit-region-wrap {
+      padding-top: 10px;
+    }
+    .scan-digit-table-wrap {
+      position: relative;
+    }
+    .scan-digit-table {
+      width: auto;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    .scan-digit-table th, .scan-digit-table td {
+      border: 1px solid #111;
+      text-align: center;
+      padding: 0;
+      height: 30px;
+    }
+    .scan-digit-table th {
+      background: #f8fafc;
+      height: 32px;
+      padding: 0 4px;
+    }
+    .scan-digit-table th:first-child,
+    .scan-digit-no-cell {
+      width: 54px;
+    }
+    .scan-digit-table th:nth-child(2),
+    .scan-digit-table th:nth-child(3),
+    .scan-digit-bubble-cell {
+      width: 86px;
+    }
+    .scan-row-guide {
+      display: inline-block;
+      background: #111;
+      border-radius: 1px;
+    }
+    .scan-row-guide.digit {
+      width: 14px;
+      height: 6px;
+    }
+    .scan-column-guide {
+      display: inline-block;
+      justify-self: center;
+      background: #111;
+      border-radius: 1px;
+    }
+    .scan-column-guide.digit {
+      width: 6px;
+      height: 14px;
+    }
+    .scan-digit-guide-rail {
+      position: absolute;
+      top: 50px;
+      right: -34px;
+      display: grid;
+      grid-template-rows: repeat(10, 30px);
+      align-items: center;
+      justify-items: start;
+      width: 18px;
+    }
+    .scan-digit-column-rail {
+      position: absolute;
+      left: 56px;
+      bottom: -32px;
+      width: 172px;
+      display: grid;
+      grid-template-columns: 86px 86px;
+      align-items: start;
+      justify-items: center;
+    }
+    .scan-bubble {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 1.5px solid #111;
+      border-radius: 999px;
+      vertical-align: middle;
+      box-sizing: border-box;
+    }
+    .scan-bubble.small {
+      width: 12px;
+      height: 12px;
+    }
+  `
+}
+
+function buildGuruExamScanFiducialSvg() {
+  return `
+    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+      <rect x="2" y="2" width="96" height="96" fill="#111"></rect>
+      <rect x="18" y="18" width="64" height="64" fill="#fff"></rect>
+      <rect x="32" y="32" width="36" height="36" fill="#111"></rect>
+    </svg>
+  `
+}
+
+function buildGuruExamScanMetricDigitRows() {
+  let rows = ''
+  for (let digit = 0; digit <= 9; digit += 1) {
+    rows += `<tr><td class="scan-digit-no-cell">${digit}</td><td class="scan-digit-bubble-cell"><span class="scan-bubble small" data-digit-bubble="1" data-digit-col="tens" data-digit-value="${digit}"></span></td><td class="scan-digit-bubble-cell"><span class="scan-bubble small" data-digit-bubble="1" data-digit-col="ones" data-digit-value="${digit}"></span></td></tr>`
+  }
+  return rows
+}
+
+function buildGuruExamScanMetricDigitGuideRail() {
+  let html = ''
+  for (let digit = 0; digit <= 9; digit += 1) {
+    html += `<span class="scan-row-guide digit" data-digit-guide="${digit}"></span>`
+  }
+  return html
+}
+
+function buildGuruExamScanMetricDigitColumnGuides() {
+  return `
+    <span class="scan-column-guide digit" data-digit-col-guide="tens"></span>
+    <span class="scan-column-guide digit" data-digit-col-guide="ones"></span>
+  `
+}
+
+function buildGuruExamScanMetricAnswerGrid(pgCount) {
+  const safeTotal = Math.max(1, Math.min(200, Number(pgCount || 0) || 1))
+  const columnCount = safeTotal <= 30 ? 1 : (safeTotal <= 80 ? 2 : 3)
+  const rowsPerColumn = Math.ceil(safeTotal / columnCount)
+  const columns = []
+  for (let col = 0; col < columnCount; col += 1) {
+    const start = (col * rowsPerColumn) + 1
+    const end = Math.min(safeTotal, start + rowsPerColumn - 1)
+    if (start > safeTotal) break
+    let rowsHtml = ''
+    for (let no = start; no <= end; no += 1) {
+      rowsHtml += `
+        <tr>
+          <td style="padding:5px 4px; border:1px solid #111; text-align:center; width:34px;">${no}</td>
+          <td style="padding:5px 4px; border:1px solid #111; text-align:center; width:36px;"><span class="scan-bubble" data-answer-bubble="1" data-q-no="${no}" data-choice="A" data-answer-group="${col}"></span></td>
+          <td style="padding:5px 4px; border:1px solid #111; text-align:center; width:36px;"><span class="scan-bubble" data-answer-bubble="1" data-q-no="${no}" data-choice="B" data-answer-group="${col}"></span></td>
+          <td style="padding:5px 4px; border:1px solid #111; text-align:center; width:36px;"><span class="scan-bubble" data-answer-bubble="1" data-q-no="${no}" data-choice="C" data-answer-group="${col}"></span></td>
+          <td style="padding:5px 4px; border:1px solid #111; text-align:center; width:36px;"><span class="scan-bubble" data-answer-bubble="1" data-q-no="${no}" data-choice="D" data-answer-group="${col}"></span></td>
+          <td class="scan-guide-side-cell"><span class="scan-row-guide answer" data-answer-guide="${no}"></span></td>
+        </tr>
+      `
+    }
+    columns.push(`
+      <div class="scan-answer-col">
+        <div class="scan-answer-col-wrap">
+          <table class="scan-bubble-table"><thead><tr><th style="width:34px;">No</th><th>A</th><th>B</th><th>C</th><th>D</th><th class="scan-guide-side-head"></th></tr></thead><tbody>${rowsHtml}<tr class="scan-column-guide-bottom-row"><td></td><td><span class="scan-column-guide answer" data-answer-col-guide="${col}:A"></span></td><td><span class="scan-column-guide answer" data-answer-col-guide="${col}:B"></span></td><td><span class="scan-column-guide answer" data-answer-col-guide="${col}:C"></span></td><td><span class="scan-column-guide answer" data-answer-col-guide="${col}:D"></span></td><td></td></tr></tbody></table>
+        </div>
+      </div>
+    `)
+  }
+  return columns.join('')
+}
+
+function buildGuruExamScanMetricSheetHtml(scanData) {
+  const jadwal = scanData?.jadwal || {}
+  const kelasLabel = String(scanData?.kelasLabel || '-')
+  const mapelLabel = String(scanData?.mapelLabel || '-')
+  const examCode = String(scanData?.examCode || '-')
+  const participants = Array.isArray(scanData?.participants) ? scanData.participants : []
+  const pgCount = Number(scanData?.pgCount || 0)
+  return `
+    <style>${buildGuruExamScanMetricStyles()}</style>
+    <div class="scan-sheet" data-scan-sheet="1">
+      <span class="scan-corner tl" data-marker="tl">${buildGuruExamScanFiducialSvg()}</span>
+      <span class="scan-corner tr" data-marker="tr">${buildGuruExamScanFiducialSvg()}</span>
+      <span class="scan-corner bl" data-marker="bl">${buildGuruExamScanFiducialSvg()}</span>
+      <span class="scan-corner br" data-marker="br">${buildGuruExamScanFiducialSvg()}</span>
+      <div class="scan-sheet-frame">
+      <div class="scan-sheet-header">
+        <h2>Lembar Jawaban Pilihan Ganda</h2>
+        <div class="scan-meta-grid">
+          <div><b>Nama Ujian:</b> ${escapeHtml(jadwal?.nama || '-')}</div>
+          <div><b>Jenis:</b> ${escapeHtml(jadwal?.jenis || '-')}</div>
+          <div><b>Mapel:</b> ${escapeHtml(mapelLabel)}</div>
+          <div><b>Kelas:</b> ${escapeHtml(kelasLabel)}</div>
+          <div><b>Tanggal:</b> ${escapeHtml(String(jadwal?.tanggal || '-'))}</div>
+          <div><b>Waktu:</b> ${escapeHtml([String(jadwal?.jam_mulai || '').trim() || '-', String(jadwal?.jam_selesai || '').trim() || '-'].join(' - '))}</div>
+          <div style="grid-column:1 / -1;"><b>Kode Ujian:</b> <span style="font-family:'Courier New',monospace;">${escapeHtml(examCode)}</span> | <b>Jumlah Peserta:</b> ${participants.length} santri | <b>Cetak:</b> ${participants.length} lembar</div>
+        </div>
+      </div>
+      <div class="scan-instruction-box">
+        <div><b>Petunjuk:</b> Isi nomor urut ujian 2 digit, lalu arsir nomor urut sesuai daftar peserta ujian.</div>
+        <div><b>Fokus Scan:</b> Nomor urut</div>
+      </div>
+      <div class="scan-identity-grid">
+        <div class="scan-identity-card">
+          <div class="scan-identity-title">Identitas Siswa</div>
+          <div class="scan-identity-line"><span>Nama:</span><span class="line"></span></div>
+          <div class="scan-identity-line"><span>Nomor Urut:</span><span class="line short"></span></div>
+          <div class="scan-identity-code"><b>Kode Ujian:</b> <span style="font-family:'Courier New',monospace;">${escapeHtml(examCode)}</span></div>
+          <div class="scan-identity-foot">Siswa hanya mengisi nomor urut 2 digit sesuai daftar peserta ujian.</div>
+        </div>
+        <div class="scan-digit-stage">
+          <div class="scan-digit-card">
+            <div class="scan-identity-title">Arsir Nomor Urut</div>
+            <div class="scan-digit-region-wrap">
+              <div class="scan-digit-table-wrap">
+                <table class="scan-digit-table">
+                  <thead><tr><th>Digit</th><th>Puluhan</th><th>Satuan</th></tr></thead>
+                  <tbody>${buildGuruExamScanMetricDigitRows()}</tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div class="scan-digit-guide-rail">${buildGuruExamScanMetricDigitGuideRail()}</div>
+          <div class="scan-digit-column-rail">${buildGuruExamScanMetricDigitColumnGuides()}</div>
+        </div>
+      </div>
+      </div>
+    </div>
+  `
+}
+
+function measureGuruExamScanTemplate(scanData) {
+  const host = document.createElement('div')
+  host.style.cssText = 'position:absolute; left:-100000px; top:0; width:190mm; opacity:0; pointer-events:none;'
+  host.innerHTML = buildGuruExamScanMetricSheetHtml(scanData)
+  document.body.appendChild(host)
+  const sheet = host.querySelector('[data-scan-sheet]')
+  if (!sheet) {
+    document.body.removeChild(host)
+    throw new Error('Template scan tidak berhasil dirender.')
+  }
+  const sheetRect = sheet.getBoundingClientRect()
+  const markerCenters = {}
+  ;['tl', 'tr', 'bl', 'br'].forEach(key => {
+    const el = host.querySelector(`[data-marker="${key}"]`)
+    const rect = el.getBoundingClientRect()
+    markerCenters[key] = {
+      x: rect.left - sheetRect.left + (rect.width / 2),
+      y: rect.top - sheetRect.top + (rect.height / 2)
+    }
+  })
+  const refWidth = Math.max(1, markerCenters.tr.x - markerCenters.tl.x)
+  const refHeight = Math.max(1, markerCenters.bl.y - markerCenters.tl.y)
+  const digitTable = host.querySelector('.scan-digit-table')
+  const answerGrid = host.querySelector('.scan-answer-grid')
+  const digitTableRect = digitTable?.getBoundingClientRect?.()
+  const answerGridRect = answerGrid?.getBoundingClientRect?.()
+  const rectMetric = rect => ({
+    x: rect.left - sheetRect.left,
+    y: rect.top - sheetRect.top,
+    width: rect.width,
+    height: rect.height
+  })
+  const digitBox = digitTableRect ? rectMetric(digitTableRect) : null
+  const answerBox = answerGridRect ? rectMetric(answerGridRect) : null
+  const bubbleToMetric = el => {
+    const rect = el.getBoundingClientRect()
+    const x = rect.left - sheetRect.left + (rect.width / 2)
+    const y = rect.top - sheetRect.top + (rect.height / 2)
+    const diameter = (rect.width + rect.height) / 2
+    return {
+      u: (x - markerCenters.tl.x) / refWidth,
+      v: (y - markerCenters.tl.y) / refHeight,
+      radiusRatio: diameter / 2 / ((refWidth + refHeight) / 2)
+    }
+  }
+  const bubbleToMarkerMetric = (el, localMarkers, prefix) => {
+    if (!localMarkers?.tl || !localMarkers?.tr || !localMarkers?.bl || !localMarkers?.br) {
+      return {
+        [`${prefix}LocalU`]: 0,
+        [`${prefix}LocalV`]: 0,
+        [`${prefix}LocalRadiusRatio`]: 0
+      }
+    }
+    const rect = el.getBoundingClientRect()
+    const x = rect.left - sheetRect.left + (rect.width / 2)
+    const y = rect.top - sheetRect.top + (rect.height / 2)
+    const diameter = (rect.width + rect.height) / 2
+    const localRefWidth = Math.max(1, localMarkers.tr.x - localMarkers.tl.x)
+    const localRefHeight = Math.max(1, localMarkers.bl.y - localMarkers.tl.y)
+    return {
+      [`${prefix}LocalU`]: (x - localMarkers.tl.x) / localRefWidth,
+      [`${prefix}LocalV`]: (y - localMarkers.tl.y) / localRefHeight,
+      [`${prefix}LocalRadiusRatio`]: diameter / 2 / ((localRefWidth + localRefHeight) / 2)
+    }
+  }
+  const bubbleToBoxMetric = (el, box) => {
+    if (!box) return { boxU: 0, boxV: 0, boxRadiusRatio: 0 }
+    const rect = el.getBoundingClientRect()
+    const x = rect.left - sheetRect.left + (rect.width / 2)
+    const y = rect.top - sheetRect.top + (rect.height / 2)
+    const diameter = (rect.width + rect.height) / 2
+    return {
+      boxU: (x - box.x) / Math.max(1, box.width),
+      boxV: (y - box.y) / Math.max(1, box.height),
+      boxRadiusRatio: diameter / 2 / Math.max(1, (box.width + box.height) / 2)
+    }
+  }
+  const digitBubbles = [...host.querySelectorAll('[data-digit-bubble]')].map(el => ({
+    col: String(el.dataset.digitCol || ''),
+    value: Number(el.dataset.digitValue || 0),
+    ...bubbleToMetric(el),
+    ...bubbleToBoxMetric(el, digitBox),
+    ...bubbleToMarkerMetric(el, null, 'digit')
+  }))
+  const answerBubbles = [...host.querySelectorAll('[data-answer-bubble]')].map(el => ({
+    no: Number(el.dataset.qNo || 0),
+    group: Number(el.dataset.answerGroup || 0),
+    choice: String(el.dataset.choice || '').trim().toUpperCase(),
+    ...bubbleToMetric(el),
+    ...bubbleToBoxMetric(el, answerBox),
+    ...bubbleToMarkerMetric(el, null, 'answer')
+  }))
+  const pointToMetric = el => {
+    const rect = el.getBoundingClientRect()
+    const x = rect.left - sheetRect.left + (rect.width / 2)
+    const y = rect.top - sheetRect.top + (rect.height / 2)
+    return {
+      u: (x - markerCenters.tl.x) / refWidth,
+      v: (y - markerCenters.tl.y) / refHeight
+    }
+  }
+  const digitGuides = [...host.querySelectorAll('[data-digit-guide]')].map(el => ({
+    value: Number(el.dataset.digitGuide || 0),
+    ...pointToMetric(el)
+  }))
+  const digitColumnGuides = [...host.querySelectorAll('[data-digit-col-guide]')].map(el => ({
+    col: String(el.dataset.digitColGuide || ''),
+    ...pointToMetric(el)
+  }))
+  const answerGuides = [...host.querySelectorAll('[data-answer-guide]')].map(el => ({
+    no: Number(el.dataset.answerGuide || 0),
+    ...pointToMetric(el)
+  }))
+  const answerColumnGuides = [...host.querySelectorAll('[data-answer-col-guide]')].map(el => {
+    const raw = String(el.dataset.answerColGuide || '')
+    const parts = raw.split(':')
+    return {
+      group: Number(parts[0] || 0),
+      choice: String(parts[1] || '').trim().toUpperCase(),
+      ...pointToMetric(el)
+    }
+  })
+  document.body.removeChild(host)
+  return {
+    sheetWidth: sheetRect.width,
+    sheetHeight: sheetRect.height,
+    markerOffsetXRatio: markerCenters.tl.x / Math.max(1, sheetRect.width),
+    markerOffsetYRatio: markerCenters.tl.y / Math.max(1, sheetRect.height),
+    referenceSize: (refWidth + refHeight) / 2,
+    digitMarkerHints: { tl: null, tr: null, bl: null, br: null },
+    answerMarkerHints: { tl: null, tr: null, bl: null, br: null },
+    digitBox: digitBox ? {
+      u0: digitBox.x / Math.max(1, sheetRect.width),
+      v0: digitBox.y / Math.max(1, sheetRect.height),
+      u1: (digitBox.x + digitBox.width) / Math.max(1, sheetRect.width),
+      v1: (digitBox.y + digitBox.height) / Math.max(1, sheetRect.height)
+    } : null,
+    answerBox: answerBox ? {
+      u0: answerBox.x / Math.max(1, sheetRect.width),
+      v0: answerBox.y / Math.max(1, sheetRect.height),
+      u1: (answerBox.x + answerBox.width) / Math.max(1, sheetRect.width),
+      v1: (answerBox.y + answerBox.height) / Math.max(1, sheetRect.height)
+    } : null,
+    digitGuides,
+    digitColumnGuides,
+    answerGuides,
+    answerColumnGuides,
+    digitBubbles,
+    answerBubbles
+  }
+}
+
+async function loadGuruExamScanImageData(dataUrl) {
+  const img = await new Promise((resolve, reject) => {
+    const el = new Image()
+    el.onload = function () { resolve(el) }
+    el.onerror = function () { reject(new Error('Gagal memuat gambar scan.')) }
+    el.src = String(dataUrl || '')
+  })
+  const scale = Math.min(1, 1800 / Math.max(1, img.naturalWidth || img.width), 2600 / Math.max(1, img.naturalHeight || img.height))
+  const width = Math.max(1, Math.round((img.naturalWidth || img.width) * scale))
+  const height = Math.max(1, Math.round((img.naturalHeight || img.height) * scale))
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  ctx.drawImage(img, 0, 0, width, height)
+  const imageData = ctx.getImageData(0, 0, width, height)
+  const rgba = imageData.data
+  const gray = new Uint8ClampedArray(width * height)
+  let total = 0
+  for (let i = 0, p = 0; i < gray.length; i += 1, p += 4) {
+    const value = Math.round((rgba[p] * 0.299) + (rgba[p + 1] * 0.587) + (rgba[p + 2] * 0.114))
+    gray[i] = value
+    total += value
+  }
+  return {
+    width,
+    height,
+    gray,
+    meanGray: total / Math.max(1, gray.length)
+  }
+}
+
+function findGuruExamScanCornerMarker(imageData, cornerKey) {
+  const { width, height, gray, meanGray } = imageData
+  const threshold = Math.max(40, Math.min(140, Math.round(meanGray * 0.55)))
+  const xStart = cornerKey.includes('r') ? Math.floor(width * 0.7) : 0
+  const xEnd = cornerKey.includes('r') ? width : Math.ceil(width * 0.3)
+  const yStart = cornerKey.includes('b') ? Math.floor(height * 0.7) : 0
+  const yEnd = cornerKey.includes('b') ? height : Math.ceil(height * 0.3)
+  const regionWidth = Math.max(1, xEnd - xStart)
+  const regionHeight = Math.max(1, yEnd - yStart)
+  const visited = new Uint8Array(regionWidth * regionHeight)
+  const queue = []
+  let best = null
+  const minArea = Math.max(24, Math.round((width * height) * 0.00004))
+  const expectedX = cornerKey.includes('r') ? xEnd - 1 : xStart
+  const expectedY = cornerKey.includes('b') ? yEnd - 1 : yStart
+
+  const pushIfDark = (x, y) => {
+    if (x < xStart || x >= xEnd || y < yStart || y >= yEnd) return false
+    const localIndex = (y - yStart) * regionWidth + (x - xStart)
+    if (visited[localIndex]) return false
+    visited[localIndex] = 1
+    const grayValue = gray[(y * width) + x]
+    if (grayValue > threshold) return false
+    queue.push(x, y)
+    return true
+  }
+
+  for (let y = yStart; y < yEnd; y += 1) {
+    for (let x = xStart; x < xEnd; x += 1) {
+      const localIndex = (y - yStart) * regionWidth + (x - xStart)
+      if (visited[localIndex]) continue
+      if (!pushIfDark(x, y)) continue
+      let area = 0
+      let minX = x
+      let maxX = x
+      let minY = y
+      let maxY = y
+      let sumX = 0
+      let sumY = 0
+      while (queue.length) {
+        const cy = queue.pop()
+        const cx = queue.pop()
+        area += 1
+        sumX += cx
+        sumY += cy
+        if (cx < minX) minX = cx
+        if (cx > maxX) maxX = cx
+        if (cy < minY) minY = cy
+        if (cy > maxY) maxY = cy
+        pushIfDark(cx + 1, cy)
+        pushIfDark(cx - 1, cy)
+        pushIfDark(cx, cy + 1)
+        pushIfDark(cx, cy - 1)
+      }
+      const boxWidth = maxX - minX + 1
+      const boxHeight = maxY - minY + 1
+      if (area < minArea || boxWidth < 4 || boxHeight < 4) continue
+      const fillRatio = area / Math.max(1, boxWidth * boxHeight)
+      const aspect = Math.min(boxWidth, boxHeight) / Math.max(boxWidth, boxHeight)
+      const centerX = sumX / area
+      const centerY = sumY / area
+      const dist = Math.hypot(centerX - expectedX, centerY - expectedY)
+      const score = area * fillRatio * aspect / Math.max(1, dist + 1)
+      if (!best || score > best.score) {
+        best = { x: centerX, y: centerY, area, score }
+      }
+    }
+  }
+  return best
+}
+
+function detectGuruExamScanMarkers(imageData) {
+  const markers = {
+    tl: findGuruExamScanCornerMarker(imageData, 'tl'),
+    tr: findGuruExamScanCornerMarker(imageData, 'tr'),
+    bl: findGuruExamScanCornerMarker(imageData, 'bl'),
+    br: findGuruExamScanCornerMarker(imageData, 'br')
+  }
+  if (!markers.tl || !markers.tr || !markers.bl || !markers.br) return null
+  return markers
+}
+
+function detectGuruExamScanSheetBounds(imageData) {
+  const { width, height, gray, meanGray } = imageData
+  const threshold = Math.max(40, Math.min(180, Math.round(meanGray * 0.78)))
+  const rowCounts = new Float32Array(height)
+  const colCounts = new Float32Array(width)
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (gray[(y * width) + x] > threshold) continue
+      rowCounts[y] += 1
+      colCounts[x] += 1
+    }
+  }
+
+  const smoothSeries = (arr, radius = 2) => {
+    const out = new Float32Array(arr.length)
+    for (let i = 0; i < arr.length; i += 1) {
+      let total = 0
+      let count = 0
+      for (let offset = -radius; offset <= radius; offset += 1) {
+        const idx = i + offset
+        if (idx < 0 || idx >= arr.length) continue
+        total += arr[idx]
+        count += 1
+      }
+      out[i] = count ? total / count : 0
+    }
+    return out
+  }
+
+  const pickPeak = (series, start, end) => {
+    let bestIndex = -1
+    let bestValue = -1
+    for (let i = Math.max(0, start); i < Math.min(series.length, end); i += 1) {
+      if (series[i] > bestValue) {
+        bestValue = series[i]
+        bestIndex = i
+      }
+    }
+    return { index: bestIndex, value: bestValue }
+  }
+
+  const rowsSmooth = smoothSeries(rowCounts, 2)
+  const colsSmooth = smoothSeries(colCounts, 2)
+  const top = pickPeak(rowsSmooth, 0, Math.ceil(height * 0.2))
+  const bottom = pickPeak(rowsSmooth, Math.floor(height * 0.8), height)
+  const left = pickPeak(colsSmooth, 0, Math.ceil(width * 0.2))
+  const right = pickPeak(colsSmooth, Math.floor(width * 0.8), width)
+
+  if (top.index < 0 || bottom.index < 0 || left.index < 0 || right.index < 0) return null
+  if (top.value < (width * 0.18) || bottom.value < (width * 0.18) || left.value < (height * 0.18) || right.value < (height * 0.18)) return null
+  if ((right.index - left.index) < (width * 0.45) || (bottom.index - top.index) < (height * 0.45)) return null
+
+  return {
+    left: left.index,
+    right: right.index,
+    top: top.index,
+    bottom: bottom.index
+  }
+}
+
+function buildGuruExamScanVirtualMarkersFromBounds(bounds, metric) {
+  if (!bounds || !metric) return null
+  const left = Number(bounds.left)
+  const right = Number(bounds.right)
+  const top = Number(bounds.top)
+  const bottom = Number(bounds.bottom)
+  if (![left, right, top, bottom].every(Number.isFinite)) return null
+  const width = right - left
+  const height = bottom - top
+  if (width <= 0 || height <= 0) return null
+  const offsetX = width * Number(metric.markerOffsetXRatio || 0)
+  const offsetY = height * Number(metric.markerOffsetYRatio || 0)
+  return {
+    tl: { x: left + offsetX, y: top + offsetY },
+    tr: { x: right - offsetX, y: top + offsetY },
+    bl: { x: left + offsetX, y: bottom - offsetY },
+    br: { x: right - offsetX, y: bottom - offsetY }
+  }
+}
+
+function detectGuruExamScanInnerRect(imageData, region) {
+  if (!region) return null
+  const { width, height, gray, meanGray } = imageData
+  const left = Math.max(0, Math.floor(Number(region.left || 0)))
+  const top = Math.max(0, Math.floor(Number(region.top || 0)))
+  const right = Math.min(width - 1, Math.ceil(Number(region.right || 0)))
+  const bottom = Math.min(height - 1, Math.ceil(Number(region.bottom || 0)))
+  if (right - left < 20 || bottom - top < 20) return null
+  const regionWidth = right - left + 1
+  const regionHeight = bottom - top + 1
+  const threshold = Math.max(40, Math.min(180, Math.round(meanGray * 0.78)))
+  const rowCounts = new Float32Array(regionHeight)
+  const colCounts = new Float32Array(regionWidth)
+  for (let y = top; y <= bottom; y += 1) {
+    for (let x = left; x <= right; x += 1) {
+      if (gray[(y * width) + x] > threshold) continue
+      rowCounts[y - top] += 1
+      colCounts[x - left] += 1
+    }
+  }
+  const smooth = (arr, radius = 1) => {
+    const out = new Float32Array(arr.length)
+    for (let i = 0; i < arr.length; i += 1) {
+      let total = 0
+      let count = 0
+      for (let offset = -radius; offset <= radius; offset += 1) {
+        const idx = i + offset
+        if (idx < 0 || idx >= arr.length) continue
+        total += arr[idx]
+        count += 1
+      }
+      out[i] = count ? total / count : 0
+    }
+    return out
+  }
+  const rowsSmooth = smooth(rowCounts, 1)
+  const colsSmooth = smooth(colCounts, 1)
+  const rowThreshold = regionWidth * 0.18
+  const colThreshold = regionHeight * 0.18
+  let innerTop = -1
+  let innerBottom = -1
+  let innerLeft = -1
+  let innerRight = -1
+  for (let i = 0; i < rowsSmooth.length; i += 1) {
+    if (rowsSmooth[i] >= rowThreshold) {
+      innerTop = i
+      break
+    }
+  }
+  for (let i = rowsSmooth.length - 1; i >= 0; i -= 1) {
+    if (rowsSmooth[i] >= rowThreshold) {
+      innerBottom = i
+      break
+    }
+  }
+  for (let i = 0; i < colsSmooth.length; i += 1) {
+    if (colsSmooth[i] >= colThreshold) {
+      innerLeft = i
+      break
+    }
+  }
+  for (let i = colsSmooth.length - 1; i >= 0; i -= 1) {
+    if (colsSmooth[i] >= colThreshold) {
+      innerRight = i
+      break
+    }
+  }
+  if (innerTop < 0 || innerBottom < 0 || innerLeft < 0 || innerRight < 0) return null
+  return {
+    left: left + innerLeft,
+    top: top + innerTop,
+    right: left + innerRight,
+    bottom: top + innerBottom
+  }
+}
+
+function buildGuruExamScanRegionFromBounds(bounds, boxMetric) {
+  if (!bounds || !boxMetric) return null
+  const width = Number(bounds.right) - Number(bounds.left)
+  const height = Number(bounds.bottom) - Number(bounds.top)
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null
+  return {
+    left: Number(bounds.left) + (width * Number(boxMetric.u0 || 0)) - (width * 0.03),
+    top: Number(bounds.top) + (height * Number(boxMetric.v0 || 0)) - (height * 0.03),
+    right: Number(bounds.left) + (width * Number(boxMetric.u1 || 0)) + (width * 0.03),
+    bottom: Number(bounds.top) + (height * Number(boxMetric.v1 || 0)) + (height * 0.03)
+  }
+}
+
+function mapGuruExamScanPointInRect(rect, u, v) {
+  return {
+    x: Number(rect.left) + ((Number(rect.right) - Number(rect.left)) * Number(u || 0)),
+    y: Number(rect.top) + ((Number(rect.bottom) - Number(rect.top)) * Number(v || 0))
+  }
+}
+
+function findGuruExamScanMarkerNear(imageData, expectedX, expectedY, searchRadius, minAreaHint = 0) {
+  const { width, height, gray, meanGray } = imageData
+  const radius = Math.max(12, Math.round(searchRadius))
+  const threshold = Math.max(40, Math.min(150, Math.round(meanGray * 0.6)))
+  const xStart = Math.max(0, Math.floor(expectedX - radius))
+  const xEnd = Math.min(width - 1, Math.ceil(expectedX + radius))
+  const yStart = Math.max(0, Math.floor(expectedY - radius))
+  const yEnd = Math.min(height - 1, Math.ceil(expectedY + radius))
+  const regionWidth = Math.max(1, xEnd - xStart + 1)
+  const regionHeight = Math.max(1, yEnd - yStart + 1)
+  const visited = new Uint8Array(regionWidth * regionHeight)
+  const queue = []
+  let best = null
+
+  const pushIfDark = (x, y) => {
+    if (x < xStart || x > xEnd || y < yStart || y > yEnd) return false
+    const localIndex = (y - yStart) * regionWidth + (x - xStart)
+    if (visited[localIndex]) return false
+    visited[localIndex] = 1
+    const grayValue = gray[(y * width) + x]
+    if (grayValue > threshold) return false
+    queue.push(x, y)
+    return true
+  }
+
+  for (let y = yStart; y <= yEnd; y += 1) {
+    for (let x = xStart; x <= xEnd; x += 1) {
+      const localIndex = (y - yStart) * regionWidth + (x - xStart)
+      if (visited[localIndex]) continue
+      if (!pushIfDark(x, y)) continue
+      let area = 0
+      let minX = x
+      let maxX = x
+      let minY = y
+      let maxY = y
+      let sumX = 0
+      let sumY = 0
+      while (queue.length) {
+        const cy = queue.pop()
+        const cx = queue.pop()
+        area += 1
+        sumX += cx
+        sumY += cy
+        if (cx < minX) minX = cx
+        if (cx > maxX) maxX = cx
+        if (cy < minY) minY = cy
+        if (cy > maxY) maxY = cy
+        pushIfDark(cx + 1, cy)
+        pushIfDark(cx - 1, cy)
+        pushIfDark(cx, cy + 1)
+        pushIfDark(cx, cy - 1)
+      }
+      const boxWidth = maxX - minX + 1
+      const boxHeight = maxY - minY + 1
+      const minArea = Math.max(14, Number(minAreaHint || 0))
+      if (area < minArea || boxWidth < 5 || boxHeight < 5) continue
+      const fillRatio = area / Math.max(1, boxWidth * boxHeight)
+      const aspect = Math.min(boxWidth, boxHeight) / Math.max(boxWidth, boxHeight)
+      const centerX = sumX / area
+      const centerY = sumY / area
+      const dist = Math.hypot(centerX - expectedX, centerY - expectedY)
+      const sizeBoost = Math.min(boxWidth, boxHeight) >= 8 ? 1.15 : 0.85
+      const score = (area * fillRatio * aspect * sizeBoost) / Math.max(1, dist + 1)
+      if (!best || score > best.score) best = { x: centerX, y: centerY, area, score }
+    }
+  }
+  return best
+}
+
+function findGuruExamScanGuideBarNear(imageData, expectedX, expectedY, searchRadius, minAreaHint = 0, orientation = 'horizontal') {
+  const { width, height, gray, meanGray } = imageData
+  const radius = Math.max(8, Number(searchRadius || 0))
+  const threshold = Math.max(40, Math.min(150, Math.round(meanGray * 0.6)))
+  const xStart = Math.max(0, Math.floor(expectedX - radius))
+  const xEnd = Math.min(width - 1, Math.ceil(expectedX + radius))
+  const yStart = Math.max(0, Math.floor(expectedY - radius))
+  const yEnd = Math.min(height - 1, Math.ceil(expectedY + radius))
+  const regionWidth = Math.max(1, xEnd - xStart + 1)
+  const regionHeight = Math.max(1, yEnd - yStart + 1)
+  const visited = new Uint8Array(regionWidth * regionHeight)
+  const queue = []
+  let best = null
+
+  const pushIfDark = (x, y) => {
+    if (x < xStart || x > xEnd || y < yStart || y > yEnd) return false
+    const localIndex = (y - yStart) * regionWidth + (x - xStart)
+    if (visited[localIndex]) return false
+    visited[localIndex] = 1
+    const grayValue = gray[(y * width) + x]
+    if (grayValue > threshold) return false
+    queue.push(x, y)
+    return true
+  }
+
+  for (let y = yStart; y <= yEnd; y += 1) {
+    for (let x = xStart; x <= xEnd; x += 1) {
+      const localIndex = (y - yStart) * regionWidth + (x - xStart)
+      if (visited[localIndex]) continue
+      if (!pushIfDark(x, y)) continue
+      let area = 0
+      let minX = x
+      let maxX = x
+      let minY = y
+      let maxY = y
+      let sumX = 0
+      let sumY = 0
+      while (queue.length) {
+        const cy = queue.pop()
+        const cx = queue.pop()
+        area += 1
+        sumX += cx
+        sumY += cy
+        if (cx < minX) minX = cx
+        if (cx > maxX) maxX = cx
+        if (cy < minY) minY = cy
+        if (cy > maxY) maxY = cy
+        pushIfDark(cx + 1, cy)
+        pushIfDark(cx - 1, cy)
+        pushIfDark(cx, cy + 1)
+        pushIfDark(cx, cy - 1)
+      }
+      const boxWidth = maxX - minX + 1
+      const boxHeight = maxY - minY + 1
+      const minArea = Math.max(12, Number(minAreaHint || 0))
+      if (area < minArea || boxWidth < 6 || boxHeight < 3) continue
+      const fillRatio = area / Math.max(1, boxWidth * boxHeight)
+      const horizontalBias = Math.max(0.6, Math.min(2.4, boxWidth / Math.max(1, boxHeight)))
+      const verticalBias = Math.max(0.6, Math.min(2.4, boxHeight / Math.max(1, boxWidth)))
+      const shapeBias = orientation === 'vertical' ? verticalBias : horizontalBias
+      const centerX = sumX / area
+      const centerY = sumY / area
+      const dist = Math.hypot(centerX - expectedX, centerY - expectedY)
+      const score = (area * fillRatio * shapeBias) / Math.max(1, dist + 1)
+      if (!best || score > best.score) best = { x: centerX, y: centerY, area, score }
+    }
+  }
+  return best
+}
+
+function sampleGuruExamScanRectDarkness(imageData, centerX, centerY, halfWidth, halfHeight) {
+  const { width, height, gray } = imageData
+  const x0 = Math.max(0, Math.floor(centerX - halfWidth))
+  const x1 = Math.min(width - 1, Math.ceil(centerX + halfWidth))
+  const y0 = Math.max(0, Math.floor(centerY - halfHeight))
+  const y1 = Math.min(height - 1, Math.ceil(centerY + halfHeight))
+  let total = 0
+  let count = 0
+  for (let y = y0; y <= y1; y += 1) {
+    for (let x = x0; x <= x1; x += 1) {
+      total += (255 - gray[(y * width) + x]) / 255
+      count += 1
+    }
+  }
+  return count ? total / count : 0
+}
+
+function detectGuruExamScanGuideBarSeries(imageData, expectedItems, searchRadius, orientation = 'horizontal') {
+  const list = Array.isArray(expectedItems) ? expectedItems.filter(Boolean) : []
+  const result = new Map()
+  if (!list.length) return result
+
+  const axisKey = orientation === 'vertical' ? 'x' : 'y'
+  const radius = Math.max(8, Number(searchRadius || 0))
+  const expectedProjected = list.map(item => ({
+    key: item.key,
+    expectedX: Number(item.expectedX || 0),
+    expectedY: Number(item.expectedY || 0)
+  }))
+
+  const expectedSorted = expectedProjected.slice().sort((a, b) => a[axisKey] - b[axisKey])
+  const gaps = []
+  for (let i = 1; i < expectedSorted.length; i += 1) {
+    gaps.push(expectedSorted[i][axisKey] - expectedSorted[i - 1][axisKey])
+  }
+  const medianGap = gaps.length
+    ? gaps.slice().sort((a, b) => a - b)[Math.floor(gaps.length / 2)]
+    : radius * 1.4
+  const minGap = Math.max(8, medianGap * 0.55)
+  const majorHalf = Math.max(6, radius * 0.55)
+  const minorHalf = Math.max(2, radius * 0.22)
+  const refineRadius = Math.max(6, radius * 0.45)
+  const refineAreaHint = Math.max(8, Math.round(refineRadius * refineRadius * 0.015))
+  let prevAxis = Number.NEGATIVE_INFINITY
+
+  expectedSorted.forEach(item => {
+    const expectedAxis = orientation === 'vertical' ? item.expectedX : item.expectedY
+    const expectedCross = orientation === 'vertical' ? item.expectedY : item.expectedX
+    const searchStart = Math.max(
+      Math.round(expectedAxis - radius),
+      Number.isFinite(prevAxis) ? Math.round(prevAxis + minGap) : Math.round(expectedAxis - radius)
+    )
+    const searchEnd = Math.round(expectedAxis + radius)
+    let bestAxis = null
+    let bestDarkness = -1
+    for (let axis = searchStart; axis <= searchEnd; axis += 1) {
+      const centerX = orientation === 'vertical' ? axis : expectedCross
+      const centerY = orientation === 'vertical' ? expectedCross : axis
+      const darkness = sampleGuruExamScanRectDarkness(
+        imageData,
+        centerX,
+        centerY,
+        orientation === 'vertical' ? minorHalf : majorHalf,
+        orientation === 'vertical' ? majorHalf : minorHalf
+      )
+      if (darkness > bestDarkness) {
+        bestDarkness = darkness
+        bestAxis = axis
+      }
+    }
+
+    const roughPoint = orientation === 'vertical'
+      ? { x: bestAxis ?? item.expectedX, y: item.expectedY }
+      : { x: item.expectedX, y: bestAxis ?? item.expectedY }
+    const refined = findGuruExamScanGuideBarNear(
+      imageData,
+      roughPoint.x,
+      roughPoint.y,
+      refineRadius,
+      refineAreaHint,
+      orientation
+    )
+
+    if (refined) {
+      const point = orientation === 'vertical'
+        ? { x: refined.x, y: item.expectedY }
+        : { x: item.expectedX, y: refined.y }
+      result.set(item.key, point)
+      prevAxis = orientation === 'vertical' ? point.x : point.y
+    } else {
+      const point = { x: item.expectedX, y: item.expectedY }
+      result.set(item.key, point)
+      prevAxis = orientation === 'vertical' ? point.x : point.y
+    }
+  })
+
+  return result
+}
+
+function detectGuruExamScanLocalMarkerSet(imageData, baseMarkers, markerHints, referenceSize) {
+  if (!baseMarkers || !markerHints?.tl || !markerHints?.tr || !markerHints?.bl || !markerHints?.br) return null
+  const searchRadius = Math.max(16, Number(referenceSize || 0) * 0.06)
+  const minAreaHint = Math.max(18, Math.round(searchRadius * searchRadius * 0.03))
+  const keys = ['tl', 'tr', 'bl', 'br']
+  const result = {}
+  for (const key of keys) {
+    const hint = markerHints[key]
+    const expected = mapGuruExamScanPoint(baseMarkers, hint.u, hint.v)
+    const detected = findGuruExamScanMarkerNear(imageData, expected.x, expected.y, searchRadius, minAreaHint)
+    if (!detected) return null
+    result[key] = detected
+  }
+  return result
+}
+
+function getGuruExamScanMarkerBox(markerSet) {
+  if (!markerSet?.tl || !markerSet?.tr || !markerSet?.bl || !markerSet?.br) return null
+  const xs = [markerSet.tl.x, markerSet.tr.x, markerSet.bl.x, markerSet.br.x].map(Number).filter(Number.isFinite)
+  const ys = [markerSet.tl.y, markerSet.tr.y, markerSet.bl.y, markerSet.br.y].map(Number).filter(Number.isFinite)
+  if (xs.length !== 4 || ys.length !== 4) return null
+  return {
+    left: Math.min(...xs),
+    right: Math.max(...xs),
+    top: Math.min(...ys),
+    bottom: Math.max(...ys)
+  }
+}
+
+function mapGuruExamScanPointInMarkerBox(markerSet, u, v) {
+  const box = getGuruExamScanMarkerBox(markerSet)
+  if (!box) return mapGuruExamScanPoint(markerSet, u, v)
+  return {
+    x: box.left + ((box.right - box.left) * Number(u || 0)),
+    y: box.top + ((box.bottom - box.top) * Number(v || 0))
+  }
+}
+
+function mapGuruExamScanPoint(markers, u, v) {
+  const tl = markers.tl
+  const tr = markers.tr
+  const bl = markers.bl
+  const br = markers.br
+  return {
+    x: (tl.x * (1 - u) * (1 - v)) + (tr.x * u * (1 - v)) + (bl.x * (1 - u) * v) + (br.x * u * v),
+    y: (tl.y * (1 - u) * (1 - v)) + (tr.y * u * (1 - v)) + (bl.y * (1 - u) * v) + (br.y * u * v)
+  }
+}
+
+function sampleGuruExamScanDarkness(imageData, centerX, centerY, radius, innerRadius = 0) {
+  const { width, height, gray } = imageData
+  const safeRadius = Math.max(2, radius)
+  const safeInnerRadius = Math.max(0, Math.min(safeRadius - 0.5, innerRadius))
+  const x0 = Math.max(0, Math.floor(centerX - safeRadius))
+  const x1 = Math.min(width - 1, Math.ceil(centerX + safeRadius))
+  const y0 = Math.max(0, Math.floor(centerY - safeRadius))
+  const y1 = Math.min(height - 1, Math.ceil(centerY + safeRadius))
+  const r2 = safeRadius * safeRadius
+  const innerR2 = safeInnerRadius * safeInnerRadius
+  let total = 0
+  let count = 0
+  for (let y = y0; y <= y1; y += 1) {
+    for (let x = x0; x <= x1; x += 1) {
+      const dx = x + 0.5 - centerX
+      const dy = y + 0.5 - centerY
+      const d2 = (dx * dx) + (dy * dy)
+      if (d2 > r2 || d2 < innerR2) continue
+      total += (255 - gray[(y * width) + x]) / 255
+      count += 1
+    }
+  }
+  return count ? total / count : 0
+}
+
+function scoreGuruExamScanBubble(imageData, centerX, centerY, radius) {
+  const safeRadius = Math.max(3, radius)
+  const coreDark = sampleGuruExamScanDarkness(imageData, centerX, centerY, safeRadius * 0.34)
+  const ringDark = sampleGuruExamScanDarkness(imageData, centerX, centerY, safeRadius * 0.78, safeRadius * 0.40)
+  const outsideDark = sampleGuruExamScanDarkness(imageData, centerX, centerY, safeRadius * 1.28, safeRadius * 0.88)
+  return round2((coreDark * 1.45) - (ringDark * 0.65) - (outsideDark * 0.18))
+}
+
+function scoreGuruExamScanBubbleAround(imageData, centerX, centerY, radius) {
+  const safeRadius = Math.max(3, radius)
+  const offset = safeRadius * 0.18
+  const offsets = [
+    [0, 0],
+    [-offset, 0],
+    [offset, 0],
+    [0, -offset],
+    [0, offset],
+    [-offset * 0.7, -offset * 0.7],
+    [offset * 0.7, -offset * 0.7],
+    [-offset * 0.7, offset * 0.7],
+    [offset * 0.7, offset * 0.7]
+  ]
+  let bestScore = Number.NEGATIVE_INFINITY
+  for (const [dx, dy] of offsets) {
+    const score = scoreGuruExamScanBubble(imageData, centerX + dx, centerY + dy, safeRadius)
+    if (score > bestScore) bestScore = score
+  }
+  return round2(bestScore)
+}
+
+function buildGuruExamScanDebugOverlayHtml(analysis) {
+  const debug = analysis?.debug || null
+  const width = Number(debug?.imageWidth || 0)
+  const height = Number(debug?.imageHeight || 0)
+  if (!debug || !width || !height) return ''
+  const markers = analysis?.markers || {}
+  const digitGuideMap = analysis?.digitGuideMap instanceof Map ? analysis.digitGuideMap : new Map()
+  const answerGuideMap = analysis?.answerGuideMap instanceof Map ? analysis.answerGuideMap : new Map()
+  const digitColumnGuideMap = analysis?.digitColumnGuideMap instanceof Map ? analysis.digitColumnGuideMap : new Map()
+  const answerColumnGuideMap = analysis?.answerColumnGuideMap instanceof Map ? analysis.answerColumnGuideMap : new Map()
+  const bounds = analysis?.bounds || null
+  const digitResult = analysis?.digitResult || {}
+  const answerDetectedMap = new Map((analysis?.answers || []).map(item => [Number(item?.no || 0), String(item?.detected || '')]))
+  const escapeAttr = value => escapeHtml(String(value ?? ''))
+  let svg = ''
+
+  if (bounds && Number.isFinite(Number(bounds.left)) && Number.isFinite(Number(bounds.top)) && Number.isFinite(Number(bounds.right)) && Number.isFinite(Number(bounds.bottom))) {
+    const rectX = round2(Number(bounds.left))
+    const rectY = round2(Number(bounds.top))
+    const rectW = round2(Number(bounds.right) - Number(bounds.left))
+    const rectH = round2(Number(bounds.bottom) - Number(bounds.top))
+    svg += `<rect x="${rectX}" y="${rectY}" width="${rectW}" height="${rectH}" fill="none" stroke="#22c55e" stroke-width="4" stroke-dasharray="12 8" />`
+  }
+  ;['tl', 'tr', 'bl', 'br'].forEach(key => {
+    const point = markers?.[key]
+    if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return
+    const x = round2(Number(point.x))
+    const y = round2(Number(point.y))
+    svg += `<circle cx="${x}" cy="${y}" r="12" fill="rgba(14,165,233,0.18)" stroke="#0284c7" stroke-width="3" />`
+    svg += `<text x="${round2(x + 14)}" y="${round2(y - 10)}" font-size="18" font-weight="700" fill="#0369a1">${escapeAttr(key.toUpperCase())}</text>`
+  })
+  digitGuideMap.forEach((point, value) => {
+    if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return
+    svg += `<rect x="${round2(Number(point.x) - 8)}" y="${round2(Number(point.y) - 4)}" width="16" height="8" fill="rgba(34,197,94,0.20)" stroke="#16a34a" stroke-width="2" />`
+    svg += `<text x="${round2(Number(point.x) + 10)}" y="${round2(Number(point.y) + 4)}" font-size="12" font-weight="700" fill="#15803d">G${escapeAttr(value)}</text>`
+  })
+  answerGuideMap.forEach((point, no) => {
+    if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return
+    svg += `<rect x="${round2(Number(point.x) - 8)}" y="${round2(Number(point.y) - 4)}" width="16" height="8" fill="rgba(168,85,247,0.16)" stroke="#7c3aed" stroke-width="2" />`
+    svg += `<text x="${round2(Number(point.x) + 10)}" y="${round2(Number(point.y) + 4)}" font-size="12" font-weight="700" fill="#6d28d9">Q${escapeAttr(no)}</text>`
+  })
+  digitColumnGuideMap.forEach((point, key) => {
+    if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return
+    svg += `<rect x="${round2(Number(point.x) - 4)}" y="${round2(Number(point.y) - 8)}" width="8" height="16" fill="rgba(14,165,233,0.20)" stroke="#0284c7" stroke-width="2" />`
+    svg += `<text x="${round2(Number(point.x) - 10)}" y="${round2(Number(point.y) + 26)}" font-size="12" font-weight="700" fill="#0369a1">${escapeAttr(key)}</text>`
+  })
+  answerColumnGuideMap.forEach((point, key) => {
+    if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return
+    svg += `<rect x="${round2(Number(point.x) - 4)}" y="${round2(Number(point.y) - 8)}" width="8" height="16" fill="rgba(59,130,246,0.16)" stroke="#2563eb" stroke-width="2" />`
+    svg += `<text x="${round2(Number(point.x) - 10)}" y="${round2(Number(point.y) + 26)}" font-size="11" font-weight="700" fill="#1d4ed8">${escapeAttr(key)}</text>`
+  })
+
+  ;['tens', 'ones'].forEach(col => {
+    const selectedValue = String(digitResult?.[col]?.value || '')
+    const list = Array.isArray(debug?.digitCandidates?.[col]) ? debug.digitCandidates[col] : []
+    list.forEach(candidate => {
+      const x = round2(Number(candidate?.x || 0))
+      const y = round2(Number(candidate?.y || 0))
+      const radius = Math.max(6, round2(Number(candidate?.radius || 0)))
+      const isSelected = selectedValue && String(candidate?.value || '') === selectedValue
+      const stroke = isSelected ? '#dc2626' : '#f59e0b'
+      const fill = isSelected ? 'rgba(220,38,38,0.22)' : 'rgba(245,158,11,0.10)'
+      const strokeWidth = isSelected ? 3.5 : 1.8
+      svg += `<circle cx="${x}" cy="${y}" r="${radius}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" />`
+      svg += `<text x="${round2(x + radius + 4)}" y="${round2(y + 4)}" font-size="16" font-weight="${isSelected ? '700' : '500'}" fill="${stroke}">${escapeAttr(col === 'tens' ? 'P' : 'S')}${escapeAttr(candidate?.value || '')}</text>`
+    })
+  })
+
+  const answerCandidates = Array.isArray(debug?.answerCandidates) ? debug.answerCandidates : []
+  answerCandidates.forEach(candidate => {
+    const x = round2(Number(candidate?.x || 0))
+    const y = round2(Number(candidate?.y || 0))
+    const radius = Math.max(7, round2(Number(candidate?.radius || 0)))
+    const no = Number(candidate?.no || 0)
+    const detected = answerDetectedMap.get(no) || ''
+    const choice = String(candidate?.value || '')
+    const isSelected = detected && choice === detected
+    const stroke = isSelected ? '#dc2626' : '#a16207'
+    const fill = isSelected ? 'rgba(220,38,38,0.18)' : 'rgba(234,179,8,0.08)'
+    const strokeWidth = isSelected ? 3.2 : 1.4
+    svg += `<circle cx="${x}" cy="${y}" r="${radius}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" />`
+    if (isSelected) {
+      svg += `<text x="${round2(x + radius + 3)}" y="${round2(y + 4)}" font-size="14" font-weight="700" fill="${stroke}">${escapeAttr(no)}${escapeAttr(choice)}</text>`
+    }
+  })
+
+  return `
+    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet" style="position:absolute; inset:0; width:100%; height:100%; pointer-events:none;">
+      ${svg}
+    </svg>
+  `
+}
+
+function pickGuruExamScanBestChoice(candidates) {
+  const sorted = [...(Array.isArray(candidates) ? candidates : [])].sort((a, b) => b.score - a.score)
+  const best = sorted[0] || null
+  const second = sorted[1] || null
+  if (!best) return { value: '', score: 0, confidence: 'low', candidates: sorted }
+  const scoreList = sorted.map(item => Number(item.score || 0)).sort((a, b) => a - b)
+  const middle = Math.floor(scoreList.length / 2)
+  const median = scoreList.length % 2
+    ? Number(scoreList[middle] || 0)
+    : round2((Number(scoreList[middle - 1] || 0) + Number(scoreList[middle] || 0)) / 2)
+  const diff = best.score - Number(second?.score || 0)
+  const deltaMedian = best.score - median
+  const confident = best.score >= 0.08 && diff >= 0.03 && deltaMedian >= 0.05
+  const moderate = best.score >= 0.05 && diff >= 0.018 && deltaMedian >= 0.03
+  return {
+    value: confident || moderate ? String(best.value || '') : '',
+    score: best.score,
+    confidence: confident ? 'high' : (moderate ? 'medium' : 'low'),
+    candidates: sorted,
+    medianScore: median,
+    deltaMedian
+  }
+}
+
+async function analyzeGuruExamScanUpload() {
+  const scanData = ujianGuruState.activeScanData
+  const rowKey = String(scanData?.rowKey || '')
+  const upload = rowKey ? ujianGuruState.scanUploadsByRow[rowKey] : null
+  if (!scanData || !upload?.dataUrl) {
+    alert('Upload dulu foto atau scan lembar jawaban sebelum dianalisa.')
+    return
+  }
+  try {
+    const metric = measureGuruExamScanTemplate(scanData)
+    const imageData = await loadGuruExamScanImageData(upload.dataUrl)
+    const bounds = detectGuruExamScanSheetBounds(imageData)
+    const virtualMarkers = buildGuruExamScanVirtualMarkersFromBounds(bounds, metric)
+    const markers = virtualMarkers || detectGuruExamScanMarkers(imageData)
+    if (!markers) {
+      throw new Error('Batas lembar tidak terbaca dengan baik. Ambil foto/scan yang lebih lurus dan pastikan seluruh lembar terlihat utuh.')
+    }
+    const imageMarkerDx = Math.hypot(markers.tr.x - markers.tl.x, markers.tr.y - markers.tl.y)
+    const imageMarkerDy = Math.hypot(markers.bl.x - markers.tl.x, markers.bl.y - markers.tl.y)
+    const imageReferenceSize = Math.max(1, (imageMarkerDx + imageMarkerDy) / 2)
+    const sampleRadiusFor = ratio => Math.max(3, ratio * imageReferenceSize * 0.55)
+    const guideSearchRadius = Math.max(14, imageReferenceSize * 0.035)
+    const guideAreaHint = Math.max(16, Math.round(guideSearchRadius * guideSearchRadius * 0.02))
+    const digitGuideMap = detectGuruExamScanGuideBarSeries(
+      imageData,
+      (Array.isArray(metric.digitGuides) ? metric.digitGuides : []).map(item => {
+        const expected = mapGuruExamScanPoint(markers, item.u, item.v)
+        return {
+          key: Number(item.value || 0),
+          expectedX: expected.x,
+          expectedY: expected.y
+        }
+      }),
+      guideSearchRadius,
+      'horizontal'
+    )
+    const answerGuideMap = detectGuruExamScanGuideBarSeries(
+      imageData,
+      (Array.isArray(metric.answerGuides) ? metric.answerGuides : []).map(item => {
+        const expected = mapGuruExamScanPoint(markers, item.u, item.v)
+        return {
+          key: Number(item.no || 0),
+          expectedX: expected.x,
+          expectedY: expected.y
+        }
+      }),
+      guideSearchRadius,
+      'horizontal'
+    )
+    const digitColumnGuideMap = detectGuruExamScanGuideBarSeries(
+      imageData,
+      (Array.isArray(metric.digitColumnGuides) ? metric.digitColumnGuides : []).map(item => {
+        const expected = mapGuruExamScanPoint(markers, item.u, item.v)
+        return {
+          key: String(item.col || ''),
+          expectedX: expected.x,
+          expectedY: expected.y
+        }
+      }),
+      guideSearchRadius,
+      'vertical'
+    )
+    const answerColumnGuideMap = detectGuruExamScanGuideBarSeries(
+      imageData,
+      (Array.isArray(metric.answerColumnGuides) ? metric.answerColumnGuides : []).map(item => {
+        const expected = mapGuruExamScanPoint(markers, item.u, item.v)
+        return {
+          key: `${Number(item.group || 0)}:${String(item.choice || '')}`,
+          expectedX: expected.x,
+          expectedY: expected.y
+        }
+      }),
+      guideSearchRadius,
+      'vertical'
+    )
+
+    const digitResult = {}
+    const digitCandidatesDebug = {}
+    ;['tens', 'ones'].forEach(col => {
+      const candidates = metric.digitBubbles
+        .filter(item => item.col === col)
+        .map(item => {
+          const mappedPt = mapGuruExamScanPoint(markers, item.u, item.v)
+          const rowGuide = digitGuideMap.get(Number(item.value || 0))
+          const colGuide = digitColumnGuideMap.get(String(item.col || ''))
+          const pt = {
+            x: colGuide?.x ?? mappedPt.x,
+            y: rowGuide?.y ?? mappedPt.y
+          }
+          const radius = sampleRadiusFor(item.radiusRatio)
+          return {
+            value: String(item.value),
+            score: scoreGuruExamScanBubbleAround(imageData, pt.x, pt.y, radius),
+            x: round2(pt.x),
+            y: round2(pt.y),
+            radius: round2(radius)
+          }
+        })
+      digitResult[col] = pickGuruExamScanBestChoice(candidates)
+      digitCandidatesDebug[col] = candidates
+    })
+
+    const nomorUrutRaw = `${digitResult.tens?.value || ''}${digitResult.ones?.value || ''}`
+    const nomorUrut = nomorUrutRaw.length === 2 ? nomorUrutRaw : ''
+    const participant = (scanData.participants || []).find(item => String(item?.nomor_urut_label || '') === nomorUrut) || null
+    const answers = []
+    const answerCandidatesDebug = []
+    const correctCount = 0
+    const wrongCount = 0
+    const blankCount = 0
+    const score = 0
+
+    ujianGuruState.scanUploadsByRow[rowKey] = {
+      ...upload,
+      analysis: {
+        createdAt: new Date().toISOString(),
+        nomorUrut,
+        participant,
+        markers,
+        digitGuideMap,
+        answerGuideMap,
+        digitColumnGuideMap,
+        answerColumnGuideMap,
+        bounds,
+        digitResult,
+        answers,
+        correctCount,
+        wrongCount,
+        blankCount,
+        score,
+        debug: {
+          imageWidth: imageData.width,
+          imageHeight: imageData.height,
+          markerSource: `${virtualMarkers ? 'sheet-bounds' : 'corner-markers'} / row+column-guides`,
+          digitCandidates: digitCandidatesDebug,
+          answerCandidates: answerCandidatesDebug
+        },
+        warnings: [
+          ...(digitResult.tens?.value && digitResult.ones?.value ? [] : ['Nomor urut belum terbaca dengan yakin.']),
+          ...(!participant && (digitResult.tens?.value || digitResult.ones?.value) ? ['Nomor urut terbaca, tetapi peserta tidak ditemukan pada daftar kelas ini.'] : []),
+          'Template scan saat ini masih fokus ke nomor urut. Analisa jawaban akan ditambahkan setelah nomor urut stabil.'
+        ]
+      }
+    }
+    rerenderGuruExamScanWorkspace()
+  } catch (error) {
+    console.error('analyzeGuruExamScanUpload error:', error)
+    alert(`Analisa scan gagal: ${String(error?.message || error || 'Unknown error')}`)
+  }
+}
+
+window.analyzeGuruExamScanUpload = analyzeGuruExamScanUpload
+
+function buildGuruExamScanWorkspaceHtml(scanData) {
+  const jadwal = scanData?.jadwal || null
+  const kelasLabel = String(scanData?.kelasLabel || '-')
+  const mapelLabel = String(scanData?.mapelLabel || '-')
+  const participants = Array.isArray(scanData?.participants) ? scanData.participants : []
+  const pgCount = Number(scanData?.pgCount || 0)
+  const answerKey = Array.isArray(scanData?.answerKey) ? scanData.answerKey : []
+  const upload = scanData?.upload || null
+  const analysis = upload?.analysis || null
+  const examCode = String(scanData?.examCode || '').trim() || '-'
+  const rowsHtml = participants.length
+    ? participants.map((item, idx) => `
+        <tr>
+          <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${idx + 1}</td>
+          <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${escapeHtml(item?.nomor_urut_label || '-')}</td>
+          <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item?.nama_santri || '-')}</td>
+          <td style="padding:8px; border:1px solid #e2e8f0; font-family:monospace;">${escapeHtml(item?.sheet_code || '-')}</td>
+        </tr>
+      `).join('')
+    : '<tr><td colspan="4" style="padding:10px; border:1px solid #e2e8f0; text-align:center; color:#64748b;">Peserta ujian belum dirilis oleh admin untuk kelas ini.</td></tr>'
+  const keyHtml = answerKey.length
+    ? answerKey.map(item => `<span style="display:inline-flex; align-items:center; justify-content:center; min-width:42px; padding:6px 8px; border-radius:999px; background:#eff6ff; color:#1d4ed8; font-weight:700; font-size:12px;">${item.no}${item.answer}</span>`).join('')
+    : '<span style="font-size:12px; color:#b45309;">Kunci jawaban PG belum lengkap. Lengkapi dulu di editor soal.</span>'
+  const analysisRowsHtml = analysis
+    ? analysis.answers.map(item => `
+        <tr>
+          <td style="padding:6px 8px; border:1px solid #e2e8f0; text-align:center;">${item.no}</td>
+          <td style="padding:6px 8px; border:1px solid #e2e8f0; text-align:center;">${escapeHtml(item.detected || '-')}</td>
+          <td style="padding:6px 8px; border:1px solid #e2e8f0; text-align:center;">${escapeHtml(item.key || '-')}</td>
+          <td style="padding:6px 8px; border:1px solid #e2e8f0; text-align:center; color:${item.correct === true ? '#15803d' : (item.correct === false ? '#b91c1c' : '#64748b')}; font-weight:700;">${item.correct === true ? 'Benar' : (item.correct === false ? 'Salah' : 'Kosong')}</td>
+          <td style="padding:6px 8px; border:1px solid #e2e8f0; text-align:center;">${escapeHtml(String(item.point || 0))}</td>
+          <td style="padding:6px 8px; border:1px solid #e2e8f0; text-align:center;">${escapeHtml(String(item.confidence || '-'))}</td>
+        </tr>
+      `).join('')
+    : ''
+  const debugOverlayHtml = analysis ? buildGuruExamScanDebugOverlayHtml(analysis) : ''
+  const analysisHtml = analysis
+    ? `
+      <div class="placeholder-card" style="background:#fff; margin-top:12px;">
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; margin-bottom:10px;">
+          <div><strong>Nomor Urut</strong><br>${escapeHtml(analysis.nomorUrut || '-')}</div>
+          <div><strong>Santri</strong><br>${escapeHtml(analysis.participant?.nama_santri || 'Belum cocok')}</div>
+          <div><strong>Benar / Salah / Kosong</strong><br>${analysis.correctCount} / ${analysis.wrongCount} / ${analysis.blankCount}</div>
+          <div><strong>Skor</strong><br>${escapeHtml(String(analysis.score || 0))}</div>
+          <div><strong>Sumber Titik</strong><br>${escapeHtml(analysis?.debug?.markerSource || '-')}</div>
+        </div>
+        <div style="font-size:12px; color:#475569; margin-bottom:8px;">Overlay debug: garis hijau = batas lembar, biru = sudut acuan, oranye = area tabel nomor urut, ungu = area tabel jawaban, merah = pilihan yang dianggap terisi, kuning = kandidat bubble lain.</div>
+        ${Array.isArray(analysis.warnings) && analysis.warnings.length ? `<div style="font-size:12px; color:#b45309; margin-bottom:8px;">${analysis.warnings.map(item => escapeHtml(item)).join('<br>')}</div>` : ''}
+        <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px;">
+          <table style="width:100%; min-width:620px; border-collapse:collapse; font-size:12px;">
+            <thead>
+              <tr style="background:#f8fafc;">
+                <th style="padding:6px 8px; border:1px solid #e2e8f0; width:44px;">No</th>
+                <th style="padding:6px 8px; border:1px solid #e2e8f0;">Terbaca</th>
+                <th style="padding:6px 8px; border:1px solid #e2e8f0;">Kunci</th>
+                <th style="padding:6px 8px; border:1px solid #e2e8f0;">Hasil</th>
+                <th style="padding:6px 8px; border:1px solid #e2e8f0;">Poin</th>
+                <th style="padding:6px 8px; border:1px solid #e2e8f0;">Yakin</th>
+              </tr>
+            </thead>
+            <tbody>${analysisRowsHtml}</tbody>
+          </table>
+        </div>
+      </div>
+    `
+    : ''
+  return `
+    <div class="placeholder-card" style="border-color:#93c5fd;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
+        <div style="font-weight:700; color:#0f172a;">Workspace Scan PG - ${escapeHtml(jadwal?.nama || '-')}</div>
+        <button type="button" class="modal-btn" onclick="backToGuruUjianList()">Kembali ke Folder</button>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:8px; margin-bottom:10px;">
+        <div class="placeholder-card"><strong>Kelas</strong><br>${escapeHtml(kelasLabel)}</div>
+        <div class="placeholder-card"><strong>Mapel</strong><br>${escapeHtml(mapelLabel)}</div>
+        <div class="placeholder-card"><strong>Kode Ujian</strong><br><span style="font-family:monospace;">${escapeHtml(examCode)}</span></div>
+        <div class="placeholder-card"><strong>Soal PG</strong><br>${pgCount} nomor</div>
+      </div>
+      <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(320px,420px); gap:12px; align-items:start; margin-bottom:12px;">
+        <div class="placeholder-card" style="background:#fff;">
+          <div style="font-weight:700; color:#0f172a; margin-bottom:8px;">Kunci Jawaban PG</div>
+          <div style="display:flex; flex-wrap:wrap; gap:8px; max-height:180px; overflow:auto;">${keyHtml}</div>
+          <div style="margin-top:10px; font-size:12px; color:#64748b;">Guru memeriksa dan mengumpulkan nilai dari workspace ini. Admin cukup mencetak soal dan lembar jawaban.</div>
+        </div>
+        <div class="placeholder-card" style="background:#fff;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+            <div style="font-weight:700; color:#0f172a;">Upload Foto / Scan Lembar</div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              <label class="modal-btn" style="cursor:pointer; margin:0;">
+                Upload
+                <input type="file" accept="image/*" capture="environment" style="display:none;" onchange="onGuruExamScanUploadChange(this)">
+              </label>
+              <button type="button" class="modal-btn" onclick="clearGuruExamScanUpload()" ${upload ? '' : 'disabled'}>Hapus Preview</button>
+              <button type="button" class="modal-btn modal-btn-primary" onclick="analyzeGuruExamScanUpload()" ${(upload && answerKey.length) ? '' : 'disabled'}>${analysis ? 'Analisa Ulang' : 'Analisa Lembar'}</button>
+            </div>
+          </div>
+          <div style="border:1px dashed #cbd5e1; border-radius:12px; background:#f8fafc; min-height:220px; padding:10px;">
+            ${upload?.dataUrl
+              ? `<div style="font-size:12px; color:#475569; margin-bottom:8px;">Preview: ${escapeHtml(upload.fileName || 'scan-image')}</div><div style="position:relative; width:100%; border-radius:10px; overflow:hidden; background:#fff;"><img src="${escapeHtml(upload.dataUrl)}" alt="Preview scan ${escapeHtml(kelasLabel)}" style="display:block; width:100%; height:auto; border-radius:10px; background:#fff;">${debugOverlayHtml}</div>`
+              : '<div style="height:100%; min-height:200px; display:flex; align-items:center; justify-content:center; text-align:center; color:#64748b; font-size:13px;">Belum ada foto/scan lembar jawaban yang diupload.</div>'}
+          </div>
+          <div style="margin-top:8px; font-size:12px; color:#64748b;">Tahap ini menyiapkan upload, preview, dan kunci jawaban. Pembacaan bubble otomatis akan disambungkan dari sini.</div>
+          ${analysisHtml}
+        </div>
+      </div>
+      <div class="placeholder-card" style="background:#fff;">
+        <div style="font-weight:700; color:#0f172a; margin-bottom:8px;">Daftar Peserta Ujian</div>
+        <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px;">
+          <table style="width:100%; min-width:640px; border-collapse:collapse; font-size:13px;">
+            <thead>
+              <tr style="background:#f8fafc;">
+                <th style="padding:8px; border:1px solid #e2e8f0; width:44px;">No</th>
+                <th style="padding:8px; border:1px solid #e2e8f0; width:90px;">Nomor Urut</th>
+                <th style="padding:8px; border:1px solid #e2e8f0;">Nama Santri</th>
+                <th style="padding:8px; border:1px solid #e2e8f0;">Sheet Code</th>
+              </tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `
+}
+
+async function openGuruExamScanWorkspace(rowKeyEncoded) {
+  const decodedKey = decodeURIComponent(String(rowKeyEncoded || '')).trim()
+  if (!decodedKey) return
+  const row = findGuruUjianRowByKey(decodedKey)
+  if (!row?.jadwal) return
+  const content = document.getElementById('guru-content')
+  if (!content) return
+  content.innerHTML = 'Loading workspace scan...'
+
+  const soal = resolveGuruUjianActiveSoal(decodedKey, row.jadwal.id)
+  if (!soal) {
+    alert('Soal untuk kelas ini belum dibuat. Buat atau simpan draft soal terlebih dahulu sebelum membuka workspace scan.')
+    return
+  }
+  const participants = await loadGuruExamParticipantsByRow(row.jadwal.id, row.kelasNama)
+  if (participants === null) {
+    backToGuruUjianList()
+    return
+  }
+  const upload = ujianGuruState.scanUploadsByRow[decodedKey] || null
+  ujianGuruState.activeScanData = {
+    rowKey: decodedKey,
+    jadwal: row.jadwal,
+    kelasLabel: String(row.kelasNama || '-'),
+    mapelLabel: String(row.mapelLabel || getExamRowMapelLabel(row.jadwal)),
+    soal,
+    participants,
+    examCode: String(participants[0]?.exam_code || ''),
+    pgCount: countGuruExamMultipleChoiceQuestions(soal),
+    answerKey: extractGuruExamMultipleChoiceAnswerKey(soal),
+    upload
+  }
+  content.innerHTML = buildGuruExamScanWorkspaceHtml(ujianGuruState.activeScanData)
+}
+
+window.openGuruExamScanWorkspace = openGuruExamScanWorkspace
+
+function rerenderGuruExamScanWorkspace() {
+  const content = document.getElementById('guru-content')
+  if (!content || !ujianGuruState.activeScanData) return
+  const rowKey = String(ujianGuruState.activeScanData.rowKey || '')
+  ujianGuruState.activeScanData = {
+    ...ujianGuruState.activeScanData,
+    upload: ujianGuruState.scanUploadsByRow[rowKey] || null
+  }
+  content.innerHTML = buildGuruExamScanWorkspaceHtml(ujianGuruState.activeScanData)
+}
+
+window.onGuruExamScanUploadChange = function onGuruExamScanUploadChange(inputEl) {
+  const rowKey = String(ujianGuruState.activeScanData?.rowKey || '')
+  if (!rowKey) return
+  const file = inputEl?.files?.[0]
+  if (!file) return
+  if (!String(file.type || '').startsWith('image/')) {
+    alert('File scan harus berupa gambar.')
+    if (inputEl) inputEl.value = ''
+    return
+  }
+  const reader = new FileReader()
+  reader.onload = function () {
+    ujianGuruState.scanUploadsByRow[rowKey] = {
+      fileName: String(file.name || 'scan-image'),
+      dataUrl: String(reader.result || ''),
+      updatedAt: new Date().toISOString(),
+      analysis: null
+    }
+    rerenderGuruExamScanWorkspace()
+  }
+  reader.onerror = function () {
+    alert('Gagal membaca file gambar scan.')
+  }
+  reader.readAsDataURL(file)
+}
+
+window.clearGuruExamScanUpload = function clearGuruExamScanUpload() {
+  const rowKey = String(ujianGuruState.activeScanData?.rowKey || '')
+  if (!rowKey) return
+  delete ujianGuruState.scanUploadsByRow[rowKey]
+  rerenderGuruExamScanWorkspace()
+}
+
 function buildGuruExamFolderMap(examRows) {
   const folderMap = new Map()
   ;(examRows || []).forEach(item => {
@@ -12476,9 +14590,12 @@ function renderGuruExamFolderRowsHtml(sortedList, soalMap) {
         <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.mapelLabel || '-')}</td>
         <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.jadwal?.tanggal || '-')}</td>
         <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(toExamStatusLabel(soal?.status))}</td>
-        <td style="padding:8px; border:1px solid #e2e8f0; white-space:nowrap;">
-          <button type="button" class="modal-btn modal-btn-primary" onclick="openGuruUjianEditorPage('${encodeURIComponent(rowKey)}')">${soal ? 'Edit Soal' : 'Buat Soal'}</button>
-          <button type="button" class="modal-btn" ${soal ? '' : 'disabled'} onclick="chooseAndPrintGuruUjianByRow('${encodeURIComponent(rowKey)}')">Cetak</button>
+        <td style="padding:8px; border:1px solid #e2e8f0;">
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            <button type="button" class="modal-btn modal-btn-primary" onclick="openGuruUjianEditorPage('${encodeURIComponent(rowKey)}')" style="flex:1 1 120px;">${soal ? 'Edit Soal' : 'Buat Soal'}</button>
+            <button type="button" class="modal-btn" ${soal ? '' : 'disabled'} onclick="chooseAndPrintGuruUjianByRow('${encodeURIComponent(rowKey)}')" style="flex:1 1 100px;">Cetak</button>
+            <button type="button" class="modal-btn" ${soal ? '' : 'disabled'} onclick="openGuruExamScanWorkspace('${encodeURIComponent(rowKey)}')" style="flex:1 1 120px;">Workspace Scan</button>
+          </div>
         </td>
       </tr>
     `
@@ -12505,7 +14622,7 @@ function renderGuruExamFolderHtml(folderName, list, soalMap) {
       </div>
       ${isOpen ? `
         <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px; margin-top:8px;">
-          <table style="width:100%; min-width:980px; border-collapse:collapse; font-size:13px;">
+          <table style="width:100%; min-width:760px; border-collapse:collapse; font-size:13px;">
             <thead>
               <tr style="background:#f8fafc;">
                 <th style="padding:8px; border:1px solid #e2e8f0; width:44px;">No</th>
@@ -12513,7 +14630,7 @@ function renderGuruExamFolderHtml(folderName, list, soalMap) {
                 <th style="padding:8px; border:1px solid #e2e8f0;">Mapel</th>
                 <th style="padding:8px; border:1px solid #e2e8f0;">Tanggal</th>
                 <th style="padding:8px; border:1px solid #e2e8f0;">Status</th>
-                <th style="padding:8px; border:1px solid #e2e8f0; width:220px;">Aksi</th>
+                <th style="padding:8px; border:1px solid #e2e8f0; width:190px;">Aksi</th>
               </tr>
             </thead>
             <tbody>
@@ -12551,10 +14668,33 @@ function buildGuruUjianTypeInfoText(typeCfg) {
   return 'Model aktif: -'
 }
 
-function buildGuruUjianSectionRowHtml({ i, qType, sectionForNo, sectionIndexByStart, sectionsLength }) {
+function getGuruUjianSectionAccent(type) {
+  const utils = getGuruExamEditorUtils()
+  if (typeof utils.getTypeAccent === 'function') return utils.getTypeAccent(type)
+  return {
+    groupBorder: '#bfdbfe',
+    groupBackground: 'linear-gradient(180deg,#eff6ff 0%,#ffffff 28%)',
+    groupShadow: '0 10px 30px rgba(37,99,235,0.08)',
+    groupStripe: '#60a5fa'
+  }
+}
+
+function buildGuruUjianSectionRowHtml({ i, qType, sectionForNo, sectionIndexByStart, sectionsLength, scorePlanItem = null, scoreMeta = null, scoreOverAllocated = false, scoreInputValue = undefined }) {
   const utils = getGuruExamEditorUtils()
   if (typeof utils.buildSectionRowHtml === 'function') {
-    return utils.buildSectionRowHtml({ i, qType, sectionForNo, sectionIndexByStart, sectionsLength, escapeHtml })
+    return utils.buildSectionRowHtml({
+      i,
+      qType,
+      sectionForNo,
+      sectionIndexByStart,
+      sectionsLength,
+      escapeHtml,
+      scorePlanItem,
+      scoreMeta,
+      scoreOverAllocated,
+      scoreInputValue,
+      formatScoreValue: formatGuruUjianScoreValue
+    })
   }
   return ''
 }
@@ -12678,7 +14818,9 @@ function renderGuruUjianQuestionRows(forcedSections = null) {
     })
   )
   const typeCfg = getGuruUjianTypeMap(count, { sections: forcedSections || ujianGuruState.sectionDefs })
+  const sectionsWithScores = applyGuruUjianScoreDrafts(typeCfg.sections || [])
   const safeCount = typeCfg.safeCount
+  const scorePlan = buildGuruUjianScorePlan(sectionsWithScores, ujianGuruState.activeJadwal)
   if (!safeCount || !(typeCfg.sections || []).length) {
     listEl.innerHTML = '<div class="placeholder-card">Belum ada model soal. Tambahkan model soal di bagian bawah.</div>'
     const infoEl = document.getElementById('guru-ujian-type-info')
@@ -12686,7 +14828,7 @@ function renderGuruUjianQuestionRows(forcedSections = null) {
     return
   }
   const sectionIndexByStart = new Map()
-  ;(typeCfg.sections || []).forEach((sec, idx) => {
+  ;sectionsWithScores.forEach((sec, idx) => {
     sectionIndexByStart.set(Number(sec.start || 0), { ...sec, idx })
   })
   const localNoByAbsNo = new Map()
@@ -12701,20 +14843,45 @@ function renderGuruUjianQuestionRows(forcedSections = null) {
   }
   let html = ''
   for (let i = 1; i <= safeCount; i += 1) {
-    const prev = draftByNo.get(i) || existingByNo.get(i) || {}
     const qType = typeCfg.typeMap[i] || 'pilihan-ganda'
-    const sectionForNo = (typeCfg.sections || []).find(sec => i >= sec.start && i <= sec.end) || null
+    const sectionForNo = sectionsWithScores.find(sec => i >= sec.start && i <= sec.end) || null
+    if (qType === 'pasangkan-kata' && sectionForNo && Number(sectionForNo.start) !== i) continue
+    const prev = qType === 'pasangkan-kata' && sectionForNo
+      ? buildGuruUjianMatchingQuestionDraft(sectionForNo, draftByNo, existingByNo)
+      : (draftByNo.get(i) || existingByNo.get(i) || {})
     const localNo = localNoByAbsNo.get(i) || i
     if (sectionForNo && Number(sectionForNo.start) === i) {
+      const accent = getGuruUjianSectionAccent(qType)
+      const sectionMeta = sectionIndexByStart.get(Number(i)) || {}
+      html += `
+        <div class="guru-ujian-section-group" style="margin-bottom:18px; border:1px solid ${accent.groupBorder}; border-radius:18px; background:${accent.groupBackground}; box-shadow:${accent.groupShadow}; overflow:hidden;">
+          <div style="padding:14px 14px 4px 14px;">
+      `
       html += buildGuruUjianSectionRowHtml({
         i,
         qType,
         sectionForNo,
         sectionIndexByStart,
-        sectionsLength: (typeCfg.sections || []).length
+        sectionsLength: sectionsWithScores.length,
+        scorePlanItem: scorePlan.byStart.get(Number(i)),
+        scoreMeta: scorePlan.scoreMeta,
+        scoreOverAllocated: scorePlan.overAllocated,
+        scoreInputValue: getGuruUjianSectionScoreDraft(sectionMeta.idx)
       })
+      html += `
+          </div>
+          <div class="guru-ujian-section-group-body" style="padding:0 14px 14px 14px;">
+            <div style="padding:10px 0 0 12px; border-left:3px solid ${accent.groupStripe};">
+      `
     }
     html += buildGuruUjianQuestionCardHtml(i, qType, localNo, prev, sectionForNo)
+    if (sectionForNo && Number(sectionForNo.end) === i) {
+      html += `
+            </div>
+          </div>
+        </div>
+      `
+    }
   }
   const infoEl = document.getElementById('guru-ujian-type-info')
   if (infoEl) {
@@ -12751,7 +14918,9 @@ function buildGuruUjianSectionDefs(sections) {
     type: item.type,
     end: item.end,
     words: item.wordPool || '',
-    count: item.blankCount || null
+    count: item.blankCount || item.count || null,
+    score: item.score ?? null,
+    instruction: item.instruction || ''
   }))
 }
 
@@ -12773,6 +14942,7 @@ function buildGuruUjianEditorShellHtml({ jadwal, kelasLabel, mapelLabel, countVa
           <input id="guru-ujian-jumlah" class="guru-field" type="number" min="0" max="200" value="${escapeHtml(String(countValue))}" readonly>
         </div>
       </div>
+      <div id="guru-ujian-score-wrap" style="margin-bottom:10px;"></div>
       <div id="guru-ujian-type-info" style="font-size:12px; color:#64748b; margin:-4px 0 8px 0;"></div>
       <div style="margin-bottom:10px;">
         <label class="guru-label">Bahasa Soal</label>
@@ -12787,10 +14957,10 @@ function buildGuruUjianEditorShellHtml({ jadwal, kelasLabel, mapelLabel, countVa
       </div>
       <div id="guru-ujian-questions"></div>
       <div id="guru-ujian-sections" style="margin-top:10px; margin-bottom:10px;"></div>
-      <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
-        <button type="button" class="modal-btn" onclick="saveGuruUjian(false)">Simpan Draft</button>
-        <button type="button" class="modal-btn modal-btn-primary" onclick="saveGuruUjian(true)">Kirim Soal</button>
-        <button type="button" class="modal-btn" onclick="chooseAndPrintGuruUjianActive()">Cetak</button>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; margin-top:8px;">
+        <button type="button" class="modal-btn" onclick="saveGuruUjian(false)" style="width:100%;">Simpan Draft</button>
+        <button type="button" class="modal-btn modal-btn-primary" onclick="saveGuruUjian(true)" style="width:100%;">Kirim Soal</button>
+        <button type="button" class="modal-btn" onclick="chooseAndPrintGuruUjianActive()" style="width:100%;">Cetak</button>
       </div>
     </div>
   `
@@ -12807,10 +14977,13 @@ function openGuruUjianEditorPage(jadwalId) {
   const content = document.getElementById('guru-content')
   if (!content) return
 
-  const existing = parseExamQuestions(ujianGuruState.activeSoal?.questions_json)
-  const countValue = ujianGuruState.activeSoal?.jumlah_nomor || existing.length || 0
+  const payload = parseExamQuestionPayload(ujianGuruState.activeSoal?.questions_json)
+  const existing = payload.questions
   const fallbackType = String(ujianGuruState.activeSoal?.bentuk_soal || 'pilihan-ganda')
-  const sections = deriveExamSectionsFromQuestions(existing, fallbackType, Number(countValue))
+  const sections = Array.isArray(payload.sections) && payload.sections.length
+    ? payload.sections
+    : deriveExamSectionsFromQuestions(existing, fallbackType, Number(ujianGuruState.activeSoal?.jumlah_nomor || existing.length || 0))
+  const countValue = estimateGuruUjianTotalFromSections(sections, ujianGuruState.activeSoal?.jumlah_nomor || existing.length || 0)
   const instruksiMeta = parseExamInstruksiMeta(ujianGuruState.activeSoal?.instruksi)
   const instruksi = String(instruksiMeta.text || '').trim()
   const kelasLabel = String(row.kelasNama || '-')
@@ -12819,6 +14992,7 @@ function openGuruUjianEditorPage(jadwalId) {
   ujianGuruState.activeJadwal = jadwal
   ujianGuruState.activeKelasName = kelasLabel
   ujianGuruState.sectionDefs = buildGuruUjianSectionDefs(sections)
+  ujianGuruState.sectionScoreDrafts = {}
   content.innerHTML = buildGuruUjianEditorShellHtml({
     jadwal,
     kelasLabel,
@@ -12835,7 +15009,9 @@ function backToGuruUjianList() {
   ujianGuruState.activeJadwal = null
   ujianGuruState.activeKelasName = ''
   ujianGuruState.sectionDefs = []
+  ujianGuruState.sectionScoreDrafts = {}
   ujianGuruState.activeSoal = null
+  ujianGuruState.activeScanData = null
   renderUjianPage()
 }
 
@@ -12902,16 +15078,31 @@ function collectGuruUjianQuestions() {
   const count = Number(document.getElementById('guru-ujian-jumlah')?.value || 0)
   const safeCount = Number.isFinite(count) ? Math.max(1, Math.min(200, Math.round(count))) : 1
   const typeCfg = getGuruUjianTypeMap(safeCount)
+  const sectionsWithScores = applyGuruUjianScoreDrafts(typeCfg.sections || [])
   if (typeCfg.errors.length) {
     alert(typeCfg.errors[0])
     return null
   }
   const questions = []
+  const sectionKeyMap = new Map()
+  let exportNo = 1
   for (let i = 1; i <= safeCount; i += 1) {
-    const text = String(document.getElementById(`guru-ujian-q-${i}`)?.value || '').trim()
-    if (!text) continue
     const qType = typeCfg.typeMap[i] || 'pilihan-ganda'
+    const sectionForNo = sectionsWithScores.find(sec => i >= sec.start && i <= sec.end) || null
+    if (qType === 'pasangkan-kata' && sectionForNo && Number(sectionForNo.start) !== i) continue
+    const text = String(document.getElementById(`guru-ujian-q-${i}`)?.value || '').trim()
+    const sourceSectionKey = String(sectionForNo?.start || i)
+    if (!sectionKeyMap.has(sourceSectionKey)) sectionKeyMap.set(sourceSectionKey, String(exportNo))
+    const sectionKey = sectionKeyMap.get(sourceSectionKey)
+    const sectionInstruction = String(sectionForNo?.instruction || '').trim()
+    const sectionScore = parseGuruUjianScoreValue(sectionForNo?.score, null)
+    const sectionMeta = {
+      sectionKey,
+      sectionInstruction,
+      sectionScore
+    }
     if (qType === 'pilihan-ganda') {
+      if (!text) continue
       const options = {
         a: String(document.getElementById(`guru-ujian-q-${i}-a`)?.value || '').trim(),
         b: String(document.getElementById(`guru-ujian-q-${i}-b`)?.value || '').trim(),
@@ -12919,20 +15110,24 @@ function collectGuruUjianQuestions() {
         d: String(document.getElementById(`guru-ujian-q-${i}-d`)?.value || '').trim()
       }
       const answer = String(document.getElementById(`guru-ujian-q-${i}-answer`)?.value || '').trim().toUpperCase()
-      questions.push({ no: i, type: qType, text, options, answer })
+      questions.push({ no: exportNo, type: qType, text, options, answer, ...sectionMeta })
+      exportNo += 1
     } else if (qType === 'pasangkan-kata') {
-      const pairs = [1, 2, 3, 4].map(n => ({
-        a: String(document.getElementById(`guru-ujian-q-${i}-a${n}`)?.value || '').trim(),
-        b: String(document.getElementById(`guru-ujian-q-${i}-b${n}`)?.value || '').trim()
-      })).filter(item => item.a || item.b)
-      questions.push({ no: i, type: qType, text, pairs })
+      const columnA = readGuruUjianMatchingColumn(i, 'a')
+      const columnB = readGuruUjianMatchingColumn(i, 'b')
+      if (!columnA.length && !columnB.length) continue
+      questions.push({ no: exportNo, type: qType, text: '', columnA, columnB, ...sectionMeta })
+      exportNo += 1
     } else if (qType === 'isi-titik') {
-      const sectionForNo = (typeCfg.sections || []).find(sec => i >= sec.start && i <= sec.end) || null
+      if (!text) continue
       const fragments = Array.isArray(sectionForNo?.wordList) ? sectionForNo.wordList : []
       const answer = String(document.getElementById(`guru-ujian-q-${i}-answer`)?.value || '').trim()
-      questions.push({ no: i, type: qType, text, fragments, answer })
+      questions.push({ no: exportNo, type: qType, text, fragments, answer, ...sectionMeta })
+      exportNo += 1
     } else {
-      questions.push({ no: i, type: qType, text })
+      if (!text) continue
+      questions.push({ no: exportNo, type: qType, text, ...sectionMeta })
+      exportNo += 1
     }
   }
   return questions
@@ -12951,9 +15146,20 @@ async function saveGuruUjian(submitMode) {
     return
   }
 
-  const jumlahNomor = Number(document.getElementById('guru-ujian-jumlah')?.value || 0)
   const bahasaSoal = String(document.getElementById('guru-ujian-lang')?.value || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
   const instruksi = String(document.getElementById('guru-ujian-instruksi')?.value || '').trim()
+  const scoreValidation = validateGuruUjianScorePlan()
+  if (!scoreValidation) return
+  const sectionsForStorage = (scoreValidation.sections || []).map(item => ({
+    type: item.type,
+    start: item.start,
+    end: item.end,
+    wordPool: item.wordPool || '',
+    blankCount: item.blankCount || item.count || null,
+    count: item.count || item.blankCount || null,
+    instruction: item.instruction || '',
+    score: item.score ?? null
+  }))
   const questions = collectGuruUjianQuestions()
   if (!questions) return
   if (!questions.length) {
@@ -12967,9 +15173,9 @@ async function saveGuruUjian(submitMode) {
     guru_id: String(ctx.guru.id),
     guru_nama: String(ctx.guru.nama || ctx.guru.id_karyawan || '').trim() || null,
     bentuk_soal: 'campuran',
-    jumlah_nomor: Number.isFinite(jumlahNomor) ? Math.max(1, Math.round(jumlahNomor)) : questions.length,
+    jumlah_nomor: estimateGuruUjianTotalFromSections(sectionsForStorage, questions.length),
     instruksi: buildExamInstruksiWithMeta(bahasaSoal, instruksi),
-    questions_json: JSON.stringify(questions),
+    questions_json: JSON.stringify({ questions, sections: sectionsForStorage }),
     status: submitMode ? 'submitted' : 'draft',
     updated_at: new Date().toISOString()
   }
@@ -13027,11 +15233,17 @@ async function saveGuruUjian(submitMode) {
     if (!String(data.kelas_target || '').trim()) ujianGuruState.soalByJadwal.set(`${String(data.jadwal_id || '')}|*`, data)
   }
 
+  const normalizedSections = sectionsForStorage
+  ujianGuruState.sectionDefs = buildGuruUjianSectionDefs(normalizedSections)
+  const totalInput = document.getElementById('guru-ujian-jumlah')
+  if (totalInput) totalInput.value = String(estimateGuruUjianTotalFromSections(normalizedSections, questions.length))
+
   alert(submitMode ? 'Soal berhasil dikirim.' : 'Draft soal berhasil disimpan.')
   if (submitMode) {
     await renderUjianPage()
     return
   }
+  renderGuruUjianSectionRows(ujianGuruState.sectionDefs)
   renderGuruUjianQuestionRows(ujianGuruState.sectionDefs)
 }
 
@@ -13050,19 +15262,20 @@ async function printGuruUjianActive(format = '') {
       alert('Pilih jadwal ujian terlebih dahulu.')
       return
     }
+    const scoreValidation = validateGuruUjianScorePlan()
+    if (!scoreValidation) return
     const questions = collectGuruUjianQuestions()
     if (!questions || !questions.length) {
       alert('Minimal isi satu soal sebelum cetak.')
       return
     }
-    const jumlahNomor = Number(document.getElementById('guru-ujian-jumlah')?.value || questions.length || 0)
     const bahasaSoal = String(document.getElementById('guru-ujian-lang')?.value || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
     const instruksi = String(document.getElementById('guru-ujian-instruksi')?.value || '').trim()
     const kelasTarget = String(ujianGuruState.activeKelasName || '-')
     const soal = {
       guru_nama: String(ujianGuruState.activeSoal?.guru_nama || ''),
       bentuk_soal: 'campuran',
-      jumlah_nomor: Number.isFinite(jumlahNomor) ? Math.max(1, Math.round(jumlahNomor)) : questions.length,
+      jumlah_nomor: questions.length,
       instruksi: buildExamInstruksiWithMeta(bahasaSoal, instruksi),
       questions_json: JSON.stringify(questions),
       status: 'draft'
@@ -13842,6 +16055,8 @@ window.closeGuruUjianEditor = closeGuruUjianEditor
 window.onGuruUjianCountChange = onGuruUjianCountChange
 window.onGuruUjianShapeChange = onGuruUjianShapeChange
 window.onGuruUjianSectionChange = onGuruUjianSectionChange
+window.onGuruUjianSectionScoreInput = onGuruUjianSectionScoreInput
+window.onGuruUjianSectionScoreKeydown = onGuruUjianSectionScoreKeydown
 window.addGuruUjianSection = addGuruUjianSection
 window.removeGuruUjianSection = removeGuruUjianSection
 window.saveGuruUjian = saveGuruUjian

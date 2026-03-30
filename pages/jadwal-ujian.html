@@ -106,3 +106,17 @@
   </div>
 </div>
 
+<div id="ju-participants-modal" class="ju-modal-overlay" onclick="closeExamParticipantsModal(event)">
+  <div class="ju-modal-card" onclick="event.stopPropagation()">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+      <strong id="ju-participants-modal-title" style="font-size:15px; color:#0f172a;">Peserta Ujian</strong>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button type="button" class="ju-btn secondary" onclick="printExamAnswerSheetTemplate()">Cetak Lembar Jawaban PG</button>
+        <button type="button" class="ju-btn secondary" onclick="printExamAttendanceSheet()">Cetak Daftar Hadir</button>
+        <button type="button" class="ju-btn secondary" onclick="closeExamParticipantsModal()">Tutup</button>
+      </div>
+    </div>
+    <div style="font-size:12px; color:#64748b; margin-bottom:10px;">Kode ujian dasar sudah tercetak otomatis. Siswa nanti cukup mengisi nomor urut ujian 2 digit pada lembar jawaban. Template yang dicetak saat ini khusus untuk bagian pilihan ganda.</div>
+    <div id="ju-participants-modal-body">Loading...</div>
+  </div>
+</div>

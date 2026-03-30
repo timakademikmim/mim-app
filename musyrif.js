@@ -60,7 +60,7 @@ let topbarKalenderState = {
 let topbarNotifState = {
   items: [],
   loaded: false,
-  rangeDays: 3,
+  rangeDays: 1,
   readMap: {}
 }
 let topbarChatBadgeState = {
@@ -700,8 +700,8 @@ function loadMusyrifNotifPrefs() {
   } catch (_err) {
     topbarNotifState.readMap = {}
   }
-  const rangeRaw = Number(localStorage.getItem(TOPBAR_NOTIF_RANGE_KEY) || '3')
-  topbarNotifState.rangeDays = [1, 3, 7].includes(rangeRaw) ? rangeRaw : 3
+  const rangeRaw = Number(localStorage.getItem(TOPBAR_NOTIF_RANGE_KEY) || '1')
+  topbarNotifState.rangeDays = [1, 3, 7].includes(rangeRaw) ? rangeRaw : 1
 }
 
 function saveMusyrifNotifReadMap() {
@@ -712,7 +712,7 @@ function saveMusyrifNotifReadMap() {
 
 function setMusyrifNotifRangeDays(days) {
   const value = Number(days)
-  topbarNotifState.rangeDays = [1, 3, 7].includes(value) ? value : 3
+  topbarNotifState.rangeDays = [1, 3, 7].includes(value) ? value : 1
   localStorage.setItem(TOPBAR_NOTIF_RANGE_KEY, String(topbarNotifState.rangeDays))
 }
 
@@ -1049,6 +1049,14 @@ async function refreshMusyrifTopbarNotifications(forceReload = false) {
   if (!forceReload && topbarNotifState.loaded) {
     renderTopbarNotifMenu(topbarNotifState.items)
     setTopbarNotifBadge((topbarNotifState.items || []).filter(item => !isMusyrifNotifRead(item)).length)
+    if (typeof window.maybeNotifyActivityItems === 'function') {
+      window.maybeNotifyActivityItems({
+        scope: 'musyrif',
+        userId: String(musyrifState?.profile?.id || localStorage.getItem('login_id') || '').trim(),
+        items: topbarNotifState.items,
+        readMap: topbarNotifState.readMap
+      })
+    }
     return
   }
   const items = await fetchMusyrifTopbarNotifications()
@@ -1056,6 +1064,14 @@ async function refreshMusyrifTopbarNotifications(forceReload = false) {
   topbarNotifState.loaded = true
   renderTopbarNotifMenu(items)
   setTopbarNotifBadge(items.filter(item => !isMusyrifNotifRead(item)).length)
+  if (typeof window.maybeNotifyActivityItems === 'function') {
+    window.maybeNotifyActivityItems({
+      scope: 'musyrif',
+      userId: String(musyrifState?.profile?.id || localStorage.getItem('login_id') || '').trim(),
+      items,
+      readMap: topbarNotifState.readMap
+    })
+  }
 }
 
 async function toggleTopbarNotifMenu() {
