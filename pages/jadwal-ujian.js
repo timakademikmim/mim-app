@@ -9,6 +9,7 @@
     row: null,
     participants: []
   }
+  var createFolderDraftModalResolver = null
 
   function escapeHtml(value) {
     return String(value == null ? '' : value)
@@ -202,6 +203,189 @@
     return document.getElementById(id)
   }
 
+  function buildFolderNameByParts(jenis, semesterNama, tahunNama) {
+    return (String(jenis || '').trim() + ' Semester ' + String(semesterNama || '').trim() + ' Tahun Ajaran ' + String(tahunNama || '').trim())
+      .replace(/\s+/g, ' ')
+      .trim()
+  }
+
+  function getMapelGroupKey(group) {
+    return String(group && group.mapel_label || '').toLowerCase() + '|' + String(group && group.perangkatan || '').toLowerCase()
+  }
+
+  function getSelectedSelectLabel(selectEl) {
+    if (!selectEl) return ''
+    var idx = Number(selectEl.selectedIndex || 0)
+    var option = selectEl.options && selectEl.options[idx] ? selectEl.options[idx] : null
+    return String(option && option.text || '').trim()
+  }
+
+  function normalizeReferenceRows(rows, fallbackItem) {
+    var list = Array.isArray(rows) ? rows.slice() : []
+    var fallbackId = String(fallbackItem && fallbackItem.id || '').trim()
+    var fallbackNama = String(fallbackItem && fallbackItem.nama || '').trim()
+    if (fallbackId && fallbackNama && !list.some(function (item) { return String(item && item.id || '') === fallbackId })) {
+      list.unshift({ id: fallbackId, nama: fallbackNama, aktif: true })
+    }
+    var seen = new Set()
+    return list.filter(function (item) {
+      var id = String(item && item.id || '').trim()
+      var nama = String(item && item.nama || '').trim()
+      if (!id || !nama || seen.has(id)) return false
+      seen.add(id)
+      return true
+    })
+  }
+
+  function populateReferenceSelect(selectEl, rows, selectedId, selectedNama) {
+    if (!selectEl) return
+    var list = Array.isArray(rows) ? rows : []
+    if (!list.length) {
+      selectEl.innerHTML = '<option value="">-</option>'
+      return
+    }
+    selectEl.innerHTML = list.map(function (item) {
+      return '<option value="' + escapeHtml(String(item.id || '')) + '">' + escapeHtml(String(item.nama || '-')) + '</option>'
+    }).join('')
+    var sid = String(selectedId || '').trim()
+    var sname = String(selectedNama || '').trim().toLowerCase()
+    if (sid && list.some(function (item) { return String(item.id || '') === sid })) {
+      selectEl.value = sid
+      return
+    }
+    var byName = list.find(function (item) { return String(item && item.nama || '').trim().toLowerCase() === sname })
+    if (byName) {
+      selectEl.value = String(byName.id || '')
+      return
+    }
+    selectEl.selectedIndex = 0
+  }
+
+  async function loadCreateFolderReferenceOptions(active) {
+    var semesterRows = []
+    var tahunRows = []
+
+    var semesterRes = await sb
+      .from('semester')
+      .select('id, nama, aktif')
+      .order('aktif', { ascending: false })
+      .order('nama', { ascending: false })
+    if (semesterRes.error) {
+      if (!(active && active.semester && active.semester.id)) {
+        throw new Error('Gagal memuat data semester: ' + String(semesterRes.error.message || 'Unknown error'))
+      }
+    } else {
+      semesterRows = semesterRes.data || []
+    }
+
+    var tahunRes = await sb
+      .from('tahun_ajaran')
+      .select('id, nama, aktif')
+      .order('aktif', { ascending: false })
+      .order('nama', { ascending: false })
+    if (tahunRes.error) {
+      if (!(active && active.tahun && active.tahun.id)) {
+        throw new Error('Gagal memuat data tahun ajaran: ' + String(tahunRes.error.message || 'Unknown error'))
+      }
+    } else {
+      tahunRows = tahunRes.data || []
+    }
+
+    return {
+      semesters: normalizeReferenceRows(semesterRows, active && active.semester),
+      years: normalizeReferenceRows(tahunRows, active && active.tahun)
+    }
+  }
+
+  function renderCreateFolderMapelSelector(groups, selectedKeySet) {
+    var bodyEl = getInput('ju-create-folder-mapel-select')
+    if (!bodyEl) return
+    var list = Array.isArray(groups) ? groups : []
+    if (!list.length) {
+      bodyEl.innerHTML = '<div style="font-size:12px; color:#64748b;">Belum ada mapel yang akan dibuat.</div>'
+      return
+    }
+    var selected = selectedKeySet instanceof Set ? selectedKeySet : new Set()
+    bodyEl.innerHTML = list.map(function (group, idx) {
+      var key = getMapelGroupKey(group)
+      var checked = selected.has(key)
+      return '<label style="display:flex; align-items:flex-start; gap:8px; padding:7px 4px; border-bottom:1px dashed #e2e8f0; cursor:pointer;">' +
+        '<input type="checkbox" data-mapel-key="' + escapeHtml(key) + '"' + (checked ? ' checked' : '') + ' onchange="updateCreateFolderMapelSummary()">' +
+        '<span style="display:block; flex:1; font-size:13px; color:#0f172a;">' +
+          '<span style="display:inline-block; min-width:26px; color:#64748b;">' + (idx + 1) + '.</span> ' + escapeHtml(String(group && group.mapel_label || '-')) +
+          '<span style="display:block; font-size:11px; color:#64748b; margin-left:26px;">Target kelas: ' + escapeHtml(String((group && group.class_rows && group.class_rows.length) || 0)) + '</span>' +
+        '</span>' +
+      '</label>'
+    }).join('')
+  }
+
+  function getSelectedCreateFolderMapelKeys() {
+    var bodyEl = getInput('ju-create-folder-mapel-select')
+    if (!bodyEl) return []
+    return Array.from(bodyEl.querySelectorAll('input[type="checkbox"][data-mapel-key]:checked'))
+      .map(function (inputEl) { return String(inputEl.getAttribute('data-mapel-key') || '').trim() })
+      .filter(Boolean)
+  }
+
+  async function openCreateExamFolderDraftModal(draft, groups, references) {
+    var modalEl = getInput('ju-create-folder-modal')
+    var jenisEl = getInput('ju-create-folder-jenis')
+    var semesterEl = getInput('ju-create-folder-semester')
+    var tahunEl = getInput('ju-create-folder-tahun')
+    var nameEl = getInput('ju-create-folder-name')
+    if (!modalEl || !jenisEl || !semesterEl || !tahunEl || !nameEl) {
+      var fallbackName = String(draft && draft.folderName || '').trim()
+      var fallbackOk = true
+      if (typeof window.showPopupConfirm === 'function') fallbackOk = await window.showPopupConfirm('Buat folder ujian: ' + fallbackName + ' ?')
+      else fallbackOk = window.confirm('Buat folder ujian: ' + fallbackName + ' ?')
+      return fallbackOk ? Object.assign({}, draft, {
+        selectedMapelKeys: Array.isArray(groups) ? groups.map(getMapelGroupKey) : []
+      }) : null
+    }
+
+    jenisEl.value = String(draft && draft.jenis || '').trim().toUpperCase()
+    populateReferenceSelect(semesterEl, references && references.semesters, draft && draft.semesterId, draft && draft.semesterNama)
+    populateReferenceSelect(tahunEl, references && references.years, draft && draft.tahunId, draft && draft.tahunNama)
+    nameEl.value = String(draft && draft.folderName || '').trim()
+    var defaultSelectedKeys = Array.isArray(draft && draft.selectedMapelKeys) && draft.selectedMapelKeys.length
+      ? draft.selectedMapelKeys
+      : (Array.isArray(groups) ? groups.map(getMapelGroupKey) : [])
+    renderCreateFolderMapelSelector(groups, new Set(defaultSelectedKeys))
+    window.updateCreateFolderMapelSummary()
+
+    var syncName = function () {
+      var auto = buildFolderNameByParts(jenisEl.value, getSelectedSelectLabel(semesterEl), getSelectedSelectLabel(tahunEl))
+      var raw = String(nameEl.value || '').trim()
+      if (!raw || String(nameEl.dataset.manualName || '') !== '1') nameEl.value = auto
+    }
+    nameEl.dataset.manualName = '0'
+    nameEl.oninput = function () {
+      if (String(nameEl.value || '').trim()) nameEl.dataset.manualName = '1'
+      else nameEl.dataset.manualName = '0'
+    }
+    jenisEl.oninput = syncName
+    semesterEl.onchange = syncName
+    tahunEl.onchange = syncName
+    syncName()
+
+    modalEl.style.display = 'flex'
+    setTimeout(function () {
+      try { nameEl.focus() } catch (_err) {}
+    }, 0)
+
+    return await new Promise(function (resolve) {
+      createFolderDraftModalResolver = resolve
+    })
+  }
+
+  function resolveCreateExamFolderDraftModal(payload) {
+    var modalEl = getInput('ju-create-folder-modal')
+    if (modalEl) modalEl.style.display = 'none'
+    var resolve = createFolderDraftModalResolver
+    createFolderDraftModalResolver = null
+    if (typeof resolve === 'function') resolve(payload || null)
+  }
+
   async function getActiveSemesterAndYear() {
     var semesterRes = await sb
       .from('semester')
@@ -244,10 +428,29 @@
     var kelasMap = new Map((kelasRes.data || []).map(function (item) { return [String(item.id || ''), item] }))
     var mapelMap = new Map((mapelRes.data || []).map(function (item) { return [String(item.id || ''), item] }))
 
-    var list = (distribusiRes.data || []).filter(function (item) {
-      if (!active.semester || !active.semester.id) return true
-      return String(item.semester_id || '') === String(active.semester.id)
-    })
+    var allRows = distribusiRes.data || []
+    var hasActiveSemester = Boolean(active.semester && active.semester.id)
+    var list = allRows
+    if (hasActiveSemester) {
+      var activeSemesterId = String(active.semester.id)
+      var listByActiveSemester = allRows.filter(function (item) {
+        return String(item.semester_id || '') === activeSemesterId
+      })
+      var listLegacyNoSemester = allRows.filter(function (item) {
+        var sid = String(item && item.semester_id || '').trim().toLowerCase()
+        return !sid || sid === 'null' || sid === 'undefined'
+      })
+      // Prioritas semester aktif + tetap dukung data distribusi lama yang belum punya semester_id.
+      if (listByActiveSemester.length || listLegacyNoSemester.length) {
+        var seen = new Set()
+        list = listByActiveSemester.concat(listLegacyNoSemester).filter(function (item) {
+          var key = String(item && item.id || '') || [String(item && item.kelas_id || ''), String(item && item.mapel_id || ''), String(item && item.semester_id || '')].join('|')
+          if (!key || seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
+      }
+    }
 
     return {
       active: active,
@@ -1069,6 +1272,70 @@
     activeParticipantModalState = { row: null, participants: [] }
   }
 
+  window.closeCreateExamFolderDraftModal = function closeCreateExamFolderDraftModal(event) {
+    if (event && event.target && event.target.id !== 'ju-create-folder-modal') return
+    resolveCreateExamFolderDraftModal(null)
+  }
+
+  window.updateCreateFolderMapelSummary = function updateCreateFolderMapelSummary() {
+    var bodyEl = getInput('ju-create-folder-mapel-select')
+    var summaryEl = getInput('ju-create-folder-mapel-summary')
+    if (!summaryEl || !bodyEl) return
+    var total = bodyEl.querySelectorAll('input[type="checkbox"][data-mapel-key]').length
+    var picked = bodyEl.querySelectorAll('input[type="checkbox"][data-mapel-key]:checked').length
+    summaryEl.textContent = picked + ' dari ' + total + ' mapel dipilih'
+  }
+
+  window.selectAllCreateFolderMapel = function selectAllCreateFolderMapel(allChecked) {
+    var bodyEl = getInput('ju-create-folder-mapel-select')
+    if (!bodyEl) return
+    bodyEl.querySelectorAll('input[type="checkbox"][data-mapel-key]').forEach(function (inputEl) {
+      inputEl.checked = Boolean(allChecked)
+    })
+    window.updateCreateFolderMapelSummary()
+  }
+
+  window.confirmCreateExamFolderDraftModal = function confirmCreateExamFolderDraftModal() {
+    var jenis = String(getInput('ju-create-folder-jenis') && getInput('ju-create-folder-jenis').value || '').trim().toUpperCase()
+    var semesterEl = getInput('ju-create-folder-semester')
+    var tahunEl = getInput('ju-create-folder-tahun')
+    var semesterId = String(semesterEl && semesterEl.value || '').trim()
+    var tahunId = String(tahunEl && tahunEl.value || '').trim()
+    var semesterNama = getSelectedSelectLabel(semesterEl)
+    var tahunNama = getSelectedSelectLabel(tahunEl)
+    var folderName = String(getInput('ju-create-folder-name') && getInput('ju-create-folder-name').value || '').trim()
+    var selectedMapelKeys = getSelectedCreateFolderMapelKeys()
+    if (!jenis) {
+      alert('Jenis ujian wajib diisi.')
+      return
+    }
+    if (!semesterId || !semesterNama) {
+      alert('Semester wajib diisi.')
+      return
+    }
+    if (!tahunId || !tahunNama) {
+      alert('Tahun ajaran wajib diisi.')
+      return
+    }
+    if (!folderName) {
+      alert('Nama folder ujian wajib diisi.')
+      return
+    }
+    if (!selectedMapelKeys.length) {
+      alert('Pilih minimal 1 mapel untuk dibuatkan folder ujian.')
+      return
+    }
+    resolveCreateExamFolderDraftModal({
+      jenis: jenis,
+      semesterId: semesterId,
+      semesterNama: semesterNama,
+      tahunId: tahunId,
+      tahunNama: tahunNama,
+      folderName: folderName,
+      selectedMapelKeys: selectedMapelKeys
+    })
+  }
+
   function buildExamAttendancePrintHtml(row, participants) {
     var meta = parseMeta(row)
     var grouped = groupParticipantsByClass(participants)
@@ -1178,13 +1445,63 @@
       return
     }
 
+    var semesterId = String(distribusi.active && distribusi.active.semester && distribusi.active.semester.id || '').trim()
+    var tahunId = String(distribusi.active && distribusi.active.tahun && distribusi.active.tahun.id || '').trim()
     var semesterNama = String(distribusi.active && distribusi.active.semester && distribusi.active.semester.nama || '-').trim()
     var tahunNama = String(distribusi.active && distribusi.active.tahun && distribusi.active.tahun.nama || '-').trim()
-    var folderName = (jenis + ' Semester ' + semesterNama + ' Tahun Ajaran ' + tahunNama).replace(/\s+/g, ' ').trim()
+    var folderName = buildFolderNameByParts(jenis, semesterNama, tahunNama)
 
     var groups = groupMapelPerangkatan(distribusi.rows, distribusi.kelasMap, distribusi.mapelMap)
     if (!groups.length) {
       alert('Belum ada distribusi mapel aktif untuk dibuatkan folder ujian.')
+      return
+    }
+
+    var referenceOptions
+    try {
+      referenceOptions = await loadCreateFolderReferenceOptions(distribusi.active)
+    } catch (error) {
+      alert(String(error && error.message || 'Gagal memuat data referensi semester/tahun ajaran.'))
+      return
+    }
+    var editedDraft = await openCreateExamFolderDraftModal({
+      jenis: jenis,
+      semesterId: semesterId,
+      semesterNama: semesterNama,
+      tahunId: tahunId,
+      tahunNama: tahunNama,
+      folderName: folderName,
+      selectedMapelKeys: groups.map(getMapelGroupKey)
+    }, groups, referenceOptions)
+    if (!editedDraft) return
+
+    jenis = String(editedDraft.jenis || '').trim().toUpperCase()
+    semesterId = String(editedDraft.semesterId || '').trim()
+    semesterNama = String(editedDraft.semesterNama || '').trim()
+    tahunId = String(editedDraft.tahunId || '').trim()
+    tahunNama = String(editedDraft.tahunNama || '').trim()
+    folderName = String(editedDraft.folderName || '').trim()
+    var selectedMapelKeySet = new Set(Array.isArray(editedDraft.selectedMapelKeys) ? editedDraft.selectedMapelKeys : [])
+    var selectedGroups = groups.filter(function (group) { return selectedMapelKeySet.has(getMapelGroupKey(group)) })
+
+    if (!jenis) {
+      alert('Jenis ujian wajib diisi.')
+      return
+    }
+    if (!semesterId || !semesterNama) {
+      alert('Semester wajib dipilih.')
+      return
+    }
+    if (!tahunId || !tahunNama) {
+      alert('Tahun ajaran wajib dipilih.')
+      return
+    }
+    if (!folderName) {
+      alert('Nama folder ujian wajib diisi.')
+      return
+    }
+    if (!selectedGroups.length) {
+      alert('Pilih minimal 1 mapel untuk dibuatkan folder ujian.')
       return
     }
 
@@ -1208,8 +1525,8 @@
 
     var now = new Date().toISOString()
     var payload = []
-    groups.forEach(function (group) {
-      var key = String(group.mapel_label || '').toLowerCase() + '|' + String(group.perangkatan || '').toLowerCase()
+    selectedGroups.forEach(function (group) {
+      var key = getMapelGroupKey(group)
       if (existingKey.has(key)) return
       payload.push({
         jenis: jenis,
@@ -1222,9 +1539,9 @@
         lokasi: null,
         keterangan: JSON.stringify({
           folder_name: folderName,
-          semester_id: distribusi.active && distribusi.active.semester ? distribusi.active.semester.id : null,
+          semester_id: semesterId || null,
           semester_nama: semesterNama,
-          tahun_ajaran_id: distribusi.active && distribusi.active.tahun ? distribusi.active.tahun.id : null,
+          tahun_ajaran_id: tahunId || null,
           tahun_ajaran_nama: tahunNama,
           mapel_nama: group.mapel_nama,
           perangkatan: group.perangkatan,

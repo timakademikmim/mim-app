@@ -3,13 +3,25 @@
 
   const ARABIC_INLINE_RE = /[\u0600-\u06FF\u0750-\u077F\u0870-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/u
   const ARABIC_INLINE_RUN_RE = /[\u0600-\u06FF\u0750-\u077F\u0870-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]+/gu
+  const ARABIC_MOJIBAKE_RE = /[ØÙ][\u0080-\u00BF]/u
+
+  function repairArabicMojibake(text) {
+    const source = String(text || '')
+    if (!source || !ARABIC_MOJIBAKE_RE.test(source) || typeof TextDecoder !== 'function') return source
+    try {
+      const bytes = Uint8Array.from(Array.from(source).map(ch => ch.charCodeAt(0) & 0xFF))
+      const decoded = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+      if (ARABIC_INLINE_RE.test(decoded)) return decoded
+    } catch (_err) {}
+    return source
+  }
 
   function hasInlineArabic(text) {
-    return ARABIC_INLINE_RE.test(String(text || ''))
+    return ARABIC_INLINE_RE.test(repairArabicMojibake(text))
   }
 
   function tokenizeMixedInlineText(text) {
-    const source = String(text || '')
+    const source = repairArabicMojibake(text)
     if (!source) return []
     const tokens = []
     let lastIndex = 0
@@ -30,7 +42,7 @@
   }
 
   function renderExamInlineTextHtml(text, escapeHtml, forceArabic = false) {
-    const source = String(text || '')
+    const source = repairArabicMojibake(text)
     if (!source) return ''
     if (forceArabic || !hasInlineArabic(source)) return escapeHtml(source)
     return tokenizeMixedInlineText(source)

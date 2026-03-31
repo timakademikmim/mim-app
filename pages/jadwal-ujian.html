@@ -120,3 +120,46 @@
     <div id="ju-participants-modal-body">Loading...</div>
   </div>
 </div>
+
+<div id="ju-create-folder-modal" class="ju-modal-overlay" onclick="closeCreateExamFolderDraftModal(event)">
+  <div class="ju-modal-card" onclick="event.stopPropagation()">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+      <strong style="font-size:15px; color:#0f172a;">Detail Folder Ujian</strong>
+      <button type="button" class="ju-btn secondary" onclick="closeCreateExamFolderDraftModal()">Tutup</button>
+    </div>
+
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; margin-bottom:12px;">
+      <div>
+        <label class="ju-label">Jenis Ujian</label>
+        <input id="ju-create-folder-jenis" class="ju-field" type="text" placeholder="Contoh: UTS">
+      </div>
+      <div>
+        <label class="ju-label">Semester</label>
+        <select id="ju-create-folder-semester" class="ju-field"></select>
+      </div>
+      <div>
+        <label class="ju-label">Tahun Ajaran</label>
+        <select id="ju-create-folder-tahun" class="ju-field"></select>
+      </div>
+      <div style="grid-column:1 / -1;">
+        <label class="ju-label">Nama Folder Ujian</label>
+        <input id="ju-create-folder-name" class="ju-field" type="text" placeholder="Nama folder ujian">
+      </div>
+    </div>
+
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+      <div style="font-size:12px; color:#64748b;">Pilih mapel yang akan dibuatkan folder ujian:</div>
+      <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+        <button type="button" class="ju-btn secondary" onclick="selectAllCreateFolderMapel(true)">Pilih Semua</button>
+        <button type="button" class="ju-btn secondary" onclick="selectAllCreateFolderMapel(false)">Kosongkan</button>
+      </div>
+    </div>
+    <div id="ju-create-folder-mapel-select" style="max-height:220px; overflow:auto; border:1px solid #e2e8f0; border-radius:10px; padding:10px; background:#f8fafc; margin-bottom:8px;">-</div>
+    <div id="ju-create-folder-mapel-summary" style="font-size:12px; color:#64748b; margin:0 2px 12px;">0 mapel dipilih</div>
+
+    <div style="display:flex; justify-content:flex-end; gap:8px;">
+      <button type="button" class="ju-btn secondary" onclick="closeCreateExamFolderDraftModal()">Batal</button>
+      <button type="button" class="ju-btn" onclick="confirmCreateExamFolderDraftModal()">Buat Folder</button>
+    </div>
+  </div>
+</div>

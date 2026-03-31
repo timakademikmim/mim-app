@@ -1,4 +1,4 @@
-const supabaseUrl = 'https://optucpelkueqmlhwlbej.supabase.co'
+﻿const supabaseUrl = 'https://optucpelkueqmlhwlbej.supabase.co'
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9wdHVjcGVsa3VlcW1saHdsYmVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAxOTY4MTgsImV4cCI6MjA4NTc3MjgxOH0.Vqaey9pcnltu9uRbPk0J-AGWaGDZjQLw92pcRv67GNE'
 const sb = window.createDesktopAwareSupabaseClient
   ? window.createDesktopAwareSupabaseClient(supabaseUrl, supabaseKey)
@@ -6311,7 +6311,7 @@ async function renderGuruProfil() {
         <label class="guru-label">Password</label>
         <div style="position:relative;">
           <input id="guru-profil-password" type="password" value="${escapeHtml(guru.password || '')}" placeholder="Password" class="guru-field" autocomplete="off" style="padding-right:46px;">
-          <button id="guru-profil-password-toggle" type="button" onclick="toggleGuruProfilePassword()" aria-label="Tampilkan password" title="Tampilkan/Sembunyikan password" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); border:none; background:transparent; cursor:pointer; font-size:16px; line-height:1;">ðŸ‘</button>
+          <button id="guru-profil-password-toggle" type="button" onclick="toggleGuruProfilePassword()" aria-label="Tampilkan password" title="Tampilkan/Sembunyikan password" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); border:none; background:transparent; cursor:pointer; font-size:16px; line-height:1;">Ã°Å¸â€˜Â</button>
         </div>
       </div>
       <button type="button" class="modal-btn modal-btn-primary" onclick="saveGuruProfil('${escapeHtml(guru.id)}')">Simpan Profil</button>
@@ -6333,7 +6333,7 @@ function toggleGuruProfilePassword() {
   if (!input || !btn) return
   const willShow = input.type === 'password'
   input.type = willShow ? 'text' : 'password'
-  btn.textContent = willShow ? 'ðŸ‘Ì¶' : 'ðŸ‘'
+  btn.textContent = willShow ? 'Ã°Å¸â€˜ÂÃŒÂ¶' : 'Ã°Å¸â€˜Â'
   btn.setAttribute('aria-label', willShow ? 'Sembunyikan password' : 'Tampilkan password')
 }
 
@@ -12565,15 +12565,22 @@ async function createExamPdfDoc(jadwal, soal) {
   const instruksiMeta = parseExamInstruksiMeta(soal?.instruksi)
   const lang = instruksiMeta.lang || 'ID'
   const isAr = lang === 'AR'
-  if (isAr) {
+  const mixedArabicDetectRe = /[\u0600-\u06FF\u0750-\u077F\u0870-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/u
+  const mixedMojibakeDetectRe = /[\u00D8\u00D9][\u0080-\u00BF]/u
+  const rawQuestionsJson = String(soal?.questions_json || '')
+  const needsArabicFont = isAr ||
+    mixedArabicDetectRe.test(String(instruksiMeta.text || '')) ||
+    mixedArabicDetectRe.test(rawQuestionsJson) ||
+    mixedMojibakeDetectRe.test(rawQuestionsJson)
+  if (needsArabicFont) {
     await ensureExamArabicFontLoaded()
-    if (!examArabicFontBase64) return null
+    if (isAr && !examArabicFontBase64) return null
   }
   const textMap = getExamPdfStaticText(lang)
   let arabicRegularReady = false
   let arabicBoldReady = false
 
-  if (isAr && examArabicFontBase64) {
+  if (needsArabicFont && examArabicFontBase64) {
     const tryRegister = (vfsKey, familyName, base64, sampleText = '') => {
       if (!String(base64 || '').trim()) return false
       try {
@@ -12586,20 +12593,22 @@ async function createExamPdfDoc(jadwal, soal) {
         return false
       }
     }
-    arabicRegularReady = tryRegister(EXAM_ARABIC_FONT_VFS_KEY, EXAM_ARABIC_FONT_NAME, examArabicFontBase64, 'Ø§Ø®ØªØ¨Ø§Ø±') ||
-      tryRegister(EXAM_ARABIC_FONT_FILE, EXAM_ARABIC_FONT_NAME, examArabicFontBase64, 'Ø§Ø®ØªØ¨Ø§Ø±')
-    arabicBoldReady = tryRegister(EXAM_ARABIC_FONT_BOLD_VFS_KEY, EXAM_ARABIC_FONT_BOLD_NAME, examArabicFontBoldBase64, 'Ø§Ø®ØªØ¨Ø§Ø±') ||
-      tryRegister(EXAM_ARABIC_FONT_BOLD_FILE, EXAM_ARABIC_FONT_BOLD_NAME, examArabicFontBoldBase64, 'Ø§Ø®ØªØ¨Ø§Ø±')
+    arabicRegularReady = tryRegister(EXAM_ARABIC_FONT_VFS_KEY, EXAM_ARABIC_FONT_NAME, examArabicFontBase64, 'اختبار') ||
+      tryRegister(EXAM_ARABIC_FONT_FILE, EXAM_ARABIC_FONT_NAME, examArabicFontBase64, 'اختبار')
+    arabicBoldReady = tryRegister(EXAM_ARABIC_FONT_BOLD_VFS_KEY, EXAM_ARABIC_FONT_BOLD_NAME, examArabicFontBoldBase64, 'اختبار') ||
+      tryRegister(EXAM_ARABIC_FONT_BOLD_FILE, EXAM_ARABIC_FONT_BOLD_NAME, examArabicFontBoldBase64, 'اختبار')
     if (!arabicRegularReady) {
       console.warn('Registrasi font Arab regular gagal.')
     }
-    if (!arabicRegularReady) return null
-    try {
-      doc.setFont(EXAM_ARABIC_FONT_NAME, 'normal')
-      doc.splitTextToSize('Ø§Ø®ØªØ¨Ø§Ø±', 20)
-    } catch (fontErr) {
-      console.warn('Validasi font Arab regular gagal.', fontErr)
-      return null
+    if (!arabicRegularReady && isAr) return null
+    if (arabicRegularReady) {
+      try {
+        doc.setFont(EXAM_ARABIC_FONT_NAME, 'normal')
+        doc.splitTextToSize('اختبار', 20)
+      } catch (fontErr) {
+        console.warn('Validasi font Arab regular gagal.', fontErr)
+        if (isAr) return null
+      }
     }
   }
 
@@ -12688,9 +12697,21 @@ async function createExamPdfDoc(jadwal, soal) {
     })
   }
   const mixedArabicRe = /[\u0600-\u06FF\u0750-\u077F\u0870-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/u
-  const containsMixedArabic = text => mixedArabicRe.test(String(text || ''))
-  const tokenizeMixedText = text => {
+  const mixedMojibakeRe = /[Ã˜Ã™][\u0080-\u00BF]/u
+  const repairArabicMojibake = text => {
     const source = String(text || '')
+    if (!source || !mixedMojibakeRe.test(source) || typeof TextDecoder !== 'function') return source
+    try {
+      const bytes = Uint8Array.from(Array.from(source).map(ch => ch.charCodeAt(0) & 0xFF))
+      const decoded = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+      if (mixedArabicRe.test(decoded)) return decoded
+    } catch (_err) {}
+    return source
+  }
+  const normalizeMixedInputText = text => repairArabicMojibake(String(text || ''))
+  const containsMixedArabic = text => mixedArabicRe.test(normalizeMixedInputText(text))
+  const tokenizeMixedText = text => {
+    const source = normalizeMixedInputText(text)
     if (!source) return []
     const parts = source.match(/\s+|[\u0600-\u06FF\u0750-\u077F\u0870-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]+|[^\s\u0600-\u06FF\u0750-\u077F\u0870-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]+/gu) || []
     return parts.map(part => ({
@@ -12750,7 +12771,7 @@ async function createExamPdfDoc(jadwal, soal) {
       }
       if (token.kind === 'arabic' && arabicRegularReady) {
         doc.setFont(EXAM_ARABIC_FONT_NAME, 'normal')
-        doc.text(`\u202B${raw}\u202C`, x + tokenWidth, y, { align: 'right' })
+        doc.text(raw, x + tokenWidth, y, { align: 'right' })
       } else {
         setNormal()
         doc.text(raw, x, y)
@@ -12760,13 +12781,14 @@ async function createExamPdfDoc(jadwal, soal) {
     setNormal()
   }
   const drawWrappedSmart = (text, wrapWidth, indent = 0) => {
-    if (isAr || !containsMixedArabic(text)) {
-      drawWrapped(text, wrapWidth, indent)
+    const source = normalizeMixedInputText(text)
+    if (isAr || !containsMixedArabic(source)) {
+      drawWrapped(source, wrapWidth, indent)
       return
     }
-    const lines = buildMixedWrappedLines(text, wrapWidth)
+    const lines = buildMixedWrappedLines(source, wrapWidth)
     if (!lines.length) {
-      drawWrapped(text, wrapWidth, indent)
+      drawWrapped(source, wrapWidth, indent)
       return
     }
     lines.forEach(tokens => {
@@ -12779,7 +12801,7 @@ async function createExamPdfDoc(jadwal, soal) {
     })
   }
   const drawTextAtSmart = (text, xPos) => {
-    const raw = String(text || '')
+    const raw = normalizeMixedInputText(text)
     if (!raw) return
     if (isAr || !containsMixedArabic(raw)) {
       doc.text(raw, xPos, y)
@@ -12796,7 +12818,7 @@ async function createExamPdfDoc(jadwal, soal) {
       }
       if (token.kind === 'arabic' && arabicRegularReady) {
         doc.setFont(EXAM_ARABIC_FONT_NAME, 'normal')
-        doc.text(`\u202B${tokenRaw}\u202C`, x + tokenWidth, y, { align: 'right' })
+        doc.text(tokenRaw, x + tokenWidth, y, { align: 'right' })
       } else {
         setNormal()
         doc.text(tokenRaw, x, y)
@@ -12926,11 +12948,11 @@ async function createExamPdfDoc(jadwal, soal) {
     drawLine(`${textMap.instruksiUmum}:`)
     y += lineStep
     setNormal()
-    drawWrapped(instruksi, usableWidth, 0)
+    drawWrappedSmart(instruksi, usableWidth, 0)
     y += blockGap
   }
 
-  const questions = parseExamQuestions(soal?.questions_json)
+  const questions = parseExamQuestions(rawQuestionsJson)
   const sections = buildExamPrintSections(questions, soal?.bentuk_soal)
   const questionIndent = 4
   const optionIndent = 10
@@ -13033,8 +13055,8 @@ async function createExamPdfDoc(jadwal, soal) {
           y = margin
         }
         setBold()
-        const colA = isAr ? 'القائمة أ' : 'Qoimah A'
-        const colB = isAr ? 'القائمة ب' : 'Qoimah B'
+        const colA = isAr ? 'Ø§Ù„Ù‚Ø§Ø¦Ù…Ø© Ø£' : 'Qoimah A'
+        const colB = isAr ? 'Ø§Ù„Ù‚Ø§Ø¦Ù…Ø© Ø¨' : 'Qoimah B'
         if (isAr) {
           doc.text(colA, lineX(optionIndent), y, { align: 'right' })
           doc.text(colB, lineX(optionIndent + 60), y, { align: 'right' })
@@ -16684,6 +16706,7 @@ document.addEventListener('DOMContentLoaded', () => {
     closeTopbarNotifMenu()
   })
 })
+
 
 
 
