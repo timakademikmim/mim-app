@@ -1,4 +1,4 @@
-﻿const supabaseUrl = 'https://optucpelkueqmlhwlbej.supabase.co'
+const supabaseUrl = 'https://optucpelkueqmlhwlbej.supabase.co'
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9wdHVjcGVsa3VlcW1saHdsYmVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAxOTY4MTgsImV4cCI6MjA4NTc3MjgxOH0.Vqaey9pcnltu9uRbPk0J-AGWaGDZjQLw92pcRv67GNE'
 const sb = window.createDesktopAwareSupabaseClient
   ? window.createDesktopAwareSupabaseClient(supabaseUrl, supabaseKey)
@@ -13,6 +13,7 @@ const IS_WAKASEK_KURIKULUM_PANEL = GURU_PANEL_MODE === 'wakasek-kurikulum'
 const WAKASEK_KURIKULUM_PAGE_SET = new Set(['dashboard', 'monitoring', 'perizinan', 'prestasi-pelanggaran', 'chat', 'profil'])
 const DEFAULT_GURU_PAGE = 'dashboard'
 const ATTENDANCE_TABLE = 'absensi_santri'
+const ATTENDANCE_DELEGATION_TABLE = 'absensi_pengganti_tugas'
 const INPUT_NILAI_TABLE = 'nilai_input_akademik'
 const RAPOR_DESC_TABLE = 'rapor_deskripsi_mapel'
 const MONTHLY_REPORT_TABLE = 'laporan_bulanan_wali'
@@ -118,6 +119,11 @@ let activeSemesterCache = null
 let currentGuruRowCache = null
 let currentMapelDetailDistribusiId = ''
 let currentAbsensiSantriList = []
+let absensiDelegationState = {
+  byDateKey: new Map(),
+  tableMissing: false,
+  guruMap: new Map()
+}
 let currentMapelDetailState = null
 let currentMapelDetailTab = 'absensi'
 let currentMapelEditMode = {
@@ -4724,6 +4730,14 @@ function buildAbsensiPenggantiColumnsMessage() {
   return `Kolom guru pengganti belum tersedia di tabel '${ATTENDANCE_TABLE}'.\n\nJalankan SQL berikut di Supabase:\n\nalter table public.${ATTENDANCE_TABLE}\n  add column if not exists guru_pengganti_id uuid null,\n  add column if not exists keterangan_pengganti text null;`
 }
 
+function buildAbsensiDelegationTableMessage() {
+  return `Tabel amanat guru pengganti belum ada.\n\nJalankan SQL berikut di Supabase:\n\ncreate table if not exists public.${ATTENDANCE_DELEGATION_TABLE} (\n  id uuid primary key default gen_random_uuid(),\n  tanggal date not null,\n  kelas_id text not null,\n  mapel_id text not null,\n  distribusi_id text null,\n  semester_id text null,\n  jam_pelajaran_id text null,\n  guru_asal_id uuid not null,\n  guru_pengganti_id uuid not null,\n  keterangan text null,\n  status text not null default 'pending',\n  created_at timestamptz not null default now(),\n  filled_at timestamptz null,\n  unique (tanggal, kelas_id, mapel_id, jam_pelajaran_id, guru_asal_id)\n);`
+}
+
+function buildAbsensiDelegationUniqueMessage() {
+  return `Tabel amanat guru pengganti sudah ada, tapi unique constraint untuk update tugas ganti belum sesuai.\n\nSilakan jalankan SQL berikut di Supabase:\n\ncreate unique index if not exists ux_absensi_pengganti_tugas_sesi\non public.${ATTENDANCE_DELEGATION_TABLE} (tanggal, kelas_id, mapel_id, jam_pelajaran_id, guru_asal_id);`
+}
+
 function isMissingAbsensiPenggantiColumnError(error) {
   const msg = String(error?.message || '').toLowerCase()
   return msg.includes('guru_pengganti_id') || msg.includes('keterangan_pengganti')
@@ -4742,6 +4756,10 @@ function isMissingTableErrorByName(error, tableName) {
 
 function isMissingAbsensiTableError(error) {
   return isMissingTableErrorByName(error, ATTENDANCE_TABLE)
+}
+
+function isMissingAbsensiDelegationTableError(error) {
+  return isMissingTableErrorByName(error, ATTENDANCE_DELEGATION_TABLE)
 }
 
 function isMissingInputNilaiTableError(error) {
@@ -4867,6 +4885,12 @@ function validateRange(value, label, maxValue) {
 function renderAbsensiSantriRows() {
   const box = document.getElementById('absensi-santri-list')
   if (!box) return
+  const pakaiPengganti = document.getElementById('absensi-pakai-pengganti')?.checked === true
+  if (pakaiPengganti) {
+    box.innerHTML = '<div class="placeholder-card" style="margin-top:10px;">Mode amanat aktif. Guru pengganti yang dipilih nanti akan mengisi absensi dari halamannya sendiri.</div>'
+    updateAbsensiSaveButtonLabel()
+    return
+  }
   const isAndroidView = document.body?.classList?.contains('platform-android')
   const noColWidth = isAndroidView ? 42 : 70
   const statusColWidth = isAndroidView ? 112 : 180
@@ -4934,18 +4958,212 @@ function getSelectedAbsensiHari() {
   return normalizeHari(getHariFromDate(tanggal))
 }
 
+function getAbsensiDelegationCacheKey(guruId, tanggal) {
+  return `${String(guruId || '').trim()}__${String(tanggal || '').trim()}`
+}
+
+function normalizeAbsensiDelegationTaskRow(row) {
+  return {
+    id: String(row?.id || '').trim(),
+    tanggal: String(row?.tanggal || '').slice(0, 10),
+    kelas_id: String(row?.kelas_id || '').trim(),
+    mapel_id: String(row?.mapel_id || '').trim(),
+    distribusi_id: String(row?.distribusi_id || '').trim(),
+    semester_id: String(row?.semester_id || '').trim(),
+    jam_pelajaran_id: String(row?.jam_pelajaran_id || '').trim(),
+    guru_asal_id: String(row?.guru_asal_id || '').trim(),
+    guru_pengganti_id: String(row?.guru_pengganti_id || '').trim(),
+    keterangan: String(row?.keterangan || '').trim(),
+    status: String(row?.status || 'pending').trim().toLowerCase() || 'pending',
+    created_at: String(row?.created_at || '').trim(),
+    filled_at: String(row?.filled_at || '').trim()
+  }
+}
+
+async function loadAbsensiDelegationTasksByDate(guruId, tanggal, { forceReload = false } = {}) {
+  const uid = String(guruId || '').trim()
+  const dateText = String(tanggal || '').trim()
+  if (!uid || !/^\d{4}-\d{2}-\d{2}$/.test(dateText)) return []
+  const cacheKey = getAbsensiDelegationCacheKey(uid, dateText)
+  if (!forceReload && absensiDelegationState.byDateKey.has(cacheKey)) {
+    return absensiDelegationState.byDateKey.get(cacheKey) || []
+  }
+  try {
+    const { data, error } = await sb
+      .from(ATTENDANCE_DELEGATION_TABLE)
+      .select('id, tanggal, kelas_id, mapel_id, distribusi_id, semester_id, jam_pelajaran_id, guru_asal_id, guru_pengganti_id, keterangan, status, created_at, filled_at')
+      .eq('guru_pengganti_id', uid)
+      .eq('tanggal', dateText)
+      .order('created_at', { ascending: true })
+    if (error) {
+      if (isMissingAbsensiDelegationTableError(error)) {
+        absensiDelegationState.tableMissing = true
+        absensiDelegationState.byDateKey.set(cacheKey, [])
+        return []
+      }
+      throw error
+    }
+    absensiDelegationState.tableMissing = false
+    const rows = (data || []).map(normalizeAbsensiDelegationTaskRow)
+    absensiDelegationState.byDateKey.set(cacheKey, rows)
+    return rows
+  } catch (error) {
+    console.error(error)
+    absensiDelegationState.byDateKey.set(cacheKey, [])
+    return []
+  }
+}
+
+function getCurrentAbsensiDelegationRows() {
+  const tanggal = String(document.getElementById('absensi-tanggal')?.value || '').trim()
+  const guruId = String(guruContextCache?.guru?.id || '').trim()
+  if (!tanggal || !guruId) return []
+  const cacheKey = getAbsensiDelegationCacheKey(guruId, tanggal)
+  return absensiDelegationState.byDateKey.get(cacheKey) || []
+}
+
+function getSelectedAbsensiDelegationRows({ kelasId = '', mapelId = '', jamIds = null } = {}) {
+  const kelasText = String(kelasId || document.getElementById('absensi-kelas')?.value || '').trim()
+  const mapelText = String(mapelId || document.getElementById('absensi-mapel')?.value || '').trim()
+  let rows = getCurrentAbsensiDelegationRows().filter(row => row.status === 'pending')
+  if (kelasText) rows = rows.filter(row => row.kelas_id === kelasText)
+  if (mapelText) rows = rows.filter(row => row.mapel_id === mapelText)
+  if (Array.isArray(jamIds) && jamIds.length) {
+    const jamSet = new Set(jamIds.map(item => String(item || '').trim()).filter(Boolean))
+    rows = rows.filter(row => jamSet.has(row.jam_pelajaran_id))
+  }
+  return rows
+}
+
+function getAbsensiKelasOptionItems() {
+  const ctx = guruContextCache
+  const itemMap = new Map()
+  ;(ctx?.activeDistribusiList || []).forEach(item => {
+    const kelasId = String(item?.kelas_id || '').trim()
+    if (!kelasId) return
+    const kelasNama = String(ctx?.kelasMap.get(kelasId)?.nama_kelas || '-').trim()
+    if (!itemMap.has(kelasId)) {
+      itemMap.set(kelasId, { id: kelasId, nama: kelasNama, hasOwn: true, hasDelegation: false })
+      return
+    }
+    itemMap.get(kelasId).hasOwn = true
+  })
+  getCurrentAbsensiDelegationRows()
+    .filter(row => row.status === 'pending')
+    .forEach(row => {
+      const kelasId = String(row.kelas_id || '').trim()
+      if (!kelasId) return
+      const kelasNama = String(ctx?.kelasMap.get(kelasId)?.nama_kelas || '-').trim()
+      if (!itemMap.has(kelasId)) {
+        itemMap.set(kelasId, { id: kelasId, nama: kelasNama, hasOwn: false, hasDelegation: true })
+        return
+      }
+      itemMap.get(kelasId).hasDelegation = true
+    })
+  return Array.from(itemMap.values()).sort((a, b) => String(a.nama || '').localeCompare(String(b.nama || '')))
+}
+
+function renderAbsensiKelasOptions() {
+  const kelasSelect = document.getElementById('absensi-kelas')
+  if (!kelasSelect) return
+  const prevValue = String(kelasSelect.value || '').trim()
+  const items = getAbsensiKelasOptionItems()
+  kelasSelect.innerHTML = '<option value="">-- Pilih Kelas --</option>'
+  items.forEach(item => {
+    const opt = document.createElement('option')
+    opt.value = item.id
+    opt.textContent = item.hasDelegation && !item.hasOwn
+      ? `${item.nama} (Tugas Ganti)`
+      : item.nama
+    kelasSelect.appendChild(opt)
+  })
+  if (prevValue && items.some(item => item.id === prevValue)) {
+    kelasSelect.value = prevValue
+  }
+}
+
+function updateAbsensiSaveButtonLabel() {
+  const saveBtn = document.getElementById('btn-save-absensi')
+  if (!saveBtn) return
+  const pakaiPengganti = document.getElementById('absensi-pakai-pengganti')?.checked === true
+  const kelasId = String(document.getElementById('absensi-kelas')?.value || '').trim()
+  const mapelId = String(document.getElementById('absensi-mapel')?.value || '').trim()
+  const jamIds = [
+    String(document.getElementById('absensi-jam-1')?.value || '').trim(),
+    String(document.getElementById('absensi-jam-2')?.value || '').trim()
+  ].filter(Boolean)
+  const delegationRows = kelasId && mapelId
+    ? getSelectedAbsensiDelegationRows({ kelasId, mapelId, jamIds: jamIds.length ? jamIds : null })
+    : []
+  if (pakaiPengganti) {
+    saveBtn.textContent = 'Amanatkan Pengisian'
+    return
+  }
+  saveBtn.textContent = delegationRows.length ? 'Simpan Absensi Pengganti' : 'Simpan Absensi'
+}
+
+function renderAbsensiDelegationInfo() {
+  const infoBox = document.getElementById('absensi-pengganti-info')
+  if (!infoBox) return
+  const pakaiPengganti = document.getElementById('absensi-pakai-pengganti')?.checked === true
+  const kelasId = String(document.getElementById('absensi-kelas')?.value || '').trim()
+  const mapelId = String(document.getElementById('absensi-mapel')?.value || '').trim()
+  const jamIds = [
+    String(document.getElementById('absensi-jam-1')?.value || '').trim(),
+    String(document.getElementById('absensi-jam-2')?.value || '').trim()
+  ].filter(Boolean)
+  const delegationRows = kelasId && mapelId
+    ? getSelectedAbsensiDelegationRows({ kelasId, mapelId, jamIds: jamIds.length ? jamIds : null })
+    : []
+  const jamNameById = new Map((guruContextCache?.jamList || []).map(item => [String(item.id || ''), String(item.nama || '').trim()]))
+
+  let html = ''
+  if (pakaiPengganti) {
+    html = `
+      <div class="placeholder-card" style="margin-top:10px; background:#eff6ff; border:1px solid #bfdbfe; color:#1e3a8a;">
+        Mode amanat aktif. Saat disimpan, absensi tidak langsung diisi, tetapi ditugaskan ke guru pengganti yang dipilih.
+      </div>
+    `
+  } else if (delegationRows.length) {
+    const guruAsalNames = [...new Set(delegationRows
+      .map(row => String(absensiDelegationState.guruMap.get(String(row.guru_asal_id || ''))?.nama || '').trim())
+      .filter(Boolean))]
+    const jamLabels = [...new Set(delegationRows
+      .map(row => String(jamNameById.get(String(row.jam_pelajaran_id || '')) || '').trim())
+      .filter(Boolean))]
+    html = `
+      <div class="placeholder-card" style="margin-top:10px; background:#f0fdf4; border:1px solid #bbf7d0; color:#166534;">
+        Anda sedang mengisi absensi sebagai guru pengganti${guruAsalNames.length ? ` untuk ${escapeHtml(guruAsalNames.join(', '))}` : ''}.
+        ${jamLabels.length ? `<div style="margin-top:4px; font-size:12px; color:#15803d;">Jam: ${escapeHtml(jamLabels.join(', '))}</div>` : ''}
+      </div>
+    `
+  }
+
+  infoBox.innerHTML = html
+  infoBox.style.display = html ? 'block' : 'none'
+  updateAbsensiSaveButtonLabel()
+}
+
 function renderAbsensiMapelOptions() {
   const mapelSelect = document.getElementById('absensi-mapel')
   if (!mapelSelect) return
 
   const prevValue = String(mapelSelect.value || '')
   const kelasId = String(document.getElementById('absensi-kelas')?.value || '')
+  if (!kelasId) {
+    mapelSelect.innerHTML = '<option value="">-- Pilih Mapel --</option>'
+    renderAbsensiDelegationInfo()
+    return
+  }
   const selectedHari = getSelectedAbsensiHari()
   const ctx = guruContextCache
-  const list = (ctx?.activeDistribusiList || []).filter(item => String(item.kelas_id || '') === kelasId)
+  const ownList = (ctx?.activeDistribusiList || []).filter(item => String(item.kelas_id || '') === kelasId)
+  const delegationRows = getSelectedAbsensiDelegationRows({ kelasId })
   let defaultMapelId = ''
-  if (selectedHari) {
-    const distribusiById = new Map(list.map(item => [String(item.id || ''), item]))
+  if (delegationRows.length) {
+    defaultMapelId = String(delegationRows[0]?.mapel_id || '')
+  } else if (selectedHari) {
+    const distribusiById = new Map(ownList.map(item => [String(item.id || ''), item]))
     const firstMatch = (ctx?.jadwalList || []).find(item => {
       if (normalizeHari(item?.hari) !== selectedHari) return false
       return distribusiById.has(String(item.distribusi_id || ''))
@@ -4956,47 +5174,128 @@ function renderAbsensiMapelOptions() {
     }
   }
 
-  const uniqueMapelIds = [...new Set(list.map(item => String(item.mapel_id || '')).filter(Boolean))]
+  const optionMap = new Map()
+  ownList.forEach(item => {
+    const mapelId = String(item?.mapel_id || '').trim()
+    if (!mapelId) return
+    if (!optionMap.has(mapelId)) optionMap.set(mapelId, { mapelId, hasOwn: true, hasDelegation: false })
+    else optionMap.get(mapelId).hasOwn = true
+  })
+  delegationRows.forEach(row => {
+    const mapelId = String(row?.mapel_id || '').trim()
+    if (!mapelId) return
+    if (!optionMap.has(mapelId)) optionMap.set(mapelId, { mapelId, hasOwn: false, hasDelegation: true })
+    else optionMap.get(mapelId).hasDelegation = true
+  })
+  const uniqueMapelIds = Array.from(optionMap.keys())
   mapelSelect.innerHTML = '<option value="">-- Pilih Mapel --</option>'
 
   uniqueMapelIds.forEach(mapelId => {
     const mapel = ctx?.mapelMap.get(mapelId)
     const opt = document.createElement('option')
     opt.value = mapelId
-    opt.textContent = getMapelLabel(mapel)
+    const meta = optionMap.get(mapelId) || {}
+    const baseLabel = getMapelLabel(mapel)
+    opt.textContent = meta.hasDelegation && !meta.hasOwn ? `${baseLabel} (Tugas Ganti)` : baseLabel
     mapelSelect.appendChild(opt)
   })
 
   if (prevValue && uniqueMapelIds.includes(prevValue)) {
     mapelSelect.value = prevValue
+    renderAbsensiDelegationInfo()
     return
   }
   if (defaultMapelId && uniqueMapelIds.includes(defaultMapelId)) {
     mapelSelect.value = defaultMapelId
   }
+  renderAbsensiDelegationInfo()
 }
 
 function renderAbsensiJamOptions() {
   const jamSelect1 = document.getElementById('absensi-jam-1')
   const jamSelect2 = document.getElementById('absensi-jam-2')
   if (!jamSelect1 && !jamSelect2) return
+  const kelasId = String(document.getElementById('absensi-kelas')?.value || '').trim()
+  const mapelId = String(document.getElementById('absensi-mapel')?.value || '').trim()
+  if (!kelasId || !mapelId) {
+    ;[jamSelect1, jamSelect2].filter(Boolean).forEach(selectEl => {
+      selectEl.innerHTML = '<option value="">-- Pilih Jam --</option>'
+      selectEl.value = ''
+    })
+    renderAbsensiDelegationInfo()
+    return
+  }
 
   const candidates = getAbsensiDistribusiCandidates()
+  const delegationRows = getSelectedAbsensiDelegationRows()
   const selectedHari = getSelectedAbsensiHari()
   const ctx = guruContextCache
-
-  const jadwalMap = new Map()
-  ;(ctx?.jadwalList || []).forEach(item => {
-    if (selectedHari && normalizeHari(item?.hari) !== selectedHari) return
-    if (!candidates.find(c => String(c.id) === String(item.distribusi_id))) return
-    jadwalMap.set(String(item.id), item)
-  })
 
   const selected1 = String(jamSelect1?.value || '')
   const selected2 = String(jamSelect2?.value || '')
   const targetSelects = [jamSelect1, jamSelect2].filter(Boolean)
   targetSelects.forEach(selectEl => {
     selectEl.innerHTML = '<option value="">-- Pilih Jam --</option>'
+  })
+
+  if (delegationRows.length) {
+    const jamMap = new Map((ctx?.jamList || []).map(item => [String(item.id || ''), item]))
+    const delegationList = delegationRows
+      .filter(row => String(row.jam_pelajaran_id || '').trim())
+      .sort((a, b) => {
+        const jamA = jamMap.get(String(a.jam_pelajaran_id || ''))
+        const jamB = jamMap.get(String(b.jam_pelajaran_id || ''))
+        const orderA = Number(jamA?.urutan || 0)
+        const orderB = Number(jamB?.urutan || 0)
+        if (orderA !== orderB) return orderA - orderB
+        return String(jamA?.jam_mulai || '').localeCompare(String(jamB?.jam_mulai || ''))
+      })
+    const matchedJamValues = [...new Set(delegationList.map(row => String(row.jam_pelajaran_id || '')).filter(Boolean))]
+    matchedJamValues.forEach(jamId => {
+      const jam = jamMap.get(jamId)
+      const label = jam
+        ? `${jam.nama || 'Jam'} (${toTimeLabel(jam.jam_mulai)}-${toTimeLabel(jam.jam_selesai)})`
+        : `Jam ${jamId}`
+      targetSelects.forEach(selectEl => {
+        const opt = document.createElement('option')
+        opt.value = jamId
+        opt.textContent = `${label} - Tugas Ganti`
+        selectEl.appendChild(opt)
+      })
+    })
+    const jam1Values = jamSelect1 ? Array.from(jamSelect1.options || []).map(opt => String(opt.value || '')) : []
+    const jam2Values = jamSelect2 ? Array.from(jamSelect2.options || []).map(opt => String(opt.value || '')) : []
+    if (jamSelect1) {
+      if (selected1 && matchedJamValues.includes(selected1) && jam1Values.includes(selected1)) {
+        jamSelect1.value = selected1
+      } else if (matchedJamValues[0] && jam1Values.includes(matchedJamValues[0])) {
+        jamSelect1.value = matchedJamValues[0]
+      } else {
+        jamSelect1.value = ''
+      }
+    }
+    if (jamSelect2) {
+      const jam1Value = String(jamSelect1?.value || '')
+      if (selected2 && selected2 !== jam1Value && matchedJamValues.includes(selected2) && jam2Values.includes(selected2)) {
+        jamSelect2.value = selected2
+      } else {
+        const jam2Default = matchedJamValues.find(value => value && value !== jam1Value) || ''
+        if (jam2Default && jam2Values.includes(jam2Default)) {
+          jamSelect2.value = jam2Default
+        } else {
+          jamSelect2.value = ''
+        }
+      }
+    }
+    renderAbsensiDelegationInfo()
+    return
+  }
+
+  const jadwalMap = new Map()
+  ;(ctx?.jadwalList || []).forEach(item => {
+    if (selectedHari && normalizeHari(item?.hari) !== selectedHari) return
+    if (!candidates.find(c => String(c.id) === String(item.distribusi_id))) return
+    jadwalMap.set(String(item.id), item)
   })
 
   const jamByRange = new Map((ctx?.jamList || []).map(item => [`${toTimeLabel(item.jam_mulai)}|${toTimeLabel(item.jam_selesai)}`, item]))
@@ -5018,6 +5317,7 @@ function renderAbsensiJamOptions() {
     })
     if (jamSelect1) jamSelect1.value = ''
     if (jamSelect2) jamSelect2.value = ''
+    renderAbsensiDelegationInfo()
     return
   }
 
@@ -5069,6 +5369,7 @@ function renderAbsensiJamOptions() {
       }
     }
   }
+  renderAbsensiDelegationInfo()
 }
 
 async function handleAbsensiKelasMapelChange() {
@@ -5099,10 +5400,9 @@ async function renderAbsensiPage() {
     return
   }
 
-  if (!ctx.activeDistribusiList.length) {
-    content.innerHTML = '<div class="placeholder-card">Distribusi mapel semester aktif belum tersedia untuk guru ini.</div>'
-    return
-  }
+  const today = new Date().toISOString().slice(0, 10)
+  const todayDelegations = await loadAbsensiDelegationTasksByDate(String(ctx.guru.id || ''), today, { forceReload: true })
+  const shouldShowAbsensiNotice = !ctx.activeDistribusiList.length && !todayDelegations.length
 
   const kelasIds = [...new Set(ctx.activeDistribusiList.map(item => String(item.kelas_id || '')).filter(Boolean))]
   const kelasOptions = kelasIds
@@ -5125,10 +5425,11 @@ async function renderAbsensiPage() {
     penggantiList = []
   }
 
-  const today = new Date().toISOString().slice(0, 10)
+  absensiDelegationState.guruMap = new Map((penggantiList || []).map(item => [String(item.id || ''), item]))
 
   content.innerHTML = `
     <div>
+      ${shouldShowAbsensiNotice ? '<div class="placeholder-card" style="margin-bottom:12px;">Distribusi mapel aktif untuk guru ini belum tersedia. Anda tetap bisa memilih tanggal lain untuk melihat tugas ganti absensi yang diamanatkan ke Anda.</div>' : ''}
       <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:10px; align-items:end;">
         <div>
           <label class="guru-label">Tanggal</label>
@@ -5179,6 +5480,8 @@ async function renderAbsensiPage() {
         </div>
       </div>
 
+      <div id="absensi-pengganti-info" style="display:none;"></div>
+
       <div id="absensi-santri-list" style="margin-top:12px;"></div>
 
       <div style="margin-top:14px;">
@@ -5188,6 +5491,11 @@ async function renderAbsensiPage() {
   `
 
   currentAbsensiSantriList = []
+  renderAbsensiKelasOptions()
+  renderAbsensiMapelOptions()
+  renderAbsensiJamOptions()
+  renderAbsensiDelegationInfo()
+  renderAbsensiSantriRows()
 }
 
 async function onAbsensiKelasChange() {
@@ -5197,13 +5505,28 @@ async function onAbsensiKelasChange() {
   const kelasId = String(document.getElementById('absensi-kelas')?.value || '')
   currentAbsensiSantriList = await getSantriByKelas(kelasId)
   renderAbsensiSantriRows()
+  renderAbsensiDelegationInfo()
 }
 
 async function onAbsensiMapelChange() {
   await handleAbsensiKelasMapelChange()
+  renderAbsensiDelegationInfo()
 }
 
 async function onAbsensiTanggalChange() {
+  const ctx = guruContextCache || await getGuruContext()
+  const guruId = String(ctx?.guru?.id || '').trim()
+  const tanggal = String(document.getElementById('absensi-tanggal')?.value || '').trim()
+  if (guruId && tanggal) {
+    await loadAbsensiDelegationTasksByDate(guruId, tanggal, { forceReload: true })
+  }
+  const kelasSelect = document.getElementById('absensi-kelas')
+  const prevKelas = String(kelasSelect?.value || '')
+  renderAbsensiKelasOptions()
+  if (kelasSelect && prevKelas) {
+    const stillExists = Array.from(kelasSelect.options || []).some(opt => String(opt.value || '') === prevKelas)
+    if (!stillExists) kelasSelect.value = ''
+  }
   const mapelSelect = document.getElementById('absensi-mapel')
   const prevMapel = String(mapelSelect?.value || '')
   renderAbsensiMapelOptions()
@@ -5212,6 +5535,10 @@ async function onAbsensiTanggalChange() {
     if (!stillExists) mapelSelect.value = ''
   }
   renderAbsensiJamOptions()
+  const kelasId = String(document.getElementById('absensi-kelas')?.value || '')
+  currentAbsensiSantriList = await getSantriByKelas(kelasId)
+  renderAbsensiSantriRows()
+  renderAbsensiDelegationInfo()
 }
 
 function onAbsensiPenggantiToggle() {
@@ -5226,6 +5553,8 @@ function onAbsensiPenggantiToggle() {
     noteEl.disabled = !checked
     if (!checked) noteEl.value = ''
   }
+  renderAbsensiSantriRows()
+  renderAbsensiDelegationInfo()
 }
 
 async function saveGuruAbsensi() {
@@ -5233,80 +5562,185 @@ async function saveGuruAbsensi() {
   if (saveBtn?.disabled) return
   setButtonLoading(saveBtn, true, 'Menyimpan...')
   try {
-  const tanggal = String(document.getElementById('absensi-tanggal')?.value || '').trim()
-  const kelasId = String(document.getElementById('absensi-kelas')?.value || '').trim()
-  const mapelId = String(document.getElementById('absensi-mapel')?.value || '').trim()
-  const jamId1 = String(document.getElementById('absensi-jam-1')?.value || '').trim()
-  const jamId2 = String(document.getElementById('absensi-jam-2')?.value || '').trim()
-  const pakaiPengganti = document.getElementById('absensi-pakai-pengganti')?.checked === true
-  const penggantiId = String(document.getElementById('absensi-guru-pengganti')?.value || '').trim()
-  const keteranganPengganti = String(document.getElementById('absensi-keterangan-pengganti')?.value || '').trim()
+    const tanggal = String(document.getElementById('absensi-tanggal')?.value || '').trim()
+    const kelasId = String(document.getElementById('absensi-kelas')?.value || '').trim()
+    const mapelId = String(document.getElementById('absensi-mapel')?.value || '').trim()
+    const jamId1 = String(document.getElementById('absensi-jam-1')?.value || '').trim()
+    const jamId2 = String(document.getElementById('absensi-jam-2')?.value || '').trim()
+    const pakaiPengganti = document.getElementById('absensi-pakai-pengganti')?.checked === true
+    const penggantiId = String(document.getElementById('absensi-guru-pengganti')?.value || '').trim()
+    const keteranganPengganti = String(document.getElementById('absensi-keterangan-pengganti')?.value || '').trim()
 
-  if (!tanggal || !kelasId || !mapelId) {
-    alert('Tanggal, kelas, dan mapel wajib diisi.')
-    return
-  }
-  if (pakaiPengganti && !penggantiId) {
-    alert('Pilih karyawan pengganti terlebih dahulu.')
-    return
-  }
-  if (jamId1 && jamId2 && jamId1 === jamId2) {
-    alert('Jam Pelajaran 1 dan Jam Pelajaran 2 tidak boleh sama.')
-    return
-  }
+    if (!tanggal || !kelasId || !mapelId) {
+      alert('Tanggal, kelas, dan mapel wajib diisi.')
+      return
+    }
+    if (pakaiPengganti && !penggantiId) {
+      alert('Pilih karyawan pengganti terlebih dahulu.')
+      return
+    }
+    if (jamId1 && jamId2 && jamId1 === jamId2) {
+      alert('Jam Pelajaran 1 dan Jam Pelajaran 2 tidak boleh sama.')
+      return
+    }
 
-  if (!currentAbsensiSantriList.length) {
-    alert('Daftar siswa masih kosong.')
-    return
-  }
+    const ctx = await getGuruContext()
+    const guruId = String(ctx?.guru?.id || '').trim()
+    if (!guruId) {
+      alert('Data guru tidak ditemukan.')
+      return
+    }
 
-  const ctx = await getGuruContext()
-  const guruId = ctx?.guru?.id
-  if (!guruId) {
-    alert('Data guru tidak ditemukan.')
-    return
-  }
+    if (pakaiPengganti && penggantiId === guruId) {
+      alert('Guru pengganti tidak boleh sama dengan guru yang sedang login.')
+      return
+    }
 
-  const distribusi = getAbsensiDistribusiCandidates()[0] || null
-  const jamIds = [...new Set([jamId1, jamId2].filter(Boolean))]
-  const jamIdsToSave = jamIds.length ? jamIds : [null]
+    const distribusi = getAbsensiDistribusiCandidates()[0] || null
+    const jamIds = [...new Set([jamId1, jamId2].filter(Boolean))]
+    const delegationRowsForMapel = getSelectedAbsensiDelegationRows({ kelasId, mapelId })
 
-  const statusMap = new Map()
-  document.querySelectorAll('[data-absen-santri-id]').forEach(selectEl => {
-    const santriId = String(selectEl.getAttribute('data-absen-santri-id') || '').trim()
-    const status = String(selectEl.value || '').trim() || 'Hadir'
-    if (!santriId) return
-    statusMap.set(santriId, status)
-  })
+    if (pakaiPengganti) {
+      if (delegationRowsForMapel.length) {
+        alert('Tugas ganti yang sudah diamanatkan ke Anda tidak bisa dialihkan lagi dari halaman ini.')
+        return
+      }
+      if (!jamIds.length) {
+        alert('Pilih minimal satu jam pelajaran untuk diamanatkan ke guru pengganti.')
+        return
+      }
+      const delegationPayload = jamIds.map(jamId => ({
+        tanggal,
+        kelas_id: kelasId,
+        mapel_id: mapelId,
+        distribusi_id: distribusi?.id ? String(distribusi.id) : null,
+        semester_id: distribusi?.semester_id ? String(distribusi.semester_id) : (ctx.activeSemester?.id ? String(ctx.activeSemester.id) : null),
+        jam_pelajaran_id: String(jamId || '').trim() || null,
+        guru_asal_id: guruId,
+        guru_pengganti_id: penggantiId,
+        keterangan: keteranganPengganti || null,
+        status: 'pending',
+        filled_at: null
+      }))
 
-  const payloads = currentAbsensiSantriList.flatMap(santri => (
-    jamIdsToSave.map(jamId => ({
-      tanggal,
-      kelas_id: kelasId,
-      mapel_id: mapelId,
-      guru_id: String(guruId),
-      jam_pelajaran_id: jamId || null,
-      semester_id: distribusi?.semester_id ? String(distribusi.semester_id) : (ctx.activeSemester?.id ? String(ctx.activeSemester.id) : null),
-      distribusi_id: distribusi?.id ? String(distribusi.id) : null,
-      santri_id: String(santri.id),
-      status: statusMap.get(String(santri.id)) || 'Hadir',
-      guru_pengganti_id: pakaiPengganti ? penggantiId : null,
-      keterangan_pengganti: pakaiPengganti ? (keteranganPengganti || null) : null
-    }))
-  ))
+      const delegationRes = await sb
+        .from(ATTENDANCE_DELEGATION_TABLE)
+        .upsert(delegationPayload, {
+          onConflict: 'tanggal,kelas_id,mapel_id,jam_pelajaran_id,guru_asal_id'
+        })
 
-  let saveError = null
-  let saveRes = await sb
-    .from(ATTENDANCE_TABLE)
-    .upsert(payloads, {
-      onConflict: 'tanggal,kelas_id,mapel_id,jam_pelajaran_id,santri_id'
+      if (delegationRes.error) {
+        console.error(delegationRes.error)
+        const msg = String(delegationRes.error.message || '')
+        if (isMissingAbsensiDelegationTableError(delegationRes.error)) {
+          alert(buildAbsensiDelegationTableMessage())
+          return
+        }
+        if (msg.toLowerCase().includes('no unique or exclusion constraint matching the on conflict specification')) {
+          alert(buildAbsensiDelegationUniqueMessage())
+          return
+        }
+        alert(`Gagal mengamanatkan absensi: ${msg || 'Unknown error'}`)
+        return
+      }
+
+      absensiDelegationState.byDateKey.delete(getAbsensiDelegationCacheKey(penggantiId, tanggal))
+      alert('Berhasil mengamanatkan pengisian absensi ke guru pengganti.')
+      clearGuruPageCache('input-absensi')
+      document.getElementById('absensi-pakai-pengganti').checked = false
+      onAbsensiPenggantiToggle()
+      return
+    }
+
+    if (!currentAbsensiSantriList.length) {
+      alert('Daftar siswa masih kosong.')
+      return
+    }
+
+    const selectedDelegationRows = delegationRowsForMapel.length
+      ? getSelectedAbsensiDelegationRows({ kelasId, mapelId, jamIds: jamIds.length ? jamIds : null })
+      : []
+    if (delegationRowsForMapel.length && !jamIds.length) {
+      alert('Pilih jam pelajaran tugas ganti terlebih dahulu.')
+      return
+    }
+
+    const delegationByJam = new Map(selectedDelegationRows.map(row => [String(row.jam_pelajaran_id || ''), row]))
+    const jamIdsToSave = jamIds.length ? jamIds : [null]
+
+    const statusMap = new Map()
+    document.querySelectorAll('[data-absen-santri-id]').forEach(selectEl => {
+      const santriId = String(selectEl.getAttribute('data-absen-santri-id') || '').trim()
+      const status = String(selectEl.value || '').trim() || 'Hadir'
+      if (!santriId) return
+      statusMap.set(santriId, status)
     })
 
-  if (saveRes.error) {
-    const conflictMsg = String(saveRes.error.message || '').toLowerCase()
-    const noUniqueForConflict = conflictMsg.includes('no unique or exclusion constraint matching the on conflict specification')
-    if (noUniqueForConflict) {
-      if (jamIds.length > 1) {
+    const payloads = currentAbsensiSantriList.flatMap(santri => (
+      jamIdsToSave.map(jamId => {
+        const delegationRow = delegationByJam.get(String(jamId || '')) || null
+        return {
+          tanggal,
+          kelas_id: kelasId,
+          mapel_id: mapelId,
+          guru_id: delegationRow?.guru_asal_id ? String(delegationRow.guru_asal_id) : guruId,
+          jam_pelajaran_id: jamId || null,
+          semester_id: delegationRow?.semester_id
+            ? String(delegationRow.semester_id)
+            : (distribusi?.semester_id ? String(distribusi.semester_id) : (ctx.activeSemester?.id ? String(ctx.activeSemester.id) : null)),
+          distribusi_id: delegationRow?.distribusi_id
+            ? String(delegationRow.distribusi_id)
+            : (distribusi?.id ? String(distribusi.id) : null),
+          santri_id: String(santri.id),
+          status: statusMap.get(String(santri.id)) || 'Hadir',
+          guru_pengganti_id: delegationRow ? guruId : null,
+          keterangan_pengganti: delegationRow ? (delegationRow.keterangan || null) : null
+        }
+      })
+    ))
+
+    let saveError = null
+    let saveRes = await sb
+      .from(ATTENDANCE_TABLE)
+      .upsert(payloads, {
+        onConflict: 'tanggal,kelas_id,mapel_id,jam_pelajaran_id,santri_id'
+      })
+
+    if (saveRes.error) {
+      const conflictMsg = String(saveRes.error.message || '').toLowerCase()
+      const noUniqueForConflict = conflictMsg.includes('no unique or exclusion constraint matching the on conflict specification')
+      if (noUniqueForConflict) {
+        if (jamIds.length > 1) {
+          alert(
+            "Database absensi masih memakai unique lama (tanpa jam_pelajaran_id), jadi 2 jam tidak bisa disimpan sekaligus.\n\n" +
+            "Silakan update unique constraint agar mencakup jam_pelajaran_id, contoh:\n" +
+            "drop index if exists ux_absensi_sesi_siswa;\n" +
+            "create unique index if not exists ux_absensi_sesi_siswa on public.absensi_santri (tanggal, kelas_id, mapel_id, jam_pelajaran_id, santri_id);"
+          )
+          return
+        }
+        saveRes = await sb
+          .from(ATTENDANCE_TABLE)
+          .upsert(payloads, {
+            onConflict: 'tanggal,kelas_id,mapel_id,santri_id'
+          })
+      }
+    }
+
+    saveError = saveRes.error
+
+    if (saveError) {
+      console.error(saveError)
+      const msg = String(saveError.message || '')
+      if (isMissingAbsensiTableError(saveError)) {
+        alert(buildAbsensiMissingTableMessage())
+        return
+      }
+      if (isMissingAbsensiPenggantiColumnError(saveError)) {
+        alert(buildAbsensiPenggantiColumnsMessage())
+        return
+      }
+      if (jamIds.length > 1 && msg.toLowerCase().includes('cannot affect row a second time')) {
         alert(
           "Database absensi masih memakai unique lama (tanpa jam_pelajaran_id), jadi 2 jam tidak bisa disimpan sekaligus.\n\n" +
           "Silakan update unique constraint agar mencakup jam_pelajaran_id, contoh:\n" +
@@ -5315,63 +5749,66 @@ async function saveGuruAbsensi() {
         )
         return
       }
-      saveRes = await sb
-        .from(ATTENDANCE_TABLE)
-        .upsert(payloads, {
-          onConflict: 'tanggal,kelas_id,mapel_id,santri_id'
-        })
+      if (jamIds.length > 1 && msg.toLowerCase().includes('duplicate key value')) {
+        alert('Gagal menyimpan 2 jam sekaligus karena constraint database masih membatasi 1 sesi per mapel/hari. Mohon update unique constraint absensi agar memasukkan jam_pelajaran_id.')
+        return
+      }
+      alert(`Gagal menyimpan absensi: ${msg || 'Unknown error'}`)
+      return
     }
-  }
 
-  saveError = saveRes.error
+    let distribusiForRecalc = distribusi
+    if (!distribusiForRecalc && selectedDelegationRows.length) {
+      const task = selectedDelegationRows[0]
+      distribusiForRecalc = {
+        id: String(task.distribusi_id || ''),
+        kelas_id: kelasId,
+        mapel_id: mapelId,
+        semester_id: String(task.semester_id || '') || (ctx.activeSemester?.id ? String(ctx.activeSemester.id) : null)
+      }
+    }
 
-  if (saveError) {
-    console.error(saveError)
-    const msg = String(saveError.message || '')
-    if (isMissingAbsensiTableError(saveError)) {
-      alert(buildAbsensiMissingTableMessage())
-      return
+    if (selectedDelegationRows.length) {
+      const delegationIds = selectedDelegationRows.map(row => String(row.id || '')).filter(Boolean)
+      if (delegationIds.length) {
+        const doneRes = await sb
+          .from(ATTENDANCE_DELEGATION_TABLE)
+          .update({
+            status: 'done',
+            filled_at: new Date().toISOString()
+          })
+          .in('id', delegationIds)
+        if (doneRes.error && !isMissingAbsensiDelegationTableError(doneRes.error)) {
+          console.error(doneRes.error)
+          alert(`Absensi tersimpan, tetapi gagal menandai tugas ganti selesai: ${doneRes.error.message || 'Unknown error'}`)
+          return
+        }
+        await loadAbsensiDelegationTasksByDate(guruId, tanggal, { forceReload: true })
+      }
     }
-    if (isMissingAbsensiPenggantiColumnError(saveError)) {
-      alert(buildAbsensiPenggantiColumnsMessage())
-      return
-    }
-    if (jamIds.length > 1 && msg.toLowerCase().includes('cannot affect row a second time')) {
-      alert(
-        "Database absensi masih memakai unique lama (tanpa jam_pelajaran_id), jadi 2 jam tidak bisa disimpan sekaligus.\n\n" +
-        "Silakan update unique constraint agar mencakup jam_pelajaran_id, contoh:\n" +
-        "drop index if exists ux_absensi_sesi_siswa;\n" +
-        "create unique index if not exists ux_absensi_sesi_siswa on public.absensi_santri (tanggal, kelas_id, mapel_id, jam_pelajaran_id, santri_id);"
-      )
-      return
-    }
-    if (jamIds.length > 1 && msg.toLowerCase().includes('duplicate key value')) {
-      alert('Gagal menyimpan 2 jam sekaligus karena constraint database masih membatasi 1 sesi per mapel/hari. Mohon update unique constraint absensi agar memasukkan jam_pelajaran_id.')
-      return
-    }
-    alert(`Gagal menyimpan absensi: ${msg || 'Unknown error'}`)
-    return
-  }
 
-  if (distribusi) {
-    try {
-      await recalculateNilaiKehadiranFromAbsensi(
-        distribusi,
-        currentAbsensiSantriList.map(item => String(item.id))
-      )
-    } catch (calcErr) {
-      console.error(calcErr)
-      alert(`Absensi tersimpan, tapi gagal update nilai kehadiran: ${calcErr.message || 'Unknown error'}`)
-      return
+    if (distribusiForRecalc) {
+      try {
+        await recalculateNilaiKehadiranFromAbsensi(
+          distribusiForRecalc,
+          currentAbsensiSantriList.map(item => String(item.id))
+        )
+      } catch (calcErr) {
+        console.error(calcErr)
+        alert(`Absensi tersimpan, tapi gagal update nilai kehadiran: ${calcErr.message || 'Unknown error'}`)
+        return
+      }
     }
-  }
 
-  alert('Absensi berhasil disimpan.')
-  document.querySelectorAll('[data-absen-santri-id]').forEach(selectEl => {
-    selectEl.value = 'Hadir'
-  })
-  clearGuruPageCache('input-absensi')
-  clearGuruPageCache('laporan-absensi')
+    alert(selectedDelegationRows.length ? 'Absensi pengganti berhasil disimpan.' : 'Absensi berhasil disimpan.')
+    document.querySelectorAll('[data-absen-santri-id]').forEach(selectEl => {
+      selectEl.value = 'Hadir'
+    })
+    clearGuruPageCache('input-absensi')
+    clearGuruPageCache('laporan-absensi')
+    renderAbsensiMapelOptions()
+    renderAbsensiJamOptions()
+    renderAbsensiDelegationInfo()
   } finally {
     setButtonLoading(saveBtn, false)
   }
@@ -8929,8 +9366,8 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
 
       return `
         <tr>
-          <td style="padding:8px; border:1px solid #e2e8f0; text-align:center; width:60px; min-width:60px; position:sticky; left:0; z-index:2; background:#fff;">${index + 1}</td>
-          <td style="padding:8px; border:1px solid #e2e8f0; min-width:200px; position:sticky; left:60px; z-index:2; background:#fff;">${escapeHtml(santri.nama || '-')}</td>
+          <td style="padding:8px; border:1px solid #e2e8f0; text-align:center; width:60px; min-width:60px; ${!document.body.classList.contains('platform-android') ? 'position:sticky; left:0; z-index:2; background:#fff;' : ''}">${index + 1}</td>
+          <td style="padding:8px; border:1px solid #e2e8f0; min-width:200px; ${!document.body.classList.contains('platform-android') ? 'position:sticky; left:60px; z-index:2; background:#fff;' : ''}">${escapeHtml(santri.nama || '-')}</td>
           ${cells || '<td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">-</td>'}
         </tr>
       `
@@ -9022,7 +9459,7 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
       ${absensiErrorMessage
         ? `<div class="placeholder-card">${escapeHtml(absensiErrorMessage)}</div>`
         : absensiDateList.length
-          ? `<div class="mapel-table-scroll mapel-absensi-table-scroll"><table style="width:max-content; min-width:100%; border-collapse:separate; border-spacing:0; font-size:13px;"><thead><tr style="background:#f8fafc;"><th style="padding:8px; border:1px solid #e2e8f0; width:60px; min-width:60px; position:sticky; left:0; z-index:5; background:#f8fafc;">No</th><th style="padding:8px; border:1px solid #e2e8f0; min-width:200px; text-align:left; position:sticky; left:60px; z-index:5; background:#f8fafc;">Nama</th>${absensiDateHeaderHtml}</tr></thead><tbody>${absensiPivotRowsHtml}</tbody></table></div>
+          ? `<div class="mapel-table-scroll mapel-absensi-table-scroll"><table style="width:max-content; min-width:100%; border-collapse:separate; border-spacing:0; font-size:13px;"><thead><tr style="background:#f8fafc;"><th style="padding:8px; border:1px solid #e2e8f0; width:60px; min-width:60px; ${!document.body.classList.contains('platform-android') ? 'position:sticky; left:0; z-index:5; background:#f8fafc;' : ''}">No</th><th style="padding:8px; border:1px solid #e2e8f0; min-width:200px; text-align:left; ${!document.body.classList.contains('platform-android') ? 'position:sticky; left:60px; z-index:5; background:#f8fafc;' : ''}">Nama</th>${absensiDateHeaderHtml}</tr></thead><tbody>${absensiPivotRowsHtml}</tbody></table></div>
              ${editAbsensi ? '<div style="margin-top:10px;"><button type="button" class="modal-btn modal-btn-primary" onclick="saveMapelAbsensiEdit()">Simpan Perubahan Absensi</button></div>' : ''}`
           : '<div class="placeholder-card">Belum ada data absensi.</div>'
       }
@@ -14228,7 +14665,7 @@ async function analyzeGuruExamScanUpload() {
     const imageMarkerDy = Math.hypot(markers.bl.x - markers.tl.x, markers.bl.y - markers.tl.y)
     const imageReferenceSize = Math.max(1, (imageMarkerDx + imageMarkerDy) / 2)
     const sampleRadiusFor = ratio => Math.max(3, ratio * imageReferenceSize * 0.55)
-    const guideSearchRadius = Math.max(14, imageReferenceSize * 0.035)
+    const guideSearchRadius = Math.max(18, imageReferenceSize * 0.045)
     const guideAreaHint = Math.max(16, Math.round(guideSearchRadius * guideSearchRadius * 0.02))
     const digitGuideMap = detectGuruExamScanGuideBarSeries(
       imageData,

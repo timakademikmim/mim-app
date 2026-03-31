@@ -1211,6 +1211,34 @@ body {
   flex: 1 1 auto;
 }
 
+.mapel-absensi-th-nama {
+  min-width: 200px;
+}
+
+.mapel-nilai-table {
+  min-width: 1040px;
+}
+
+@media (max-width: 768px) {
+  .mapel-absensi-th-nama {
+    min-width: 120px;
+  }
+
+  .mapel-nilai-table {
+    min-width: 700px;
+  }
+}
+
+@media (max-width: 480px) {
+  .mapel-absensi-th-nama {
+    min-width: 90px;
+  }
+
+  .mapel-nilai-table {
+    min-width: 600px;
+  }
+}
+
 .mapel-back-btn {
   width: 36px;
   height: 36px;

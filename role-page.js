@@ -2461,29 +2461,79 @@ function clearChatNotifyOpen(userId) {
 const WEB_NOTIFY_MAX_TRACKED_IDS = 120
 let browserNotifPermissionRequest = null
 let browserNotifPermissionAsked = false
+let browserNotifPermissionGestureBound = false
+let mimNotificationServiceWorkerRegistration = null
+
+function browserServiceWorkerNotificationSupported() {
+  return (
+    browserNotificationSupported() &&
+    typeof window !== 'undefined' &&
+    typeof navigator !== 'undefined' &&
+    'serviceWorker' in navigator &&
+    window.isSecureContext !== false
+  )
+}
+
+function bindBrowserNotificationPermissionGesture() {
+  if (!browserNotificationSupported() || browserNotifPermissionGestureBound) return
+  const permission = String(window.Notification.permission || 'default')
+  if (permission !== 'default') return
+  browserNotifPermissionGestureBound = true
+  const requestPermissionOnGesture = () => {
+    if (String(window.Notification.permission || 'default') !== 'default') return
+    ensureBrowserNotificationPermission(true)
+  }
+  const listenerOptions = { once: true, passive: true }
+  window.addEventListener('pointerdown', requestPermissionOnGesture, listenerOptions)
+  window.addEventListener('touchstart', requestPermissionOnGesture, listenerOptions)
+  window.addEventListener('click', requestPermissionOnGesture, listenerOptions)
+  window.addEventListener('keydown', requestPermissionOnGesture, { once: true })
+}
+
+async function ensureMimNotificationServiceWorker() {
+  if (!browserServiceWorkerNotificationSupported()) return null
+  if (mimNotificationServiceWorkerRegistration) return mimNotificationServiceWorkerRegistration
+  try {
+    const registration = await navigator.serviceWorker.register('./mim-notification-sw.js?v=20260330-web-notif-sw-01', {
+      scope: './'
+    })
+    mimNotificationServiceWorkerRegistration = registration || await navigator.serviceWorker.ready
+    return mimNotificationServiceWorkerRegistration
+  } catch (error) {
+    console.error('Failed to register notification service worker:', error)
+    return null
+  }
+}
 
 function browserNotificationSupported() {
   return typeof window !== 'undefined' && typeof window.Notification === 'function'
 }
 
-async function ensureBrowserNotificationPermission() {
+async function ensureBrowserNotificationPermission(forcePrompt = false) {
   if (!browserNotificationSupported()) return 'denied'
   const currentPermission = String(window.Notification.permission || 'default')
   if (currentPermission !== 'default') return currentPermission
-  if (browserNotifPermissionAsked) return currentPermission
-  if (document.visibilityState !== 'visible') return currentPermission
+  if (browserNotifPermissionAsked && !forcePrompt) return currentPermission
+  if (!forcePrompt && document.visibilityState !== 'visible') return currentPermission
   browserNotifPermissionAsked = true
   if (browserNotifPermissionRequest) return browserNotifPermissionRequest
   browserNotifPermissionRequest = (async () => {
+    let resolvedPermission = 'default'
     try {
       const requestResult = window.Notification.requestPermission()
       if (requestResult && typeof requestResult.then === 'function') {
-        return String(await requestResult)
+        resolvedPermission = String(await requestResult)
+        return resolvedPermission
       }
-      return String(requestResult || window.Notification.permission || 'default')
+      resolvedPermission = String(requestResult || window.Notification.permission || 'default')
+      return resolvedPermission
     } catch (_error) {
+      resolvedPermission = 'denied'
       return 'denied'
     } finally {
+      if (resolvedPermission === 'default') {
+        browserNotifPermissionAsked = false
+      }
       browserNotifPermissionRequest = null
     }
   })()
@@ -2524,6 +2574,39 @@ function buildBrowserNotificationTag(options = {}) {
   return 'mim-notification'
 }
 
+function buildBrowserNotificationData(options = {}) {
+  const threadId = safeChatId(options?.threadId || '')
+  const route = String(options?.route || '').trim().toLowerCase()
+  const scope = safeChatId(options?.scope || '')
+  const userId = safeChatId(options?.userId || '')
+  return {
+    threadId,
+    route,
+    scope,
+    userId,
+    tag: buildBrowserNotificationTag(options)
+  }
+}
+
+function buildBrowserNotificationTargetUrl(options = {}) {
+  try {
+    const url = new URL(window.location.href)
+    url.searchParams.delete('mim_notify')
+    url.searchParams.delete('mim_route')
+    url.searchParams.delete('mim_thread')
+    const threadId = safeChatId(options?.threadId || '')
+    const route = String(options?.route || '').trim().toLowerCase()
+    if (threadId || route) {
+      url.searchParams.set('mim_notify', '1')
+      if (route) url.searchParams.set('mim_route', route)
+      if (threadId) url.searchParams.set('mim_thread', threadId)
+    }
+    return url.toString()
+  } catch (_error) {
+    return String(window.location.href || '')
+  }
+}
+
 function handleBrowserNotificationClick(options = {}) {
   const threadId = safeChatId(options?.threadId || '')
   if (threadId) {
@@ -2539,6 +2622,27 @@ function handleBrowserNotificationClick(options = {}) {
   const route = String(options?.route || '').trim().toLowerCase()
   if (route === 'chat') {
     openChatPanelFromNotification()
+  }
+}
+
+function consumePendingBrowserNotificationFromUrl() {
+  try {
+    const url = new URL(window.location.href)
+    if (url.searchParams.get('mim_notify') !== '1') return false
+    const options = {
+      route: String(url.searchParams.get('mim_route') || '').trim().toLowerCase(),
+      threadId: safeChatId(url.searchParams.get('mim_thread') || '')
+    }
+    url.searchParams.delete('mim_notify')
+    url.searchParams.delete('mim_route')
+    url.searchParams.delete('mim_thread')
+    try {
+      window.history.replaceState({}, document.title, url.toString())
+    } catch (_error) {}
+    handleBrowserNotificationClick(options)
+    return true
+  } catch (_error) {
+    return false
   }
 }
 
@@ -2596,6 +2700,18 @@ if (!window.__chatNotifyOpenHandlerBound) {
   })
 }
 
+if (browserServiceWorkerNotificationSupported() && !window.__mimNotificationSwMessageBound) {
+  window.__mimNotificationSwMessageBound = true
+  navigator.serviceWorker.addEventListener('message', event => {
+    const type = String(event?.data?.type || '').trim()
+    if (type !== 'mim-notification-click') return
+    handleBrowserNotificationClick(event?.data?.options || {})
+  })
+  ensureMimNotificationServiceWorker()
+}
+
+bindBrowserNotificationPermissionGesture()
+
 window.addEventListener('mim-open-chat-thread', event => {
   const tid = safeChatId(event?.detail?.threadId || '')
   if (!tid) return
@@ -2615,6 +2731,7 @@ window.addEventListener('mim-open-chat-panel', () => {
 })
 
 window.addEventListener('load', () => {
+  consumePendingBrowserNotificationFromUrl()
   const pendingThread = safeChatId(localStorage.getItem(CHAT_OPEN_STORAGE_KEY) || '')
   if (pendingThread) {
     openChatPageFromNotification(pendingThread)
@@ -2654,15 +2771,29 @@ window.showLocalNotification = async function showLocalNotification(title, body,
   const permission = await ensureBrowserNotificationPermission()
   if (permission !== 'granted') return false
   try {
+    const notificationData = buildBrowserNotificationData(options)
+    const swRegistration = await ensureMimNotificationServiceWorker()
+    if (swRegistration && typeof swRegistration.showNotification === 'function') {
+      await swRegistration.showNotification(titleText, {
+        body: bodyText,
+        tag: notificationData.tag,
+        data: {
+          type: 'mim-notification',
+          options: notificationData,
+          targetUrl: buildBrowserNotificationTargetUrl(notificationData)
+        }
+      })
+      return true
+    }
     const notif = new window.Notification(titleText, {
       body: bodyText,
-      tag: buildBrowserNotificationTag(options)
+      tag: notificationData.tag
     })
     notif.onclick = () => {
       try {
         window.focus()
       } catch (_error) {}
-      handleBrowserNotificationClick(options)
+      handleBrowserNotificationClick(notificationData)
       try {
         notif.close()
       } catch (_error) {}

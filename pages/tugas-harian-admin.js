@@ -169,6 +169,34 @@ function getDateListByTaskFrequency(periode, frekuensi) {
   return getDateListByPeriode(periode)
 }
 
+function inferAdminTaskFrequencyFromDates(periode, dateList = []) {
+  const uniqueDates = Array.from(new Set(
+    (Array.isArray(dateList) ? dateList : [])
+      .map(item => String(item || '').slice(0, 10))
+      .filter(item => /^\d{4}-\d{2}-\d{2}$/.test(item))
+      .filter(item => String(item).startsWith(`${periode}-`))
+  )).sort()
+
+  if (!uniqueDates.length) return 'harian'
+
+  const monthlyDates = getDateListByTaskFrequency(periode, 'bulanan')
+  if (uniqueDates.length === 1) {
+    return uniqueDates[0] === String(monthlyDates[0] || '') ? 'bulanan' : 'harian'
+  }
+
+  const diffs = []
+  for (let i = 1; i < uniqueDates.length; i += 1) {
+    const prev = new Date(`${uniqueDates[i - 1]}T00:00:00`)
+    const current = new Date(`${uniqueDates[i]}T00:00:00`)
+    if (Number.isNaN(prev.getTime()) || Number.isNaN(current.getTime())) continue
+    const diff = Math.round((current.getTime() - prev.getTime()) / (24 * 60 * 60 * 1000))
+    diffs.push(diff)
+  }
+
+  if (diffs.length && diffs.every(diff => diff >= 6 && diff <= 8)) return 'pekanan'
+  return 'harian'
+}
+
 function getNextPeriode(periode) {
   const text = String(periode || '').trim()
   if (!/^\d{4}-\d{2}$/.test(text)) return ''
@@ -176,19 +204,6 @@ function getNextPeriode(periode) {
   if (!Number.isFinite(y) || !Number.isFinite(m)) return ''
   const next = new Date(y, m, 1)
   return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`
-}
-
-function shiftDateToNextMonth(dateText) {
-  const text = String(dateText || '').trim()
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return ''
-  const [y, m, d] = text.split('-').map(Number)
-  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return ''
-  const nextStart = new Date(y, m, 1)
-  const year = nextStart.getFullYear()
-  const month = nextStart.getMonth() + 1
-  const maxDay = new Date(year, month, 0).getDate()
-  const day = Math.min(d, maxDay)
-  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 }
 
 function normalizeTaskText(raw) {
@@ -790,11 +805,8 @@ async function setAdminDailyTaskToNextMonth() {
     const sourceDates = Array.isArray(group.tanggalList) && group.tanggalList.length
       ? group.tanggalList
       : []
-    const targetDates = sourceDates
-      .map(src => shiftDateToNextMonth(src))
-      .map(dateText => shiftToNonAhad(dateText))
-      .filter(dateText => String(dateText || '').startsWith(`${nextPeriode}-`))
-      .filter(Boolean)
+    const inferredFrequency = inferAdminTaskFrequencyFromDates(periode, sourceDates)
+    const targetDates = getDateListByTaskFrequency(nextPeriode, inferredFrequency)
 
     targetDates.forEach(tanggal => {
       const key = `${tanggal}__${String(group.judul || '').trim().toLowerCase()}`
