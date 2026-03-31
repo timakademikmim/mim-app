@@ -1,7 +1,46 @@
 ﻿;(function initGuruExamHtmlUtils() {
   if (window.guruExamHtmlUtils) return
 
-  function buildExamIsiTitikExtraLineHtml({ items, isAr, escapeHtml }) {
+  const ARABIC_INLINE_RE = /[\u0600-\u06FF\u0750-\u077F\u0870-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/u
+  const ARABIC_INLINE_RUN_RE = /[\u0600-\u06FF\u0750-\u077F\u0870-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]+/gu
+
+  function hasInlineArabic(text) {
+    return ARABIC_INLINE_RE.test(String(text || ''))
+  }
+
+  function tokenizeMixedInlineText(text) {
+    const source = String(text || '')
+    if (!source) return []
+    const tokens = []
+    let lastIndex = 0
+    ARABIC_INLINE_RUN_RE.lastIndex = 0
+    let match = ARABIC_INLINE_RUN_RE.exec(source)
+    while (match) {
+      if (match.index > lastIndex) {
+        tokens.push({ kind: 'latin', text: source.slice(lastIndex, match.index) })
+      }
+      tokens.push({ kind: 'arabic', text: match[0] })
+      lastIndex = match.index + match[0].length
+      match = ARABIC_INLINE_RUN_RE.exec(source)
+    }
+    if (lastIndex < source.length) {
+      tokens.push({ kind: 'latin', text: source.slice(lastIndex) })
+    }
+    return tokens
+  }
+
+  function renderExamInlineTextHtml(text, escapeHtml, forceArabic = false) {
+    const source = String(text || '')
+    if (!source) return ''
+    if (forceArabic || !hasInlineArabic(source)) return escapeHtml(source)
+    return tokenizeMixedInlineText(source)
+      .map(token => (token.kind === 'arabic'
+        ? `<span class="mixed-ar">${escapeHtml(token.text)}</span>`
+        : escapeHtml(token.text)))
+      .join('')
+  }
+
+  function buildExamIsiTitikExtraLineHtml({ items, isAr, escapeHtml, renderText }) {
     const fragSet = new Set()
     ;(items || []).forEach(item => {
       const frags = Array.isArray(item?.fragments) ? item.fragments : []
@@ -13,7 +52,7 @@
     const list = [...fragSet]
     if (!list.length) return ''
     const label = isAr ? 'خيارات الكلمات' : 'Pilihan kata'
-    return `<p><strong>${escapeHtml(label)}:</strong> (${escapeHtml(list.join(', '))})</p>`
+    return `<p><strong>${escapeHtml(label)}:</strong> (${renderText(list.join(', '), isAr)})</p>`
   }
 
   function buildExamMatchingColumns(items) {
@@ -43,8 +82,8 @@
     return letters[Number(index || 0) % letters.length]
   }
 
-  function buildExamBrowserQuestionTitleHtml({ q, no, lang, escapeHtml, formatExamMarker, formatExamNumber }) {
-    return `<div class="q-title">${escapeHtml(formatExamMarker(formatExamNumber(no, lang), lang))} ${escapeHtml(String(q?.text || '-'))}</div>`
+  function buildExamBrowserQuestionTitleHtml({ q, no, lang, isAr, escapeHtml, formatExamMarker, formatExamNumber, renderText }) {
+    return `<div class="q-title">${escapeHtml(formatExamMarker(formatExamNumber(no, lang), lang))} ${renderText(String(q?.text || '-'), isAr)}</div>`
   }
 
   function getExamPgGridClass(opts, isAr) {
@@ -55,7 +94,7 @@
     return 'pg-grid-1'
   }
 
-  function buildExamBrowserPgQuestionHtml({ q, qText, lang, isAr, escapeHtml, formatExamMarker }) {
+  function buildExamBrowserPgQuestionHtml({ q, qText, lang, isAr, escapeHtml, formatExamMarker, renderText }) {
     const opts = q?.options || {}
     const mA = isAr ? 'أ' : 'a'
     const mB = isAr ? 'ب' : 'b'
@@ -66,21 +105,21 @@
       <li>
         ${qText}
         <div class="pg-grid ${gridClass}">
-          <div>${escapeHtml(formatExamMarker(mA, lang))} ${escapeHtml(String(opts.a || '-'))}</div>
-          <div>${escapeHtml(formatExamMarker(mB, lang))} ${escapeHtml(String(opts.b || '-'))}</div>
-          <div>${escapeHtml(formatExamMarker(mC, lang))} ${escapeHtml(String(opts.c || '-'))}</div>
-          <div>${escapeHtml(formatExamMarker(mD, lang))} ${escapeHtml(String(opts.d || '-'))}</div>
+          <div>${escapeHtml(formatExamMarker(mA, lang))} ${renderText(String(opts.a || '-'), isAr)}</div>
+          <div>${escapeHtml(formatExamMarker(mB, lang))} ${renderText(String(opts.b || '-'), isAr)}</div>
+          <div>${escapeHtml(formatExamMarker(mC, lang))} ${renderText(String(opts.c || '-'), isAr)}</div>
+          <div>${escapeHtml(formatExamMarker(mD, lang))} ${renderText(String(opts.d || '-'), isAr)}</div>
         </div>
       </li>
     `
   }
 
-  function buildExamBrowserPairQuestionHtml({ q, qText, lang, isAr, escapeHtml, formatExamMarker, formatExamNumber, getArabicLetterByIndex }) {
+  function buildExamBrowserPairQuestionHtml({ q, qText, lang, isAr, escapeHtml, formatExamMarker, formatExamNumber, getArabicLetterByIndex, renderText }) {
     const pairs = Array.isArray(q?.pairs) ? q.pairs : []
     const rows = pairs.map((pair, i) => `
       <tr>
-        <td>${escapeHtml(formatExamMarker(formatExamNumber(i + 1, lang), lang))} ${escapeHtml(String(pair?.a || '-'))}</td>
-        <td>${escapeHtml(formatExamMarker((isAr ? getArabicLetterByIndex(i) : String.fromCharCode(65 + i)), lang))} ${escapeHtml(String(pair?.b || '-'))}</td>
+        <td>${escapeHtml(formatExamMarker(formatExamNumber(i + 1, lang), lang))} ${renderText(String(pair?.a || '-'), isAr)}</td>
+        <td>${escapeHtml(formatExamMarker((isAr ? getArabicLetterByIndex(i) : String.fromCharCode(65 + i)), lang))} ${renderText(String(pair?.b || '-'), isAr)}</td>
       </tr>
     `).join('')
     return `
@@ -103,12 +142,13 @@
     escapeHtml,
     formatExamMarker,
     formatExamNumber,
-    getArabicLetterByIndex
+    getArabicLetterByIndex,
+    renderText
   }) {
     const no = idx + 1
-    const qText = buildExamBrowserQuestionTitleHtml({ q, no, lang, escapeHtml, formatExamMarker, formatExamNumber })
-    if (section.type === 'pilihan-ganda') return buildExamBrowserPgQuestionHtml({ q, qText, lang, isAr, escapeHtml, formatExamMarker })
-    if (section.type === 'pasangkan-kata') return buildExamBrowserPairQuestionHtml({ q, qText, lang, isAr, escapeHtml, formatExamMarker, formatExamNumber, getArabicLetterByIndex })
+    const qText = buildExamBrowserQuestionTitleHtml({ q, no, lang, isAr, escapeHtml, formatExamMarker, formatExamNumber, renderText })
+    if (section.type === 'pilihan-ganda') return buildExamBrowserPgQuestionHtml({ q, qText, lang, isAr, escapeHtml, formatExamMarker, renderText })
+    if (section.type === 'pasangkan-kata') return buildExamBrowserPairQuestionHtml({ q, qText, lang, isAr, escapeHtml, formatExamMarker, formatExamNumber, getArabicLetterByIndex, renderText })
     return `<li>${qText}</li>`
   }
 
@@ -126,19 +166,20 @@
     const headingParts = getExamPrintTypeParts(section.type, sectionIndex, lang)
     const instruksiModel = String(section?.instruction || '').trim()
     const items = section.items || []
+    const renderText = (value, forceArabic = isAr) => renderExamInlineTextHtml(value, escapeHtml, forceArabic)
     if (section.type === 'pasangkan-kata') {
       const matchingCols = buildExamMatchingColumns(items)
       const maxRows = Math.max(matchingCols.columnA.length, matchingCols.columnB.length)
       const rowsHtml = Array.from({ length: maxRows }, (_item, idx) => `
         <tr>
-          <td>${escapeHtml(String(matchingCols.columnA[idx] || '-'))}</td>
-          <td>${escapeHtml(String(matchingCols.columnB[idx] || '-'))}</td>
+          <td>${renderText(String(matchingCols.columnA[idx] || '-'))}</td>
+          <td>${renderText(String(matchingCols.columnB[idx] || '-'))}</td>
         </tr>
       `).join('')
       return `
         <section class="sec">
-          <h3><strong>${escapeHtml(headingParts.marker)}</strong> ${escapeHtml(headingParts.label)}</h3>
-          ${instruksiModel ? `<p>${escapeHtml(instruksiModel)}</p>` : ''}
+          <h3><strong>${escapeHtml(headingParts.marker)}</strong> ${renderText(headingParts.label)}</h3>
+          ${instruksiModel ? `<p>${renderText(instruksiModel)}</p>` : ''}
           <table class="pair-table">
             <thead><tr><th>${isAr ? 'القائمة أ' : 'Qoimah A'}</th><th>${isAr ? 'القائمة ب' : 'Qoimah B'}</th></tr></thead>
             <tbody>${rowsHtml}</tbody>
@@ -147,7 +188,7 @@
       `
     }
     const extraLine = section.type === 'isi-titik'
-      ? buildExamIsiTitikExtraLineHtml({ items, isAr, escapeHtml })
+      ? buildExamIsiTitikExtraLineHtml({ items, isAr, escapeHtml, renderText })
       : ''
     const questionsHtml = items.map((q, idx) => buildExamBrowserQuestionHtml({
       section,
@@ -158,12 +199,13 @@
       escapeHtml,
       formatExamMarker,
       formatExamNumber,
-      getArabicLetterByIndex
+      getArabicLetterByIndex,
+      renderText
     })).join('')
     return `
       <section class="sec">
-        <h3><strong>${escapeHtml(headingParts.marker)}</strong> ${escapeHtml(headingParts.label)}</h3>
-        ${instruksiModel ? `<p>${escapeHtml(instruksiModel)}</p>` : ''}
+        <h3><strong>${escapeHtml(headingParts.marker)}</strong> ${renderText(headingParts.label)}</h3>
+        ${instruksiModel ? `<p>${renderText(instruksiModel)}</p>` : ''}
         ${extraLine}
         <ol>${questionsHtml}</ol>
       </section>
@@ -221,6 +263,7 @@
     .pg-grid > div { font-size: ${contentFontSize}; }
     .pair-table { border-collapse: collapse; width: 100%; margin-top: 4px; }
     .pair-table th, .pair-table td { border: 1px solid #999; padding: 4px 6px; font-size: ${pairFontSize}; text-align: ${isAr ? 'right' : 'left'}; }
+    .mixed-ar { display:inline-block; direction:rtl; unicode-bidi:isolate-override; white-space:pre-wrap; font-family:'Traditional Arabic','Times New Roman',serif; font-size:1.15em; line-height:1; }
     @media print { body { margin: 10mm; } }
   </style>
 </head>
@@ -248,8 +291,9 @@
   }
 
   function buildExamWordQuestionHtml({ section, q, idx, lang, isAr, markerHtml, escapeHtml }) {
+    const renderText = value => renderExamInlineTextHtml(value, escapeHtml, isAr)
     const no = idx + 1
-    const qText = `<div class="q-title">${markerHtml(formatExamNumber(no, lang))} ${escapeHtml(String(q?.text || '-'))}</div>`
+    const qText = `<div class="q-title">${markerHtml(formatExamNumber(no, lang))} ${renderText(String(q?.text || '-'))}</div>`
     if (section.type === 'pilihan-ganda') {
       const opts = q?.options || {}
       const mA = isAr ? 'أ' : 'a'
@@ -258,10 +302,10 @@
       const mD = isAr ? 'د' : 'd'
       const gridClass = getExamPgGridClass(opts, isAr)
       return `<li>${qText}<div class="pg-grid ${gridClass}">
-        <div>${markerHtml(mA)} ${escapeHtml(String(opts.a || '-'))}</div>
-        <div>${markerHtml(mB)} ${escapeHtml(String(opts.b || '-'))}</div>
-        <div>${markerHtml(mC)} ${escapeHtml(String(opts.c || '-'))}</div>
-        <div>${markerHtml(mD)} ${escapeHtml(String(opts.d || '-'))}</div>
+        <div>${markerHtml(mA)} ${renderText(String(opts.a || '-'))}</div>
+        <div>${markerHtml(mB)} ${renderText(String(opts.b || '-'))}</div>
+        <div>${markerHtml(mC)} ${renderText(String(opts.c || '-'))}</div>
+        <div>${markerHtml(mD)} ${renderText(String(opts.d || '-'))}</div>
       </div></li>`
     }
     return `<li>${qText}</li>`
@@ -271,16 +315,17 @@
     const headingParts = getExamPrintTypeParts(section.type, sectionIndex, lang)
     const instruksiModel = String(section?.instruction || '').trim()
     const items = section.items || []
+    const renderText = value => renderExamInlineTextHtml(value, escapeHtml, isAr)
     if (section.type === 'pasangkan-kata') {
       const matchingCols = buildExamMatchingColumns(items)
       const maxRows = Math.max(matchingCols.columnA.length, matchingCols.columnB.length)
       const rowsHtml = Array.from({ length: maxRows }, (_item, idx) => `
         <tr>
-          <td>${escapeHtml(String(matchingCols.columnA[idx] || '-'))}</td>
-          <td>${escapeHtml(String(matchingCols.columnB[idx] || '-'))}</td>
+          <td>${renderText(String(matchingCols.columnA[idx] || '-'))}</td>
+          <td>${renderText(String(matchingCols.columnB[idx] || '-'))}</td>
         </tr>
       `).join('')
-      return `<section class="sec"><h3><strong>${isAr ? `<span class="ar-marker">${escapeHtml(headingParts.marker)}</span>` : escapeHtml(headingParts.marker)}</strong> ${escapeHtml(headingParts.label)}</h3>${instruksiModel ? `<p>${escapeHtml(instruksiModel)}</p>` : ''}<table class="pair-table"><thead><tr><th>${isAr ? 'القائمة أ' : 'Qoimah A'}</th><th>${isAr ? 'القائمة ب' : 'Qoimah B'}</th></tr></thead><tbody>${rowsHtml}</tbody></table></section>`
+      return `<section class="sec"><h3><strong>${isAr ? `<span class="ar-marker">${escapeHtml(headingParts.marker)}</span>` : escapeHtml(headingParts.marker)}</strong> ${renderText(headingParts.label)}</h3>${instruksiModel ? `<p>${renderText(instruksiModel)}</p>` : ''}<table class="pair-table"><thead><tr><th>${isAr ? 'القائمة أ' : 'Qoimah A'}</th><th>${isAr ? 'القائمة ب' : 'Qoimah B'}</th></tr></thead><tbody>${rowsHtml}</tbody></table></section>`
     }
     const questionsHtml = items.map((q, idx) => buildExamWordQuestionHtml({
       section,
@@ -291,7 +336,7 @@
       markerHtml,
       escapeHtml
     })).join('')
-    return `<section class="sec"><h3><strong>${isAr ? `<span class="ar-marker">${escapeHtml(headingParts.marker)}</span>` : escapeHtml(headingParts.marker)}</strong> ${escapeHtml(headingParts.label)}</h3>${instruksiModel ? `<p>${escapeHtml(instruksiModel)}</p>` : ''}<ol>${questionsHtml}</ol></section>`
+    return `<section class="sec"><h3><strong>${isAr ? `<span class="ar-marker">${escapeHtml(headingParts.marker)}</span>` : escapeHtml(headingParts.marker)}</strong> ${renderText(headingParts.label)}</h3>${instruksiModel ? `<p>${renderText(instruksiModel)}</p>` : ''}<ol>${questionsHtml}</ol></section>`
   }
 
   function buildExamWordSectionsHtml({ sections, lang, isAr, markerHtml, escapeHtml, getExamPrintTypeParts }) {
@@ -348,6 +393,7 @@ li { margin: 8px 0; font-size: ${contentFontSize}; }
 .pair-table { border-collapse: collapse; width: 100%; margin-top: 4px; }
 .pair-table th, .pair-table td { border: 1px solid #999; padding: 4px 6px; font-size: ${pairFontSize}; text-align: ${isAr ? 'right' : 'left'}; }
 .ar-marker { display:inline-block; white-space:nowrap; direction:rtl; unicode-bidi:isolate-override; min-width:20px; }
+.mixed-ar { display:inline-block; direction:rtl; unicode-bidi:isolate-override; white-space:pre-wrap; font-family:'Traditional Arabic','Times New Roman',serif; font-size:1.15em; line-height:1; }
 * { font-family: ${wordFontFamily}; ${wordBidiCss} }
 </style></head>
 <body>

@@ -12357,14 +12357,7 @@ function renderGuruUjianSectionRows(sourceSections = null) {
   const safeCount = Math.max(0, Math.min(200, totalCount))
   const normalized = applyGuruUjianScoreDrafts(normalizeGuruUjianSections(safeCount, baseSections))
   const scorePlan = buildGuruUjianScorePlan(normalized, ujianGuruState.activeJadwal)
-  ujianGuruState.sectionDefs = normalized.map(item => ({
-    type: item.type,
-    end: item.end,
-    words: item.wordPool,
-    count: item.count,
-    score: item.score,
-    instruction: item.instruction
-  }))
+  ujianGuruState.sectionDefs = buildGuruUjianSectionDefs(normalized)
   const totalEl = document.getElementById('guru-ujian-jumlah')
   if (totalEl) totalEl.value = String(normalized[normalized.length - 1]?.end || 0)
   if (scoreWrap) {
@@ -12694,6 +12687,124 @@ async function createExamPdfDoc(jadwal, soal) {
       y += lineStep
     })
   }
+  const mixedArabicRe = /[\u0600-\u06FF\u0750-\u077F\u0870-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/u
+  const containsMixedArabic = text => mixedArabicRe.test(String(text || ''))
+  const tokenizeMixedText = text => {
+    const source = String(text || '')
+    if (!source) return []
+    const parts = source.match(/\s+|[\u0600-\u06FF\u0750-\u077F\u0870-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]+|[^\s\u0600-\u06FF\u0750-\u077F\u0870-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]+/gu) || []
+    return parts.map(part => ({
+      kind: /^\s+$/u.test(part) ? 'space' : (containsMixedArabic(part) ? 'arabic' : 'latin'),
+      text: part
+    }))
+  }
+  const measureMixedTokenWidth = token => {
+    const raw = String(token?.text || '')
+    if (!raw) return 0
+    try {
+      if (token?.kind === 'arabic' && arabicRegularReady) {
+        doc.setFont(EXAM_ARABIC_FONT_NAME, 'normal')
+      } else {
+        setNormal()
+      }
+      return Number(doc.getTextWidth(raw) || 0)
+    } catch (_err) {
+      return 0
+    } finally {
+      setNormal()
+    }
+  }
+  const buildMixedWrappedLines = (text, wrapWidth) => {
+    const tokens = tokenizeMixedText(text)
+    const lines = []
+    let current = []
+    let currentWidth = 0
+    const pushCurrent = () => {
+      while (current.length && current[0]?.kind === 'space') current.shift()
+      while (current.length && current[current.length - 1]?.kind === 'space') current.pop()
+      if (current.length) lines.push(current)
+      current = []
+      currentWidth = 0
+    }
+    tokens.forEach(token => {
+      if (!current.length && token.kind === 'space') return
+      const tokenWidth = measureMixedTokenWidth(token)
+      const shouldBreak = current.length && token.kind !== 'space' && (currentWidth + tokenWidth > wrapWidth)
+      if (shouldBreak) pushCurrent()
+      if (!current.length && token.kind === 'space') return
+      current.push(token)
+      currentWidth += tokenWidth
+    })
+    pushCurrent()
+    return lines
+  }
+  const drawMixedLine = (tokens, indent = 0) => {
+    let x = margin + indent
+    tokens.forEach(token => {
+      const raw = String(token?.text || '')
+      if (!raw) return
+      const tokenWidth = measureMixedTokenWidth(token)
+      if (token.kind === 'space') {
+        x += tokenWidth
+        return
+      }
+      if (token.kind === 'arabic' && arabicRegularReady) {
+        doc.setFont(EXAM_ARABIC_FONT_NAME, 'normal')
+        doc.text(`\u202B${raw}\u202C`, x + tokenWidth, y, { align: 'right' })
+      } else {
+        setNormal()
+        doc.text(raw, x, y)
+      }
+      x += tokenWidth
+    })
+    setNormal()
+  }
+  const drawWrappedSmart = (text, wrapWidth, indent = 0) => {
+    if (isAr || !containsMixedArabic(text)) {
+      drawWrapped(text, wrapWidth, indent)
+      return
+    }
+    const lines = buildMixedWrappedLines(text, wrapWidth)
+    if (!lines.length) {
+      drawWrapped(text, wrapWidth, indent)
+      return
+    }
+    lines.forEach(tokens => {
+      if (y > 285) {
+        doc.addPage()
+        y = margin
+      }
+      drawMixedLine(tokens, indent)
+      y += lineStep
+    })
+  }
+  const drawTextAtSmart = (text, xPos) => {
+    const raw = String(text || '')
+    if (!raw) return
+    if (isAr || !containsMixedArabic(raw)) {
+      doc.text(raw, xPos, y)
+      return
+    }
+    let x = xPos
+    tokenizeMixedText(raw).forEach(token => {
+      const tokenRaw = String(token?.text || '')
+      if (!tokenRaw) return
+      const tokenWidth = measureMixedTokenWidth(token)
+      if (token.kind === 'space') {
+        x += tokenWidth
+        return
+      }
+      if (token.kind === 'arabic' && arabicRegularReady) {
+        doc.setFont(EXAM_ARABIC_FONT_NAME, 'normal')
+        doc.text(`\u202B${tokenRaw}\u202C`, x + tokenWidth, y, { align: 'right' })
+      } else {
+        setNormal()
+        doc.text(tokenRaw, x, y)
+      }
+      x += tokenWidth
+    })
+    setNormal()
+  }
   const toIsoDateText = value => {
     const raw = String(value || '').trim()
     if (!raw) return ''
@@ -12891,7 +13002,7 @@ async function createExamPdfDoc(jadwal, soal) {
     y += lineStep
     if (sectionInstruction) {
       setNormal()
-      drawWrapped(sectionInstruction, usableWidth - 4, 4)
+      drawWrappedSmart(sectionInstruction, usableWidth - 4, 4)
       y += blockGap
     }
 
@@ -12908,7 +13019,7 @@ async function createExamPdfDoc(jadwal, soal) {
       const fragList = [...fragSet]
       if (fragList.length) {
         const fragLine = `Pilihan kata: (${fragList.join(', ')})`
-        drawWrapped(fragLine, usableWidth - optionIndent, optionIndent)
+        drawWrappedSmart(fragLine, usableWidth - optionIndent, optionIndent)
         y += blockGap
       }
     }
@@ -12944,8 +13055,8 @@ async function createExamPdfDoc(jadwal, soal) {
             doc.text(left, lineX(optionIndent), y, { align: 'right' })
             doc.text(right, lineX(optionIndent + 60), y, { align: 'right' })
           } else {
-            doc.text(left, margin + optionIndent, y)
-            doc.text(right, margin + optionIndent + 60, y)
+            drawTextAtSmart(left, margin + optionIndent)
+            drawTextAtSmart(right, margin + optionIndent + 60)
           }
           y += lineStep
         }
@@ -12971,7 +13082,7 @@ async function createExamPdfDoc(jadwal, soal) {
         )
       } else {
         const title = `${formatExamMarker(formatExamNumber(no, lang), lang)} ${qTextRaw}`
-        drawWrapped(title, usableWidth - questionIndent, questionIndent)
+        drawWrappedSmart(title, usableWidth - questionIndent, questionIndent)
       }
       if (isPg) {
         const opts = q?.options || {}
@@ -12980,10 +13091,15 @@ async function createExamPdfDoc(jadwal, soal) {
         const cTxt = `c. ${String(opts.c || '-')}`
         const dTxt = `d. ${String(opts.d || '-')}`
         if (!isAr) {
+          const hasMixedOption = [aTxt, bTxt, cTxt, dTxt].some(containsMixedArabic)
           const xStart = margin + optionIndent
           const col4 = pgOptionLayout.col4
           const col2 = pgOptionLayout.col2
-          if (pgOptionLayout.mode === 'one-line') {
+          if (hasMixedOption) {
+            ;[aTxt, bTxt, cTxt, dTxt].forEach(text => {
+              drawWrappedSmart(text, usableWidth - optionIndent, optionIndent)
+            })
+          } else if (pgOptionLayout.mode === 'one-line') {
             if (y > 285) {
               doc.addPage()
               y = margin
@@ -14923,38 +15039,8 @@ function buildGuruExamScanWorkspaceHtml(scanData) {
 }
 
 async function openGuruExamScanWorkspace(rowKeyEncoded) {
-  const decodedKey = decodeURIComponent(String(rowKeyEncoded || '')).trim()
-  if (!decodedKey) return
-  const row = findGuruUjianRowByKey(decodedKey)
-  if (!row?.jadwal) return
-  const content = document.getElementById('guru-content')
-  if (!content) return
-  content.innerHTML = 'Loading workspace scan...'
-
-  const soal = resolveGuruUjianActiveSoal(decodedKey, row.jadwal.id)
-  if (!soal) {
-    alert('Soal untuk kelas ini belum dibuat. Buat atau simpan draft soal terlebih dahulu sebelum membuka workspace scan.')
-    return
-  }
-  const participants = await loadGuruExamParticipantsByRow(row.jadwal.id, row.kelasNama)
-  if (participants === null) {
-    backToGuruUjianList()
-    return
-  }
-  const upload = ujianGuruState.scanUploadsByRow[decodedKey] || null
-  ujianGuruState.activeScanData = {
-    rowKey: decodedKey,
-    jadwal: row.jadwal,
-    kelasLabel: String(row.kelasNama || '-'),
-    mapelLabel: String(row.mapelLabel || getExamRowMapelLabel(row.jadwal)),
-    soal,
-    participants,
-    examCode: String(participants[0]?.exam_code || ''),
-    pgCount: countGuruExamMultipleChoiceQuestions(soal),
-    answerKey: extractGuruExamMultipleChoiceAnswerKey(soal),
-    upload
-  }
-  content.innerHTML = buildGuruExamScanWorkspaceHtml(ujianGuruState.activeScanData)
+  void rowKeyEncoded
+  alert('Fitur scan jawaban sedang dinonaktifkan sementara sampai versi yang lebih stabil siap dipakai.')
 }
 
 window.openGuruExamScanWorkspace = openGuruExamScanWorkspace
@@ -15031,7 +15117,6 @@ function renderGuruExamFolderRowsHtml(sortedList, soalMap) {
           <div style="display:flex; gap:6px; flex-wrap:wrap;">
             <button type="button" class="modal-btn modal-btn-primary" onclick="openGuruUjianEditorPage('${encodeURIComponent(rowKey)}')" style="flex:1 1 120px;">${soal ? 'Edit Soal' : 'Buat Soal'}</button>
             <button type="button" class="modal-btn" ${soal ? '' : 'disabled'} onclick="chooseAndPrintGuruUjianByRow('${encodeURIComponent(rowKey)}')" style="flex:1 1 100px;">Cetak</button>
-            <button type="button" class="modal-btn" ${soal ? '' : 'disabled'} onclick="openGuruExamScanWorkspace('${encodeURIComponent(rowKey)}')" style="flex:1 1 120px;">Workspace Scan</button>
           </div>
         </td>
       </tr>
@@ -15352,12 +15437,17 @@ function resolveGuruUjianActiveSoal(decodedKey, jadwalId) {
 
 function buildGuruUjianSectionDefs(sections) {
   return (Array.isArray(sections) ? sections : []).map(item => ({
-    type: item.type,
-    end: item.end,
-    words: item.wordPool || '',
-    count: item.blankCount || item.count || null,
-    score: item.score ?? null,
-    instruction: item.instruction || ''
+    type: normalizeExamQuestionType(item?.type, 'pilihan-ganda'),
+    start: Number.isFinite(Number(item?.start)) ? Math.max(1, Math.round(Number(item.start))) : null,
+    end: Number.isFinite(Number(item?.end)) ? Math.max(1, Math.round(Number(item.end))) : null,
+    words: String(item?.wordPool || item?.words || '').trim(),
+    wordPool: String(item?.wordPool || item?.words || '').trim(),
+    blankCount: Number.isFinite(Number(item?.blankCount)) ? Math.max(1, Math.round(Number(item.blankCount))) : null,
+    count: Number.isFinite(Number(item?.count))
+      ? Math.max(1, Math.round(Number(item.count)))
+      : (Number.isFinite(Number(item?.blankCount)) ? Math.max(1, Math.round(Number(item.blankCount))) : null),
+    score: item?.score ?? null,
+    instruction: String(item?.instruction || item?.instruksi || '').trim()
   }))
 }
 
@@ -15670,7 +15760,7 @@ async function saveGuruUjian(submitMode) {
     if (!String(data.kelas_target || '').trim()) ujianGuruState.soalByJadwal.set(`${String(data.jadwal_id || '')}|*`, data)
   }
 
-  const normalizedSections = sectionsForStorage
+  const normalizedSections = buildGuruUjianSectionDefs(scoreValidation.sections || sectionsForStorage)
   ujianGuruState.sectionDefs = buildGuruUjianSectionDefs(normalizedSections)
   const totalInput = document.getElementById('guru-ujian-jumlah')
   if (totalInput) totalInput.value = String(estimateGuruUjianTotalFromSections(normalizedSections, questions.length))
