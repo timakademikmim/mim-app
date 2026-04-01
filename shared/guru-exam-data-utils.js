@@ -50,13 +50,44 @@
     return { mapelPairsByClass, mapelPairsByPerangkatan, normalizedClassMap }
   }
 
+  function resolveVisibleClassList({
+    item,
+    distKey,
+    normalizedClassMap,
+    normalizeExamLookup,
+    getExamRowClassList
+  }) {
+    var allowedClasses = Array.isArray(normalizedClassMap && normalizedClassMap.get(distKey))
+      ? normalizedClassMap.get(distKey)
+      : []
+    var rowClasses = typeof getExamRowClassList === 'function'
+      ? getExamRowClassList(item, [])
+      : []
+
+    var normalizedAllowedMap = new Map(
+      allowedClasses
+        .map(function (kelasNama) { return String(kelasNama || '').trim() })
+        .filter(Boolean)
+        .map(function (kelasNama) { return [normalizeExamLookup(kelasNama), kelasNama] })
+    )
+
+    if (!normalizedAllowedMap.size) return rowClasses
+    if (!rowClasses.length) return allowedClasses
+
+    return rowClasses.filter(function (kelasNama) {
+      return normalizedAllowedMap.has(normalizeExamLookup(kelasNama))
+    })
+  }
+
   function filterExamScheduleRows({
     jadwalRows = [],
     mapelPairsByClass,
     mapelPairsByPerangkatan,
+    normalizedClassMap,
     normalizeExamLookup,
     parseExamMetaFromSchedule,
-    getExamMapelBaseLabel
+    getExamMapelBaseLabel,
+    getExamRowClassList
   }) {
     return jadwalRows.filter(item => {
       const keyByClass = `${normalizeExamLookup(item.kelas)}|${normalizeExamLookup(item.mapel)}`
@@ -66,7 +97,16 @@
       const perangkatan = String(meta?.perangkatan || '').trim() || String(item?.kelas || '').trim()
       const mapelBase = getExamMapelBaseLabel(String(meta?.mapel_nama || '').trim()) || getExamMapelBaseLabel(item?.mapel)
       const keyByPerangkatan = `${normalizeExamLookup(mapelBase)}|${normalizeExamLookup(perangkatan)}`
-      return mapelPairsByPerangkatan.has(keyByPerangkatan)
+      if (!mapelPairsByPerangkatan.has(keyByPerangkatan)) return false
+
+      const visibleClasses = resolveVisibleClassList({
+        item: item,
+        distKey: keyByPerangkatan,
+        normalizedClassMap: normalizedClassMap,
+        normalizeExamLookup: normalizeExamLookup,
+        getExamRowClassList: getExamRowClassList
+      })
+      return visibleClasses.length > 0
     })
   }
 
@@ -85,15 +125,14 @@
       const perangkatan = String(meta?.perangkatan || '').trim() || String(item?.kelas || '').trim()
       const mapelBase = getExamMapelBaseLabel(String(meta?.mapel_nama || '').trim()) || getExamMapelBaseLabel(item?.mapel)
       const distKey = `${normalizeExamLookup(mapelBase)}|${normalizeExamLookup(perangkatan)}`
-      const fallbackClassNames = normalizedClassMap.get(distKey) || []
-      const kelasList = getExamRowClassList(item, fallbackClassNames)
+      const kelasList = resolveVisibleClassList({
+        item: item,
+        distKey: distKey,
+        normalizedClassMap: normalizedClassMap,
+        normalizeExamLookup: normalizeExamLookup,
+        getExamRowClassList: getExamRowClassList
+      })
       if (!kelasList.length) {
-        examRows.push({
-          rowKey: `${String(item.id || '')}|-`,
-          jadwal: item,
-          kelasNama: '-',
-          mapelLabel: getExamRowMapelLabel(item)
-        })
         return
       }
       kelasList.forEach(kelasNama => {

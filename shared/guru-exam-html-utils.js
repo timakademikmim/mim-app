@@ -63,8 +63,7 @@
     })
     const list = [...fragSet]
     if (!list.length) return ''
-    const label = isAr ? 'خيارات الكلمات' : 'Pilihan kata'
-    return `<p><strong>${escapeHtml(label)}:</strong> (${renderText(list.join(', '), isAr)})</p>`
+    return `<p>(${renderText(list.join(', '), isAr)})</p>`
   }
 
   function buildExamMatchingColumns(items) {
@@ -94,33 +93,99 @@
     return letters[Number(index || 0) % letters.length]
   }
 
+  function getExamOptionKeyByIndex(index) {
+    let n = Math.max(0, Number(index || 0))
+    let out = ''
+    do {
+      out = String.fromCharCode(97 + (n % 26)) + out
+      n = Math.floor(n / 26) - 1
+    } while (n >= 0)
+    return out
+  }
+
+  function getExamOptionOrderValue(key) {
+    const normalized = String(key || '').trim().toLowerCase()
+    if (!/^[a-z]+$/.test(normalized)) return Number.POSITIVE_INFINITY
+    let value = 0
+    for (const ch of normalized) value = (value * 26) + (ch.charCodeAt(0) - 96)
+    return value
+  }
+
+  function getExamPgOptionEntries(options, isAr) {
+    const rows = []
+    if (Array.isArray(options)) {
+      options.forEach((rawVal, idx) => {
+        const value = String(rawVal || '').trim()
+        if (!value) return
+        const key = getExamOptionKeyByIndex(idx)
+        rows.push({
+          key,
+          label: isAr ? getArabicLetterByIndexLocal(idx) : key,
+          value
+        })
+      })
+      return rows
+    }
+    if (options && typeof options === 'object') {
+      Object.entries(options).forEach(([rawKey, rawVal], idx) => {
+        const value = String(rawVal || '').trim()
+        if (!value) return
+        const normalizedKey = /^[a-z]+$/i.test(String(rawKey || '').trim())
+          ? String(rawKey || '').trim().toLowerCase()
+          : getExamOptionKeyByIndex(idx)
+        const order = getExamOptionOrderValue(normalizedKey)
+        const labelIndex = Number.isFinite(order) ? Math.max(0, order - 1) : idx
+        rows.push({
+          key: normalizedKey,
+          label: isAr ? getArabicLetterByIndexLocal(labelIndex) : normalizedKey,
+          value,
+          order,
+          idx
+        })
+      })
+      rows.sort((a, b) => {
+        if (a.order !== b.order) return a.order - b.order
+        return a.idx - b.idx
+      })
+      return rows.map(item => ({ key: item.key, label: item.label, value: item.value }))
+    }
+    return rows
+  }
+
   function buildExamBrowserQuestionTitleHtml({ q, no, lang, isAr, escapeHtml, formatExamMarker, formatExamNumber, renderText }) {
+    if (isAr) {
+      return `<div class="q-title q-title-ar"><span class="q-marker-num">${escapeHtml(String(formatExamNumber(no, lang)))}</span><span class="q-marker-dot">.</span><span class="q-title-text">${renderText(String(q?.text || '-'), isAr)}</span></div>`
+    }
     return `<div class="q-title">${escapeHtml(formatExamMarker(formatExamNumber(no, lang), lang))} ${renderText(String(q?.text || '-'), isAr)}</div>`
   }
 
-  function getExamPgGridClass(opts, isAr) {
-    const values = ['a', 'b', 'c', 'd'].map(key => String(opts?.[key] || '-').trim())
+  function getExamPgGridClass(optionEntries, isAr) {
+    const values = (optionEntries || []).map(item => String(item?.value || '-').trim())
+    if (!values.length) return 'pg-grid-1'
+    const count = values.length
     const maxLen = values.reduce((max, item) => Math.max(max, item.length), 0)
-    if (maxLen <= (isAr ? 10 : 12)) return 'pg-grid-4'
-    if (maxLen <= (isAr ? 22 : 24)) return 'pg-grid-2'
+    if (count >= 4 && maxLen <= (isAr ? 10 : 12)) return 'pg-grid-4'
+    if (count >= 2 && maxLen <= (isAr ? 22 : 24)) return 'pg-grid-2'
     return 'pg-grid-1'
   }
 
   function buildExamBrowserPgQuestionHtml({ q, qText, lang, isAr, escapeHtml, formatExamMarker, renderText }) {
-    const opts = q?.options || {}
-    const mA = isAr ? 'أ' : 'a'
-    const mB = isAr ? 'ب' : 'b'
-    const mC = isAr ? 'ج' : 'c'
-    const mD = isAr ? 'د' : 'd'
-    const gridClass = getExamPgGridClass(opts, isAr)
+    const entries = getExamPgOptionEntries(q?.options || {}, isAr)
+    const safeEntries = entries.length ? entries : [
+      { label: isAr ? 'أ' : 'a', value: '-' },
+      { label: isAr ? 'ب' : 'b', value: '-' }
+    ]
+    const gridClass = getExamPgGridClass(safeEntries, isAr)
+    const optionsHtml = safeEntries.map(item => (
+      isAr
+        ? `<div class="pg-opt-ar"><span class="q-marker-num">${escapeHtml(String(item.label || ''))}</span><span class="q-marker-dot">.</span><span class="q-title-text">${renderText(String(item.value || '-'), isAr)}</span></div>`
+        : `<div>${escapeHtml(formatExamMarker(String(item.label || ''), lang))} ${renderText(String(item.value || '-'), isAr)}</div>`
+    )).join('')
     return `
       <li>
         ${qText}
         <div class="pg-grid ${gridClass}">
-          <div>${escapeHtml(formatExamMarker(mA, lang))} ${renderText(String(opts.a || '-'), isAr)}</div>
-          <div>${escapeHtml(formatExamMarker(mB, lang))} ${renderText(String(opts.b || '-'), isAr)}</div>
-          <div>${escapeHtml(formatExamMarker(mC, lang))} ${renderText(String(opts.c || '-'), isAr)}</div>
-          <div>${escapeHtml(formatExamMarker(mD, lang))} ${renderText(String(opts.d || '-'), isAr)}</div>
+          ${optionsHtml}
         </div>
       </li>
     `
@@ -181,6 +246,30 @@
     const renderText = (value, forceArabic = isAr) => renderExamInlineTextHtml(value, escapeHtml, forceArabic)
     if (section.type === 'pasangkan-kata') {
       const matchingCols = buildExamMatchingColumns(items)
+      if (isAr) {
+        const colAItems = (matchingCols.columnA.length ? matchingCols.columnA : ['-'])
+          .map(item => `<div class="pair-item">${renderText(String(item || '-'))}</div>`)
+          .join('')
+        const colBItems = (matchingCols.columnB.length ? matchingCols.columnB : ['-'])
+          .map(item => `<div class="pair-item">${renderText(String(item || '-'))}</div>`)
+          .join('')
+        return `
+          <section class="sec">
+            <h3><strong>${escapeHtml(headingParts.marker)}</strong> ${renderText(headingParts.label)}</h3>
+            ${instruksiModel ? `<p>${renderText(instruksiModel)}</p>` : ''}
+            <div class="pair-columns pair-columns-ar">
+              <div class="pair-column">
+                <div class="pair-column-title">القائمة أ</div>
+                ${colAItems}
+              </div>
+              <div class="pair-column">
+                <div class="pair-column-title">القائمة ب</div>
+                ${colBItems}
+              </div>
+            </div>
+          </section>
+        `
+      }
       const maxRows = Math.max(matchingCols.columnA.length, matchingCols.columnB.length)
       const rowsHtml = Array.from({ length: maxRows }, (_item, idx) => `
         <tr>
@@ -265,9 +354,14 @@
     .sec { margin-top: 14px; }
     .sec h3 { margin: 0 0 6px 0; font-size: 16px; }
     .sec p { margin: 4px 0; font-size: ${contentFontSize}; }
-    ol { margin: 6px 0 0 0; padding-${isAr ? 'right' : 'left'}: 20px; }
+    ol { margin: 6px 0 0 0; padding-${isAr ? 'right' : 'left'}: 20px; ${isAr ? 'list-style:none;' : ''} }
     li { margin: 8px 0; font-size: ${contentFontSize}; }
     .q-title { margin-bottom: 4px; font-size: ${contentFontSize}; }
+    .q-title-ar { display:grid; grid-template-columns: 2em 0.8em minmax(0,1fr); column-gap:4px; align-items:start; }
+    .q-marker-num { text-align:right; white-space:nowrap; }
+    .q-marker-dot { text-align:center; white-space:nowrap; }
+    .q-title-text { text-align:right; }
+    .pg-opt-ar { display:grid; grid-template-columns: 1.6em 0.7em minmax(0,1fr); column-gap:4px; align-items:start; }
     .pg-grid { display: grid; gap: 2px 18px; margin-${isAr ? 'right' : 'left'}: 20px; }
     .pg-grid.pg-grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     .pg-grid.pg-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -275,6 +369,10 @@
     .pg-grid > div { font-size: ${contentFontSize}; }
     .pair-table { border-collapse: collapse; width: 100%; margin-top: 4px; }
     .pair-table th, .pair-table td { border: 1px solid #999; padding: 4px 6px; font-size: ${pairFontSize}; text-align: ${isAr ? 'right' : 'left'}; }
+    .pair-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 4px; }
+    .pair-columns-ar { margin-right: 18px; }
+    .pair-column-title { margin: 0 0 4px 0; font-weight: 700; text-decoration: underline; font-size: ${pairFontSize}; text-align: ${isAr ? 'right' : 'left'}; }
+    .pair-item { font-size: ${pairFontSize}; line-height: 1.35; margin: 0 0 2px 0; text-align: ${isAr ? 'right' : 'left'}; }
     .mixed-ar { display:inline-block; direction:rtl; unicode-bidi:isolate-override; white-space:pre-wrap; font-family:'Traditional Arabic','Times New Roman',serif; font-size:1.15em; line-height:1; }
     @media print { body { margin: 10mm; } }
   </style>
@@ -305,20 +403,22 @@
   function buildExamWordQuestionHtml({ section, q, idx, lang, isAr, markerHtml, escapeHtml }) {
     const renderText = value => renderExamInlineTextHtml(value, escapeHtml, isAr)
     const no = idx + 1
-    const qText = `<div class="q-title">${markerHtml(formatExamNumber(no, lang))} ${renderText(String(q?.text || '-'))}</div>`
+    const qText = isAr
+      ? `<div class="q-title q-title-ar"><span class="q-marker-num">${escapeHtml(String(formatExamNumber(no, lang)))}</span><span class="q-marker-dot">.</span><span class="q-title-text">${renderText(String(q?.text || '-'))}</span></div>`
+      : `<div class="q-title">${markerHtml(formatExamNumber(no, lang))} ${renderText(String(q?.text || '-'))}</div>`
     if (section.type === 'pilihan-ganda') {
-      const opts = q?.options || {}
-      const mA = isAr ? 'أ' : 'a'
-      const mB = isAr ? 'ب' : 'b'
-      const mC = isAr ? 'ج' : 'c'
-      const mD = isAr ? 'د' : 'd'
-      const gridClass = getExamPgGridClass(opts, isAr)
-      return `<li>${qText}<div class="pg-grid ${gridClass}">
-        <div>${markerHtml(mA)} ${renderText(String(opts.a || '-'))}</div>
-        <div>${markerHtml(mB)} ${renderText(String(opts.b || '-'))}</div>
-        <div>${markerHtml(mC)} ${renderText(String(opts.c || '-'))}</div>
-        <div>${markerHtml(mD)} ${renderText(String(opts.d || '-'))}</div>
-      </div></li>`
+      const entries = getExamPgOptionEntries(q?.options || {}, isAr)
+      const safeEntries = entries.length ? entries : [
+        { label: isAr ? 'أ' : 'a', value: '-' },
+        { label: isAr ? 'ب' : 'b', value: '-' }
+      ]
+      const gridClass = getExamPgGridClass(safeEntries, isAr)
+      const optionsHtml = safeEntries.map(item => (
+        isAr
+          ? `<div class="pg-opt-ar"><span class="q-marker-num">${escapeHtml(String(item.label || ''))}</span><span class="q-marker-dot">.</span><span class="q-title-text">${renderText(String(item.value || '-'))}</span></div>`
+          : `<div>${markerHtml(String(item.label || ''))} ${renderText(String(item.value || '-'))}</div>`
+      )).join('')
+      return `<li>${qText}<div class="pg-grid ${gridClass}">${optionsHtml}</div></li>`
     }
     return `<li>${qText}</li>`
   }
@@ -330,6 +430,15 @@
     const renderText = value => renderExamInlineTextHtml(value, escapeHtml, isAr)
     if (section.type === 'pasangkan-kata') {
       const matchingCols = buildExamMatchingColumns(items)
+      if (isAr) {
+        const colAItems = (matchingCols.columnA.length ? matchingCols.columnA : ['-'])
+          .map(item => `<div class="pair-item">${renderText(String(item || '-'))}</div>`)
+          .join('')
+        const colBItems = (matchingCols.columnB.length ? matchingCols.columnB : ['-'])
+          .map(item => `<div class="pair-item">${renderText(String(item || '-'))}</div>`)
+          .join('')
+        return `<section class="sec"><h3><strong>${isAr ? `<span class="ar-marker">${escapeHtml(headingParts.marker)}</span>` : escapeHtml(headingParts.marker)}</strong> ${renderText(headingParts.label)}</h3>${instruksiModel ? `<p>${renderText(instruksiModel)}</p>` : ''}<div class="pair-columns pair-columns-ar"><div class="pair-column"><div class="pair-column-title">القائمة أ</div>${colAItems}</div><div class="pair-column"><div class="pair-column-title">القائمة ب</div>${colBItems}</div></div></section>`
+      }
       const maxRows = Math.max(matchingCols.columnA.length, matchingCols.columnB.length)
       const rowsHtml = Array.from({ length: maxRows }, (_item, idx) => `
         <tr>
@@ -394,9 +503,14 @@ h1 { text-align: center; font-size: 22px; margin: 0 0 12px 0; }
 .sec { margin-top: 14px; }
 .sec h3 { margin: 0 0 6px 0; font-size: 16px; }
 .sec p { margin: 4px 0; font-size: ${contentFontSize}; }
-ol { margin: 6px 0 0 0; padding-${isAr ? 'right' : 'left'}: 20px; }
+ol { margin: 6px 0 0 0; padding-${isAr ? 'right' : 'left'}: 20px; ${isAr ? 'list-style:none;' : ''} }
 li { margin: 8px 0; font-size: ${contentFontSize}; }
 .q-title { margin-bottom: 4px; font-size: ${contentFontSize}; }
+.q-title-ar { display:grid; grid-template-columns: 2em 0.8em minmax(0,1fr); column-gap:4px; align-items:start; }
+.q-marker-num { text-align:right; white-space:nowrap; }
+.q-marker-dot { text-align:center; white-space:nowrap; }
+.q-title-text { text-align:right; }
+.pg-opt-ar { display:grid; grid-template-columns: 1.6em 0.7em minmax(0,1fr); column-gap:4px; align-items:start; }
 .pg-grid { display: grid; gap: 2px 18px; margin-${isAr ? 'right' : 'left'}: 20px; }
 .pg-grid.pg-grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .pg-grid.pg-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -404,6 +518,10 @@ li { margin: 8px 0; font-size: ${contentFontSize}; }
 .pg-grid > div { font-size: ${contentFontSize}; }
 .pair-table { border-collapse: collapse; width: 100%; margin-top: 4px; }
 .pair-table th, .pair-table td { border: 1px solid #999; padding: 4px 6px; font-size: ${pairFontSize}; text-align: ${isAr ? 'right' : 'left'}; }
+.pair-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 4px; }
+.pair-columns-ar { margin-right: 18px; }
+.pair-column-title { margin: 0 0 4px 0; font-weight: 700; text-decoration: underline; font-size: ${pairFontSize}; text-align: ${isAr ? 'right' : 'left'}; }
+.pair-item { font-size: ${pairFontSize}; line-height: 1.35; margin: 0 0 2px 0; text-align: ${isAr ? 'right' : 'left'}; }
 .ar-marker { display:inline-block; white-space:nowrap; direction:rtl; unicode-bidi:isolate-override; min-width:20px; }
 .mixed-ar { display:inline-block; direction:rtl; unicode-bidi:isolate-override; white-space:pre-wrap; font-family:'Traditional Arabic','Times New Roman',serif; font-size:1.15em; line-height:1; }
 * { font-family: ${wordFontFamily}; ${wordBidiCss} }

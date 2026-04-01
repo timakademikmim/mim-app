@@ -17,6 +17,7 @@
     const raw = String(mapelText || '').trim()
     if (!raw) return ''
     return raw
+      .replace(/\s*\([^)]*\)\s*/g, ' ')
       .replace(/\(\s*(SMP|SMA|Umum)\s*\)/ig, '')
       .replace(/(\s+(SMP|SMA|Umum))+$/i, '')
       .replace(/\s{2,}/g, ' ')
@@ -97,4 +98,3 @@
     getExamRowMapelLabel
   }
 })()
-

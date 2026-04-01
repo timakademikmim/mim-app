@@ -184,26 +184,90 @@
     `
   }
 
+  function getPgOptionKeyByIndex(index) {
+    let n = Math.max(0, Number(index || 0))
+    let out = ''
+    do {
+      out = String.fromCharCode(97 + (n % 26)) + out
+      n = Math.floor(n / 26) - 1
+    } while (n >= 0)
+    return out
+  }
+
+  function getPgOptionOrderValue(key) {
+    const normalized = String(key || '').trim().toLowerCase()
+    if (!/^[a-z]+$/.test(normalized)) return Number.POSITIVE_INFINITY
+    let value = 0
+    for (const ch of normalized) {
+      value = (value * 26) + (ch.charCodeAt(0) - 96)
+    }
+    return value
+  }
+
+  function normalizePgOptionEntries(rawOptions) {
+    const rows = []
+    if (Array.isArray(rawOptions)) {
+      rawOptions.forEach((item, idx) => {
+        const text = String(item || '').trim()
+        if (!text) return
+        rows.push({ key: getPgOptionKeyByIndex(idx), text })
+      })
+      return rows
+    }
+    if (rawOptions && typeof rawOptions === 'object') {
+      Object.entries(rawOptions).forEach(([rawKey, rawVal], idx) => {
+        const text = String(rawVal || '').trim()
+        if (!text) return
+        const normalizedKey = /^[a-z]+$/i.test(String(rawKey || '').trim())
+          ? String(rawKey || '').trim().toLowerCase()
+          : getPgOptionKeyByIndex(idx)
+        rows.push({
+          key: normalizedKey,
+          text,
+          order: getPgOptionOrderValue(normalizedKey),
+          idx
+        })
+      })
+      rows.sort((a, b) => {
+        if (a.order !== b.order) return a.order - b.order
+        return a.idx - b.idx
+      })
+      return rows.map(item => ({ key: item.key, text: item.text }))
+    }
+    return rows
+  }
+
   function buildQuestionPgHtml({ i, localNo, prev, escapeHtml }) {
-    const opts = prev.options || {}
+    const options = normalizePgOptionEntries(prev.options)
+    const values = options.map(item => item.text)
+    while (values.length < 2) values.push('')
+    values.push('')
+    const answerValue = String(prev.answer || '').trim().toLowerCase()
+    const answerOptions = options.length
+      ? options.map(item => `<option value="${escapeHtml(item.key)}" ${answerValue === item.key ? 'selected' : ''}>${escapeHtml(item.key.toUpperCase())}</option>`).join('')
+      : ''
     return `
       <div class="placeholder-card guru-ujian-question-row" data-no="${i}" data-type="pilihan-ganda" style="margin-bottom:8px;">
         <div style="font-weight:700; margin-bottom:6px;">Nomor ${localNo} <span style="font-weight:600; color:#2563eb;">(Pilihan Ganda)</span></div>
         <textarea id="guru-ujian-q-${i}" class="guru-field" rows="2" placeholder="Tulis pertanyaan">${escapeHtml(String(prev.text || ''))}</textarea>
-        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; margin-top:8px;">
-          <input id="guru-ujian-q-${i}-a" class="guru-field" type="text" placeholder="Opsi A" value="${escapeHtml(String(opts.a || ''))}">
-          <input id="guru-ujian-q-${i}-b" class="guru-field" type="text" placeholder="Opsi B" value="${escapeHtml(String(opts.b || ''))}">
-          <input id="guru-ujian-q-${i}-c" class="guru-field" type="text" placeholder="Opsi C" value="${escapeHtml(String(opts.c || ''))}">
-          <input id="guru-ujian-q-${i}-d" class="guru-field" type="text" placeholder="Opsi D" value="${escapeHtml(String(opts.d || ''))}">
+        <div id="guru-ujian-q-${i}-options" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:8px; margin-top:8px;">
+          ${values.map((value, idx) => `
+            <input
+              class="guru-field guru-ujian-pg-option-input"
+              type="text"
+              data-option-index="${idx}"
+              placeholder="Opsi ${escapeHtml(getPgOptionKeyByIndex(idx).toUpperCase())}"
+              value="${escapeHtml(String(value || ''))}"
+              oninput="onGuruUjianPgOptionInput(${i})"
+            >
+          `).join('')}
         </div>
+        <div style="margin-top:6px; font-size:11px; color:#475569;">Minimal 2 opsi. Tambah opsi dengan mengisi kolom kosong terakhir.</div>
         <div style="margin-top:8px;">
           <label class="guru-label">Kunci Jawaban</label>
           <select id="guru-ujian-q-${i}-answer" class="guru-field" style="width:100%; max-width:180px;">
             <option value="">Pilih</option>
-            <option value="A" ${String(prev.answer || '') === 'A' ? 'selected' : ''}>A</option>
-            <option value="B" ${String(prev.answer || '') === 'B' ? 'selected' : ''}>B</option>
-            <option value="C" ${String(prev.answer || '') === 'C' ? 'selected' : ''}>C</option>
-            <option value="D" ${String(prev.answer || '') === 'D' ? 'selected' : ''}>D</option>
+            ${answerOptions}
           </select>
         </div>
       </div>

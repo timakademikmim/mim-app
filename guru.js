@@ -16,6 +16,7 @@ const ATTENDANCE_TABLE = 'absensi_santri'
 const ATTENDANCE_DELEGATION_TABLE = 'absensi_pengganti_tugas'
 const INPUT_NILAI_TABLE = 'nilai_input_akademik'
 const RAPOR_DESC_TABLE = 'rapor_deskripsi_mapel'
+const MAPEL_PATRON_MATERI_TABLE = 'mapel_patron_materi'
 const MONTHLY_REPORT_TABLE = 'laporan_bulanan_wali'
 const MONTHLY_REPORT_STORAGE_BUCKET = 'laporan-bulanan'
 const MONTHLY_REPORT_WA_TEMPLATE_KEY = 'laporan_bulanan_wa_template'
@@ -123,6 +124,22 @@ let absensiDelegationState = {
   byDateKey: new Map(),
   tableMissing: false,
   guruMap: new Map()
+}
+let absensiPatronMateriState = {
+  list: [],
+  lastMateri: '',
+  lastTanggal: '',
+  tableMissing: false,
+  editedByUser: false,
+  currentValue: ''
+}
+let inputNilaiPatronMateriState = {
+  list: [],
+  lastMateri: '',
+  lastTanggal: '',
+  tableMissing: false,
+  editedByUser: false,
+  currentValue: ''
 }
 let currentMapelDetailState = null
 let currentMapelDetailTab = 'absensi'
@@ -311,7 +328,7 @@ async function getActiveTahunAjaran(forceReload = false) {
 }
 
 function saveMapelDetailState(distribusiId, tab) {
-  const validTab = tab === 'nilai' || tab === 'rapor-desc' ? tab : 'absensi'
+  const validTab = normalizeMapelDetailTab(tab)
   const payload = {
     distribusiId: String(distribusiId || ''),
     tab: validTab
@@ -331,9 +348,7 @@ function getMapelDetailState() {
     if (!parsed || typeof parsed !== 'object') return null
     const distribusiId = String(parsed.distribusiId || '').trim()
     if (!distribusiId) return null
-    const tab = parsed.tab === 'nilai' || parsed.tab === 'rapor-desc'
-      ? parsed.tab
-      : 'absensi'
+    const tab = normalizeMapelDetailTab(parsed.tab)
     return { distribusiId, tab }
   } catch (error) {
     return null
@@ -4723,11 +4738,21 @@ async function getSantriByKelas(kelasId) {
 }
 
 function buildAbsensiMissingTableMessage() {
-  return `Tabel '${ATTENDANCE_TABLE}' belum ada di Supabase.\n\nSilakan buat tabel dulu dengan kolom minimal:\n- id (primary key)\n- tanggal (date)\n- kelas_id\n- mapel_id\n- guru_id\n- jam_pelajaran_id (nullable)\n- semester_id (nullable)\n- distribusi_id (nullable)\n- santri_id\n- status (text)\n- guru_pengganti_id (uuid, nullable)\n- keterangan_pengganti (text, nullable)`
+  return `Tabel '${ATTENDANCE_TABLE}' belum ada di Supabase.\n\nSilakan buat tabel dulu dengan kolom minimal:\n- id (primary key)\n- tanggal (date)\n- kelas_id\n- mapel_id\n- guru_id\n- jam_pelajaran_id (nullable)\n- semester_id (nullable)\n- distribusi_id (nullable)\n- santri_id\n- status (text)\n- guru_pengganti_id (uuid, nullable)\n- keterangan_pengganti (text, nullable)\n- patron_materi (text, nullable)`
 }
 
 function buildAbsensiPenggantiColumnsMessage() {
   return `Kolom guru pengganti belum tersedia di tabel '${ATTENDANCE_TABLE}'.\n\nJalankan SQL berikut di Supabase:\n\nalter table public.${ATTENDANCE_TABLE}\n  add column if not exists guru_pengganti_id uuid null,\n  add column if not exists keterangan_pengganti text null;`
+}
+
+function buildAbsensiPatronMateriColumnMessage() {
+  return `Kolom patron materi belum tersedia di tabel '${ATTENDANCE_TABLE}'.\n\nJalankan SQL berikut di Supabase:\n\nalter table public.${ATTENDANCE_TABLE}\n  add column if not exists patron_materi text null;`
+}
+
+function normalizeMapelDetailTab(tab) {
+  const raw = String(tab || '').trim().toLowerCase()
+  if (raw === 'nilai' || raw === 'rapor-desc' || raw === 'patron-materi') return raw
+  return 'absensi'
 }
 
 function buildAbsensiDelegationTableMessage() {
@@ -4741,6 +4766,11 @@ function buildAbsensiDelegationUniqueMessage() {
 function isMissingAbsensiPenggantiColumnError(error) {
   const msg = String(error?.message || '').toLowerCase()
   return msg.includes('guru_pengganti_id') || msg.includes('keterangan_pengganti')
+}
+
+function isMissingAbsensiPatronMateriColumnError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  return msg.includes('patron_materi')
 }
 
 function isMissingTableErrorByName(error, tableName) {
@@ -4767,7 +4797,16 @@ function isMissingInputNilaiTableError(error) {
 }
 
 function buildInputNilaiMissingTableMessage() {
-  return `Tabel '${INPUT_NILAI_TABLE}' belum ada di Supabase.\n\nSilakan buat tabel dengan kolom minimal:\n- id (primary key)\n- tanggal (date)\n- kelas_id\n- mapel_id\n- guru_id\n- semester_id (nullable)\n- distribusi_id (nullable)\n- santri_id\n- jenis (text: Tugas/Ulangan Harian/UTS/UAS/Keterampilan)\n- nilai (numeric)`
+  return `Tabel '${INPUT_NILAI_TABLE}' belum ada di Supabase.\n\nSilakan buat tabel dengan kolom minimal:\n- id (primary key)\n- tanggal (date)\n- kelas_id\n- mapel_id\n- guru_id\n- semester_id (nullable)\n- distribusi_id (nullable)\n- santri_id\n- jenis (text: Tugas/Ulangan Harian/UTS/UAS/Keterampilan)\n- nilai (numeric)\n- materi (text, nullable)`
+}
+
+function isMissingInputNilaiMateriColumnError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  return msg.includes('materi')
+}
+
+function buildInputNilaiMissingMateriColumnMessage() {
+  return `Kolom materi belum tersedia di tabel '${INPUT_NILAI_TABLE}'.\n\nJalankan SQL berikut di Supabase:\n\nalter table public.${INPUT_NILAI_TABLE}\n  add column if not exists materi text null;`
 }
 
 function isMissingRaporDescTableError(error) {
@@ -4882,6 +4921,87 @@ function validateRange(value, label, maxValue) {
   return true
 }
 
+function normalizePatronMateriList(rawValue) {
+  if (Array.isArray(rawValue)) {
+    return rawValue
+      .map(item => String(item || '').trim())
+      .filter(Boolean)
+  }
+  const raw = String(rawValue ?? '').trim()
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map(item => String(item || '').trim())
+        .filter(Boolean)
+    }
+  } catch (_error) {}
+  return raw
+    .split(/\r?\n/)
+    .map(item => String(item || '').trim())
+    .filter(Boolean)
+}
+
+function buildMapelPatronMateriRowHtml(index, value = '', disabled = false) {
+  const disabledAttr = disabled ? 'disabled' : ''
+  return `
+    <div data-patron-materi-row style="display:grid; grid-template-columns:44px 1fr auto; gap:8px; align-items:center; margin-bottom:8px;">
+      <div data-patron-materi-index style="font-size:12px; color:#64748b; text-align:center;">${index}</div>
+      <input type="text" class="guru-field" data-patron-materi-item value="${escapeHtml(String(value || ''))}" placeholder="Tulis materi..." oninput="updateMapelPatronMateriCounter()" ${disabledAttr}>
+      <button type="button" class="modal-btn modal-btn-danger" onclick="removeMapelPatronMateriRow(this)" ${disabledAttr}>Hapus</button>
+    </div>
+  `
+}
+
+function getMapelPatronMateriListFromDom() {
+  return Array.from(document.querySelectorAll('[data-patron-materi-item]'))
+    .map(inputEl => String(inputEl?.value || '').trim())
+    .filter(Boolean)
+}
+
+function refreshMapelPatronMateriRowsMeta() {
+  const rows = Array.from(document.querySelectorAll('[data-patron-materi-row]'))
+  rows.forEach((rowEl, idx) => {
+    const indexEl = rowEl.querySelector('[data-patron-materi-index]')
+    if (indexEl) indexEl.textContent = String(idx + 1)
+  })
+}
+
+function updateMapelPatronMateriCounter() {
+  refreshMapelPatronMateriRowsMeta()
+  const counterEl = document.getElementById('mapel-patron-materi-count')
+  if (!counterEl) return
+  const filledCount = getMapelPatronMateriListFromDom().length
+  counterEl.textContent = String(filledCount)
+}
+
+function addMapelPatronMateriRow(value = '') {
+  const listEl = document.getElementById('mapel-patron-materi-list')
+  if (!listEl) return
+  if (String(listEl.dataset.readonly || '') === '1') return
+  const nextIndex = listEl.querySelectorAll('[data-patron-materi-row]').length + 1
+  listEl.insertAdjacentHTML('beforeend', buildMapelPatronMateriRowHtml(nextIndex, value, false))
+  updateMapelPatronMateriCounter()
+}
+
+function removeMapelPatronMateriRow(triggerBtn) {
+  const listEl = document.getElementById('mapel-patron-materi-list')
+  if (!listEl) return
+  if (String(listEl.dataset.readonly || '') === '1') return
+  const rows = Array.from(listEl.querySelectorAll('[data-patron-materi-row]'))
+  const rowEl = triggerBtn?.closest?.('[data-patron-materi-row]') || null
+  if (!rowEl) return
+  if (rows.length <= 1) {
+    const inputEl = rowEl.querySelector('[data-patron-materi-item]')
+    if (inputEl) inputEl.value = ''
+    updateMapelPatronMateriCounter()
+    return
+  }
+  rowEl.remove()
+  updateMapelPatronMateriCounter()
+}
+
 function renderAbsensiSantriRows() {
   const box = document.getElementById('absensi-santri-list')
   if (!box) return
@@ -4956,6 +5076,14 @@ function getSelectedAbsensiHari() {
   const tanggal = String(document.getElementById('absensi-tanggal')?.value || '').trim()
   if (!tanggal) return ''
   return normalizeHari(getHariFromDate(tanggal))
+}
+
+function isMissingMapelPatronMateriTableError(error) {
+  return isMissingTableErrorByName(error, MAPEL_PATRON_MATERI_TABLE)
+}
+
+function buildMapelPatronMateriMissingTableMessage() {
+  return `Tabel '${MAPEL_PATRON_MATERI_TABLE}' belum ada di Supabase.\n\nJalankan SQL berikut:\n\ncreate table if not exists public.${MAPEL_PATRON_MATERI_TABLE} (\n  id bigserial primary key,\n  distribusi_id text not null,\n  guru_id text not null,\n  mapel_id text not null,\n  semester_id text null,\n  materi_json text null,\n  updated_at timestamptz not null default now(),\n  unique (distribusi_id)\n);`
 }
 
 function getAbsensiDelegationCacheKey(guruId, tanggal) {
@@ -5372,8 +5500,171 @@ function renderAbsensiJamOptions() {
   renderAbsensiDelegationInfo()
 }
 
+function onAbsensiPatronMateriSelectChange() {
+  const selectEl = document.getElementById('absensi-patron-materi')
+  const inputEl = document.getElementById('absensi-patron-materi-input')
+  if (!selectEl || !inputEl) return
+  const val = String(selectEl.value || '').trim()
+  if (!val) return
+  inputEl.value = val
+  absensiPatronMateriState.currentValue = val
+  absensiPatronMateriState.editedByUser = true
+}
+
+function onAbsensiPatronMateriInputChange() {
+  const inputEl = document.getElementById('absensi-patron-materi-input')
+  const selectEl = document.getElementById('absensi-patron-materi')
+  if (!inputEl || !selectEl) return
+  const val = String(inputEl.value || '').trim()
+  absensiPatronMateriState.currentValue = val
+  absensiPatronMateriState.editedByUser = true
+  if (val && absensiPatronMateriState.list.includes(val)) {
+    selectEl.value = val
+  } else {
+    selectEl.value = ''
+  }
+}
+
+function resolveAbsensiPatronDistribusi() {
+  const candidate = getAbsensiDistribusiCandidates()[0] || null
+  if (candidate?.id) return candidate
+  const delegationRows = getSelectedAbsensiDelegationRows()
+  const delegation = delegationRows.find(row => String(row.distribusi_id || '').trim()) || null
+  if (!delegation) return null
+  return {
+    id: String(delegation.distribusi_id || ''),
+    kelas_id: String(delegation.kelas_id || ''),
+    mapel_id: String(delegation.mapel_id || ''),
+    semester_id: String(delegation.semester_id || '')
+  }
+}
+
+async function refreshAbsensiPatronMateriFields({ resetEdited = false } = {}) {
+  const selectEl = document.getElementById('absensi-patron-materi')
+  const inputEl = document.getElementById('absensi-patron-materi-input')
+  const noteEl = document.getElementById('absensi-patron-materi-note')
+  if (!selectEl || !inputEl || !noteEl) return
+
+  if (resetEdited) {
+    absensiPatronMateriState.editedByUser = false
+    absensiPatronMateriState.currentValue = ''
+  }
+
+  const tanggal = String(document.getElementById('absensi-tanggal')?.value || '').trim()
+  const kelasId = String(document.getElementById('absensi-kelas')?.value || '').trim()
+  const mapelId = String(document.getElementById('absensi-mapel')?.value || '').trim()
+  const distribusi = resolveAbsensiPatronDistribusi()
+  const semesterId = String(distribusi?.semester_id || '').trim() || String(guruContextCache?.activeSemester?.id || '').trim()
+
+  if (!kelasId || !mapelId) {
+    selectEl.innerHTML = '<option value="">▼</option>'
+    inputEl.value = ''
+    noteEl.textContent = 'Pilih kelas dan mapel dulu untuk menampilkan patron materi.'
+    absensiPatronMateriState.list = []
+    absensiPatronMateriState.lastMateri = ''
+    absensiPatronMateriState.lastTanggal = ''
+    absensiPatronMateriState.currentValue = ''
+    return
+  }
+
+  let patronList = []
+  if (distribusi?.id) {
+    const patronRes = await sb
+      .from(MAPEL_PATRON_MATERI_TABLE)
+      .select('materi_json')
+      .eq('distribusi_id', String(distribusi.id))
+      .maybeSingle()
+    if (patronRes.error) {
+      if (isMissingMapelPatronMateriTableError(patronRes.error)) {
+        absensiPatronMateriState.tableMissing = true
+        noteEl.textContent = 'Tabel patron materi belum tersedia.'
+      } else {
+        console.error(patronRes.error)
+        noteEl.textContent = 'Gagal memuat patron materi mapel.'
+      }
+    } else {
+      absensiPatronMateriState.tableMissing = false
+      patronList = normalizePatronMateriList(patronRes.data?.materi_json)
+    }
+  }
+  absensiPatronMateriState.list = patronList
+
+  selectEl.innerHTML = '<option value="">▼</option>' +
+    patronList.map(item => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join('')
+
+  let latestBuilder = sb
+    .from(ATTENDANCE_TABLE)
+    .select('tanggal, patron_materi')
+    .eq('kelas_id', kelasId)
+    .eq('mapel_id', mapelId)
+    .not('patron_materi', 'is', null)
+    .order('tanggal', { ascending: false })
+    .limit(1)
+  latestBuilder = semesterId ? latestBuilder.eq('semester_id', semesterId) : latestBuilder.is('semester_id', null)
+  const latestQuery = await latestBuilder
+
+  if (latestQuery.error) {
+    if (isMissingAbsensiPatronMateriColumnError(latestQuery.error)) {
+      noteEl.textContent = 'Kolom patron materi absensi belum tersedia.'
+    } else if (!absensiPatronMateriState.tableMissing) {
+      console.error(latestQuery.error)
+      noteEl.textContent = 'Gagal memuat materi terakhir diajarkan.'
+    }
+    return
+  }
+
+  const latestRow = (latestQuery.data || [])[0] || null
+  const latestMateri = String(latestRow?.patron_materi || '').trim()
+  const latestTanggal = String(latestRow?.tanggal || '').slice(0, 10)
+  absensiPatronMateriState.lastMateri = latestMateri
+  absensiPatronMateriState.lastTanggal = latestTanggal
+
+  let currentDayMateri = ''
+  if (/^\d{4}-\d{2}-\d{2}$/.test(tanggal)) {
+    let currentBuilder = sb
+      .from(ATTENDANCE_TABLE)
+      .select('patron_materi')
+      .eq('tanggal', tanggal)
+      .eq('kelas_id', kelasId)
+      .eq('mapel_id', mapelId)
+      .not('patron_materi', 'is', null)
+      .limit(1)
+    currentBuilder = semesterId ? currentBuilder.eq('semester_id', semesterId) : currentBuilder.is('semester_id', null)
+    const currentQuery = await currentBuilder
+    if (!currentQuery.error) {
+      const currentRow = (currentQuery.data || [])[0] || null
+      currentDayMateri = String(currentRow?.patron_materi || '').trim()
+    }
+  }
+
+  const defaultMateri = currentDayMateri || latestMateri
+  const shouldFill = !absensiPatronMateriState.editedByUser || !String(absensiPatronMateriState.currentValue || '').trim()
+  const selectedValue = shouldFill ? defaultMateri : String(absensiPatronMateriState.currentValue || '').trim()
+  inputEl.value = selectedValue
+  if (selectedValue && patronList.includes(selectedValue)) {
+    selectEl.value = selectedValue
+  } else {
+    selectEl.value = ''
+  }
+  absensiPatronMateriState.currentValue = selectedValue
+
+  if (latestMateri) {
+    const tanggalLabel = latestTanggal ? ` (${latestTanggal})` : ''
+    noteEl.textContent = `Materi terakhir diajarkan: ${latestMateri}${tanggalLabel}`
+  } else if (!absensiPatronMateriState.tableMissing) {
+    noteEl.textContent = 'Belum ada riwayat materi sebelumnya untuk mapel ini.'
+  }
+}
+
+function getSelectedAbsensiPatronMateriValue() {
+  const inputEl = document.getElementById('absensi-patron-materi-input')
+  if (!inputEl) return ''
+  return String(inputEl.value || '').trim()
+}
+
 async function handleAbsensiKelasMapelChange() {
   renderAbsensiJamOptions()
+  await refreshAbsensiPatronMateriFields({ resetEdited: true })
 
   const kelasId = String(document.getElementById('absensi-kelas')?.value || '')
   currentAbsensiSantriList = await getSantriByKelas(kelasId)
@@ -5462,6 +5753,19 @@ async function renderAbsensiPage() {
         </div>
       </div>
 
+      <div style="margin-top:10px; display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:10px; align-items:end;">
+        <div>
+          <label class="guru-label">Patron Materi (Opsional)</label>
+          <div style="display:grid; grid-template-columns:1fr 56px; gap:8px; align-items:center;">
+            <input id="absensi-patron-materi-input" class="guru-field" type="text" placeholder="Tulis materi manual atau pilih dari dropdown" oninput="onAbsensiPatronMateriInputChange()">
+            <select id="absensi-patron-materi" class="guru-field" style="padding-left:8px; padding-right:8px; text-align:center;" onchange="onAbsensiPatronMateriSelectChange()" title="Pilih dari patron materi">
+              <option value="">▼</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div id="absensi-patron-materi-note" style="font-size:12px; color:#64748b; margin-top:6px;">Pilih kelas dan mapel dulu untuk menampilkan patron materi.</div>
+
       <div style="margin-top:10px; display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:10px; align-items:end;">
         <div style="display:flex; align-items:center; gap:8px;">
           <input id="absensi-pakai-pengganti" type="checkbox" onchange="onAbsensiPenggantiToggle()">
@@ -5494,6 +5798,7 @@ async function renderAbsensiPage() {
   renderAbsensiKelasOptions()
   renderAbsensiMapelOptions()
   renderAbsensiJamOptions()
+  await refreshAbsensiPatronMateriFields({ resetEdited: true })
   renderAbsensiDelegationInfo()
   renderAbsensiSantriRows()
 }
@@ -5501,6 +5806,7 @@ async function renderAbsensiPage() {
 async function onAbsensiKelasChange() {
   renderAbsensiMapelOptions()
   renderAbsensiJamOptions()
+  await refreshAbsensiPatronMateriFields({ resetEdited: true })
 
   const kelasId = String(document.getElementById('absensi-kelas')?.value || '')
   currentAbsensiSantriList = await getSantriByKelas(kelasId)
@@ -5535,6 +5841,7 @@ async function onAbsensiTanggalChange() {
     if (!stillExists) mapelSelect.value = ''
   }
   renderAbsensiJamOptions()
+  await refreshAbsensiPatronMateriFields({ resetEdited: true })
   const kelasId = String(document.getElementById('absensi-kelas')?.value || '')
   currentAbsensiSantriList = await getSantriByKelas(kelasId)
   renderAbsensiSantriRows()
@@ -5567,6 +5874,7 @@ async function saveGuruAbsensi() {
     const mapelId = String(document.getElementById('absensi-mapel')?.value || '').trim()
     const jamId1 = String(document.getElementById('absensi-jam-1')?.value || '').trim()
     const jamId2 = String(document.getElementById('absensi-jam-2')?.value || '').trim()
+    const patronMateri = getSelectedAbsensiPatronMateriValue()
     const pakaiPengganti = document.getElementById('absensi-pakai-pengganti')?.checked === true
     const penggantiId = String(document.getElementById('absensi-guru-pengganti')?.value || '').trim()
     const keteranganPengganti = String(document.getElementById('absensi-keterangan-pengganti')?.value || '').trim()
@@ -5694,7 +6002,8 @@ async function saveGuruAbsensi() {
           santri_id: String(santri.id),
           status: statusMap.get(String(santri.id)) || 'Hadir',
           guru_pengganti_id: delegationRow ? guruId : null,
-          keterangan_pengganti: delegationRow ? (delegationRow.keterangan || null) : null
+          keterangan_pengganti: delegationRow ? (delegationRow.keterangan || null) : null,
+          patron_materi: patronMateri || null
         }
       })
     ))
@@ -5738,6 +6047,10 @@ async function saveGuruAbsensi() {
       }
       if (isMissingAbsensiPenggantiColumnError(saveError)) {
         alert(buildAbsensiPenggantiColumnsMessage())
+        return
+      }
+      if (isMissingAbsensiPatronMateriColumnError(saveError)) {
+        alert(buildAbsensiPatronMateriColumnMessage())
         return
       }
       if (jamIds.length > 1 && msg.toLowerCase().includes('cannot affect row a second time')) {
@@ -5808,9 +6121,161 @@ async function saveGuruAbsensi() {
     clearGuruPageCache('laporan-absensi')
     renderAbsensiMapelOptions()
     renderAbsensiJamOptions()
+    await refreshAbsensiPatronMateriFields({ resetEdited: true })
     renderAbsensiDelegationInfo()
   } finally {
     setButtonLoading(saveBtn, false)
+  }
+}
+
+function onInputNilaiPatronMateriSelectChange() {
+  const selectEl = document.getElementById('input-nilai-patron-materi')
+  const inputEl = document.getElementById('input-nilai-patron-materi-input')
+  if (!selectEl || !inputEl) return
+  const val = String(selectEl.value || '').trim()
+  if (!val) return
+  inputEl.value = val
+  inputNilaiPatronMateriState.currentValue = val
+  inputNilaiPatronMateriState.editedByUser = true
+}
+
+function onInputNilaiPatronMateriInputChange() {
+  const inputEl = document.getElementById('input-nilai-patron-materi-input')
+  const selectEl = document.getElementById('input-nilai-patron-materi')
+  if (!inputEl || !selectEl) return
+  const val = String(inputEl.value || '').trim()
+  inputNilaiPatronMateriState.currentValue = val
+  inputNilaiPatronMateriState.editedByUser = true
+  if (val && inputNilaiPatronMateriState.list.includes(val)) {
+    selectEl.value = val
+  } else {
+    selectEl.value = ''
+  }
+}
+
+function getSelectedInputNilaiPatronMateriValue() {
+  const inputEl = document.getElementById('input-nilai-patron-materi-input')
+  if (!inputEl) return ''
+  return String(inputEl.value || '').trim()
+}
+
+async function refreshInputNilaiPatronMateriFields({ resetEdited = false } = {}) {
+  const selectEl = document.getElementById('input-nilai-patron-materi')
+  const inputEl = document.getElementById('input-nilai-patron-materi-input')
+  const noteEl = document.getElementById('input-nilai-patron-materi-note')
+  if (!selectEl || !inputEl || !noteEl) return
+
+  if (resetEdited) {
+    inputNilaiPatronMateriState.editedByUser = false
+    inputNilaiPatronMateriState.currentValue = ''
+  }
+
+  const tanggal = String(document.getElementById('input-nilai-tanggal')?.value || '').trim()
+  const kelasId = String(document.getElementById('input-nilai-kelas')?.value || '').trim()
+  const mapelId = String(document.getElementById('input-nilai-mapel')?.value || '').trim()
+  const jenis = String(document.getElementById('input-nilai-jenis')?.value || '').trim()
+  const ctx = guruContextCache
+  const distribusi = (ctx?.activeDistribusiList || []).find(item => (
+    String(item.kelas_id || '') === kelasId && String(item.mapel_id || '') === mapelId
+  )) || null
+  const semesterId = String(distribusi?.semester_id || '').trim()
+
+  if (!kelasId || !mapelId || !distribusi?.id) {
+    selectEl.innerHTML = '<option value="">▼</option>'
+    inputEl.value = ''
+    noteEl.textContent = 'Pilih kelas dan mapel dulu untuk menampilkan patron materi.'
+    inputNilaiPatronMateriState.list = []
+    inputNilaiPatronMateriState.lastMateri = ''
+    inputNilaiPatronMateriState.lastTanggal = ''
+    inputNilaiPatronMateriState.currentValue = ''
+    return
+  }
+
+  let patronList = []
+  const patronRes = await sb
+    .from(MAPEL_PATRON_MATERI_TABLE)
+    .select('materi_json')
+    .eq('distribusi_id', String(distribusi.id))
+    .maybeSingle()
+  if (patronRes.error) {
+    if (isMissingMapelPatronMateriTableError(patronRes.error)) {
+      inputNilaiPatronMateriState.tableMissing = true
+      noteEl.textContent = 'Tabel patron materi belum tersedia.'
+    } else {
+      console.error(patronRes.error)
+      noteEl.textContent = 'Gagal memuat patron materi mapel.'
+    }
+  } else {
+    inputNilaiPatronMateriState.tableMissing = false
+    patronList = normalizePatronMateriList(patronRes.data?.materi_json)
+  }
+  inputNilaiPatronMateriState.list = patronList
+
+  selectEl.innerHTML = '<option value="">▼</option>' +
+    patronList.map(item => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join('')
+
+  let latestBuilder = sb
+    .from(INPUT_NILAI_TABLE)
+    .select('tanggal, materi')
+    .eq('kelas_id', kelasId)
+    .eq('mapel_id', mapelId)
+    .eq('jenis', jenis)
+    .not('materi', 'is', null)
+    .order('tanggal', { ascending: false })
+    .limit(1)
+  latestBuilder = semesterId ? latestBuilder.eq('semester_id', semesterId) : latestBuilder.is('semester_id', null)
+  const latestQuery = await latestBuilder
+  if (latestQuery.error) {
+    if (isMissingInputNilaiMateriColumnError(latestQuery.error)) {
+      noteEl.textContent = 'Kolom materi input nilai belum tersedia.'
+    } else if (!inputNilaiPatronMateriState.tableMissing) {
+      console.error(latestQuery.error)
+      noteEl.textContent = 'Gagal memuat materi nilai terakhir.'
+    }
+    return
+  }
+
+  const latestRow = (latestQuery.data || [])[0] || null
+  const latestMateri = String(latestRow?.materi || '').trim()
+  const latestTanggal = String(latestRow?.tanggal || '').slice(0, 10)
+  inputNilaiPatronMateriState.lastMateri = latestMateri
+  inputNilaiPatronMateriState.lastTanggal = latestTanggal
+
+  let currentDayMateri = ''
+  if (/^\d{4}-\d{2}-\d{2}$/.test(tanggal)) {
+    let currentBuilder = sb
+      .from(INPUT_NILAI_TABLE)
+      .select('materi')
+      .eq('tanggal', tanggal)
+      .eq('kelas_id', kelasId)
+      .eq('mapel_id', mapelId)
+      .eq('jenis', jenis)
+      .not('materi', 'is', null)
+      .limit(1)
+    currentBuilder = semesterId ? currentBuilder.eq('semester_id', semesterId) : currentBuilder.is('semester_id', null)
+    const currentQuery = await currentBuilder
+    if (!currentQuery.error) {
+      const currentRow = (currentQuery.data || [])[0] || null
+      currentDayMateri = String(currentRow?.materi || '').trim()
+    }
+  }
+
+  const defaultMateri = currentDayMateri || latestMateri
+  const shouldFill = !inputNilaiPatronMateriState.editedByUser || !String(inputNilaiPatronMateriState.currentValue || '').trim()
+  const selectedValue = shouldFill ? defaultMateri : String(inputNilaiPatronMateriState.currentValue || '').trim()
+  inputEl.value = selectedValue
+  if (selectedValue && patronList.includes(selectedValue)) {
+    selectEl.value = selectedValue
+  } else {
+    selectEl.value = ''
+  }
+  inputNilaiPatronMateriState.currentValue = selectedValue
+
+  if (latestMateri) {
+    const tanggalLabel = latestTanggal ? ` (${latestTanggal})` : ''
+    noteEl.textContent = `Materi terakhir dinilai: ${latestMateri}${tanggalLabel}`
+  } else if (!inputNilaiPatronMateriState.tableMissing) {
+    noteEl.textContent = 'Belum ada riwayat materi nilai sebelumnya untuk mapel ini.'
   }
 }
 
@@ -5888,17 +6353,24 @@ async function onInputNilaiKelasChange() {
 
   const kelasId = String(document.getElementById('input-nilai-kelas')?.value || '')
   currentInputNilaiSantriList = await getSantriByKelas(kelasId)
+  await refreshInputNilaiPatronMateriFields({ resetEdited: true })
   renderInputNilaiSantriRows()
 }
 
 async function onInputNilaiMapelChange() {
   const kelasId = String(document.getElementById('input-nilai-kelas')?.value || '')
   currentInputNilaiSantriList = await getSantriByKelas(kelasId)
+  await refreshInputNilaiPatronMateriFields({ resetEdited: true })
   renderInputNilaiSantriRows()
 }
 
 function onInputNilaiJenisChange() {
+  refreshInputNilaiPatronMateriFields({ resetEdited: true })
   renderInputNilaiSantriRows()
+}
+
+function onInputNilaiTanggalChange() {
+  refreshInputNilaiPatronMateriFields({ resetEdited: true })
 }
 
 async function recalculateNilaiAkademikFromInput(distribusi, santriIdList) {
@@ -5974,10 +6446,10 @@ async function recalculateNilaiAkademikFromInput(distribusi, santriIdList) {
     const sidText = String(sid)
     const existing = existingMap.get(sidText) || {}
     const nilai_tugas = agg.nilai_tugas?.count ? round2(agg.nilai_tugas.total / agg.nilai_tugas.count) : null
-    const nilai_ulangan_harian = agg.nilai_ulangan_harian?.count ? round2(agg.nilai_ulangan_harian.total / agg.nilai_ulangan_harian.count) : null
-    const nilai_pts = agg.nilai_pts?.count ? round2(agg.nilai_pts.total / agg.nilai_pts.count) : null
-    const nilai_pas = agg.nilai_pas?.count ? round2(agg.nilai_pas.total / agg.nilai_pas.count) : null
-    const nilai_keterampilan = agg.nilai_keterampilan?.count ? round2(agg.nilai_keterampilan.total / agg.nilai_keterampilan.count) : null
+    const nilai_ulangan_harian = agg.nilai_ulangan_harian?.count ? round2(agg.nilai_ulangan_harian.total / agg.nilai_ulangan_harian.count) : 0
+    const nilai_pts = agg.nilai_pts?.count ? round2(agg.nilai_pts.total / agg.nilai_pts.count) : 0
+    const nilai_pas = agg.nilai_pas?.count ? round2(agg.nilai_pas.total / agg.nilai_pas.count) : 0
+    const nilai_keterampilan = agg.nilai_keterampilan?.count ? round2(agg.nilai_keterampilan.total / agg.nilai_keterampilan.count) : 0
     const nilai_kehadiran = calculateNilaiKehadiranFromRows(absensiBySantri.get(sidText) || [])
     const nilai_akhir = round2(
       Number(nilai_tugas || 0) +
@@ -6059,10 +6531,10 @@ async function recalculateNilaiKehadiranFromAbsensi(distribusi, santriIdList) {
     const existing = existingMap.get(sid) || {}
     const nilai_kehadiran = calculateNilaiKehadiranFromRows(absensiBySantri.get(sid) || [])
     const nilai_tugas = existing.nilai_tugas ?? null
-    const nilai_ulangan_harian = existing.nilai_ulangan_harian ?? null
-    const nilai_pts = existing.nilai_pts ?? null
-    const nilai_pas = existing.nilai_pas ?? null
-    const nilai_keterampilan = existing.nilai_keterampilan ?? null
+    const nilai_ulangan_harian = existing.nilai_ulangan_harian ?? 0
+    const nilai_pts = existing.nilai_pts ?? 0
+    const nilai_pas = existing.nilai_pas ?? 0
+    const nilai_keterampilan = existing.nilai_keterampilan ?? 0
     const nilai_akhir = round2(
       Number(nilai_tugas || 0) +
       Number(nilai_ulangan_harian || 0) +
@@ -6103,6 +6575,7 @@ async function saveInputNilaiBatch() {
   const kelasId = String(document.getElementById('input-nilai-kelas')?.value || '').trim()
   const mapelId = String(document.getElementById('input-nilai-mapel')?.value || '').trim()
   const jenis = String(document.getElementById('input-nilai-jenis')?.value || '').trim()
+  const materi = getSelectedInputNilaiPatronMateriValue()
   const maxJenis = getJenisNilaiMax(jenis)
 
   if (!tanggal || !kelasId || !mapelId || !jenis) {
@@ -6130,8 +6603,9 @@ async function saveInputNilaiBatch() {
   document.querySelectorAll('[data-input-nilai-santri-id]').forEach(inputEl => {
     if (hasInvalidValue) return
     const sid = String(inputEl.getAttribute('data-input-nilai-santri-id') || '').trim()
-    const nilai = toNullableNumber(inputEl.value || '')
-    if (!sid || nilai === null) return
+    const nilaiRaw = toNullableNumber(inputEl.value || '')
+    if (!sid) return
+    const nilai = nilaiRaw === null ? 0 : nilaiRaw
     if (Number.isNaN(nilai)) return
     if (!validateRange(nilai, `Nilai ${jenis}`, maxJenis)) {
       hasInvalidValue = true
@@ -6146,7 +6620,8 @@ async function saveInputNilaiBatch() {
       distribusi_id: String(distribusi.id),
       santri_id: sid,
       jenis,
-      nilai: round2(nilai)
+      nilai: round2(nilai),
+      materi: materi || null
     })
   })
 
@@ -6166,6 +6641,10 @@ async function saveInputNilaiBatch() {
     console.error(error)
     if (isMissingInputNilaiTableError(error)) {
       alert(buildInputNilaiMissingTableMessage())
+      return
+    }
+    if (isMissingInputNilaiMateriColumnError(error)) {
+      alert(buildInputNilaiMissingMateriColumnMessage())
       return
     }
     alert(`Gagal simpan input nilai: ${error.message || 'Unknown error'}`)
@@ -6228,7 +6707,7 @@ async function renderInputNilaiPage() {
       <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:10px; align-items:end;">
         <div>
           <label class="guru-label">Tanggal</label>
-          <input id="input-nilai-tanggal" class="guru-field" type="date" value="${today}">
+          <input id="input-nilai-tanggal" class="guru-field" type="date" value="${today}" onchange="onInputNilaiTanggalChange()">
         </div>
         <div>
           <label class="guru-label">Kelas</label>
@@ -6251,6 +6730,19 @@ async function renderInputNilaiPage() {
         </div>
       </div>
 
+      <div style="margin-top:10px; display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:10px; align-items:end;">
+        <div>
+          <label class="guru-label">Materi Penilaian (Opsional)</label>
+          <div style="display:grid; grid-template-columns:1fr 56px; gap:8px; align-items:center;">
+            <input id="input-nilai-patron-materi-input" class="guru-field" type="text" placeholder="Tulis materi manual atau pilih dari dropdown" oninput="onInputNilaiPatronMateriInputChange()">
+            <select id="input-nilai-patron-materi" class="guru-field" style="padding-left:8px; padding-right:8px; text-align:center;" onchange="onInputNilaiPatronMateriSelectChange()" title="Pilih dari patron materi">
+              <option value="">▼</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div id="input-nilai-patron-materi-note" style="font-size:12px; color:#64748b; margin-top:6px;">Pilih kelas dan mapel dulu untuk menampilkan patron materi.</div>
+
       <div id="input-nilai-santri-list" style="margin-top:12px;"></div>
       <div style="margin-top:14px;">
         <button id="btn-save-input-nilai" type="button" class="modal-btn modal-btn-primary" onclick="saveInputNilaiBatch()">Simpan Input Nilai</button>
@@ -6258,6 +6750,7 @@ async function renderInputNilaiPage() {
     </div>
   `
   currentInputNilaiSantriList = []
+  await refreshInputNilaiPatronMateriFields({ resetEdited: true })
 }
 async function renderGuruProfil() {
   const content = document.getElementById('guru-content')
@@ -9201,7 +9694,7 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
     currentMapelEditMode = { absensi: false, nilai: false }
   }
   currentMapelDetailDistribusiId = nextDistribusiId
-  currentMapelDetailTab = tab === 'nilai' || tab === 'rapor-desc' ? tab : 'absensi'
+  currentMapelDetailTab = normalizeMapelDetailTab(tab)
   saveMapelDetailState(currentMapelDetailDistribusiId, currentMapelDetailTab)
   currentMapelDetailState = null
   const content = document.getElementById('guru-content')
@@ -9386,7 +9879,10 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
     .join('')
 
   const buildNilaiCellBtn = (santriId, jenis, value) => {
-    const text = value === null || value === undefined || value === '' ? '-' : String(value)
+    const isEmpty = value === null || value === undefined || value === ''
+    const text = isEmpty && (jenis === 'Ulangan Harian' || jenis === 'UTS' || jenis === 'UAS' || jenis === 'Keterampilan')
+      ? '0'
+      : (isEmpty ? '-' : String(value))
     return `<button type="button" class="nilai-click-btn" onclick="openMapelNilaiDetail('${escapeHtml(santriId)}','${escapeHtml(jenis)}')">${escapeHtml(text)}</button>`
   }
 
@@ -9406,6 +9902,30 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
   } else {
     raporDescRow = raporDescRes.data || null
   }
+
+  let patronMateriRow = null
+  let patronMateriErrorText = ''
+  let patronMateriList = []
+  const patronMateriRes = await sb
+    .from(MAPEL_PATRON_MATERI_TABLE)
+    .select('*')
+    .eq('distribusi_id', String(distribusi.id))
+    .maybeSingle()
+  if (patronMateriRes.error) {
+    if (isMissingMapelPatronMateriTableError(patronMateriRes.error)) {
+      patronMateriErrorText = buildMapelPatronMateriMissingTableMessage()
+    } else {
+      patronMateriErrorText = `Gagal load patron materi: ${patronMateriRes.error.message || 'Unknown error'}`
+    }
+  } else {
+    patronMateriRow = patronMateriRes.data || null
+    patronMateriList = normalizePatronMateriList(patronMateriRow?.materi_json)
+  }
+  const patronMateriDisabledAttr = patronMateriErrorText ? 'disabled' : ''
+  const patronMateriSeedRows = patronMateriList.length ? patronMateriList : ['']
+  const patronMateriRowsHtml = patronMateriSeedRows
+    .map((item, idx) => buildMapelPatronMateriRowHtml(idx + 1, item, Boolean(patronMateriErrorText)))
+    .join('')
 
   const nilaiRowsHtml = (santriList || [])
     .map((santri, index) => {
@@ -9444,6 +9964,7 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
       <button type="button" class="mapel-detail-tab-btn ${currentMapelDetailTab === 'absensi' ? 'active' : ''}" data-mapel-detail-tab="absensi" onclick="setMapelDetailTab('absensi')">Absensi</button>
       <button type="button" class="mapel-detail-tab-btn ${currentMapelDetailTab === 'nilai' ? 'active' : ''}" data-mapel-detail-tab="nilai" onclick="setMapelDetailTab('nilai')">Nilai</button>
       <button type="button" class="mapel-detail-tab-btn ${currentMapelDetailTab === 'rapor-desc' ? 'active' : ''}" data-mapel-detail-tab="rapor-desc" onclick="setMapelDetailTab('rapor-desc')">Deskripsi Rapor</button>
+      <button type="button" class="mapel-detail-tab-btn ${currentMapelDetailTab === 'patron-materi' ? 'active' : ''}" data-mapel-detail-tab="patron-materi" onclick="setMapelDetailTab('patron-materi')">Patron Materi</button>
     </div>
 
     <div id="mapel-detail-pane-absensi" class="mapel-detail-pane ${currentMapelDetailTab === 'absensi' ? 'active' : ''}">
@@ -9524,13 +10045,34 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
         </div>
       </div>
     </div>
+
+    <div id="mapel-detail-pane-patron-materi" class="mapel-detail-pane ${currentMapelDetailTab === 'patron-materi' ? 'active' : ''}">
+      <div class="placeholder-card">
+        <div style="font-weight:700; margin-bottom:8px;">Patron Materi Mapel</div>
+        ${patronMateriErrorText
+          ? `<div style="white-space:pre-wrap; color:#991b1b; font-size:12px; margin-bottom:8px;">${escapeHtml(patronMateriErrorText)}</div>`
+          : '<div style="font-size:12px; color:#64748b; margin-bottom:8px;">Tambahkan daftar materi yang diajarkan. Tulis satu materi per baris.</div>'
+        }
+        <div id="mapel-patron-materi-list" data-readonly="${patronMateriErrorText ? '1' : '0'}" style="margin-bottom:8px;">
+          ${patronMateriRowsHtml}
+        </div>
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-top:8px;">
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <button type="button" class="modal-btn" onclick="addMapelPatronMateriRow()" ${patronMateriDisabledAttr}>Tambah Materi</button>
+            <div style="font-size:12px; color:#64748b;">Total materi: <b id="mapel-patron-materi-count">${patronMateriList.length}</b></div>
+          </div>
+          <button id="btn-save-patron-materi" type="button" class="modal-btn modal-btn-primary" onclick="saveMapelPatronMateri('${escapeHtml(String(distribusi.id || ''))}')" ${patronMateriDisabledAttr}>Simpan Patron Materi</button>
+        </div>
+      </div>
+    </div>
     </div>
 
   `
+  updateMapelPatronMateriCounter()
 }
 
 function setMapelDetailTab(tab) {
-  const validTab = tab === 'nilai' || tab === 'rapor-desc' ? tab : 'absensi'
+  const validTab = normalizeMapelDetailTab(tab)
   currentMapelDetailTab = validTab
   saveMapelDetailState(currentMapelDetailDistribusiId, currentMapelDetailTab)
   const buttons = document.querySelectorAll('.mapel-detail-tab-btn')
@@ -9738,7 +10280,7 @@ async function openMapelNilaiDetail(santriId, jenis) {
 
   const { data, error } = await sb
     .from(INPUT_NILAI_TABLE)
-    .select('id, tanggal, nilai, jenis')
+    .select('id, tanggal, nilai, jenis, materi')
     .eq('santri_id', sid)
     .eq('kelas_id', state.distribusi.kelas_id)
     .eq('mapel_id', state.distribusi.mapel_id)
@@ -9750,6 +10292,10 @@ async function openMapelNilaiDetail(santriId, jenis) {
     console.error(error)
     if (isMissingInputNilaiTableError(error)) {
       alert(buildInputNilaiMissingTableMessage())
+      return
+    }
+    if (isMissingInputNilaiMateriColumnError(error)) {
+      alert(buildInputNilaiMissingMateriColumnMessage())
       return
     }
     alert(`Gagal load detail nilai: ${error.message || 'Unknown error'}`)
@@ -9765,7 +10311,8 @@ async function openMapelNilaiDetail(santriId, jenis) {
     rows: (data || []).map(item => ({
       id: item.id,
       tanggal: String(item.tanggal || '').slice(0, 10),
-      nilai: item.nilai === null || item.nilai === undefined ? '' : String(item.nilai)
+      nilai: item.nilai === null || item.nilai === undefined ? '' : String(item.nilai),
+      materi: String(item.materi || '').trim()
     })),
     deletedIds: []
   }
@@ -9836,6 +10383,9 @@ function renderNilaiDetailModalContent() {
       <td style="padding:8px; border:1px solid #e2e8f0;">
         <input type="number" step="1" min="0" ${maxValue !== null ? `max="${maxValue}"` : ''} class="guru-field" style="padding:6px 8px; text-align:center;" value="${escapeHtml(String(row.nilai ?? ''))}" oninput="updateNilaiDetailRow(${index}, 'nilai', this.value)">
       </td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">
+        <input type="text" class="guru-field" style="padding:6px 8px;" value="${escapeHtml(String(row.materi || ''))}" placeholder="Materi (opsional)" oninput="updateNilaiDetailRow(${index}, 'materi', this.value)">
+      </td>
       <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">
         <button type="button" class="modal-btn modal-btn-danger" style="padding:5px 10px; font-size:12px;" onclick="removeNilaiDetailRow(${index})">Hapus</button>
       </td>
@@ -9852,11 +10402,12 @@ function renderNilaiDetailModalContent() {
             <th style="padding:8px; border:1px solid #e2e8f0; width:60px;">No</th>
             <th style="padding:8px; border:1px solid #e2e8f0;">Tanggal</th>
             <th style="padding:8px; border:1px solid #e2e8f0;">Nilai</th>
+            <th style="padding:8px; border:1px solid #e2e8f0;">Materi</th>
             <th style="padding:8px; border:1px solid #e2e8f0; width:90px;">Aksi</th>
           </tr>
         </thead>
         <tbody>
-          ${rowsHtml || '<tr><td colspan="4" style="padding:10px; border:1px solid #e2e8f0; text-align:center;">Belum ada data.</td></tr>'}
+          ${rowsHtml || '<tr><td colspan="5" style="padding:10px; border:1px solid #e2e8f0; text-align:center;">Belum ada data.</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -9884,7 +10435,8 @@ function addNilaiDetailRow() {
   state.rows.push({
     id: null,
     tanggal: new Date().toISOString().slice(0, 10),
-    nilai: ''
+    nilai: '',
+    materi: ''
   })
   renderNilaiDetailModalContent()
 }
@@ -9912,6 +10464,7 @@ async function saveNilaiDetailChanges() {
   for (const row of state.rows) {
     const tanggal = String(row.tanggal || '').trim()
     const nilai = toNullableNumber(row.nilai)
+    const materi = String(row.materi || '').trim()
     if (!tanggal || nilai === null) continue
     if (Number.isNaN(nilai)) {
       alert('Nilai harus berupa angka valid.')
@@ -9920,7 +10473,7 @@ async function saveNilaiDetailChanges() {
     if (!validateRange(nilai, `Nilai ${state.jenis}`, maxJenis)) return
 
     if (row.id) {
-      updateRows.push({ id: row.id, tanggal, nilai: round2(nilai) })
+      updateRows.push({ id: row.id, tanggal, nilai: round2(nilai), materi: materi || null })
     } else {
       insertRows.push({
         tanggal,
@@ -9931,7 +10484,8 @@ async function saveNilaiDetailChanges() {
         distribusi_id: String(state.distribusi.id),
         santri_id: String(state.santriId),
         jenis: state.jenis,
-        nilai: round2(nilai)
+        nilai: round2(nilai),
+        materi: materi || null
       })
     }
   }
@@ -9948,10 +10502,14 @@ async function saveNilaiDetailChanges() {
   for (const row of updateRows) {
     const { error } = await sb
       .from(INPUT_NILAI_TABLE)
-      .update({ tanggal: row.tanggal, nilai: row.nilai })
+      .update({ tanggal: row.tanggal, nilai: row.nilai, materi: row.materi })
       .eq('id', row.id)
     if (error) {
       console.error(error)
+      if (isMissingInputNilaiMateriColumnError(error)) {
+        alert(buildInputNilaiMissingMateriColumnMessage())
+        return
+      }
       alert(`Gagal update detail nilai: ${error.message || 'Unknown error'}`)
       return
     }
@@ -9961,6 +10519,10 @@ async function saveNilaiDetailChanges() {
     const { error } = await sb.from(INPUT_NILAI_TABLE).insert(insertRows)
     if (error) {
       console.error(error)
+      if (isMissingInputNilaiMateriColumnError(error)) {
+        alert(buildInputNilaiMissingMateriColumnMessage())
+        return
+      }
       alert(`Gagal tambah detail nilai: ${error.message || 'Unknown error'}`)
       return
     }
@@ -10018,11 +10580,15 @@ async function saveMapelNilaiInternal(santriId, opts = {}) {
   }
 
   const nilai_tugas = toNullableNumber(document.getElementById(`nilai-tugas-${sid}`)?.value || '')
-  const nilai_ulangan_harian = toNullableNumber(document.getElementById(`nilai-uh-${sid}`)?.value || '')
-  const nilai_pts = toNullableNumber(document.getElementById(`nilai-pts-${sid}`)?.value || '')
-  const nilai_pas = toNullableNumber(document.getElementById(`nilai-pas-${sid}`)?.value || '')
+  const nilai_ulangan_harianRaw = toNullableNumber(document.getElementById(`nilai-uh-${sid}`)?.value || '')
+  const nilai_ptsRaw = toNullableNumber(document.getElementById(`nilai-pts-${sid}`)?.value || '')
+  const nilai_pasRaw = toNullableNumber(document.getElementById(`nilai-pas-${sid}`)?.value || '')
   const nilai_kehadiran = toNullableNumber(document.getElementById(`nilai-kehadiran-${sid}`)?.value || '')
-  const nilai_keterampilan = toNullableNumber(document.getElementById(`nilai-keterampilan-${sid}`)?.value || '')
+  const nilai_keterampilanRaw = toNullableNumber(document.getElementById(`nilai-keterampilan-${sid}`)?.value || '')
+  const nilai_ulangan_harian = nilai_ulangan_harianRaw === null ? 0 : nilai_ulangan_harianRaw
+  const nilai_pts = nilai_ptsRaw === null ? 0 : nilai_ptsRaw
+  const nilai_pas = nilai_pasRaw === null ? 0 : nilai_pasRaw
+  const nilai_keterampilan = nilai_keterampilanRaw === null ? 0 : nilai_keterampilanRaw
 
   if (!validateRange(nilai_tugas, 'Nilai Tugas', 5)) return { ok: false }
   if (!validateRange(nilai_ulangan_harian, 'Nilai Ulangan Harian', 10)) return { ok: false }
@@ -10179,6 +10745,57 @@ async function saveMapelRaporDesc(distribusiId) {
     alert('Deskripsi rapor berhasil disimpan.')
     clearGuruPageCache('mapel')
     clearGuruPageCache('rapor')
+  } finally {
+    setButtonLoading(saveBtn, false)
+  }
+}
+
+async function saveMapelPatronMateri(distribusiId) {
+  const distribusiIdText = String(distribusiId || '').trim()
+  if (!distribusiIdText) {
+    alert('Data distribusi belum valid.')
+    return
+  }
+
+  const saveBtn = document.getElementById('btn-save-patron-materi')
+  if (saveBtn?.disabled) return
+  setButtonLoading(saveBtn, true, 'Menyimpan...')
+
+  try {
+    const ctx = await getGuruContext()
+    const distribusi = (ctx.yearDistribusiList || []).find(item => String(item.id) === distribusiIdText)
+    if (!distribusi) {
+      alert('Distribusi mapel tidak ditemukan.')
+      return
+    }
+
+    const materiList = getMapelPatronMateriListFromDom()
+    const payload = {
+      distribusi_id: distribusiIdText,
+      guru_id: String(ctx?.guru?.id || ''),
+      mapel_id: String(distribusi.mapel_id || ''),
+      semester_id: distribusi.semester_id ? String(distribusi.semester_id) : null,
+      materi_json: JSON.stringify(materiList),
+      updated_at: new Date().toISOString()
+    }
+
+    const { error } = await sb
+      .from(MAPEL_PATRON_MATERI_TABLE)
+      .upsert(payload, { onConflict: 'distribusi_id' })
+
+    if (error) {
+      console.error(error)
+      if (isMissingMapelPatronMateriTableError(error)) {
+        alert(buildMapelPatronMateriMissingTableMessage())
+        return
+      }
+      alert(`Gagal simpan patron materi: ${error.message || 'Unknown error'}`)
+      return
+    }
+
+    alert('Patron materi berhasil disimpan.')
+    clearGuruPageCache('mapel')
+    await openMapelDetail(distribusiIdText, 'patron-materi')
   } finally {
     setButtonLoading(saveBtn, false)
   }
@@ -11657,6 +12274,7 @@ function getExamMapelBaseLabel(mapelText) {
   const raw = String(mapelText || '').trim()
   if (!raw) return ''
   return raw
+    .replace(/\s*\([^)]*\)\s*/g, ' ')
     .replace(/\(\s*(SMP|SMA|Umum)\s*\)/ig, '')
     .replace(/(\s+(SMP|SMA|Umum))+$/i, '')
     .replace(/\s{2,}/g, ' ')
@@ -12008,7 +12626,25 @@ function buildGuruExamDistribusiMapsLocal(ctx) {
   return { mapelPairsByClass, mapelPairsByPerangkatan, normalizedClassMap }
 }
 
-function filterGuruExamScheduleRowsLocal(jadwalRows, mapelPairsByClass, mapelPairsByPerangkatan) {
+function resolveGuruVisibleExamClassListLocal(item, distKey, normalizedClassMap, getRowClassListFn = getExamRowClassList) {
+  const allowedClasses = Array.isArray(normalizedClassMap?.get(distKey))
+    ? normalizedClassMap.get(distKey)
+    : []
+  const rowClasses = typeof getRowClassListFn === 'function'
+    ? getRowClassListFn(item, [])
+    : []
+  const normalizedAllowedMap = new Map(
+    allowedClasses
+      .map(kelasNama => String(kelasNama || '').trim())
+      .filter(Boolean)
+      .map(kelasNama => [normalizeExamLookup(kelasNama), kelasNama])
+  )
+  if (!normalizedAllowedMap.size) return rowClasses
+  if (!rowClasses.length) return allowedClasses
+  return rowClasses.filter(kelasNama => normalizedAllowedMap.has(normalizeExamLookup(kelasNama)))
+}
+
+function filterGuruExamScheduleRowsLocal(jadwalRows, mapelPairsByClass, mapelPairsByPerangkatan, normalizedClassMap) {
   return (Array.isArray(jadwalRows) ? jadwalRows : []).filter(item => {
     const keyByClass = `${normalizeExamLookup(item.kelas)}|${normalizeExamLookup(item.mapel)}`
     if (mapelPairsByClass.has(keyByClass)) return true
@@ -12016,7 +12652,9 @@ function filterGuruExamScheduleRowsLocal(jadwalRows, mapelPairsByClass, mapelPai
     const perangkatan = String(meta?.perangkatan || '').trim() || String(item?.kelas || '').trim()
     const mapelBase = getExamMapelBaseLabel(String(meta?.mapel_nama || '').trim()) || getExamMapelBaseLabel(item?.mapel)
     const keyByPerangkatan = `${normalizeExamLookup(mapelBase)}|${normalizeExamLookup(perangkatan)}`
-    return mapelPairsByPerangkatan.has(keyByPerangkatan)
+    if (!mapelPairsByPerangkatan.has(keyByPerangkatan)) return false
+    const visibleClasses = resolveGuruVisibleExamClassListLocal(item, keyByPerangkatan, normalizedClassMap)
+    return visibleClasses.length > 0
   })
 }
 
@@ -12027,15 +12665,8 @@ function buildGuruExamRowsLocal(filteredRows, normalizedClassMap) {
     const perangkatan = String(meta?.perangkatan || '').trim() || String(item?.kelas || '').trim()
     const mapelBase = getExamMapelBaseLabel(String(meta?.mapel_nama || '').trim()) || getExamMapelBaseLabel(item?.mapel)
     const distKey = `${normalizeExamLookup(mapelBase)}|${normalizeExamLookup(perangkatan)}`
-    const fallbackClassNames = normalizedClassMap.get(distKey) || []
-    const kelasList = getExamRowClassList(item, fallbackClassNames)
+    const kelasList = resolveGuruVisibleExamClassListLocal(item, distKey, normalizedClassMap)
     if (!kelasList.length) {
-      examRows.push({
-        rowKey: `${String(item.id || '')}|-`,
-        jadwal: item,
-        kelasNama: '-',
-        mapelLabel: getExamRowMapelLabel(item)
-      })
       return
     }
     kelasList.forEach(kelasNama => {
@@ -12410,6 +13041,129 @@ function getGuruUjianTypeMap(totalCount, options = {}) {
   return { typeMap, errors, safeCount, sections }
 }
 
+function getGuruUjianPgOptionKeyByIndex(index) {
+  let n = Math.max(0, Number(index || 0))
+  let out = ''
+  do {
+    out = String.fromCharCode(97 + (n % 26)) + out
+    n = Math.floor(n / 26) - 1
+  } while (n >= 0)
+  return out
+}
+
+function getGuruUjianPgOptionOrderValue(key) {
+  const normalized = String(key || '').trim().toLowerCase()
+  if (!/^[a-z]+$/.test(normalized)) return Number.POSITIVE_INFINITY
+  let value = 0
+  for (const ch of normalized) {
+    value = (value * 26) + (ch.charCodeAt(0) - 96)
+  }
+  return value
+}
+
+function normalizeGuruUjianPgOptionEntries(rawOptions) {
+  const rows = []
+  if (Array.isArray(rawOptions)) {
+    rawOptions.forEach((item, idx) => {
+      const text = String(item || '').trim()
+      if (!text) return
+      rows.push({ key: getGuruUjianPgOptionKeyByIndex(idx), text })
+    })
+    return rows
+  }
+  if (rawOptions && typeof rawOptions === 'object') {
+    Object.entries(rawOptions).forEach(([rawKey, rawVal], idx) => {
+      const text = String(rawVal || '').trim()
+      if (!text) return
+      const normalizedKey = /^[a-z]+$/i.test(String(rawKey || '').trim())
+        ? String(rawKey || '').trim().toLowerCase()
+        : getGuruUjianPgOptionKeyByIndex(idx)
+      rows.push({
+        key: normalizedKey,
+        text,
+        order: getGuruUjianPgOptionOrderValue(normalizedKey),
+        idx
+      })
+    })
+    rows.sort((a, b) => {
+      if (a.order !== b.order) return a.order - b.order
+      return a.idx - b.idx
+    })
+    return rows.map(item => ({ key: item.key, text: item.text }))
+  }
+  return rows
+}
+
+function readGuruUjianPgOptionEntries(no) {
+  const wrap = document.getElementById(`guru-ujian-q-${no}-options`)
+  if (!wrap) return []
+  return [...wrap.querySelectorAll('.guru-ujian-pg-option-input')]
+    .map((inputEl, idx) => ({
+      key: getGuruUjianPgOptionKeyByIndex(idx),
+      text: String(inputEl?.value || '').trim()
+    }))
+    .filter(item => item.text)
+}
+
+function syncGuruUjianPgAnswerOptions(no) {
+  const selectEl = document.getElementById(`guru-ujian-q-${no}-answer`)
+  if (!selectEl) return
+  const prevValue = String(selectEl.value || '').trim().toLowerCase()
+  const entries = readGuruUjianPgOptionEntries(no)
+  const optionsHtml = entries.map(item => (
+    `<option value="${escapeHtml(item.key)}" ${prevValue === item.key ? 'selected' : ''}>${escapeHtml(item.key.toUpperCase())}</option>`
+  )).join('')
+  selectEl.innerHTML = `<option value="">Pilih</option>${optionsHtml}`
+  if (prevValue && !entries.some(item => item.key === prevValue)) selectEl.value = ''
+}
+
+function ensureGuruUjianPgTrailingInput(no) {
+  const wrap = document.getElementById(`guru-ujian-q-${no}-options`)
+  if (!wrap) return
+  let inputs = [...wrap.querySelectorAll('.guru-ujian-pg-option-input')]
+  while (inputs.length < 2) {
+    const idx = inputs.length
+    const inputEl = document.createElement('input')
+    inputEl.type = 'text'
+    inputEl.className = 'guru-field guru-ujian-pg-option-input'
+    inputEl.dataset.optionIndex = String(idx)
+    inputEl.placeholder = `Opsi ${getGuruUjianPgOptionKeyByIndex(idx).toUpperCase()}`
+    inputEl.oninput = () => onGuruUjianPgOptionInput(no)
+    wrap.appendChild(inputEl)
+    inputs = [...wrap.querySelectorAll('.guru-ujian-pg-option-input')]
+  }
+
+  const last = inputs[inputs.length - 1]
+  if (String(last?.value || '').trim()) {
+    const idx = inputs.length
+    const inputEl = document.createElement('input')
+    inputEl.type = 'text'
+    inputEl.className = 'guru-field guru-ujian-pg-option-input'
+    inputEl.dataset.optionIndex = String(idx)
+    inputEl.placeholder = `Opsi ${getGuruUjianPgOptionKeyByIndex(idx).toUpperCase()}`
+    inputEl.oninput = () => onGuruUjianPgOptionInput(no)
+    wrap.appendChild(inputEl)
+    inputs = [...wrap.querySelectorAll('.guru-ujian-pg-option-input')]
+  }
+
+  const trailingBlankInputs = [...inputs].reverse().filter(inputEl => !String(inputEl?.value || '').trim())
+  while (inputs.length > 2 && trailingBlankInputs.length > 1) {
+    const removeInput = trailingBlankInputs.shift()
+    if (removeInput?.parentNode === wrap) removeInput.parentNode.removeChild(removeInput)
+    inputs = [...wrap.querySelectorAll('.guru-ujian-pg-option-input')]
+  }
+
+  inputs.forEach((inputEl, idx) => {
+    inputEl.dataset.optionIndex = String(idx)
+    inputEl.placeholder = `Opsi ${getGuruUjianPgOptionKeyByIndex(idx).toUpperCase()}`
+  })
+  syncGuruUjianPgAnswerOptions(no)
+}
+
+function onGuruUjianPgOptionInput(no) {
+  ensureGuruUjianPgTrailingInput(no)
+}
+
 function readGuruUjianMatchingColumn(no, side) {
   const wrap = document.getElementById(`guru-ujian-q-${no}-col-${side}`)
   if (!wrap) return []
@@ -12494,17 +13248,17 @@ function getGuruUjianDraftByNumber() {
     const type = normalizeExamQuestionType(rowEl?.dataset?.type || 'pilihan-ganda', 'pilihan-ganda')
     const text = String(document.getElementById(`guru-ujian-q-${no}`)?.value || '')
     if (type === 'pilihan-ganda') {
+      const optionEntries = readGuruUjianPgOptionEntries(no)
+      const options = {}
+      optionEntries.forEach(item => {
+        options[item.key] = item.text
+      })
       map.set(no, {
         no,
         type,
         text,
-        options: {
-          a: String(document.getElementById(`guru-ujian-q-${no}-a`)?.value || ''),
-          b: String(document.getElementById(`guru-ujian-q-${no}-b`)?.value || ''),
-          c: String(document.getElementById(`guru-ujian-q-${no}-c`)?.value || ''),
-          d: String(document.getElementById(`guru-ujian-q-${no}-d`)?.value || '')
-        },
-        answer: String(document.getElementById(`guru-ujian-q-${no}-answer`)?.value || '')
+        options,
+        answer: String(document.getElementById(`guru-ujian-q-${no}-answer`)?.value || '').trim().toUpperCase()
       })
     } else if (type === 'pasangkan-kata') {
       map.set(no, {
@@ -12522,6 +13276,33 @@ function getGuruUjianDraftByNumber() {
     }
   })
   return map
+}
+
+function getGuruUjianDraftBySectionLocal(sectionSource = null) {
+  const draftByNo = getGuruUjianDraftByNumber()
+  const slotMap = new Map()
+  if (!draftByNo.size) return slotMap
+  const maxNo = [...draftByNo.keys()].reduce((max, no) => Math.max(max, Number(no || 0)), 0)
+  const sourceSections = getGuruUjianSectionsSource(sectionSource)
+  if (!Array.isArray(sourceSections) || !sourceSections.length) return slotMap
+  const safeCount = estimateGuruUjianTotalFromSections(sourceSections, maxNo)
+  const normalizedSections = normalizeGuruUjianSections(safeCount, sourceSections)
+  normalizedSections.forEach((section, sectionIdx) => {
+    const start = Number(section?.start || 1)
+    const end = Number(section?.end || start)
+    if (String(section?.type || '') === 'pasangkan-kata') {
+      const row = draftByNo.get(start)
+      if (row) slotMap.set(`${sectionIdx}:1`, row)
+      return
+    }
+    for (let no = start; no <= end; no += 1) {
+      const row = draftByNo.get(no)
+      if (!row) continue
+      const local = no - start + 1
+      slotMap.set(`${sectionIdx}:${local}`, row)
+    }
+  })
+  return slotMap
 }
 
 function toExamStatusLabel(status) {
@@ -12629,6 +13410,26 @@ async function createExamPdfDoc(jadwal, soal) {
   const lineStep = isAr ? 7 : 6
   const metaStep = isAr ? 8 : 6
   const blockGap = isAr ? 3 : 2
+  // Debug alignment table for Arabic marker layout (nomor | titik | isi).
+  // Set ke `false` setelah posisi sudah final.
+  const arabLayoutDebug = isAr
+  const drawArabicLayoutDebugBoxes = ({ markerRightX, markerSlotWidth, dotSlotWidth, spacerSlotWidth = 0, textRightX, textWidth, baselineY, rowHeight = (lineStep - 0.8) }) => {
+    if (!arabLayoutDebug) return
+    const safeRowHeight = Math.max(4.2, Number(rowHeight) || 0)
+    const rowTop = baselineY - (safeRowHeight - 1.4)
+    const markerLeftX = markerRightX - markerSlotWidth
+    const dotLeftX = markerLeftX - dotSlotWidth
+    const spacerLeftX = markerRightX
+    const textLeftX = textRightX - textWidth
+    doc.setDrawColor(37, 99, 235)
+    doc.setLineWidth(0.18)
+    if (spacerSlotWidth > 0) doc.rect(spacerLeftX, rowTop, spacerSlotWidth, safeRowHeight)
+    doc.rect(markerLeftX, rowTop, markerSlotWidth, safeRowHeight)
+    doc.rect(dotLeftX, rowTop, dotSlotWidth, safeRowHeight)
+    doc.rect(textLeftX, rowTop, textWidth, safeRowHeight)
+    doc.setDrawColor(0, 0, 0)
+    doc.setLineWidth(0.2)
+  }
   const drawLine = (text, indent = 0) => {
     const str = toRtl(text)
     if (isAr) doc.text(str, lineX(indent), y, { align: 'right' })
@@ -12667,19 +13468,69 @@ async function createExamPdfDoc(jadwal, soal) {
       doc.text(toRtl(String(lines[li] || '')), lineX(markerIndent), y, { align: 'right' })
     }
   }
-  const drawArabicMarkerTextBlock = (marker, text, markerIndent = 0, _dotIndent = 1.6, _textIndent = 6.2, wrapWidth = usableWidth - _textIndent) => {
+  const drawArabicNumberedTextRow = (marker, text, markerIndent = 0, wrapWidth = usableWidth - markerIndent) => {
     const markerRaw = String(marker || '').trim().replace(/\.+$/, '')
-    const textRaw = String(text || '-').trim() || '-'
-    const rowRaw = markerRaw ? `${markerRaw}. ${textRaw}` : textRaw
-    const dynamicWrapWidth = Math.max(24, Number(wrapWidth) || (usableWidth - markerIndent))
-    const lines = safeSplit(rowRaw, dynamicWrapWidth)
-    if (!lines.length) return
-    lines.forEach(line => {
+    const textRaw = normalizeMixedInputText(String(text || '-').trim() || '-')
+    // Geser satu baris utuh (nomor+titik+isi) sedikit ke kanan.
+    const arabQuestionRowRightShift = 4.2
+    const effectiveIndent = Math.max(0, markerIndent - arabQuestionRowRightShift)
+    // Marker stays in its normal visual form (`nomor.`); only the question text uses a fixed column.
+    const markerColWidth = 6.1
+    const markerRightX = lineX(effectiveIndent)
+    const textRightX = markerRightX - markerColWidth
+    const textWrapWidth = Math.max(24, Math.min(
+      Number(wrapWidth) || (usableWidth - effectiveIndent),
+      usableWidth - effectiveIndent - markerColWidth
+    ))
+    const lines = safeSplit(textRaw, textWrapWidth)
+    const safeLines = lines.length ? lines : ['-']
+    setNormal()
+    safeLines.forEach((line, lineIdx) => {
       if (y > 285) {
         doc.addPage()
         y = margin
       }
-      doc.text(toRtl(String(line || '')), lineX(markerIndent), y, { align: 'right' })
+      if (lineIdx === 0 && markerRaw) {
+        doc.text(toRtl(`${markerRaw}.`), markerRightX, y, { align: 'right' })
+      }
+      doc.text(toRtl(String(line || '').trim()), textRightX, y, { align: 'right' })
+      y += lineStep
+    })
+  }
+  const drawArabicMarkerTextBlock = (marker, text, markerIndent = 0, _dotIndent = 1.6, _textIndent = 6.2, wrapWidth = usableWidth - _textIndent) => {
+    const markerRaw = String(marker || '').trim().replace(/\.+$/, '')
+    // Transparent-table columns (RTL): [spasi][nomor][titik][isi]
+    const spacerSlotWidth = 4.2
+    const markerSlotWidth = 8.0
+    const dotSlotWidth = 3.8
+    const textGap = 0.15
+    const blockRightX = lineX(markerIndent)
+    const markerRightX = blockRightX - spacerSlotWidth
+    const dotRightX = markerRightX - markerSlotWidth
+    const textRightX = dotRightX - dotSlotWidth - textGap
+    const textRaw = normalizeMixedInputText(String(text || '-').trim() || '-')
+    const dynamicWrapWidth = Math.max(24, Number(wrapWidth) || (usableWidth - markerIndent - spacerSlotWidth - markerSlotWidth - dotSlotWidth - textGap))
+    const lines = safeSplit(textRaw, dynamicWrapWidth)
+    const safeLines = lines.length ? lines : ['-']
+    safeLines.forEach((line, lineIdx) => {
+      if (y > 285) {
+        doc.addPage()
+        y = margin
+      }
+      if (lineIdx === 0 && markerRaw) {
+        doc.text(toRtl(markerRaw), markerRightX + 0.2, y, { align: 'right' })
+        doc.text('.', dotRightX - 0.25, y, { align: 'right' })
+      }
+      doc.text(toRtl(String(line || '').trim()), textRightX, y, { align: 'right' })
+      drawArabicLayoutDebugBoxes({
+        markerRightX,
+        markerSlotWidth,
+        dotSlotWidth,
+        spacerSlotWidth,
+        textRightX,
+        textWidth: dynamicWrapWidth,
+        baselineY: y
+      })
       y += lineStep
     })
   }
@@ -12827,6 +13678,20 @@ async function createExamPdfDoc(jadwal, soal) {
     })
     setNormal()
   }
+  const drawLatinMarkerTextBlock = (marker, text, markerIndent = 0, markerGap = 6.2, wrapWidth = usableWidth - markerGap) => {
+    const markerRaw = String(marker || '').trim()
+    const textRaw = normalizeMixedInputText(String(text || '-').trim() || '-')
+    if (y > 285) {
+      doc.addPage()
+      y = margin
+    }
+    if (markerRaw) {
+      setNormal()
+      doc.text(markerRaw, margin + markerIndent, y)
+    }
+    const effectiveWrapWidth = Math.max(24, Number(wrapWidth) || (usableWidth - markerIndent - markerGap))
+    drawWrappedSmart(textRaw, effectiveWrapWidth, markerIndent + markerGap)
+  }
   const toIsoDateText = value => {
     const raw = String(value || '').trim()
     if (!raw) return ''
@@ -12967,43 +13832,89 @@ async function createExamPdfDoc(jadwal, soal) {
       return String(text || '').length * fallbackFactor
     }
   }
+  const getExamOptionKeyByIndex = idx => {
+    let n = Math.max(0, Number(idx || 0))
+    let out = ''
+    do {
+      out = String.fromCharCode(97 + (n % 26)) + out
+      n = Math.floor(n / 26) - 1
+    } while (n >= 0)
+    return out
+  }
+  const getExamOptionOrderValue = key => {
+    const normalized = String(key || '').trim().toLowerCase()
+    if (!/^[a-z]+$/.test(normalized)) return Number.POSITIVE_INFINITY
+    let value = 0
+    for (const ch of normalized) value = (value * 26) + (ch.charCodeAt(0) - 96)
+    return value
+  }
+  const getExamPgOptionEntries = options => {
+    const rows = []
+    if (Array.isArray(options)) {
+      options.forEach((rawVal, idx) => {
+        const value = String(rawVal || '').trim()
+        if (!value) return
+        const key = getExamOptionKeyByIndex(idx)
+        rows.push({
+          key,
+          label: isAr ? getArabicLetterByIndex(idx) : key,
+          value
+        })
+      })
+      return rows
+    }
+    if (options && typeof options === 'object') {
+      Object.entries(options).forEach(([rawKey, rawVal], idx) => {
+        const value = String(rawVal || '').trim()
+        if (!value) return
+        const normalizedKey = /^[a-z]+$/i.test(String(rawKey || '').trim())
+          ? String(rawKey || '').trim().toLowerCase()
+          : getExamOptionKeyByIndex(idx)
+        const order = getExamOptionOrderValue(normalizedKey)
+        const labelIndex = Number.isFinite(order) ? Math.max(0, order - 1) : idx
+        rows.push({
+          key: normalizedKey,
+          label: isAr ? getArabicLetterByIndex(labelIndex) : normalizedKey,
+          value,
+          order,
+          idx
+        })
+      })
+      rows.sort((a, b) => {
+        if (a.order !== b.order) return a.order - b.order
+        return a.idx - b.idx
+      })
+      return rows.map(item => ({ key: item.key, label: item.label, value: item.value }))
+    }
+    return rows
+  }
+  const formatPgOptionLine = item => `${String(item?.label || '-').trim()}. ${String(item?.value || '-').trim() || '-'}`
   const resolvePgOptionLayout = () => {
     const sampleRows = []
+    let maxOptionCount = 0
     sections.forEach(sec => {
       if (sec?.type !== 'pilihan-ganda') return
       ;(sec.items || []).forEach(item => {
-        const opts = item?.options || {}
-        if (isAr) {
-          sampleRows.push([
-            `${getArabicLetterByIndex(0)}. ${String(opts.a || '-')}`,
-            `${getArabicLetterByIndex(1)}. ${String(opts.b || '-')}`,
-            `${getArabicLetterByIndex(2)}. ${String(opts.c || '-')}`,
-            `${getArabicLetterByIndex(3)}. ${String(opts.d || '-')}`
-          ])
-        } else {
-          sampleRows.push([
-            `a. ${String(opts.a || '-')}`,
-            `b. ${String(opts.b || '-')}`,
-            `c. ${String(opts.c || '-')}`,
-            `d. ${String(opts.d || '-')}`
-          ])
-        }
+        const entries = getExamPgOptionEntries(item?.options || {})
+        if (!entries.length) return
+        maxOptionCount = Math.max(maxOptionCount, entries.length)
+        sampleRows.push(entries.map(formatPgOptionLine))
       })
     })
     const availableWidth = usableWidth - optionIndent
     const col4 = availableWidth / 4
     const col2 = availableWidth / 2
     if (!sampleRows.length) return { mode: 'vertical', col4, col2 }
-    let canOneLine = true
-    let canTwoRows = true
+    let canFourCols = maxOptionCount >= 4
+    let canTwoCols = maxOptionCount >= 2
     sampleRows.forEach(row => {
       row.forEach(label => {
         const w = getTextWidthSafe(label)
-        if (w > (col4 - 2)) canOneLine = false
-        if (w > (col2 - 2)) canTwoRows = false
+        if (w > (col4 - 2)) canFourCols = false
+        if (w > (col2 - 2)) canTwoCols = false
       })
     })
-    return { mode: canOneLine ? 'one-line' : (canTwoRows ? 'two-rows' : 'vertical'), col4, col2 }
+    return { mode: canFourCols ? 'one-line' : (canTwoCols ? 'two-rows' : 'vertical'), col4, col2 }
   }
   const pgOptionLayout = resolvePgOptionLayout()
   sections.forEach((section, sectionIndex) => {
@@ -13040,7 +13951,7 @@ async function createExamPdfDoc(jadwal, soal) {
       })
       const fragList = [...fragSet]
       if (fragList.length) {
-        const fragLine = `Pilihan kata: (${fragList.join(', ')})`
+        const fragLine = `(${fragList.join(', ')})`
         drawWrappedSmart(fragLine, usableWidth - optionIndent, optionIndent)
         y += blockGap
       }
@@ -13055,32 +13966,50 @@ async function createExamPdfDoc(jadwal, soal) {
           y = margin
         }
         setBold()
-        const colA = isAr ? 'Ø§Ù„Ù‚Ø§Ø¦Ù…Ø© Ø£' : 'Qoimah A'
-        const colB = isAr ? 'Ø§Ù„Ù‚Ø§Ø¦Ù…Ø© Ø¨' : 'Qoimah B'
+        const colA = isAr ? 'القائمة أ' : 'Qoimah A'
+        const colB = isAr ? 'القائمة ب' : 'Qoimah B'
+        const arPairShift = isAr ? 8 : 0
         if (isAr) {
-          doc.text(colA, lineX(optionIndent), y, { align: 'right' })
-          doc.text(colB, lineX(optionIndent + 60), y, { align: 'right' })
+          const rightAX = lineX(optionIndent + 60 + arPairShift)
+          const rightBX = lineX(optionIndent + arPairShift)
+          doc.text(colA, rightAX, y, { align: 'right' })
+          doc.text(colB, rightBX, y, { align: 'right' })
+          const colAWidth = getTextWidthSafe(colA, 3.2)
+          const colBWidth = getTextWidthSafe(colB, 3.2)
+          doc.setLineWidth(0.35)
+          doc.line(rightAX - colAWidth, y + 1.1, rightAX, y + 1.1)
+          doc.line(rightBX - colBWidth, y + 1.1, rightBX, y + 1.1)
         } else {
           doc.text(colA, margin + optionIndent, y)
           doc.text(colB, margin + optionIndent + 60, y)
         }
         y += lineStep
         setNormal()
+        const leftX = margin + optionIndent
+        const rightX = margin + optionIndent + 60
+        const pairWrapWidth = 52
         for (let idxPair = 0; idxPair < maxRows; idxPair += 1) {
-          if (y > 285) {
-            doc.addPage()
-            y = margin
-          }
           const left = String(matchingCols.columnA[idxPair] || '-')
           const right = String(matchingCols.columnB[idxPair] || '-')
-          if (isAr) {
-            doc.text(left, lineX(optionIndent), y, { align: 'right' })
-            doc.text(right, lineX(optionIndent + 60), y, { align: 'right' })
-          } else {
-            drawTextAtSmart(left, margin + optionIndent)
-            drawTextAtSmart(right, margin + optionIndent + 60)
+          const leftLines = safeSplit(left, pairWrapWidth)
+          const rightLines = safeSplit(right, pairWrapWidth)
+          const rowLineCount = Math.max(leftLines.length || 1, rightLines.length || 1)
+          for (let lineIdx = 0; lineIdx < rowLineCount; lineIdx += 1) {
+            if (y > 285) {
+              doc.addPage()
+              y = margin
+            }
+            const leftLine = String(leftLines[lineIdx] || '')
+            const rightLine = String(rightLines[lineIdx] || '')
+            if (isAr) {
+              if (leftLine) doc.text(leftLine, lineX(optionIndent + 60 + arPairShift), y, { align: 'right' })
+              if (rightLine) doc.text(rightLine, lineX(optionIndent + arPairShift), y, { align: 'right' })
+            } else {
+              if (leftLine) drawTextAtSmart(leftLine, leftX)
+              if (rightLine) drawTextAtSmart(rightLine, rightX)
+            }
+            y += lineStep
           }
-          y += lineStep
         }
       }
       y += blockGap
@@ -13094,107 +14023,137 @@ async function createExamPdfDoc(jadwal, soal) {
       setNormal()
       if (isAr) {
         const noPrefix = formatExamNumber(no, lang)
-        drawArabicMarkerTextBlock(
-          noPrefix,
-          qTextRaw,
-          questionIndent,
-          questionIndent + 1.6,
-          questionIndent + 6.2,
-          usableWidth - questionIndent - 7
-        )
+        drawArabicNumberedTextRow(noPrefix, qTextRaw, questionIndent, usableWidth - questionIndent - 1)
       } else {
-        const title = `${formatExamMarker(formatExamNumber(no, lang), lang)} ${qTextRaw}`
-        drawWrappedSmart(title, usableWidth - questionIndent, questionIndent)
+        const qMarker = formatExamMarker(formatExamNumber(no, lang), lang)
+        drawLatinMarkerTextBlock(qMarker, qTextRaw, questionIndent, questionMarkerGap, usableWidth - questionIndent - questionMarkerGap)
       }
       if (isPg) {
-        const opts = q?.options || {}
-        const aTxt = `a. ${String(opts.a || '-')}`
-        const bTxt = `b. ${String(opts.b || '-')}`
-        const cTxt = `c. ${String(opts.c || '-')}`
-        const dTxt = `d. ${String(opts.d || '-')}`
+        const entries = getExamPgOptionEntries(q?.options || {})
+        const optionEntries = (entries.length ? entries : [
+          { label: isAr ? getArabicLetterByIndex(0) : 'a', value: '-' },
+          { label: isAr ? getArabicLetterByIndex(1) : 'b', value: '-' }
+        ])
+        const optionLines = optionEntries.map(formatPgOptionLine)
         if (!isAr) {
-          const hasMixedOption = [aTxt, bTxt, cTxt, dTxt].some(containsMixedArabic)
+          const hasMixedOption = optionLines.some(containsMixedArabic)
           const xStart = margin + optionIndent
           const col4 = pgOptionLayout.col4
           const col2 = pgOptionLayout.col2
           if (hasMixedOption) {
-            ;[aTxt, bTxt, cTxt, dTxt].forEach(text => {
-              drawWrappedSmart(text, usableWidth - optionIndent, optionIndent)
+            optionEntries.forEach(item => {
+              const marker = formatExamMarker(String(item?.label || '-'), lang)
+              drawLatinMarkerTextBlock(marker, String(item?.value || '-'), optionIndent, optionMarkerGap, usableWidth - optionIndent - optionMarkerGap)
             })
           } else if (pgOptionLayout.mode === 'one-line') {
-            if (y > 285) {
-              doc.addPage()
-              y = margin
-            }
-            doc.text(aTxt, xStart, y)
-            doc.text(bTxt, xStart + col4, y)
-            doc.text(cTxt, xStart + (col4 * 2), y)
-            doc.text(dTxt, xStart + (col4 * 3), y)
-            y += optionLineStep
-          } else if (pgOptionLayout.mode === 'two-rows') {
-            if (y > 285) {
-              doc.addPage()
-              y = margin
-            }
-            doc.text(aTxt, xStart, y)
-            doc.text(bTxt, xStart + col2, y)
-            y += optionLineStep
-            if (y > 285) {
-              doc.addPage()
-              y = margin
-            }
-            doc.text(cTxt, xStart, y)
-            doc.text(dTxt, xStart + col2, y)
-            y += optionLineStep
-          } else {
-            ;[aTxt, bTxt, cTxt, dTxt].forEach(text => {
+            for (let idxOpt = 0; idxOpt < optionEntries.length; idxOpt += 4) {
               if (y > 285) {
                 doc.addPage()
                 y = margin
               }
-              doc.text(text, xStart, y)
+              const chunk = optionEntries.slice(idxOpt, idxOpt + 4)
+              chunk.forEach((item, colIdx) => {
+                const xCol = xStart + (col4 * colIdx)
+                const marker = formatExamMarker(String(item?.label || '-'), lang)
+                doc.text(marker, xCol, y)
+                drawTextAtSmart(String(item?.value || '-'), xCol + optionMarkerGap)
+              })
               y += optionLineStep
+            }
+          } else if (pgOptionLayout.mode === 'two-rows') {
+            for (let idxOpt = 0; idxOpt < optionEntries.length; idxOpt += 2) {
+              if (y > 285) {
+                doc.addPage()
+                y = margin
+              }
+              const chunk = optionEntries.slice(idxOpt, idxOpt + 2)
+              chunk.forEach((item, colIdx) => {
+                const xCol = xStart + (col2 * colIdx)
+                const marker = formatExamMarker(String(item?.label || '-'), lang)
+                doc.text(marker, xCol, y)
+                drawTextAtSmart(String(item?.value || '-'), xCol + optionMarkerGap)
+              })
+              y += optionLineStep
+            }
+          } else {
+            optionEntries.forEach(item => {
+              const marker = formatExamMarker(String(item?.label || '-'), lang)
+              drawLatinMarkerTextBlock(marker, String(item?.value || '-'), optionIndent, optionMarkerGap, usableWidth - optionIndent - optionMarkerGap)
             })
           }
         } else {
-          const arOptions = [
-            `${getArabicLetterByIndex(0)}. ${String(opts.a || '-')}`,
-            `${getArabicLetterByIndex(1)}. ${String(opts.b || '-')}`,
-            `${getArabicLetterByIndex(2)}. ${String(opts.c || '-')}`,
-            `${getArabicLetterByIndex(3)}. ${String(opts.d || '-')}`
-          ]
+          const arOptions = optionEntries
           const xRight = lineX(optionIndent)
           const col4 = pgOptionLayout.col4
           const col2 = pgOptionLayout.col2
+          const drawArabicOptionMarker = (rawMarker, xPos, valueColWidth) => {
+            const markerRaw = String(rawMarker || '').trim().replace(/\.+$/, '')
+            const spacerSlotWidth = 2.4
+            const markerSlotWidth = 4.6
+            const dotSlotWidth = 2.0
+            const textGap = 0.12
+            const markerRightX = xPos - spacerSlotWidth
+            const dotRightX = markerRightX - markerSlotWidth
+            const valueRightX = dotRightX - dotSlotWidth - textGap
+            if (markerRaw) doc.text(toRtl(markerRaw), markerRightX + 0.1, y, { align: 'right' })
+            doc.text('.', dotRightX - 0.2, y, { align: 'right' })
+            drawArabicLayoutDebugBoxes({
+              markerRightX,
+              markerSlotWidth,
+              dotSlotWidth,
+              spacerSlotWidth,
+              textRightX: valueRightX,
+              textWidth: Math.max(8, Number(valueColWidth) || 8),
+              baselineY: y,
+              rowHeight: optionLineStep - 0.9
+            })
+            return {
+              spacerSlotWidth,
+              markerSlotWidth,
+              dotSlotWidth,
+              textGap,
+              valueRightX,
+              advance: spacerSlotWidth + markerSlotWidth + dotSlotWidth + textGap
+            }
+          }
           if (pgOptionLayout.mode === 'one-line') {
-            if (y > 285) {
-              doc.addPage()
-              y = margin
+            for (let idxOpt = 0; idxOpt < arOptions.length; idxOpt += 4) {
+              if (y > 285) {
+                doc.addPage()
+                y = margin
+              }
+              const chunk = arOptions.slice(idxOpt, idxOpt + 4)
+              chunk.forEach((item, colIdx) => {
+                const xCol = xRight - (col4 * colIdx)
+                const marker = String(item?.label || '-').trim()
+                const value = String(item?.value || '-')
+                const textWidth = Math.max(10, col4 - 10.8)
+                const markerLayout = drawArabicOptionMarker(marker, xCol, textWidth) || { valueRightX: xCol - 8 }
+                doc.text(toRtl(value.trim()), markerLayout.valueRightX, y, { align: 'right' })
+              })
+              y += optionLineStep
             }
-            doc.text(toRtl(arOptions[0]), xRight, y, { align: 'right' })
-            doc.text(toRtl(arOptions[1]), xRight - col4, y, { align: 'right' })
-            doc.text(toRtl(arOptions[2]), xRight - (col4 * 2), y, { align: 'right' })
-            doc.text(toRtl(arOptions[3]), xRight - (col4 * 3), y, { align: 'right' })
-            y += optionLineStep
           } else if (pgOptionLayout.mode === 'two-rows') {
-            if (y > 285) {
-              doc.addPage()
-              y = margin
+            for (let idxOpt = 0; idxOpt < arOptions.length; idxOpt += 2) {
+              if (y > 285) {
+                doc.addPage()
+                y = margin
+              }
+              const chunk = arOptions.slice(idxOpt, idxOpt + 2)
+              chunk.forEach((item, colIdx) => {
+                const xCol = xRight - (col2 * colIdx)
+                const marker = String(item?.label || '-').trim()
+                const value = String(item?.value || '-')
+                const textWidth = Math.max(10, col2 - 10.8)
+                const markerLayout = drawArabicOptionMarker(marker, xCol, textWidth) || { valueRightX: xCol - 8 }
+                doc.text(toRtl(value.trim()), markerLayout.valueRightX, y, { align: 'right' })
+              })
+              y += optionLineStep
             }
-            doc.text(toRtl(arOptions[0]), xRight, y, { align: 'right' })
-            doc.text(toRtl(arOptions[1]), xRight - col2, y, { align: 'right' })
-            y += optionLineStep
-            if (y > 285) {
-              doc.addPage()
-              y = margin
-            }
-            doc.text(toRtl(arOptions[2]), xRight, y, { align: 'right' })
-            doc.text(toRtl(arOptions[3]), xRight - col2, y, { align: 'right' })
-            y += optionLineStep
           } else {
-            arOptions.forEach(line => {
-              const marker = String(line.split('.')[0] || '')
-              const val = String(line.slice(line.indexOf('.') + 1) || '-').trim()
+            arOptions.forEach(item => {
+              const marker = String(item?.label || '-').trim()
+              const val = String(item?.value || '-')
               drawArabicMarkerTextBlock(
                 marker,
                 val,
@@ -13385,6 +14344,18 @@ async function exportExamWordFile(jadwal, soal, fileName) {
   setTimeout(() => URL.revokeObjectURL(url), 1200)
 }
 
+function getGuruExamDocxUtils() {
+  return window.guruExamDocxUtils || {}
+}
+
+async function exportExamArabicTemplateFile(jadwal, soal, fileName) {
+  const docxUtils = getGuruExamDocxUtils()
+  if (typeof docxUtils.exportArabicExamDocx !== 'function') {
+    throw new Error('Fitur template DOCX Arab belum siap.')
+  }
+  return docxUtils.exportArabicExamDocx(jadwal, soal, fileName)
+}
+
 function getGuruExamDistribusiMaps(ctx) {
   const examDataUtils = window.guruExamDataUtils || {}
   const distribusiMaps = typeof examDataUtils.buildExamDistribusiMaps === 'function'
@@ -13413,11 +14384,13 @@ function buildGuruExamRowsFromSchedule(jadwalRows, mapData) {
         jadwalRows: jadwalRows || [],
         mapelPairsByClass,
         mapelPairsByPerangkatan,
+        normalizedClassMap,
         normalizeExamLookup,
         parseExamMetaFromSchedule,
-        getExamMapelBaseLabel
+        getExamMapelBaseLabel,
+        getExamRowClassList
       })
-    : filterGuruExamScheduleRowsLocal(jadwalRows || [], mapelPairsByClass, mapelPairsByPerangkatan)
+    : filterGuruExamScheduleRowsLocal(jadwalRows || [], mapelPairsByClass, mapelPairsByPerangkatan, normalizedClassMap)
   return typeof examDataUtils.buildExamRowsFromSchedule === 'function'
     ? examDataUtils.buildExamRowsFromSchedule({
         filteredRows: filtered,
@@ -15345,7 +16318,7 @@ async function renderUjianPage() {
   content.innerHTML = renderGuruExamListHtml(examRows, soalMap)
 }
 
-function renderGuruUjianQuestionRows(forcedSections = null) {
+function renderGuruUjianQuestionRows(forcedSections = null, draftSections = null) {
   const count = Number(document.getElementById('guru-ujian-jumlah')?.value || 0)
   const listEl = document.getElementById('guru-ujian-questions')
   if (!listEl) return
@@ -15353,6 +16326,7 @@ function renderGuruUjianQuestionRows(forcedSections = null) {
     renderGuruUjianSectionRows(forcedSections || ujianGuruState.sectionDefs)
   }
   const draftByNo = getGuruUjianDraftByNumber()
+  const draftBySectionLocal = getGuruUjianDraftBySectionLocal(draftSections)
   const existing = parseExamQuestions(ujianGuruState.activeSoal?.questions_json)
   const fallbackType = String(ujianGuruState.activeSoal?.bentuk_soal || 'pilihan-ganda')
   const existingByNo = new Map(
@@ -15390,9 +16364,14 @@ function renderGuruUjianQuestionRows(forcedSections = null) {
     const qType = typeCfg.typeMap[i] || 'pilihan-ganda'
     const sectionForNo = sectionsWithScores.find(sec => i >= sec.start && i <= sec.end) || null
     if (qType === 'pasangkan-kata' && sectionForNo && Number(sectionForNo.start) !== i) continue
+    const sectionMetaForNo = sectionIndexByStart.get(Number(sectionForNo?.start || i)) || {}
+    const sectionIdx = Number(sectionMetaForNo?.idx || 0)
+    const sectionLocalNo = sectionForNo ? Math.max(1, i - Number(sectionForNo.start || i) + 1) : (localNoByAbsNo.get(i) || i)
+    const sectionLocalKey = `${sectionIdx}:${qType === 'pasangkan-kata' ? 1 : sectionLocalNo}`
+    const sectionDraft = draftBySectionLocal.get(sectionLocalKey) || null
     const prev = qType === 'pasangkan-kata' && sectionForNo
-      ? buildGuruUjianMatchingQuestionDraft(sectionForNo, draftByNo, existingByNo)
-      : (draftByNo.get(i) || existingByNo.get(i) || {})
+      ? (sectionDraft || buildGuruUjianMatchingQuestionDraft(sectionForNo, draftByNo, existingByNo))
+      : (sectionDraft || draftByNo.get(i) || existingByNo.get(i) || {})
     const localNo = localNoByAbsNo.get(i) || i
     if (sectionForNo && Number(sectionForNo.start) === i) {
       const accent = getGuruUjianSectionAccent(qType)
@@ -15436,6 +16415,11 @@ function renderGuruUjianQuestionRows(forcedSections = null) {
     }
   }
   listEl.innerHTML = html
+  listEl.querySelectorAll('.guru-ujian-question-row[data-type="pilihan-ganda"]').forEach(rowEl => {
+    const no = Number(rowEl?.dataset?.no || 0)
+    if (!Number.isFinite(no) || no <= 0) return
+    ensureGuruUjianPgTrailingInput(no)
+  })
 }
 function toggleGuruExamFolder(folderNameEncoded) {
   const key = decodeURIComponent(String(folderNameEncoded || '')).trim()
@@ -15551,7 +16535,7 @@ function openGuruUjianEditorPage(jadwalId) {
     instruksiLang: instruksiMeta.lang
   })
   renderGuruUjianSectionRows(ujianGuruState.sectionDefs)
-  renderGuruUjianQuestionRows(ujianGuruState.sectionDefs)
+  renderGuruUjianQuestionRows(ujianGuruState.sectionDefs, ujianGuruState.sectionDefs)
 }
 
 function backToGuruUjianList() {
@@ -15592,13 +16576,14 @@ function onGuruUjianSectionChange() {
 }
 
 function syncGuruUjianSectionsFromSource() {
+  const prevSections = buildGuruUjianSectionDefs(ujianGuruState.sectionDefs || [])
   const latest = getGuruUjianSectionsSource()
-  ujianGuruState.sectionDefs = latest
   renderGuruUjianSectionRows(latest)
-  renderGuruUjianQuestionRows(latest)
+  renderGuruUjianQuestionRows(latest, prevSections)
 }
 
 function addGuruUjianSection() {
+  const prevSections = buildGuruUjianSectionDefs(getGuruUjianSectionsSource())
   const current = Array.isArray(ujianGuruState.sectionDefs) ? [...ujianGuruState.sectionDefs] : []
   const fromDom = readGuruUjianSectionsFromDom()
   const baseCurrent = fromDom.length ? fromDom : current
@@ -15606,21 +16591,20 @@ function addGuruUjianSection() {
   const newCountRaw = document.getElementById('guru-ujian-new-section-count')?.value
   const newCount = parseGuruUjianRangeValue(newCountRaw, 200) || 1
   const base = baseCurrent.concat([{ type: newType, count: newCount }])
-  ujianGuruState.sectionDefs = base
   renderGuruUjianSectionRows(base)
-  renderGuruUjianQuestionRows(base)
+  renderGuruUjianQuestionRows(base, prevSections)
 }
 
 function removeGuruUjianSection(index) {
+  const prevSections = buildGuruUjianSectionDefs(getGuruUjianSectionsSource())
   const idx = Number(index)
   const fromDom = readGuruUjianSectionsFromDom()
   const sections = fromDom.length ? fromDom : (Array.isArray(ujianGuruState.sectionDefs) ? [...ujianGuruState.sectionDefs] : [])
   if (!Number.isFinite(idx) || idx < 0 || idx >= sections.length) return
   if (sections.length <= 1) return
   const next = sections.filter((_item, i) => i !== idx)
-  ujianGuruState.sectionDefs = next
   renderGuruUjianSectionRows(next)
-  renderGuruUjianQuestionRows(next)
+  renderGuruUjianQuestionRows(next, prevSections)
 }
 
 function collectGuruUjianQuestions() {
@@ -15652,13 +16636,21 @@ function collectGuruUjianQuestions() {
     }
     if (qType === 'pilihan-ganda') {
       if (!text) continue
-      const options = {
-        a: String(document.getElementById(`guru-ujian-q-${i}-a`)?.value || '').trim(),
-        b: String(document.getElementById(`guru-ujian-q-${i}-b`)?.value || '').trim(),
-        c: String(document.getElementById(`guru-ujian-q-${i}-c`)?.value || '').trim(),
-        d: String(document.getElementById(`guru-ujian-q-${i}-d`)?.value || '').trim()
+      const optionEntries = readGuruUjianPgOptionEntries(i)
+      if (optionEntries.length < 2) {
+        alert(`Soal nomor ${exportNo} (Pilihan Ganda) minimal harus punya 2 opsi jawaban.`)
+        return null
       }
-      const answer = String(document.getElementById(`guru-ujian-q-${i}-answer`)?.value || '').trim().toUpperCase()
+      const options = {}
+      optionEntries.forEach(item => {
+        options[item.key] = item.text
+      })
+      const answerRaw = String(document.getElementById(`guru-ujian-q-${i}-answer`)?.value || '').trim().toLowerCase()
+      if (answerRaw && !Object.prototype.hasOwnProperty.call(options, answerRaw)) {
+        alert(`Kunci jawaban soal nomor ${exportNo} tidak cocok dengan opsi yang tersedia.`)
+        return null
+      }
+      const answer = answerRaw ? answerRaw.toUpperCase() : ''
       questions.push({ no: exportNo, type: qType, text, options, answer, ...sectionMeta })
       exportNo += 1
     } else if (qType === 'pasangkan-kata') {
@@ -15830,7 +16822,14 @@ async function printGuruUjianActive(format = '') {
       status: 'draft'
     }
     if (mode === 'word') {
-      console.info('Mode Word dinonaktifkan sementara. Mengalihkan ke PDF.')
+      if (bahasaSoal === 'AR') {
+        const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasTarget || '-')}.docx`
+        await exportExamArabicTemplateFile({ ...jadwal, kelas: kelasTarget }, soal, fileName)
+        return
+      }
+      const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasTarget || '-')}.doc`
+      await exportExamWordFile({ ...jadwal, kelas: kelasTarget }, soal, fileName)
+      return
     }
     const doc = await createExamPdfDoc({ ...jadwal, kelas: kelasTarget }, soal)
     if (!doc) {
@@ -15877,8 +16876,17 @@ async function printGuruUjianByRow(rowKeyEncoded, format = '') {
       alert('Soal belum tersedia untuk dicetak.')
       return
     }
+    const instruksiMeta = parseExamInstruksiMeta(soalRes.data?.instruksi)
+    const bahasaSoal = String(instruksiMeta.lang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
     if (mode === 'word') {
-      console.info('Mode Word dinonaktifkan sementara. Mengalihkan ke PDF.')
+      if (bahasaSoal === 'AR') {
+        const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.docx`
+        await exportExamArabicTemplateFile({ ...jadwal, kelas: kelasNama }, soalRes.data, fileName)
+        return
+      }
+      const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.doc`
+      await exportExamWordFile({ ...jadwal, kelas: kelasNama }, soalRes.data, fileName)
+      return
     }
 
     const doc = await createExamPdfDoc({ ...jadwal, kelas: kelasNama }, soalRes.data)
@@ -15907,13 +16915,11 @@ async function chooseAndPrintGuruUjianByRow(rowKeyEncoded) {
 }
 
 async function exportGuruUjianActiveWord() {
-  alert('Export Word dinonaktifkan sementara. File akan diunduh sebagai PDF.')
-  await printGuruUjianActive('pdf')
+  await printGuruUjianActive('word')
 }
 
 async function exportGuruUjianByRowWord(rowKeyEncoded) {
-  alert('Export Word dinonaktifkan sementara. File akan diunduh sebagai PDF.')
-  await printGuruUjianByRow(rowKeyEncoded, 'pdf')
+  await printGuruUjianByRow(rowKeyEncoded, 'word')
 }
 
 async function setupRaporAccess(forceReload = false) {
@@ -16560,10 +17566,15 @@ window.onAbsensiKelasChange = onAbsensiKelasChange
 window.onAbsensiMapelChange = onAbsensiMapelChange
 window.onAbsensiTanggalChange = onAbsensiTanggalChange
 window.onAbsensiPenggantiToggle = onAbsensiPenggantiToggle
+window.onAbsensiPatronMateriSelectChange = onAbsensiPatronMateriSelectChange
+window.onAbsensiPatronMateriInputChange = onAbsensiPatronMateriInputChange
 window.saveGuruAbsensi = saveGuruAbsensi
+window.onInputNilaiTanggalChange = onInputNilaiTanggalChange
 window.onInputNilaiKelasChange = onInputNilaiKelasChange
 window.onInputNilaiMapelChange = onInputNilaiMapelChange
 window.onInputNilaiJenisChange = onInputNilaiJenisChange
+window.onInputNilaiPatronMateriSelectChange = onInputNilaiPatronMateriSelectChange
+window.onInputNilaiPatronMateriInputChange = onInputNilaiPatronMateriInputChange
 window.saveInputNilaiBatch = saveInputNilaiBatch
 window.onLaporanBulananPeriodChange = onLaporanBulananPeriodChange
 window.openLaporanBulananBulkInputModal = openLaporanBulananBulkInputModal
@@ -16606,6 +17617,7 @@ window.onGuruUjianShapeChange = onGuruUjianShapeChange
 window.onGuruUjianSectionChange = onGuruUjianSectionChange
 window.onGuruUjianSectionScoreInput = onGuruUjianSectionScoreInput
 window.onGuruUjianSectionScoreKeydown = onGuruUjianSectionScoreKeydown
+window.onGuruUjianPgOptionInput = onGuruUjianPgOptionInput
 window.addGuruUjianSection = addGuruUjianSection
 window.removeGuruUjianSection = removeGuruUjianSection
 window.saveGuruUjian = saveGuruUjian
@@ -16618,6 +17630,7 @@ window.exportGuruUjianByRowWord = exportGuruUjianByRowWord
 window.exportGuruUjianActiveWord = exportGuruUjianActiveWord
 window.onMonitoringSantriClassFilterChange = onMonitoringSantriClassFilterChange
 window.saveMapelRaporDesc = saveMapelRaporDesc
+window.saveMapelPatronMateri = saveMapelPatronMateri
 window.openMapelDetail = openMapelDetail
 window.toggleGuruAvailableMapelSection = toggleGuruAvailableMapelSection
 window.clearSelectedGuruMapelClaim = clearSelectedGuruMapelClaim
@@ -16630,6 +17643,9 @@ window.updateNilaiDetailRow = updateNilaiDetailRow
 window.removeNilaiDetailRow = removeNilaiDetailRow
 window.saveNilaiDetailChanges = saveNilaiDetailChanges
 window.setMapelDetailTab = setMapelDetailTab
+window.updateMapelPatronMateriCounter = updateMapelPatronMateriCounter
+window.addMapelPatronMateriRow = addMapelPatronMateriRow
+window.removeMapelPatronMateriRow = removeMapelPatronMateriRow
 window.startMapelAbsensiEdit = startMapelAbsensiEdit
 window.cancelMapelAbsensiEdit = cancelMapelAbsensiEdit
 window.saveMapelAbsensiEdit = saveMapelAbsensiEdit
