@@ -14,6 +14,7 @@ const WAKASEK_KURIKULUM_PAGE_SET = new Set(['dashboard', 'monitoring', 'perizina
 const DEFAULT_GURU_PAGE = 'dashboard'
 const ATTENDANCE_TABLE = 'absensi_santri'
 const ATTENDANCE_DELEGATION_TABLE = 'absensi_pengganti_tugas'
+const ATTENDANCE_SUBMISSION_TABLE = 'absensi_pengajuan_pengganti'
 const INPUT_NILAI_TABLE = 'nilai_input_akademik'
 const RAPOR_DESC_TABLE = 'rapor_deskripsi_mapel'
 const MAPEL_PATRON_MATERI_TABLE = 'mapel_patron_materi'
@@ -37,6 +38,7 @@ const KARYAWAN_FOTO_MAX_SIZE_BYTES = 300 * 1024
 const CHAT_MEMBERS_TABLE = 'chat_thread_members'
 const CHAT_MESSAGES_TABLE = 'chat_messages'
 const TOPBAR_CHAT_BADGE_TICK_MS = 10000
+const TOPBAR_NOTIF_TICK_MS = 30000
 const TOPBAR_NOTIF_RANGE_OPTIONS = [1, 3, 7]
 const GURU_SIDEBAR_ICON_ONLY_BREAKPOINT = 1180
 const GURU_LAPORAN_PAGE_SET = new Set(['laporan', 'laporan-absensi', 'laporan-pekanan', 'laporan-bulanan'])
@@ -124,6 +126,13 @@ let absensiDelegationState = {
   byDateKey: new Map(),
   tableMissing: false,
   guruMap: new Map()
+}
+let absensiSubstituteState = {
+  byGuruId: new Map(),
+  approvalRows: [],
+  tableMissing: false,
+  selectedGuruAsalId: '',
+  teacherOptions: []
 }
 let absensiPatronMateriState = {
   list: [],
@@ -223,7 +232,8 @@ let topbarNotifState = {
   items: [],
   loaded: false,
   rangeDays: 1,
-  readMap: {}
+  readMap: {},
+  intervalId: null
 }
 let topbarChatBadgeState = {
   intervalId: null,
@@ -4134,11 +4144,29 @@ async function openGuruAbsensiFromNotifAction(action = {}) {
   return true
 }
 
+async function openGuruAbsensiApprovalFromNotifAction(action = {}) {
+  const proposalId = String(action?.proposalId || '').trim()
+  if (!proposalId) return false
+  await loadGuruPage('input-absensi')
+  await loadAbsensiSubmissionApprovalRows({ forceReload: true })
+  renderAbsensiApprovalPanel()
+  const target = Array.from(document.querySelectorAll('[data-absensi-approval-id]'))
+    .find(el => String(el.getAttribute('data-absensi-approval-id') || '') === proposalId)
+  if (!target) return false
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  const detailsEl = target.querySelector('details')
+  if (detailsEl) detailsEl.open = true
+  return true
+}
+
 async function handleGuruNotifItemAction(item) {
   const actionType = String(item?.action?.type || '').trim()
   if (!actionType) return false
   if (actionType === 'input-absensi') {
     return await openGuruAbsensiFromNotifAction(item.action)
+  }
+  if (actionType === 'input-absensi-approval') {
+    return await openGuruAbsensiApprovalFromNotifAction(item.action)
   }
   return false
 }
@@ -4342,6 +4370,13 @@ function startGuruTopbarChatBadgeTicker() {
   }, TOPBAR_CHAT_BADGE_TICK_MS)
 }
 
+function startGuruTopbarNotificationTicker() {
+  if (topbarNotifState.intervalId) return
+  topbarNotifState.intervalId = window.setInterval(() => {
+    refreshGuruTopbarNotificationsSafe(true)
+  }, TOPBAR_NOTIF_TICK_MS)
+}
+
 async function fetchGuruTopbarNotifications() {
   const items = []
   const dateKeys = buildGuruNotifDateKeys()
@@ -4424,6 +4459,49 @@ async function fetchGuruTopbarNotifications() {
         })
       })
     })
+
+    try {
+      const approvalRes = await sb
+        .from(ATTENDANCE_SUBMISSION_TABLE)
+        .select('id, tanggal, kelas_id, mapel_id, guru_pengganti_id, jam_pelajaran_1_id, jam_pelajaran_2_id, created_at, status')
+        .eq('guru_asal_id', String(ctx?.guru?.id || ''))
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false })
+      if (approvalRes.error) {
+        if (!isMissingAbsensiSubmissionTableError(approvalRes.error)) {
+          console.error(approvalRes.error)
+        }
+      } else {
+        const jamMap = new Map((ctx?.jamList || []).map(item => [String(item.id || ''), item]))
+        const guruMap = getAbsensiSourceGuruMap()
+        ;(approvalRes.data || []).forEach(row => {
+          const kelas = ctx?.kelasMap?.get(String(row?.kelas_id || ''))
+          const mapel = ctx?.mapelMap?.get(String(row?.mapel_id || ''))
+          const jamLabels = [String(row?.jam_pelajaran_1_id || ''), String(row?.jam_pelajaran_2_id || '')]
+            .filter(Boolean)
+            .map(id => {
+              const jam = jamMap.get(id)
+              return jam ? `${jam.nama || 'Jam'} (${toTimeLabel(jam.jam_mulai)}-${toTimeLabel(jam.jam_selesai)})` : id
+            })
+            .filter(Boolean)
+          const guruPenggantiNama = String(guruMap.get(String(row?.guru_pengganti_id || ''))?.nama || 'Guru Pengganti')
+          items.push({
+            id: `absensi-approval|${String(row?.id || '')}`,
+            type: 'Persetujuan Absensi',
+            title: `${getMapelLabel(mapel)} - ${String(kelas?.nama_kelas || '-')}`,
+            meta: `${formatNotifDateLabel(String(row?.tanggal || '').slice(0, 10))}${jamLabels.length ? ` | ${jamLabels.join(', ')}` : ''}`,
+            desc: `${guruPenggantiNama} mengirim absensi pengganti dan menunggu persetujuan.`,
+            sortKey: `${String(row?.tanggal || '').slice(0, 10)} ${String(row?.created_at || '')}`,
+            action: {
+              type: 'input-absensi-approval',
+              proposalId: String(row?.id || '')
+            }
+          })
+        })
+      }
+    } catch (approvalError) {
+      console.error(approvalError)
+    }
   } catch (error) {
     console.error(error)
   }
@@ -4706,6 +4784,111 @@ async function getGuruContext(forceReload = false) {
   return guruContextCache
 }
 
+async function getGuruScheduleContextByGuruId(guruId, forceReload = false) {
+  const gid = String(guruId || '').trim()
+  if (!gid) {
+    return {
+      guru: null,
+      activeTahunAjaran: null,
+      activeSemester: null,
+      distribusiList: [],
+      yearDistribusiList: [],
+      activeDistribusiList: [],
+      kelasMap: new Map(),
+      mapelMap: new Map(),
+      semesterMap: new Map(),
+      jadwalList: [],
+      jamList: []
+    }
+  }
+  if (!forceReload && absensiSubstituteState.byGuruId.has(gid)) {
+    return absensiSubstituteState.byGuruId.get(gid)
+  }
+
+  const [guruRes, activeTahunAjaran, activeSemester] = await Promise.all([
+    sb.from('karyawan').select('id, nama, id_karyawan').eq('id', gid).maybeSingle(),
+    getActiveTahunAjaran(),
+    getActiveSemester()
+  ])
+  if (guruRes.error) throw guruRes.error
+  const guru = guruRes.data || null
+  const activeTahunAjaranId = String(activeTahunAjaran?.id || '')
+
+  const distribusiRes = await sb
+    .from('distribusi_mapel')
+    .select('id, kelas_id, mapel_id, guru_id, semester_id')
+    .eq('guru_id', gid)
+
+  if (distribusiRes.error) throw distribusiRes.error
+
+  const distribusiList = distribusiRes.data || []
+  const semesterIds = [...new Set(distribusiList.map(item => item.semester_id).filter(Boolean))]
+  const semesterRes = semesterIds.length
+    ? await sb.from('semester').select('id, nama, aktif, tahun_ajaran_id').in('id', semesterIds)
+    : { data: [], error: null }
+  if (semesterRes.error) console.error(semesterRes.error)
+
+  const semesterMap = new Map((semesterRes.data || []).map(item => [String(item.id), item]))
+  const yearDistribusiList = activeTahunAjaranId
+    ? distribusiList.filter(item => String(semesterMap.get(String(item.semester_id || ''))?.tahun_ajaran_id || '') === activeTahunAjaranId)
+    : distribusiList
+  const activeDistribusiList = activeSemester?.id
+    ? yearDistribusiList.filter(item => String(item.semester_id || '') === String(activeSemester.id))
+    : yearDistribusiList
+
+  const kelasIds = [...new Set(yearDistribusiList.map(item => item.kelas_id).filter(Boolean))]
+  const mapelIds = [...new Set(yearDistribusiList.map(item => item.mapel_id).filter(Boolean))]
+  const distribusiIds = [...new Set(yearDistribusiList.map(item => item.id).filter(Boolean))]
+
+  const supportJamTahunAjaran = await checkJamPelajaranSupportsTahunAjaran()
+  let jamQuery = sb
+    .from('jam_pelajaran')
+    .select('id, nama, jam_mulai, jam_selesai, aktif, urutan')
+    .order('urutan', { ascending: true })
+    .order('jam_mulai', { ascending: true })
+  if (supportJamTahunAjaran && activeTahunAjaranId) {
+    jamQuery = jamQuery.eq('tahun_ajaran_id', activeTahunAjaranId)
+  }
+
+  const [kelasRes, mapelRes, jadwalRes, jamRes] = await Promise.all([
+    kelasIds.length ? sb.from('kelas').select('id, nama_kelas, tingkat, tahun_ajaran_id').in('id', kelasIds) : Promise.resolve({ data: [] }),
+    getMapelRowsByIds(mapelIds),
+    distribusiIds.length ? sb.from('jadwal_pelajaran').select('id, distribusi_id, hari, jam_mulai, jam_selesai').in('distribusi_id', distribusiIds) : Promise.resolve({ data: [] }),
+    jamQuery
+  ])
+
+  if (kelasRes.error) console.error(kelasRes.error)
+  if (mapelRes.error) console.error(mapelRes.error)
+  if (jadwalRes.error) console.error(jadwalRes.error)
+
+  let jamList = []
+  if (!jamRes.error) {
+    jamList = jamRes.data || []
+  } else {
+    const jamRetry = await sb
+      .from('jam_pelajaran')
+      .select('id, nama, jam_mulai, jam_selesai')
+      .order('jam_mulai', { ascending: true })
+    if (!jamRetry.error) jamList = jamRetry.data || []
+  }
+
+  const result = {
+    guru,
+    activeTahunAjaran,
+    activeSemester,
+    distribusiList,
+    yearDistribusiList,
+    activeDistribusiList,
+    kelasMap: new Map((kelasRes.data || []).map(item => [String(item.id), item])),
+    mapelMap: new Map((mapelRes.data || []).map(item => [String(item.id), item])),
+    semesterMap,
+    jadwalList: jadwalRes.data || [],
+    jamList
+  }
+  absensiSubstituteState.byGuruId.set(gid, result)
+  return result
+}
+
 async function getSantriByKelas(kelasId) {
   if (!kelasId) return []
   const tahunAktif = await getActiveTahunAjaran()
@@ -4763,6 +4946,10 @@ function buildAbsensiDelegationUniqueMessage() {
   return `Tabel amanat guru pengganti sudah ada, tapi unique constraint untuk update tugas ganti belum sesuai.\n\nSilakan jalankan SQL berikut di Supabase:\n\ncreate unique index if not exists ux_absensi_pengganti_tugas_sesi\non public.${ATTENDANCE_DELEGATION_TABLE} (tanggal, kelas_id, mapel_id, jam_pelajaran_id, guru_asal_id);`
 }
 
+function buildAbsensiSubmissionTableMessage() {
+  return `Tabel pengajuan absensi guru pengganti belum ada.\n\nJalankan SQL berikut di Supabase:\n\ncreate table if not exists public.${ATTENDANCE_SUBMISSION_TABLE} (\n  id uuid primary key default gen_random_uuid(),\n  tanggal date not null,\n  kelas_id text not null,\n  mapel_id text not null,\n  distribusi_id text null,\n  semester_id text null,\n  guru_asal_id uuid not null,\n  guru_pengganti_id uuid not null,\n  jam_pelajaran_1_id text null,\n  jam_pelajaran_2_id text null,\n  patron_materi text null,\n  keterangan text null,\n  payload_absensi jsonb not null default '[]'::jsonb,\n  status text not null default 'pending',\n  reviewed_by uuid null,\n  reviewed_at timestamptz null,\n  review_note text null,\n  created_at timestamptz not null default now()\n);`
+}
+
 function isMissingAbsensiPenggantiColumnError(error) {
   const msg = String(error?.message || '').toLowerCase()
   return msg.includes('guru_pengganti_id') || msg.includes('keterangan_pengganti')
@@ -4790,6 +4977,10 @@ function isMissingAbsensiTableError(error) {
 
 function isMissingAbsensiDelegationTableError(error) {
   return isMissingTableErrorByName(error, ATTENDANCE_DELEGATION_TABLE)
+}
+
+function isMissingAbsensiSubmissionTableError(error) {
+  return isMissingTableErrorByName(error, ATTENDANCE_SUBMISSION_TABLE)
 }
 
 function isMissingInputNilaiTableError(error) {
@@ -5064,7 +5255,7 @@ function renderAbsensiSantriRows() {
 function getAbsensiDistribusiCandidates() {
   const kelasId = String(document.getElementById('absensi-kelas')?.value || '')
   const mapelId = String(document.getElementById('absensi-mapel')?.value || '')
-  const ctx = guruContextCache
+  const ctx = getAbsensiSourceContext()
   if (!ctx) return []
 
   return (ctx.activeDistribusiList || []).filter(item => {
@@ -5076,6 +5267,150 @@ function getSelectedAbsensiHari() {
   const tanggal = String(document.getElementById('absensi-tanggal')?.value || '').trim()
   if (!tanggal) return ''
   return normalizeHari(getHariFromDate(tanggal))
+}
+
+function isAbsensiSubstituteMode() {
+  return document.getElementById('absensi-sebagai-pengganti')?.checked === true
+}
+
+function getSelectedAbsensiGuruAsalId() {
+  return String(document.getElementById('absensi-guru-asal')?.value || '').trim()
+}
+
+function getAbsensiSourceContext() {
+  if (isAbsensiSubstituteMode()) {
+    const guruAsalId = getSelectedAbsensiGuruAsalId()
+    if (guruAsalId && absensiSubstituteState.byGuruId.has(guruAsalId)) {
+      return absensiSubstituteState.byGuruId.get(guruAsalId)
+    }
+    return {
+      guru: null,
+      activeTahunAjaran: guruContextCache?.activeTahunAjaran || null,
+      activeSemester: guruContextCache?.activeSemester || null,
+      distribusiList: [],
+      yearDistribusiList: [],
+      activeDistribusiList: [],
+      kelasMap: guruContextCache?.kelasMap || new Map(),
+      mapelMap: guruContextCache?.mapelMap || new Map(),
+      semesterMap: new Map(),
+      jadwalList: [],
+      jamList: guruContextCache?.jamList || []
+    }
+  }
+  return guruContextCache
+}
+
+function getAbsensiSourceGuruMap() {
+  if (!isAbsensiSubstituteMode()) return absensiDelegationState.guruMap
+  const map = new Map(absensiDelegationState.guruMap)
+  ;(absensiSubstituteState.teacherOptions || []).forEach(item => {
+    const sid = String(item?.id || '').trim()
+    if (sid) map.set(sid, item)
+  })
+  return map
+}
+
+function normalizeAbsensiSubmissionProposalRow(row) {
+  const payloadList = Array.isArray(row?.payload_absensi)
+    ? row.payload_absensi
+    : (typeof row?.payload_absensi === 'string'
+        ? (() => {
+            try {
+              const parsed = JSON.parse(row.payload_absensi)
+              return Array.isArray(parsed) ? parsed : []
+            } catch (_) {
+              return []
+            }
+          })()
+        : [])
+  return {
+    id: String(row?.id || '').trim(),
+    tanggal: String(row?.tanggal || '').slice(0, 10),
+    kelas_id: String(row?.kelas_id || '').trim(),
+    mapel_id: String(row?.mapel_id || '').trim(),
+    distribusi_id: String(row?.distribusi_id || '').trim(),
+    semester_id: String(row?.semester_id || '').trim(),
+    guru_asal_id: String(row?.guru_asal_id || '').trim(),
+    guru_pengganti_id: String(row?.guru_pengganti_id || '').trim(),
+    jam_pelajaran_1_id: String(row?.jam_pelajaran_1_id || '').trim(),
+    jam_pelajaran_2_id: String(row?.jam_pelajaran_2_id || '').trim(),
+    patron_materi: String(row?.patron_materi || '').trim(),
+    keterangan: String(row?.keterangan || '').trim(),
+    status: String(row?.status || 'pending').trim().toLowerCase() || 'pending',
+    reviewed_by: String(row?.reviewed_by || '').trim(),
+    reviewed_at: String(row?.reviewed_at || '').trim(),
+    review_note: String(row?.review_note || '').trim(),
+    created_at: String(row?.created_at || '').trim(),
+    payload_absensi: payloadList.map(item => ({
+      santri_id: String(item?.santri_id || '').trim(),
+      nama: String(item?.nama || item?.santri_nama || '').trim(),
+      status: String(item?.status || 'Hadir').trim() || 'Hadir'
+    }))
+  }
+}
+
+async function loadAbsensiGuruAsalOptions({ forceReload = false } = {}) {
+  if (!forceReload && Array.isArray(absensiSubstituteState.teacherOptions) && absensiSubstituteState.teacherOptions.length) {
+    return absensiSubstituteState.teacherOptions
+  }
+  const activeSemester = await getActiveSemester()
+  let distribusiQuery = sb
+    .from('distribusi_mapel')
+    .select('guru_id')
+  if (activeSemester?.id) {
+    distribusiQuery = distribusiQuery.eq('semester_id', activeSemester.id)
+  }
+  const distribusiRes = await distribusiQuery
+  if (distribusiRes.error) throw distribusiRes.error
+  const guruIds = [...new Set((distribusiRes.data || []).map(item => String(item?.guru_id || '').trim()).filter(Boolean))]
+  if (!guruIds.length) {
+    absensiSubstituteState.teacherOptions = []
+    return []
+  }
+  const karyawanRes = await sb
+    .from('karyawan')
+    .select('id, nama, id_karyawan, aktif')
+    .in('id', guruIds)
+    .eq('aktif', true)
+    .order('nama')
+  if (karyawanRes.error) throw karyawanRes.error
+  const options = (karyawanRes.data || [])
+    .map(item => ({
+      id: String(item?.id || '').trim(),
+      nama: String(item?.nama || '-').trim(),
+      id_karyawan: String(item?.id_karyawan || '').trim()
+    }))
+    .filter(item => item.id)
+  absensiSubstituteState.teacherOptions = options
+  options.forEach(item => {
+    absensiDelegationState.guruMap.set(String(item.id), item)
+  })
+  return options
+}
+
+async function loadAbsensiSubmissionApprovalRows({ forceReload = false } = {}) {
+  const guruId = String(guruContextCache?.guru?.id || '').trim()
+  if (!guruId) return []
+  if (!forceReload && Array.isArray(absensiSubstituteState.approvalRows) && absensiSubstituteState.approvalRows.length) {
+    return absensiSubstituteState.approvalRows
+  }
+  const { data, error } = await sb
+    .from(ATTENDANCE_SUBMISSION_TABLE)
+    .select('id, tanggal, kelas_id, mapel_id, distribusi_id, semester_id, guru_asal_id, guru_pengganti_id, jam_pelajaran_1_id, jam_pelajaran_2_id, patron_materi, keterangan, payload_absensi, status, reviewed_by, reviewed_at, review_note, created_at')
+    .eq('guru_asal_id', guruId)
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false })
+  if (error) {
+    if (isMissingAbsensiSubmissionTableError(error)) {
+      absensiSubstituteState.tableMissing = true
+      absensiSubstituteState.approvalRows = []
+      return []
+    }
+    throw error
+  }
+  absensiSubstituteState.tableMissing = false
+  absensiSubstituteState.approvalRows = (data || []).map(normalizeAbsensiSubmissionProposalRow)
+  return absensiSubstituteState.approvalRows
 }
 
 function isMissingMapelPatronMateriTableError(error) {
@@ -5164,8 +5499,31 @@ function getSelectedAbsensiDelegationRows({ kelasId = '', mapelId = '', jamIds =
 }
 
 function getAbsensiKelasOptionItems() {
-  const ctx = guruContextCache
+  const ctx = getAbsensiSourceContext()
+  const selectedHari = getSelectedAbsensiHari()
   const itemMap = new Map()
+  if (!ctx) return []
+  if (isAbsensiSubstituteMode()) {
+    const distribusiById = new Map((ctx.activeDistribusiList || []).map(item => [String(item.id || ''), item]))
+    ;(ctx.jadwalList || []).forEach(item => {
+      if (selectedHari && normalizeHari(item?.hari) !== selectedHari) return
+      const distribusi = distribusiById.get(String(item?.distribusi_id || ''))
+      if (!distribusi) return
+      const kelasId = String(distribusi?.kelas_id || '').trim()
+      if (!kelasId) return
+      const kelasNama = String(ctx?.kelasMap.get(kelasId)?.nama_kelas || '-').trim()
+      if (!itemMap.has(kelasId)) itemMap.set(kelasId, { id: kelasId, nama: kelasNama, hasOwn: true, hasDelegation: false })
+    })
+    if (!itemMap.size) {
+      ;(ctx.activeDistribusiList || []).forEach(item => {
+        const kelasId = String(item?.kelas_id || '').trim()
+        if (!kelasId) return
+        const kelasNama = String(ctx?.kelasMap.get(kelasId)?.nama_kelas || '-').trim()
+        if (!itemMap.has(kelasId)) itemMap.set(kelasId, { id: kelasId, nama: kelasNama, hasOwn: true, hasDelegation: false })
+      })
+    }
+    return Array.from(itemMap.values()).sort((a, b) => String(a.nama || '').localeCompare(String(b.nama || '')))
+  }
   ;(ctx?.activeDistribusiList || []).forEach(item => {
     const kelasId = String(item?.kelas_id || '').trim()
     if (!kelasId) return
@@ -5213,6 +5571,7 @@ function renderAbsensiKelasOptions() {
 function updateAbsensiSaveButtonLabel() {
   const saveBtn = document.getElementById('btn-save-absensi')
   if (!saveBtn) return
+  const sebagaiPengganti = isAbsensiSubstituteMode()
   const pakaiPengganti = document.getElementById('absensi-pakai-pengganti')?.checked === true
   const kelasId = String(document.getElementById('absensi-kelas')?.value || '').trim()
   const mapelId = String(document.getElementById('absensi-mapel')?.value || '').trim()
@@ -5223,6 +5582,10 @@ function updateAbsensiSaveButtonLabel() {
   const delegationRows = kelasId && mapelId
     ? getSelectedAbsensiDelegationRows({ kelasId, mapelId, jamIds: jamIds.length ? jamIds : null })
     : []
+  if (sebagaiPengganti) {
+    saveBtn.textContent = 'Kirim Menunggu Persetujuan'
+    return
+  }
   if (pakaiPengganti) {
     saveBtn.textContent = 'Amanatkan Pengisian'
     return
@@ -5233,6 +5596,7 @@ function updateAbsensiSaveButtonLabel() {
 function renderAbsensiDelegationInfo() {
   const infoBox = document.getElementById('absensi-pengganti-info')
   if (!infoBox) return
+  const sebagaiPengganti = isAbsensiSubstituteMode()
   const pakaiPengganti = document.getElementById('absensi-pakai-pengganti')?.checked === true
   const kelasId = String(document.getElementById('absensi-kelas')?.value || '').trim()
   const mapelId = String(document.getElementById('absensi-mapel')?.value || '').trim()
@@ -5246,7 +5610,15 @@ function renderAbsensiDelegationInfo() {
   const jamNameById = new Map((guruContextCache?.jamList || []).map(item => [String(item.id || ''), String(item.nama || '').trim()]))
 
   let html = ''
-  if (pakaiPengganti) {
+  if (sebagaiPengganti) {
+    const guruAsalId = getSelectedAbsensiGuruAsalId()
+    const guruAsalNama = String(getAbsensiSourceGuruMap().get(guruAsalId)?.nama || '').trim()
+    html = `
+      <div class="placeholder-card" style="margin-top:10px; background:#fff7ed; border:1px solid #fdba74; color:#9a3412;">
+        Mode guru pengganti aktif. Saat disimpan, absensi dikirim sebagai pengajuan dan menunggu persetujuan guru asli${guruAsalNama ? ` (${escapeHtml(guruAsalNama)})` : ''}.
+      </div>
+    `
+  } else if (pakaiPengganti) {
     html = `
       <div class="placeholder-card" style="margin-top:10px; background:#eff6ff; border:1px solid #bfdbfe; color:#1e3a8a;">
         Mode amanat aktif. Saat disimpan, absensi tidak langsung diisi, tetapi ditugaskan ke guru pengganti yang dipilih.
@@ -5284,11 +5656,12 @@ function renderAbsensiMapelOptions() {
     return
   }
   const selectedHari = getSelectedAbsensiHari()
-  const ctx = guruContextCache
+  const ctx = getAbsensiSourceContext()
   const ownList = (ctx?.activeDistribusiList || []).filter(item => String(item.kelas_id || '') === kelasId)
   const delegationRows = getSelectedAbsensiDelegationRows({ kelasId })
+  const substituteMode = isAbsensiSubstituteMode()
   let defaultMapelId = ''
-  if (delegationRows.length) {
+  if (!substituteMode && delegationRows.length) {
     defaultMapelId = String(delegationRows[0]?.mapel_id || '')
   } else if (selectedHari) {
     const distribusiById = new Map(ownList.map(item => [String(item.id || ''), item]))
@@ -5309,7 +5682,7 @@ function renderAbsensiMapelOptions() {
     if (!optionMap.has(mapelId)) optionMap.set(mapelId, { mapelId, hasOwn: true, hasDelegation: false })
     else optionMap.get(mapelId).hasOwn = true
   })
-  delegationRows.forEach(row => {
+  if (!substituteMode) delegationRows.forEach(row => {
     const mapelId = String(row?.mapel_id || '').trim()
     if (!mapelId) return
     if (!optionMap.has(mapelId)) optionMap.set(mapelId, { mapelId, hasOwn: false, hasDelegation: true })
@@ -5357,7 +5730,8 @@ function renderAbsensiJamOptions() {
   const candidates = getAbsensiDistribusiCandidates()
   const delegationRows = getSelectedAbsensiDelegationRows()
   const selectedHari = getSelectedAbsensiHari()
-  const ctx = guruContextCache
+  const ctx = getAbsensiSourceContext()
+  const substituteMode = isAbsensiSubstituteMode()
 
   const selected1 = String(jamSelect1?.value || '')
   const selected2 = String(jamSelect2?.value || '')
@@ -5366,7 +5740,7 @@ function renderAbsensiJamOptions() {
     selectEl.innerHTML = '<option value="">-- Pilih Jam --</option>'
   })
 
-  if (delegationRows.length) {
+  if (!substituteMode && delegationRows.length) {
     const jamMap = new Map((ctx?.jamList || []).map(item => [String(item.id || ''), item]))
     const delegationList = delegationRows
       .filter(row => String(row.jam_pelajaran_id || '').trim())
@@ -5528,6 +5902,7 @@ function onAbsensiPatronMateriInputChange() {
 function resolveAbsensiPatronDistribusi() {
   const candidate = getAbsensiDistribusiCandidates()[0] || null
   if (candidate?.id) return candidate
+  if (isAbsensiSubstituteMode()) return null
   const delegationRows = getSelectedAbsensiDelegationRows()
   const delegation = delegationRows.find(row => String(row.distribusi_id || '').trim()) || null
   if (!delegation) return null
@@ -5536,6 +5911,75 @@ function resolveAbsensiPatronDistribusi() {
     kelas_id: String(delegation.kelas_id || ''),
     mapel_id: String(delegation.mapel_id || ''),
     semester_id: String(delegation.semester_id || '')
+  }
+}
+
+function buildAbsensiVerificationKey({ guruId = '', santriId = '', jamId = '' } = {}) {
+  return `${String(guruId || '').trim()}|${String(santriId || '').trim()}|${String(jamId || '').trim() || '__NO_JAM__'}`
+}
+
+async function verifySavedGuruAbsensi({
+  tanggal = '',
+  kelasId = '',
+  mapelId = '',
+  expectedGuruIds = [],
+  expectedSantriIds = [],
+  expectedJamIds = []
+} = {}) {
+  const normalizedTanggal = String(tanggal || '').trim()
+  const normalizedKelasId = String(kelasId || '').trim()
+  const normalizedMapelId = String(mapelId || '').trim()
+  const guruIds = [...new Set((expectedGuruIds || []).map(id => String(id || '').trim()).filter(Boolean))]
+  const santriIds = [...new Set((expectedSantriIds || []).map(id => String(id || '').trim()).filter(Boolean))]
+  const jamIds = [...new Set((expectedJamIds || []).map(id => String(id || '').trim()).filter(Boolean))]
+
+  if (!normalizedTanggal || !normalizedKelasId || !normalizedMapelId || !guruIds.length || !santriIds.length) {
+    return { ok: false, matchedCount: 0, expectedCount: 0, missingKeys: [], rows: [] }
+  }
+
+  let query = sb
+    .from(ATTENDANCE_TABLE)
+    .select('guru_id, santri_id, jam_pelajaran_id')
+    .eq('tanggal', normalizedTanggal)
+    .eq('kelas_id', normalizedKelasId)
+    .eq('mapel_id', normalizedMapelId)
+    .in('santri_id', santriIds)
+
+  if (guruIds.length === 1) {
+    query = query.eq('guru_id', guruIds[0])
+  } else {
+    query = query.in('guru_id', guruIds)
+  }
+
+  const res = await query
+  if (res.error) throw res.error
+
+  const rows = res.data || []
+  const actualKeySet = new Set(
+    rows.map(row => buildAbsensiVerificationKey({
+      guruId: row?.guru_id,
+      santriId: row?.santri_id,
+      jamId: row?.jam_pelajaran_id
+    }))
+  )
+
+  const jamTargets = jamIds.length ? jamIds : ['']
+  const expectedKeys = []
+  guruIds.forEach(guruId => {
+    santriIds.forEach(santriId => {
+      jamTargets.forEach(jamId => {
+        expectedKeys.push(buildAbsensiVerificationKey({ guruId, santriId, jamId }))
+      })
+    })
+  })
+
+  const missingKeys = expectedKeys.filter(key => !actualKeySet.has(key))
+  return {
+    ok: missingKeys.length === 0,
+    matchedCount: expectedKeys.length - missingKeys.length,
+    expectedCount: expectedKeys.length,
+    missingKeys,
+    rows
   }
 }
 
@@ -5693,6 +6137,13 @@ async function renderAbsensiPage() {
 
   const today = new Date().toISOString().slice(0, 10)
   const todayDelegations = await loadAbsensiDelegationTasksByDate(String(ctx.guru.id || ''), today, { forceReload: true })
+  let approvalRows = []
+  try {
+    approvalRows = await loadAbsensiSubmissionApprovalRows({ forceReload: true })
+  } catch (error) {
+    console.error(error)
+    approvalRows = []
+  }
   const shouldShowAbsensiNotice = !ctx.activeDistribusiList.length && !todayDelegations.length
 
   const kelasIds = [...new Set(ctx.activeDistribusiList.map(item => String(item.kelas_id || '')).filter(Boolean))]
@@ -5717,6 +6168,13 @@ async function renderAbsensiPage() {
   }
 
   absensiDelegationState.guruMap = new Map((penggantiList || []).map(item => [String(item.id || ''), item]))
+  try {
+    await loadAbsensiGuruAsalOptions({ forceReload: true })
+  } catch (error) {
+    console.error(error)
+    absensiSubstituteState.teacherOptions = []
+  }
+  absensiSubstituteState.approvalRows = approvalRows
 
   content.innerHTML = `
     <div>
@@ -5768,6 +6226,16 @@ async function renderAbsensiPage() {
 
       <div style="margin-top:10px; display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:10px; align-items:end;">
         <div style="display:flex; align-items:center; gap:8px;">
+          <input id="absensi-sebagai-pengganti" type="checkbox" onchange="onAbsensiSebagaiPenggantiToggle()">
+          <label for="absensi-sebagai-pengganti" class="guru-label" style="margin:0;">Isi Sebagai Guru Pengganti</label>
+        </div>
+        <div id="absensi-guru-asal-wrap" style="display:none;">
+          <label class="guru-label">Guru yang Digantikan</label>
+          <select id="absensi-guru-asal" class="guru-field" disabled onchange="onAbsensiGuruAsalChange()">
+            <option value="">-- Pilih Guru Asli --</option>
+          </select>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
           <input id="absensi-pakai-pengganti" type="checkbox" onchange="onAbsensiPenggantiToggle()">
           <label for="absensi-pakai-pengganti" class="guru-label" style="margin:0;">Gunakan Guru Pengganti</label>
         </div>
@@ -5786,6 +6254,11 @@ async function renderAbsensiPage() {
 
       <div id="absensi-pengganti-info" style="display:none;"></div>
 
+      <div id="absensi-approval-panel" style="${approvalRows.length ? '' : 'display:none;'} margin-top:12px; border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:12px;">
+        <div style="font-weight:700; color:#0f172a; margin-bottom:8px;">Menunggu Persetujuan Anda</div>
+        <div id="absensi-approval-list"></div>
+      </div>
+
       <div id="absensi-santri-list" style="margin-top:12px;"></div>
 
       <div style="margin-top:14px;">
@@ -5795,11 +6268,13 @@ async function renderAbsensiPage() {
   `
 
   currentAbsensiSantriList = []
+  renderAbsensiGuruAsalOptions()
   renderAbsensiKelasOptions()
   renderAbsensiMapelOptions()
   renderAbsensiJamOptions()
   await refreshAbsensiPatronMateriFields({ resetEdited: true })
   renderAbsensiDelegationInfo()
+  renderAbsensiApprovalPanel()
   renderAbsensiSantriRows()
 }
 
@@ -5846,9 +6321,22 @@ async function onAbsensiTanggalChange() {
   currentAbsensiSantriList = await getSantriByKelas(kelasId)
   renderAbsensiSantriRows()
   renderAbsensiDelegationInfo()
+  renderAbsensiApprovalPanel()
 }
 
 function onAbsensiPenggantiToggle() {
+  if (document.getElementById('absensi-pakai-pengganti')?.checked) {
+    const togglePengganti = document.getElementById('absensi-sebagai-pengganti')
+    if (togglePengganti) togglePengganti.checked = false
+    absensiSubstituteState.selectedGuruAsalId = ''
+    const guruAsalWrap = document.getElementById('absensi-guru-asal-wrap')
+    const guruAsalSelect = document.getElementById('absensi-guru-asal')
+    if (guruAsalWrap) guruAsalWrap.style.display = 'none'
+    if (guruAsalSelect) {
+      guruAsalSelect.disabled = true
+      guruAsalSelect.value = ''
+    }
+  }
   const checked = document.getElementById('absensi-pakai-pengganti')?.checked === true
   const selectEl = document.getElementById('absensi-guru-pengganti')
   const noteEl = document.getElementById('absensi-keterangan-pengganti')
@@ -5864,6 +6352,251 @@ function onAbsensiPenggantiToggle() {
   renderAbsensiDelegationInfo()
 }
 
+function renderAbsensiGuruAsalOptions() {
+  const selectEl = document.getElementById('absensi-guru-asal')
+  if (!selectEl) return
+  const prevValue = String(selectEl.value || absensiSubstituteState.selectedGuruAsalId || '').trim()
+  const currentGuruId = String(guruContextCache?.guru?.id || '').trim()
+  const items = (absensiSubstituteState.teacherOptions || []).filter(item => String(item.id || '') !== currentGuruId)
+  selectEl.innerHTML = '<option value="">-- Pilih Guru Asli --</option>' +
+    items.map(item => `<option value="${escapeHtml(String(item.id || ''))}">${escapeHtml(String(item.nama || '-'))}</option>`).join('')
+  if (prevValue && items.some(item => String(item.id || '') === prevValue)) {
+    selectEl.value = prevValue
+  }
+}
+
+async function onAbsensiSebagaiPenggantiToggle() {
+  const checked = isAbsensiSubstituteMode()
+  const guruAsalSelect = document.getElementById('absensi-guru-asal')
+  const guruAsalWrap = document.getElementById('absensi-guru-asal-wrap')
+  const noteEl = document.getElementById('absensi-keterangan-pengganti')
+  if (document.getElementById('absensi-pakai-pengganti')?.checked && checked) {
+    document.getElementById('absensi-pakai-pengganti').checked = false
+    onAbsensiPenggantiToggle()
+  }
+  if (guruAsalWrap) guruAsalWrap.style.display = checked ? 'block' : 'none'
+  if (guruAsalSelect) {
+    guruAsalSelect.disabled = !checked
+    if (!checked) guruAsalSelect.value = ''
+  }
+  if (noteEl) {
+    noteEl.disabled = !checked
+    if (!checked) noteEl.value = ''
+  }
+  if (!checked) {
+    absensiSubstituteState.selectedGuruAsalId = ''
+  } else {
+    await loadAbsensiGuruAsalOptions()
+    renderAbsensiGuruAsalOptions()
+  }
+  renderAbsensiKelasOptions()
+  renderAbsensiMapelOptions()
+  renderAbsensiJamOptions()
+  await refreshAbsensiPatronMateriFields({ resetEdited: true })
+  const kelasId = String(document.getElementById('absensi-kelas')?.value || '')
+  currentAbsensiSantriList = await getSantriByKelas(kelasId)
+  renderAbsensiSantriRows()
+  renderAbsensiDelegationInfo()
+}
+
+async function onAbsensiGuruAsalChange() {
+  const guruAsalId = getSelectedAbsensiGuruAsalId()
+  absensiSubstituteState.selectedGuruAsalId = guruAsalId
+  if (guruAsalId) {
+    try {
+      await getGuruScheduleContextByGuruId(guruAsalId, true)
+    } catch (error) {
+      console.error(error)
+      alert(`Gagal memuat jadwal guru asli: ${error.message || 'Unknown error'}`)
+    }
+  }
+  renderAbsensiKelasOptions()
+  renderAbsensiMapelOptions()
+  renderAbsensiJamOptions()
+  await refreshAbsensiPatronMateriFields({ resetEdited: true })
+  const kelasId = String(document.getElementById('absensi-kelas')?.value || '')
+  currentAbsensiSantriList = await getSantriByKelas(kelasId)
+  renderAbsensiSantriRows()
+  renderAbsensiDelegationInfo()
+}
+
+function renderAbsensiApprovalPanel() {
+  const panel = document.getElementById('absensi-approval-panel')
+  const box = document.getElementById('absensi-approval-list')
+  if (!panel || !box) return
+  const rows = absensiSubstituteState.approvalRows || []
+  if (!rows.length) {
+    panel.style.display = 'none'
+    box.innerHTML = ''
+    return
+  }
+  const ctx = guruContextCache
+  const kelasMap = ctx?.kelasMap || new Map()
+  const mapelMap = ctx?.mapelMap || new Map()
+  const jamMap = new Map((ctx?.jamList || []).map(item => [String(item.id || ''), item]))
+  const guruMap = getAbsensiSourceGuruMap()
+  const html = rows.map((row, index) => {
+    const kelasNama = String(kelasMap.get(String(row.kelas_id || ''))?.nama_kelas || '-')
+    const mapelLabel = getMapelLabel(mapelMap.get(String(row.mapel_id || '')))
+    const guruPenggantiNama = String(guruMap.get(String(row.guru_pengganti_id || ''))?.nama || '-')
+    const jamIds = [String(row.jam_pelajaran_1_id || ''), String(row.jam_pelajaran_2_id || '')].filter(Boolean)
+    const jamLabels = jamIds.map(id => {
+      const jam = jamMap.get(id)
+      return jam ? `${jam.nama || 'Jam'} (${toTimeLabel(jam.jam_mulai)}-${toTimeLabel(jam.jam_selesai)})` : id
+    }).filter(Boolean)
+    const previewRows = (row.payload_absensi || []).map((item, idx) => `
+      <tr>
+        <td style="padding:6px; border:1px solid #e2e8f0; text-align:center;">${idx + 1}</td>
+        <td style="padding:6px; border:1px solid #e2e8f0;">${escapeHtml(String(item.nama || '-'))}</td>
+        <td style="padding:6px; border:1px solid #e2e8f0; text-align:center;">${escapeHtml(String(item.status || 'Hadir'))}</td>
+      </tr>
+    `).join('')
+    return `
+      <div data-absensi-approval-id="${escapeHtml(String(row.id || ''))}" class="placeholder-card" style="margin-top:${index ? 10 : 0}px; background:#fff; border:1px solid #e2e8f0;">
+        <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+          <div>
+            <div style="font-weight:700; color:#0f172a;">${escapeHtml(mapelLabel)} - ${escapeHtml(kelasNama)}</div>
+            <div style="font-size:12px; color:#64748b; margin-top:4px;">${escapeHtml(row.tanggal || '-')} ${jamLabels.length ? `| ${escapeHtml(jamLabels.join(', '))}` : ''}</div>
+            <div style="font-size:12px; color:#475569; margin-top:4px;">Diisi oleh guru pengganti: <strong>${escapeHtml(guruPenggantiNama)}</strong></div>
+            ${row.patron_materi ? `<div style="font-size:12px; color:#475569; margin-top:4px;">Materi: ${escapeHtml(row.patron_materi)}</div>` : ''}
+            ${row.keterangan ? `<div style="font-size:12px; color:#475569; margin-top:4px;">Catatan: ${escapeHtml(row.keterangan)}</div>` : ''}
+          </div>
+          <div style="font-size:12px; color:#64748b; white-space:nowrap;">${escapeHtml(formatGuruPerizinanDate(row.created_at || row.tanggal))}</div>
+        </div>
+        <details style="margin-top:10px;">
+          <summary style="cursor:pointer; color:#1d4ed8; font-weight:600;">Lihat Preview Absensi</summary>
+          <div style="margin-top:10px; overflow:auto;">
+            <table style="width:100%; border-collapse:collapse; font-size:12px;">
+              <thead><tr style="background:#f8fafc;"><th style="padding:6px; border:1px solid #e2e8f0; width:48px;">No</th><th style="padding:6px; border:1px solid #e2e8f0; text-align:left;">Nama</th><th style="padding:6px; border:1px solid #e2e8f0; width:120px;">Status</th></tr></thead>
+              <tbody>${previewRows || '<tr><td colspan="3" style="padding:8px; border:1px solid #e2e8f0; text-align:center;">Belum ada preview.</td></tr>'}</tbody>
+            </table>
+          </div>
+        </details>
+        <div style="margin-top:10px; display:grid; grid-template-columns:1fr auto auto; gap:8px; align-items:center;">
+          <input id="absensi-approval-note-${escapeHtml(String(row.id || ''))}" class="guru-field" type="text" placeholder="Catatan persetujuan / penolakan (opsional)">
+          <button type="button" class="modal-btn" onclick="reviewAbsensiSubmission('${escapeHtml(String(row.id || ''))}', 'rejected')">Tolak</button>
+          <button type="button" class="modal-btn modal-btn-primary" onclick="reviewAbsensiSubmission('${escapeHtml(String(row.id || ''))}', 'approved')">Setujui</button>
+        </div>
+      </div>
+    `
+  }).join('')
+  panel.style.display = 'block'
+  box.innerHTML = html
+}
+
+async function reviewAbsensiSubmission(id, nextStatus = 'approved') {
+  const sid = String(id || '').trim()
+  const status = String(nextStatus || '').trim().toLowerCase()
+  if (!sid || !['approved', 'rejected'].includes(status)) return
+  const row = (absensiSubstituteState.approvalRows || []).find(item => String(item.id || '') === sid)
+  if (!row) {
+    alert('Data pengajuan absensi tidak ditemukan.')
+    return
+  }
+  const note = String(document.getElementById(`absensi-approval-note-${sid}`)?.value || '').trim()
+  const reviewer = await getCurrentGuruRow()
+  const reviewerId = String(reviewer?.id || '').trim() || null
+
+  if (status === 'approved') {
+    const jamIds = [String(row.jam_pelajaran_1_id || ''), String(row.jam_pelajaran_2_id || '')].filter(Boolean)
+    const jamIdsToSave = jamIds.length ? jamIds : [null]
+    const payloads = (row.payload_absensi || []).flatMap(item => (
+      jamIdsToSave.map(jamId => ({
+        tanggal: row.tanggal,
+        kelas_id: row.kelas_id,
+        mapel_id: row.mapel_id,
+        guru_id: row.guru_asal_id,
+        jam_pelajaran_id: jamId || null,
+        semester_id: row.semester_id || null,
+        distribusi_id: row.distribusi_id || null,
+        santri_id: String(item.santri_id || ''),
+        status: String(item.status || 'Hadir') || 'Hadir',
+        guru_pengganti_id: row.guru_pengganti_id || null,
+        keterangan_pengganti: row.keterangan || null,
+        patron_materi: row.patron_materi || null
+      }))
+    ))
+
+    let saveRes = await sb
+      .from(ATTENDANCE_TABLE)
+      .upsert(payloads, {
+        onConflict: 'tanggal,kelas_id,mapel_id,jam_pelajaran_id,santri_id'
+      })
+
+    if (saveRes.error) {
+      const conflictMsg = String(saveRes.error.message || '').toLowerCase()
+      const noUniqueForConflict = conflictMsg.includes('no unique or exclusion constraint matching the on conflict specification')
+      if (noUniqueForConflict && jamIds.length <= 1) {
+        saveRes = await sb
+          .from(ATTENDANCE_TABLE)
+          .upsert(payloads, {
+            onConflict: 'tanggal,kelas_id,mapel_id,santri_id'
+          })
+      }
+    }
+
+    if (saveRes.error) {
+      const err = saveRes.error
+      console.error(err)
+      const msg = String(err.message || '')
+      if (isMissingAbsensiTableError(err)) {
+        alert(buildAbsensiMissingTableMessage())
+        return
+      }
+      if (isMissingAbsensiPenggantiColumnError(err)) {
+        alert(buildAbsensiPenggantiColumnsMessage())
+        return
+      }
+      if (isMissingAbsensiPatronMateriColumnError(err)) {
+        alert(buildAbsensiPatronMateriColumnMessage())
+        return
+      }
+      alert(`Gagal menyetujui absensi pengganti: ${msg || 'Unknown error'}`)
+      return
+    }
+
+    if (row.distribusi_id) {
+      try {
+        await recalculateNilaiKehadiranFromAbsensi(
+          {
+            id: row.distribusi_id,
+            kelas_id: row.kelas_id,
+            mapel_id: row.mapel_id,
+            semester_id: row.semester_id || null
+          },
+          (row.payload_absensi || []).map(item => String(item.santri_id || '')).filter(Boolean)
+        )
+      } catch (calcErr) {
+        console.error(calcErr)
+        alert(`Absensi disimpan, tapi gagal update nilai kehadiran: ${calcErr.message || 'Unknown error'}`)
+        return
+      }
+    }
+  }
+
+  const reviewPayload = {
+    status,
+    reviewed_by: reviewerId,
+    reviewed_at: new Date().toISOString(),
+    review_note: note || null
+  }
+  const reviewRes = await sb.from(ATTENDANCE_SUBMISSION_TABLE).update(reviewPayload).eq('id', sid)
+  if (reviewRes.error) {
+    if (isMissingAbsensiSubmissionTableError(reviewRes.error)) {
+      alert(buildAbsensiSubmissionTableMessage())
+      return
+    }
+    alert(`Gagal menyimpan persetujuan absensi: ${reviewRes.error.message || 'Unknown error'}`)
+    return
+  }
+
+  absensiSubstituteState.approvalRows = await loadAbsensiSubmissionApprovalRows({ forceReload: true })
+  renderAbsensiApprovalPanel()
+  refreshGuruTopbarNotificationsSafe(true)
+  clearGuruPageCache('laporan-absensi')
+  alert(status === 'approved' ? 'Absensi pengganti disetujui dan disimpan ke data akhir.' : 'Pengajuan absensi pengganti ditolak.')
+}
+
 async function saveGuruAbsensi() {
   const saveBtn = document.getElementById('btn-save-absensi')
   if (saveBtn?.disabled) return
@@ -5875,12 +6608,18 @@ async function saveGuruAbsensi() {
     const jamId1 = String(document.getElementById('absensi-jam-1')?.value || '').trim()
     const jamId2 = String(document.getElementById('absensi-jam-2')?.value || '').trim()
     const patronMateri = getSelectedAbsensiPatronMateriValue()
+    const sebagaiPengganti = isAbsensiSubstituteMode()
+    const guruAsalId = getSelectedAbsensiGuruAsalId()
     const pakaiPengganti = document.getElementById('absensi-pakai-pengganti')?.checked === true
     const penggantiId = String(document.getElementById('absensi-guru-pengganti')?.value || '').trim()
     const keteranganPengganti = String(document.getElementById('absensi-keterangan-pengganti')?.value || '').trim()
 
     if (!tanggal || !kelasId || !mapelId) {
       alert('Tanggal, kelas, dan mapel wajib diisi.')
+      return
+    }
+    if (sebagaiPengganti && !guruAsalId) {
+      alert('Pilih guru yang digantikan terlebih dahulu.')
       return
     }
     if (pakaiPengganti && !penggantiId) {
@@ -5899,6 +6638,10 @@ async function saveGuruAbsensi() {
       return
     }
 
+    if (sebagaiPengganti && guruAsalId === guruId) {
+      alert('Guru yang digantikan tidak boleh sama dengan guru yang sedang login.')
+      return
+    }
     if (pakaiPengganti && penggantiId === guruId) {
       alert('Guru pengganti tidak boleh sama dengan guru yang sedang login.')
       return
@@ -5983,6 +6726,47 @@ async function saveGuruAbsensi() {
       if (!santriId) return
       statusMap.set(santriId, status)
     })
+
+    if (sebagaiPengganti) {
+      if (!jamIds.length) {
+        alert('Pilih minimal satu jam pelajaran yang digantikan.')
+        return
+      }
+      const submissionPayload = {
+        tanggal,
+        kelas_id: kelasId,
+        mapel_id: mapelId,
+        distribusi_id: distribusi?.id ? String(distribusi.id) : null,
+        semester_id: distribusi?.semester_id ? String(distribusi.semester_id) : (ctx.activeSemester?.id ? String(ctx.activeSemester.id) : null),
+        guru_asal_id: guruAsalId,
+        guru_pengganti_id: guruId,
+        jam_pelajaran_1_id: jamId1 || null,
+        jam_pelajaran_2_id: jamId2 || null,
+        patron_materi: patronMateri || null,
+        keterangan: keteranganPengganti || null,
+        payload_absensi: currentAbsensiSantriList.map(santri => ({
+          santri_id: String(santri.id || ''),
+          nama: String(santri.nama || '-'),
+          status: statusMap.get(String(santri.id || '')) || 'Hadir'
+        })),
+        status: 'pending'
+      }
+      const submissionRes = await sb.from(ATTENDANCE_SUBMISSION_TABLE).insert(submissionPayload)
+      if (submissionRes.error) {
+        console.error(submissionRes.error)
+        if (isMissingAbsensiSubmissionTableError(submissionRes.error)) {
+          alert(buildAbsensiSubmissionTableMessage())
+          return
+        }
+        alert(`Gagal mengirim pengajuan absensi pengganti: ${submissionRes.error.message || 'Unknown error'}`)
+        return
+      }
+      document.querySelectorAll('[data-absen-santri-id]').forEach(selectEl => {
+        selectEl.value = 'Hadir'
+      })
+      alert('Pengajuan absensi guru pengganti berhasil dikirim dan menunggu persetujuan guru asli.')
+      return
+    }
 
     const payloads = currentAbsensiSantriList.flatMap(santri => (
       jamIdsToSave.map(jamId => {
@@ -6113,7 +6897,33 @@ async function saveGuruAbsensi() {
       }
     }
 
-    alert(selectedDelegationRows.length ? 'Absensi pengganti berhasil disimpan.' : 'Absensi berhasil disimpan.')
+    let verificationWarning = ''
+    try {
+      const verification = await verifySavedGuruAbsensi({
+        tanggal,
+        kelasId,
+        mapelId,
+        expectedGuruIds: [...new Set(payloads.map(item => String(item.guru_id || '').trim()).filter(Boolean))],
+        expectedSantriIds: currentAbsensiSantriList.map(item => String(item.id || '').trim()),
+        expectedJamIds: jamIdsToSave.filter(Boolean)
+      })
+      if (!verification.ok) {
+        verificationWarning =
+          `Absensi tersimpan, tetapi verifikasi database belum lengkap (${verification.matchedCount}/${verification.expectedCount} kombinasi terdeteksi).\n\n` +
+          `Saran: buka lagi absensi hari ini lalu simpan ulang sekali. Jika masih sama, segera laporkan ke admin karena ini bisa memengaruhi rekap kehadiran guru.`
+      }
+    } catch (verifyErr) {
+      console.error(verifyErr)
+      verificationWarning =
+        `Absensi tersimpan, tetapi verifikasi ulang ke database gagal dilakukan: ${verifyErr.message || 'Unknown error'}\n\n` +
+        `Mohon cek lagi rekap absensi setelah menyimpan.`
+    }
+
+    if (verificationWarning) {
+      alert(verificationWarning)
+    } else {
+      alert(selectedDelegationRows.length ? 'Absensi pengganti berhasil disimpan.' : 'Absensi berhasil disimpan.')
+    }
     document.querySelectorAll('[data-absen-santri-id]').forEach(selectEl => {
       selectEl.value = 'Hadir'
     })
@@ -14348,12 +15158,103 @@ function getGuruExamDocxUtils() {
   return window.guruExamDocxUtils || {}
 }
 
+async function buildExamDocxHeaderMeta(jadwal, soal = null) {
+  const toExamDateLabelLocal = value => {
+    const raw = String(value || '').trim()
+    if (!raw) return '-'
+    let iso = ''
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      iso = raw
+    } else {
+      const date = new Date(raw)
+      if (Number.isNaN(date.getTime())) return raw
+      const yy = date.getFullYear()
+      const mm = String(date.getMonth() + 1).padStart(2, '0')
+      const dd = String(date.getDate()).padStart(2, '0')
+      iso = `${yy}-${mm}-${dd}`
+    }
+    const date = new Date(`${iso}T00:00:00`)
+    if (Number.isNaN(date.getTime())) return iso
+    return date.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+  }
+
+  const getExamMainTitle = (jenisRaw, semesterNameRaw) => {
+    const jenis = String(jenisRaw || '').trim().toUpperCase()
+    const semesterName = String(semesterNameRaw || '').trim().toLowerCase()
+    const isAkhir = jenis.includes('UAS') || jenis.includes('PAS') || jenis.includes('AKHIR')
+    const semesterLabel = semesterName.includes('genap')
+      ? 'GENAP'
+      : semesterName.includes('ganjil')
+        ? 'GANJIL'
+        : String(semesterNameRaw || '').trim().toUpperCase()
+    const ujianLabel = isAkhir ? 'AKHIR' : 'TENGAH'
+    return `SOAL UJIAN ${ujianLabel} SEMESTER ${semesterLabel || '-'}`
+  }
+
+  const [tahunAjaranAktif, semesterAktif] = await Promise.all([
+    getActiveTahunAjaran(),
+    getActiveSemester()
+  ])
+  const tahunAjaranLabel = String(tahunAjaranAktif?.nama || '-')
+  const semesterNama = String(semesterAktif?.nama || '').trim()
+  const mapelLabel = String(getExamMapelBaseLabel(jadwal?.mapel) || jadwal?.mapel || '-')
+  const kelasLabel = String(jadwal?.kelas || '-')
+  const hariTanggalLabel = toExamDateLabelLocal(jadwal?.tanggal)
+  const instruksiMeta = parseExamInstruksiMeta(soal?.instruksi)
+  const bahasaSoal = String(instruksiMeta?.lang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+  const durasiMenit = (() => {
+    const toMinutes = timeValue => {
+      const raw = String(timeValue || '').trim()
+      if (!raw) return NaN
+      const parts = raw.split(':')
+      const hh = Number(parts[0])
+      const mm = Number(parts[1])
+      if (!Number.isFinite(hh) || !Number.isFinite(mm)) return NaN
+      return hh * 60 + mm
+    }
+    const start = toMinutes(jadwal?.jam_mulai)
+    const end = toMinutes(jadwal?.jam_selesai)
+    const diff = end - start
+    return Number.isFinite(diff) && diff > 0 ? diff : 0
+  })()
+  const waktuLabel = durasiMenit > 0
+    ? `${durasiMenit} menit`
+    : `${toTimeLabel(jadwal?.jam_mulai)} - ${toTimeLabel(jadwal?.jam_selesai)}`
+  const judulUjian = getExamMainTitle(jadwal?.jenis || jadwal?.nama || '', semesterNama || jadwal?.nama || '')
+
+  return {
+    examTitle: judulUjian,
+    schoolName: 'PESANTREN QUR`AN PUTRA MARKAZ IMAM MALIK',
+    schoolYear: `TAHUN AJARAN ${tahunAjaranLabel}`,
+    examName: String(jadwal?.nama || '-'),
+    examType: String(jadwal?.jenis || '-'),
+    subject: mapelLabel,
+    className: kelasLabel,
+    examDate: hariTanggalLabel,
+    duration: waktuLabel,
+    scoreLabel: 'NILAI',
+    studentLine: '________________________________',
+    lang: bahasaSoal,
+    generalInstruction: String(instruksiMeta?.text || '').trim()
+  }
+}
+
 async function exportExamArabicTemplateFile(jadwal, soal, fileName) {
   const docxUtils = getGuruExamDocxUtils()
   if (typeof docxUtils.exportArabicExamDocx !== 'function') {
     throw new Error('Fitur template DOCX Arab belum siap.')
   }
-  return docxUtils.exportArabicExamDocx(jadwal, soal, fileName)
+  const headerMeta = await buildExamDocxHeaderMeta(jadwal, soal)
+  return docxUtils.exportArabicExamDocx(jadwal, soal, fileName, headerMeta)
+}
+
+async function exportExamIndonesianTemplateFile(jadwal, soal, fileName) {
+  const docxUtils = getGuruExamDocxUtils()
+  if (typeof docxUtils.exportIndonesianExamDocx !== 'function') {
+    throw new Error('Fitur template DOCX Indonesia belum siap.')
+  }
+  const headerMeta = await buildExamDocxHeaderMeta(jadwal, soal)
+  return docxUtils.exportIndonesianExamDocx(jadwal, soal, fileName, { ...headerMeta, lang: 'ID' })
 }
 
 function getGuruExamDistribusiMaps(ctx) {
@@ -16821,16 +17722,26 @@ async function printGuruUjianActive(format = '') {
       questions_json: JSON.stringify(questions),
       status: 'draft'
     }
+    if (mode === 'pdf' && bahasaSoal === 'AR') {
+      alert('Cetak PDF untuk soal bahasa Arab dilakukan manual lewat Word. Pilih Word lalu cetak PDF dari Word.')
+      return
+    }
     if (mode === 'word') {
       if (bahasaSoal === 'AR') {
         const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasTarget || '-')}.docx`
         await exportExamArabicTemplateFile({ ...jadwal, kelas: kelasTarget }, soal, fileName)
         return
       }
-      const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasTarget || '-')}.doc`
-      await exportExamWordFile({ ...jadwal, kelas: kelasTarget }, soal, fileName)
+      const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasTarget || '-')}.docx`
+      await exportExamIndonesianTemplateFile({ ...jadwal, kelas: kelasTarget }, soal, fileName)
       return
     }
+    if (bahasaSoal === 'AR') {
+      const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasTarget || '-')}.docx`
+      await exportExamArabicTemplateFile({ ...jadwal, kelas: kelasTarget }, soal, fileName)
+      return
+    }
+
     const doc = await createExamPdfDoc({ ...jadwal, kelas: kelasTarget }, soal)
     if (!doc) {
       alert('Cetak gagal: font Arab/PDF belum siap. Pastikan file TTF tersedia dan refresh halaman.')
@@ -16878,14 +17789,23 @@ async function printGuruUjianByRow(rowKeyEncoded, format = '') {
     }
     const instruksiMeta = parseExamInstruksiMeta(soalRes.data?.instruksi)
     const bahasaSoal = String(instruksiMeta.lang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+    if (mode === 'pdf' && bahasaSoal === 'AR') {
+      alert('Cetak PDF untuk soal bahasa Arab dilakukan manual lewat Word. Pilih Word lalu cetak PDF dari Word.')
+      return
+    }
     if (mode === 'word') {
       if (bahasaSoal === 'AR') {
         const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.docx`
         await exportExamArabicTemplateFile({ ...jadwal, kelas: kelasNama }, soalRes.data, fileName)
         return
       }
-      const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.doc`
-      await exportExamWordFile({ ...jadwal, kelas: kelasNama }, soalRes.data, fileName)
+      const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.docx`
+      await exportExamIndonesianTemplateFile({ ...jadwal, kelas: kelasNama }, soalRes.data, fileName)
+      return
+    }
+    if (bahasaSoal === 'AR') {
+      const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.docx`
+      await exportExamArabicTemplateFile({ ...jadwal, kelas: kelasNama }, soalRes.data, fileName)
       return
     }
 
@@ -16903,15 +17823,15 @@ async function printGuruUjianByRow(rowKeyEncoded, format = '') {
 }
 
 async function chooseExamPrintFormatPopup() {
-  return 'pdf'
+  return 'word'
 }
 
 async function chooseAndPrintGuruUjianActive() {
-  await printGuruUjianActive()
+  await printGuruUjianActive('word')
 }
 
 async function chooseAndPrintGuruUjianByRow(rowKeyEncoded) {
-  await printGuruUjianByRow(rowKeyEncoded)
+  await printGuruUjianByRow(rowKeyEncoded, 'word')
 }
 
 async function exportGuruUjianActiveWord() {
@@ -17566,9 +18486,12 @@ window.onAbsensiKelasChange = onAbsensiKelasChange
 window.onAbsensiMapelChange = onAbsensiMapelChange
 window.onAbsensiTanggalChange = onAbsensiTanggalChange
 window.onAbsensiPenggantiToggle = onAbsensiPenggantiToggle
+window.onAbsensiSebagaiPenggantiToggle = onAbsensiSebagaiPenggantiToggle
+window.onAbsensiGuruAsalChange = onAbsensiGuruAsalChange
 window.onAbsensiPatronMateriSelectChange = onAbsensiPatronMateriSelectChange
 window.onAbsensiPatronMateriInputChange = onAbsensiPatronMateriInputChange
 window.saveGuruAbsensi = saveGuruAbsensi
+window.reviewAbsensiSubmission = reviewAbsensiSubmission
 window.onInputNilaiTanggalChange = onInputNilaiTanggalChange
 window.onInputNilaiKelasChange = onInputNilaiKelasChange
 window.onInputNilaiMapelChange = onInputNilaiMapelChange
@@ -17682,6 +18605,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadGuruNotifPrefs()
   ensureTopbarNotification()
   refreshGuruTopbarIndicators()
+  startGuruTopbarNotificationTicker()
   startGuruTopbarChatBadgeTicker()
   setupRaporAccess(true)
   setupMonitoringAccess(true)
