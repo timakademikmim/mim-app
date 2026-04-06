@@ -269,7 +269,15 @@ let ujianGuruState = {
   sectionScoreDrafts: {},
   activeSoal: null,
   activeScanData: null,
-  scanUploadsByRow: {}
+  scanUploadsByRow: {},
+  autosaveTimer: null,
+  autosaveServerTimer: null,
+  autosaveServerPromise: null,
+  autosaveServerInFlight: false,
+  autosaveBound: false,
+  autosaveLocalHash: '',
+  autosaveServerHash: '',
+  autosaveActiveRowKey: ''
 }
 let examArabicFontBase64 = ''
 let examArabicFontBoldBase64 = ''
@@ -6001,7 +6009,7 @@ async function refreshAbsensiPatronMateriFields({ resetEdited = false } = {}) {
   const semesterId = String(distribusi?.semester_id || '').trim() || String(guruContextCache?.activeSemester?.id || '').trim()
 
   if (!kelasId || !mapelId) {
-    selectEl.innerHTML = '<option value="">▼</option>'
+    selectEl.innerHTML = '<option value="">?</option>'
     inputEl.value = ''
     noteEl.textContent = 'Pilih kelas dan mapel dulu untuk menampilkan patron materi.'
     absensiPatronMateriState.list = []
@@ -6033,7 +6041,7 @@ async function refreshAbsensiPatronMateriFields({ resetEdited = false } = {}) {
   }
   absensiPatronMateriState.list = patronList
 
-  selectEl.innerHTML = '<option value="">▼</option>' +
+  selectEl.innerHTML = '<option value="">?</option>' +
     patronList.map(item => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join('')
 
   let latestBuilder = sb
@@ -6217,7 +6225,7 @@ async function renderAbsensiPage() {
           <div style="display:grid; grid-template-columns:1fr 56px; gap:8px; align-items:center;">
             <input id="absensi-patron-materi-input" class="guru-field" type="text" placeholder="Tulis materi manual atau pilih dari dropdown" oninput="onAbsensiPatronMateriInputChange()">
             <select id="absensi-patron-materi" class="guru-field" style="padding-left:8px; padding-right:8px; text-align:center;" onchange="onAbsensiPatronMateriSelectChange()" title="Pilih dari patron materi">
-              <option value="">▼</option>
+              <option value="">?</option>
             </select>
           </div>
         </div>
@@ -6991,7 +6999,7 @@ async function refreshInputNilaiPatronMateriFields({ resetEdited = false } = {})
   const semesterId = String(distribusi?.semester_id || '').trim()
 
   if (!kelasId || !mapelId || !distribusi?.id) {
-    selectEl.innerHTML = '<option value="">▼</option>'
+    selectEl.innerHTML = '<option value="">?</option>'
     inputEl.value = ''
     noteEl.textContent = 'Pilih kelas dan mapel dulu untuk menampilkan patron materi.'
     inputNilaiPatronMateriState.list = []
@@ -7021,7 +7029,7 @@ async function refreshInputNilaiPatronMateriFields({ resetEdited = false } = {})
   }
   inputNilaiPatronMateriState.list = patronList
 
-  selectEl.innerHTML = '<option value="">▼</option>' +
+  selectEl.innerHTML = '<option value="">?</option>' +
     patronList.map(item => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join('')
 
   let latestBuilder = sb
@@ -7546,7 +7554,7 @@ async function renderInputNilaiPage() {
           <div style="display:grid; grid-template-columns:1fr 56px; gap:8px; align-items:center;">
             <input id="input-nilai-patron-materi-input" class="guru-field" type="text" placeholder="Tulis materi manual atau pilih dari dropdown" oninput="onInputNilaiPatronMateriInputChange()">
             <select id="input-nilai-patron-materi" class="guru-field" style="padding-left:8px; padding-right:8px; text-align:center;" onchange="onInputNilaiPatronMateriSelectChange()" title="Pilih dari patron materi">
-              <option value="">▼</option>
+              <option value="">?</option>
             </select>
           </div>
         </div>
@@ -13820,6 +13828,9 @@ function renderGuruUjianSectionRows(sourceSections = null) {
         <label class="guru-label">Tambah Model Soal</label>
         <select id="guru-ujian-new-section-type" class="guru-field">
           <option value="pilihan-ganda">Pilihan Ganda</option>
+          <option value="benar-salah">Benar / Salah</option>
+          <option value="cari-kata">Cari Kata</option>
+          <option value="teka-silang">Teka-Teki Silang</option>
           <option value="esai">Esai</option>
           <option value="pasangkan-kata">Pasangkan Kata (A-B)</option>
           <option value="isi-titik">Isi Titik Kosong</option>
@@ -13974,6 +13985,1072 @@ function onGuruUjianPgOptionInput(no) {
   ensureGuruUjianPgTrailingInput(no)
 }
 
+function getGuruUjianCariKataAlphabet(lang = 'ID') {
+  return String(lang || 'ID').toUpperCase() === 'AR'
+    ? Array.from('ابتثجحخدذرزسشصضطظعغفقكلمنهوي')
+    : Array.from('ABCDEFGHIJKLMNOPQRSTUVWXYZ')
+}
+
+function normalizeGuruUjianCariKataWord(rawValue, lang = 'ID') {
+  const safeLang = String(lang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+  let value = String(rawValue || '').normalize('NFC').trim()
+  if (!value) return ''
+  value = value.replace(/[^\p{L}\p{N}]+/gu, '')
+  if (!value) return ''
+  return safeLang === 'AR' ? value : value.toUpperCase()
+}
+
+function splitGuruUjianCariKataWords(rawValue, lang = 'ID') {
+  const seen = new Set()
+  return String(rawValue || '')
+    .split(/[\r\n,;]+/)
+    .map(item => normalizeGuruUjianCariKataWord(item, lang))
+    .filter(item => {
+      if (!item || seen.has(item)) return false
+      seen.add(item)
+      return true
+    })
+}
+
+function buildGuruUjianCariKataSeed(text) {
+  let hash = 2166136261
+  for (const ch of Array.from(String(text || ''))) {
+    hash ^= ch.codePointAt(0) || 0
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
+}
+
+function createGuruUjianCariKataRng(seedText) {
+  let state = buildGuruUjianCariKataSeed(seedText) || 123456789
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0
+    return state / 4294967296
+  }
+}
+
+function shuffleGuruUjianCariKataList(list, rand) {
+  const out = [...(Array.isArray(list) ? list : [])]
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rand() * (i + 1))
+    const tmp = out[i]
+    out[i] = out[j]
+    out[j] = tmp
+  }
+  return out
+}
+
+function readGuruUjianCariKataConfig(no, lang = null) {
+  const safeLang = String(lang || getGuruUjianSelectedLang() || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+  const rows = Math.max(5, Math.min(20, Number(document.getElementById(`guru-ujian-q-${no}-rows`)?.value || 10) || 10))
+  const cols = Math.max(5, Math.min(20, Number(document.getElementById(`guru-ujian-q-${no}-cols`)?.value || 10) || 10))
+  const text = String(document.getElementById(`guru-ujian-q-${no}`)?.value || '')
+  const wordsText = String(document.getElementById(`guru-ujian-q-${no}-words`)?.value || '')
+  const words = splitGuruUjianCariKataWords(wordsText, safeLang)
+  return { text, rows, cols, wordsText, words, lang: safeLang }
+}
+
+function generateGuruUjianCariKataPuzzle({ rows, cols, words, lang = 'ID', seedText = '' }) {
+  const safeRows = Math.max(5, Math.min(20, Number(rows || 10) || 10))
+  const safeCols = Math.max(5, Math.min(20, Number(cols || 10) || 10))
+  const safeLang = String(lang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+  const normalizedWords = (Array.isArray(words) ? words : [])
+    .map(item => normalizeGuruUjianCariKataWord(item, safeLang))
+    .filter(Boolean)
+    .sort((a, b) => Array.from(b).length - Array.from(a).length)
+  const rand = createGuruUjianCariKataRng(`${safeLang}|${safeRows}x${safeCols}|${seedText}|${normalizedWords.join('|')}`)
+  const alphabet = getGuruUjianCariKataAlphabet(safeLang)
+  const grid = Array.from({ length: safeRows }, () => Array(safeCols).fill(''))
+  const directions = [
+    { dx: 1, dy: 0, name: 'H' },
+    { dx: 0, dy: 1, name: 'V' },
+    { dx: 1, dy: 1, name: 'D1' },
+    { dx: -1, dy: 1, name: 'D2' }
+  ]
+  const placements = []
+  const unplacedWords = []
+
+  normalizedWords.forEach(word => {
+    const letters = Array.from(word)
+    const candidates = []
+    directions.forEach(direction => {
+      for (let row = 0; row < safeRows; row += 1) {
+        for (let col = 0; col < safeCols; col += 1) {
+          const endRow = row + (direction.dy * (letters.length - 1))
+          const endCol = col + (direction.dx * (letters.length - 1))
+          if (endRow < 0 || endRow >= safeRows || endCol < 0 || endCol >= safeCols) continue
+          let fits = true
+          for (let i = 0; i < letters.length; i += 1) {
+            const rr = row + (direction.dy * i)
+            const cc = col + (direction.dx * i)
+            const current = grid[rr][cc]
+            if (current && current !== letters[i]) {
+              fits = false
+              break
+            }
+          }
+          if (fits) candidates.push({ row, col, direction })
+        }
+      }
+    })
+
+    if (!candidates.length) {
+      unplacedWords.push(word)
+      return
+    }
+
+    const choice = shuffleGuruUjianCariKataList(candidates, rand)[0]
+    letters.forEach((letter, index) => {
+      const rr = choice.row + (choice.direction.dy * index)
+      const cc = choice.col + (choice.direction.dx * index)
+      grid[rr][cc] = letter
+    })
+    placements.push({
+      word,
+      row: choice.row,
+      col: choice.col,
+      direction: choice.direction.name
+    })
+  })
+
+  for (let row = 0; row < safeRows; row += 1) {
+    for (let col = 0; col < safeCols; col += 1) {
+      if (grid[row][col]) continue
+      grid[row][col] = alphabet[Math.floor(rand() * alphabet.length)] || alphabet[0] || 'A'
+    }
+  }
+
+  return {
+    rows: safeRows,
+    cols: safeCols,
+    lang: safeLang,
+    words: normalizedWords,
+    grid,
+    placements,
+    unplacedWords
+  }
+}
+
+function buildGuruUjianCariKataPreviewHtml(puzzle, config = {}) {
+  const safeLang = String(config.lang || puzzle?.lang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+  const words = Array.isArray(puzzle?.words) ? puzzle.words : []
+  const grid = Array.isArray(puzzle?.grid) ? puzzle.grid : []
+  const placements = Array.isArray(puzzle?.placements) ? puzzle.placements : []
+  const introText = String(config.text || '').trim()
+  const infoTitle = safeLang === 'AR' ? 'الكلمات المطلوبة' : 'Kata yang dicari'
+  const warningTitle = safeLang === 'AR' ? 'هناك كلمات لم تدخل في الشبكة' : 'Ada kata yang belum muat di grid'
+  const emptyText = safeLang === 'AR' ? 'اكتب الكلمات أولاً لعرض المعاينة.' : 'Isi daftar kata untuk melihat preview.'
+  const markerNote = safeLang === 'AR'
+    ? 'المربعات الملوّنة تبيّن مواضع الكلمات للمعلم فقط.'
+    : 'Kotak berwarna menunjukkan posisi kata untuk guru.'
+  const fontFamily = safeLang === 'AR' ? "'Traditional Arabic','Times New Roman',serif" : "'Times New Roman',serif"
+  const palette = ['#fde68a', '#bfdbfe', '#bbf7d0', '#fbcfe8', '#ddd6fe', '#fecdd3', '#a7f3d0', '#fed7aa']
+  const directionMap = {
+    H: { dx: 1, dy: 0 },
+    V: { dx: 0, dy: 1 },
+    D1: { dx: 1, dy: 1 },
+    D2: { dx: -1, dy: 1 }
+  }
+  if (!words.length) {
+    return `<div style="padding:12px; border:1px dashed #86efac; border-radius:12px; color:#166534; background:#f0fdf4;">${escapeHtml(emptyText)}</div>`
+  }
+  let placementCursor = 0
+  const wordEntries = words.map(word => {
+    const placement = placements[placementCursor] && placements[placementCursor].word === word
+      ? placements[placementCursor++]
+      : null
+    return {
+      word,
+      placement,
+      markerNo: placement ? placementCursor : null,
+      color: placement ? palette[(placementCursor - 1) % palette.length] : '#fecaca'
+    }
+  })
+  const cellMarkers = new Map()
+  wordEntries.forEach(entry => {
+    if (!entry?.placement || !entry.markerNo) return
+    const letters = Array.from(String(entry.placement.word || ''))
+    const delta = directionMap[entry.placement.direction] || directionMap.H
+    letters.forEach((_, letterIndex) => {
+      const row = Number(entry.placement.row || 0) + (delta.dy * letterIndex)
+      const col = Number(entry.placement.col || 0) + (delta.dx * letterIndex)
+      const key = `${row}:${col}`
+      const marks = cellMarkers.get(key) || []
+      marks.push({ no: entry.markerNo, word: entry.word, color: entry.color })
+      cellMarkers.set(key, marks)
+    })
+  })
+  const cellHtml = grid.map((row, rowIndex) => `
+    <tr>
+      ${(Array.isArray(row) ? row : []).map((cell, colIndex) => {
+        const marks = cellMarkers.get(`${rowIndex}:${colIndex}`) || []
+        const bgStyle = !marks.length
+          ? ''
+          : marks.length === 1
+            ? `background:${marks[0].color};`
+            : `background:linear-gradient(135deg, ${marks.map((mark, index) => `${mark.color} ${Math.floor((index / marks.length) * 100)}% ${Math.floor(((index + 1) / marks.length) * 100)}%`).join(', ')});`
+        const markerTitle = marks.length ? escapeHtml(marks.map(mark => `${mark.no}. ${mark.word}`).join(' | ')) : ''
+        return `<td title="${markerTitle}" style="position:relative; width:30px; height:30px; border:1px solid #86efac; text-align:center; vertical-align:middle; font-weight:700; font-family:${fontFamily}; color:#14532d; ${bgStyle}">${escapeHtml(String(cell || ''))}</td>`
+      }).join('')}
+    </tr>
+  `).join('')
+  const wordsHtml = wordEntries.map(entry => `
+    <span style="display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; background:${entry.placement ? entry.color : '#fef2f2'}; border:1px ${entry.placement ? 'solid' : 'dashed'} ${entry.placement ? '#86efac' : '#fca5a5'}; color:${entry.placement ? '#166534' : '#991b1b'}; font-size:12px; font-weight:600; font-family:${fontFamily};">
+      <span style="display:inline-flex; align-items:center; justify-content:center; min-width:18px; height:18px; border-radius:999px; background:${entry.placement ? '#166534' : '#991b1b'}; color:#fff; font-size:10px; line-height:18px; font-weight:700;">${escapeHtml(String(entry.markerNo || '!'))}</span>
+      <span>${escapeHtml(entry.word)}</span>
+    </span>
+  `).join('')
+  const warningHtml = Array.isArray(puzzle?.unplacedWords) && puzzle.unplacedWords.length
+    ? `
+      <div style="margin-top:10px; padding:10px 12px; border:1px solid #fecaca; border-radius:12px; background:#fef2f2; color:#991b1b; font-size:12px;">
+        <strong>${escapeHtml(warningTitle)}:</strong> ${escapeHtml(puzzle.unplacedWords.join(', '))}
+      </div>
+    `
+    : ''
+  return `
+    <div style="padding:12px; border:1px solid #bbf7d0; border-radius:14px; background:#f0fdf4;">
+      ${introText ? `<div style="margin-bottom:10px; color:#166534; font-size:13px; font-family:${fontFamily};">${escapeHtml(introText)}</div>` : ''}
+      <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;">
+        <strong style="font-size:12px; color:#166534; margin-right:4px;">${escapeHtml(infoTitle)}:</strong>
+        ${wordsHtml}
+      </div>
+      <div style="margin-bottom:10px; font-size:12px; color:#166534; font-style:italic; font-family:${fontFamily};">${escapeHtml(markerNote)}</div>
+      <div style="overflow:auto;">
+        <table style="border-collapse:collapse; margin:0;">
+          <tbody>${cellHtml}</tbody>
+        </table>
+      </div>
+      ${warningHtml}
+    </div>
+  `
+}
+
+function renderGuruUjianCariKataPreview(no) {
+  const wrap = document.getElementById(`guru-ujian-q-${no}-preview`)
+  if (!wrap) return
+  const config = readGuruUjianCariKataConfig(no)
+  const puzzle = generateGuruUjianCariKataPuzzle({
+    rows: config.rows,
+    cols: config.cols,
+    words: config.words,
+    lang: config.lang,
+    seedText: `${no}|${config.text}|${config.wordsText}`
+  })
+  wrap.innerHTML = buildGuruUjianCariKataPreviewHtml(puzzle, config)
+}
+
+function onGuruUjianCariKataInput(no) {
+  renderGuruUjianCariKataPreview(no)
+}
+
+function normalizeGuruUjianTekaSilangAnswer(rawValue, lang = 'ID') {
+  const safeLang = String(lang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+  let value = String(rawValue || '').normalize('NFC').trim()
+  if (!value) return ''
+  value = value.replace(/\s+/g, '')
+  value = value.replace(/[^\p{L}\p{N}]+/gu, '')
+  if (!value) return ''
+  return safeLang === 'AR' ? value : value.toUpperCase()
+}
+
+function serializeGuruUjianTekaSilangEntries(entries) {
+  const safeEntries = entries || {}
+  return JSON.stringify({
+    across: Array.isArray(safeEntries.across) ? safeEntries.across : [],
+    down: Array.isArray(safeEntries.down) ? safeEntries.down : []
+  })
+}
+
+function detectGuruUjianTekaSilangSlotsFromMask(maskRows) {
+  const rows = Array.isArray(maskRows) ? maskRows.length : 0
+  const cols = rows ? String(maskRows[0] || '').length : 0
+  const activeAt = (row, col) => row >= 0 && col >= 0 && row < rows && col < cols && String(maskRows[row] || '')[col] !== '#'
+  const across = []
+  const down = []
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      if (!activeAt(row, col)) continue
+      const startsAcross = (!activeAt(row, col - 1)) && activeAt(row, col + 1)
+      const startsDown = (!activeAt(row - 1, col)) && activeAt(row + 1, col)
+      if (startsAcross) {
+        let length = 1
+        while (activeAt(row, col + length)) length += 1
+        across.push({ direction: 'across', row, col, length, clue: '', answer: '' })
+      }
+      if (startsDown) {
+        let length = 1
+        while (activeAt(row + length, col)) length += 1
+        down.push({ direction: 'down', row, col, length, clue: '', answer: '' })
+      }
+    }
+  }
+  return { across, down }
+}
+
+function getGuruUjianTekaSilangEntryKey(direction, row, col, length) {
+  const safeDirection = String(direction || '').trim().toLowerCase() === 'down' ? 'down' : 'across'
+  const safeRow = Number.isInteger(Number(row)) ? Number(row) : 0
+  const safeCol = Number.isInteger(Number(col)) ? Number(col) : 0
+  const safeLength = Number.isInteger(Number(length)) ? Number(length) : 0
+  return `${safeDirection}:${safeRow}:${safeCol}:${safeLength}`
+}
+function normalizeGuruUjianTekaSilangEntry(rawEntry, rows, cols) {
+  const direction = String(rawEntry?.direction || '').trim().toLowerCase() === 'down' ? 'down' : 'across'
+  const row = Number(rawEntry?.row)
+  const col = Number(rawEntry?.col)
+  const length = Number(rawEntry?.length)
+  if (!Number.isInteger(row) || !Number.isInteger(col) || !Number.isInteger(length)) return null
+  if (row < 0 || col < 0 || row >= rows || col >= cols || length < 2) return null
+  const maxLength = direction === 'across' ? (cols - col) : (rows - row)
+  if (length > maxLength) return null
+  return {
+    key: getGuruUjianTekaSilangEntryKey(direction, row, col, length),
+    direction,
+    row,
+    col,
+    length,
+    clue: String(rawEntry?.clue || ''),
+    answer: String(rawEntry?.answer || '')
+  }
+}
+
+function buildGuruUjianTekaSilangModel(rows, cols, rawEntries) {
+  const safeRows = Math.max(5, Math.min(20, Number(rows || 10) || 10))
+  const safeCols = Math.max(5, Math.min(20, Number(cols || 10) || 10))
+  const entryMap = new Map()
+  ;['across', 'down'].forEach(direction => {
+    const list = Array.isArray(rawEntries?.[direction]) ? rawEntries[direction] : []
+    list.forEach(item => {
+      const normalized = normalizeGuruUjianTekaSilangEntry({ ...item, direction }, safeRows, safeCols)
+      if (!normalized) return
+      entryMap.set(normalized.key, normalized)
+    })
+  })
+  const entriesAcross = [...entryMap.values()]
+    .filter(entry => entry.direction === 'across')
+    .sort((a, b) => a.row - b.row || a.col - b.col || a.length - b.length)
+  const entriesDown = [...entryMap.values()]
+    .filter(entry => entry.direction === 'down')
+    .sort((a, b) => a.row - b.row || a.col - b.col || a.length - b.length)
+
+  const startCells = new Map()
+  ;[...entriesAcross, ...entriesDown].forEach(entry => {
+    const key = `${entry.row}:${entry.col}`
+    if (!startCells.has(key)) startCells.set(key, { row: entry.row, col: entry.col })
+  })
+  const numberMap = new Map()
+  ;[...startCells.values()]
+    .sort((a, b) => a.row - b.row || a.col - b.col)
+    .forEach((cell, index) => {
+      numberMap.set(`${cell.row}:${cell.col}`, index + 1)
+    })
+
+  const cellUsage = new Map()
+  const maskGrid = Array.from({ length: safeRows }, () => Array(safeCols).fill('#'))
+  const applyEntry = entry => {
+    const stepRow = entry.direction === 'down' ? 1 : 0
+    const stepCol = entry.direction === 'across' ? 1 : 0
+    for (let offset = 0; offset < entry.length; offset += 1) {
+      const row = entry.row + (stepRow * offset)
+      const col = entry.col + (stepCol * offset)
+      if (row < 0 || col < 0 || row >= safeRows || col >= safeCols) continue
+      maskGrid[row][col] = '.'
+      const key = `${row}:${col}`
+      const usage = cellUsage.get(key) || []
+      usage.push(entry.key)
+      cellUsage.set(key, usage)
+    }
+  }
+  entriesAcross.forEach(applyEntry)
+  entriesDown.forEach(applyEntry)
+
+  const attachNumbers = list => list.map(entry => ({
+    ...entry,
+    number: numberMap.get(`${entry.row}:${entry.col}`) || 0
+  }))
+
+  return {
+    rows: safeRows,
+    cols: safeCols,
+    maskRows: maskGrid.map(row => row.join('')),
+    numberMap,
+    cellUsage,
+    entriesAcross: attachNumbers(entriesAcross),
+    entriesDown: attachNumbers(entriesDown)
+  }
+}
+
+function readGuruUjianTekaSilangSeedEntries(no) {
+  try {
+    const raw = String(document.getElementById(`guru-ujian-q-${no}-tts-seed`)?.value || '').trim()
+    if (!raw) return { across: [], down: [], __explicit: false }
+    const parsed = JSON.parse(raw)
+    return {
+      across: Array.isArray(parsed?.across) ? parsed.across : [],
+      down: Array.isArray(parsed?.down) ? parsed.down : [],
+      __explicit: true
+    }
+  } catch (_error) {
+    return { across: [], down: [], __explicit: false }
+  }
+}
+
+function buildGuruUjianTekaSilangLegacyEntries(no, rows, cols) {
+  const maskInput = document.getElementById(`guru-ujian-q-${no}-tts-mask`)
+  const rawMask = String(maskInput?.value || '').trim()
+  if (!rawMask) return { across: [], down: [] }
+  const sourceRows = rawMask.split(/[\r\n/]+/).filter(Boolean)
+  if (!sourceRows.length) return { across: [], down: [] }
+  const detected = detectGuruUjianTekaSilangSlotsFromMask(sourceRows)
+  return {
+    across: detected.across.map(entry => normalizeGuruUjianTekaSilangEntry(entry, rows, cols)).filter(Boolean),
+    down: detected.down.map(entry => normalizeGuruUjianTekaSilangEntry(entry, rows, cols)).filter(Boolean)
+  }
+}
+
+function readGuruUjianTekaSilangRawEntries(no, rows, cols) {
+  const safeRows = Math.max(5, Math.min(20, Number(rows || 10) || 10))
+  const safeCols = Math.max(5, Math.min(20, Number(cols || 10) || 10))
+  const seed = readGuruUjianTekaSilangSeedEntries(no)
+  const hasSeed = (Array.isArray(seed.across) && seed.across.length) || (Array.isArray(seed.down) && seed.down.length)
+  const baseSeed = (seed.__explicit || hasSeed) ? seed : buildGuruUjianTekaSilangLegacyEntries(no, safeRows, safeCols)
+  const map = new Map()
+  ;['across', 'down'].forEach(direction => {
+    const list = Array.isArray(baseSeed?.[direction]) ? baseSeed[direction] : []
+    list.forEach(entry => {
+      const normalized = normalizeGuruUjianTekaSilangEntry({ ...entry, direction }, safeRows, safeCols)
+      if (!normalized) return
+      map.set(normalized.key, normalized)
+    })
+  })
+  document.querySelectorAll(`#guru-ujian-q-${no}-tts-slots [data-tts-entry-key]`).forEach(card => {
+    const direction = String(card?.dataset?.ttsDirection || '')
+    const row = Number(card?.dataset?.ttsRow)
+    const col = Number(card?.dataset?.ttsCol)
+    const length = Number(card?.dataset?.ttsLength)
+    const normalized = normalizeGuruUjianTekaSilangEntry({ direction, row, col, length }, safeRows, safeCols)
+    if (!normalized) return
+    const clueInput = card.querySelector('[data-tts-kind="clue"]')
+    const answerInput = card.querySelector('[data-tts-kind="answer"]')
+    normalized.clue = String(clueInput?.value || '')
+    normalized.answer = String(answerInput?.value || '')
+    map.set(normalized.key, normalized)
+  })
+  return {
+    across: [...map.values()].filter(entry => entry.direction === 'across'),
+    down: [...map.values()].filter(entry => entry.direction === 'down')
+  }
+}
+
+function persistGuruUjianTekaSilangSeedEntries(no, entries) {
+  const input = document.getElementById(`guru-ujian-q-${no}-tts-seed`)
+  if (!input) return
+  input.value = serializeGuruUjianTekaSilangEntries(entries)
+}
+
+function readGuruUjianTekaSilangConfig(no, lang = null) {
+  const safeLang = String(lang || getGuruUjianSelectedLang() || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+  const rows = Math.max(5, Math.min(20, Number(document.getElementById(`guru-ujian-q-${no}-rows`)?.value || 10) || 10))
+  const cols = Math.max(5, Math.min(20, Number(document.getElementById(`guru-ujian-q-${no}-cols`)?.value || 10) || 10))
+  const text = String(document.getElementById(`guru-ujian-q-${no}`)?.value || '')
+  const model = buildGuruUjianTekaSilangModel(rows, cols, readGuruUjianTekaSilangRawEntries(no, rows, cols))
+  persistGuruUjianTekaSilangSeedEntries(no, {
+    across: model.entriesAcross.map(({ key, number, ...entry }) => entry),
+    down: model.entriesDown.map(({ key, number, ...entry }) => entry)
+  })
+  return {
+    text,
+    rows,
+    cols,
+    lang: safeLang,
+    maskRows: model.maskRows,
+    maskText: model.maskRows.join('\n'),
+    numberMap: model.numberMap,
+    cellUsage: model.cellUsage,
+    entriesAcross: model.entriesAcross,
+    entriesDown: model.entriesDown
+  }
+}
+
+function getGuruUjianTekaSilangMode(no) {
+  const value = String(document.getElementById(`guru-ujian-q-${no}-tts-mode`)?.value || '').trim().toLowerCase()
+  return value === 'down' ? 'down' : (value === 'across' ? 'across' : '')
+}
+
+function getGuruUjianTekaSilangAnchor(no) {
+  const raw = String(document.getElementById(`guru-ujian-q-${no}-tts-anchor`)?.value || '').trim()
+  if (!raw) return null
+  const [rowRaw, colRaw] = raw.split(':')
+  const row = Number(rowRaw)
+  const col = Number(colRaw)
+  if (!Number.isInteger(row) || !Number.isInteger(col)) return null
+  return { row, col }
+}
+
+function setGuruUjianTekaSilangAnchor(no, anchor) {
+  const input = document.getElementById(`guru-ujian-q-${no}-tts-anchor`)
+  if (!input) return
+  input.value = anchor && Number.isInteger(anchor.row) && Number.isInteger(anchor.col)
+    ? `${anchor.row}:${anchor.col}`
+    : ''
+}
+
+function getGuruUjianTekaSilangPendingEnd(no) {
+  const raw = String(document.getElementById(`guru-ujian-q-${no}-tts-pending-end`)?.value || '').trim()
+  if (!raw) return null
+  const [rowRaw, colRaw] = raw.split(':')
+  const row = Number(rowRaw)
+  const col = Number(colRaw)
+  if (!Number.isInteger(row) || !Number.isInteger(col)) return null
+  return { row, col }
+}
+
+function setGuruUjianTekaSilangPendingEnd(no, endpoint) {
+  const input = document.getElementById(`guru-ujian-q-${no}-tts-pending-end`)
+  if (!input) return
+  input.value = endpoint && Number.isInteger(endpoint.row) && Number.isInteger(endpoint.col)
+    ? `${endpoint.row}:${endpoint.col}`
+    : ''
+}
+
+function setGuruUjianTekaSilangPendingEndFromRaw(no, raw) {
+  const clean = String(raw || '').trim()
+  if (!clean) {
+    setGuruUjianTekaSilangPendingEnd(no, null)
+    renderGuruUjianTekaSilangEditor(no)
+    setGuruUjianTekaSilangStatus(no, 'Titik akhir draft dibersihkan.')
+    return
+  }
+  const [rowRaw, colRaw] = clean.split(':')
+  const row = Number(rowRaw)
+  const col = Number(colRaw)
+  if (!Number.isInteger(row) || !Number.isInteger(col)) {
+    setGuruUjianTekaSilangStatus(no, 'Titik akhir draft tidak valid.', 'error')
+    return
+  }
+  setGuruUjianTekaSilangPendingEnd(no, { row, col })
+  renderGuruUjianTekaSilangEditor(no)
+  setGuruUjianTekaSilangStatus(no, `Titik akhir draft dipilih: baris ${row + 1}, kolom ${col + 1}. Klik centang untuk konfirmasi slot.`)
+}
+
+function setGuruUjianTekaSilangStatus(no, message, kind = 'info') {
+  const host = document.querySelector(`.guru-ujian-question-row[data-no="${no}"]`) || document.body
+  let el = document.getElementById(`guru-ujian-q-${no}-tts-status`)
+  if (!el) {
+    el = document.createElement('div')
+    el.id = `guru-ujian-q-${no}-tts-status`
+    host.appendChild(el)
+  }
+  const palette = kind === 'error'
+    ? { color: '#991b1b', bg: '#fef2f2', border: '#fecaca' }
+    : kind === 'success'
+      ? { color: '#166534', bg: '#f0fdf4', border: '#bbf7d0' }
+      : { color: '#6b21a8', bg: '#faf5ff', border: '#e9d5ff' }
+  if (el._ttsTimer) {
+    clearTimeout(el._ttsTimer)
+    el._ttsTimer = null
+  }
+  if (!message) {
+    el.textContent = ''
+    el.style.display = 'none'
+    return
+  }
+  el.textContent = message
+  el.style.display = 'block'
+  el.style.position = 'absolute'
+  el.style.right = '16px'
+  el.style.bottom = '16px'
+  el.style.zIndex = '30'
+  el.style.maxWidth = '320px'
+  el.style.padding = '10px 12px'
+  el.style.borderRadius = '14px'
+  el.style.fontSize = '12px'
+  el.style.lineHeight = '1.45'
+  el.style.boxShadow = '0 14px 32px rgba(91,33,182,0.16)'
+  el.style.border = `1px solid ${palette.border}`
+  el.style.background = palette.bg
+  el.style.color = palette.color
+  el.style.pointerEvents = 'none'
+  el._ttsTimer = setTimeout(() => {
+    el.style.display = 'none'
+  }, kind === 'error' ? 3600 : 2200)
+}
+function buildGuruUjianTekaSilangEndpointHtml(no, rows, cols) {
+  const anchor = getGuruUjianTekaSilangAnchor(no)
+  const pendingEnd = getGuruUjianTekaSilangPendingEnd(no)
+  if (!anchor) {
+    return '<div style="margin-top:10px; font-size:12px; color:#6b21a8;">Klik titik awal pada grid, lalu pilih titik akhir.</div>'
+  }
+  const options = []
+  for (let col = 0; col < cols; col += 1) {
+    if (col === anchor.col) continue
+    const value = `${anchor.row}:${col}`
+    const selected = pendingEnd && pendingEnd.row === anchor.row && pendingEnd.col === col ? ' selected' : ''
+    options.push(`<option value="${value}"${selected}>Mendatar · Kolom ${col + 1}</option>`)
+  }
+  for (let row = 0; row < rows; row += 1) {
+    if (row === anchor.row) continue
+    const value = `${row}:${anchor.col}`
+    const selected = pendingEnd && pendingEnd.row === row && pendingEnd.col === anchor.col ? ' selected' : ''
+    options.push(`<option value="${value}"${selected}>Menurun · Baris ${row + 1}</option>`)
+  }
+  return `
+    <div style="margin-top:10px; padding:10px; border:1px dashed #d8b4fe; border-radius:12px; background:#fff;">
+      <div style="font-size:12px; font-weight:700; color:#7e22ce; margin-bottom:4px;">Pilih Titik Akhir</div>
+      <div style="font-size:11px; color:#7e22ce; margin-bottom:8px;">Pilih titik akhir untuk draft, lalu klik centang/konfirmasi supaya slot benar-benar dibuat.</div>
+      <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+        <select id="guru-ujian-q-${no}-tts-endpoint-main" class="guru-field" style="max-width:220px; min-width:180px;">
+          <option value="">Pilih titik akhir...</option>
+          ${options.join('')}
+        </select>
+        <button id="guru-ujian-q-${no}-tts-endpoint-btn" type="button" class="guru-btn-secondary" style="padding:6px 10px; font-size:11px;" ${pendingEnd ? '' : 'disabled'}>Konfirmasi Slot</button>
+      </div>
+    </div>
+  `
+}
+
+function collectGuruUjianTekaSilangCellLetters(config) {
+  const safeLang = String(config?.lang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+  const cellLetters = new Map()
+  const entries = [
+    ...(Array.isArray(config?.entriesAcross) ? config.entriesAcross : []),
+    ...(Array.isArray(config?.entriesDown) ? config.entriesDown : [])
+  ]
+  entries.forEach(entry => {
+    const answerChars = Array.from(normalizeGuruUjianTekaSilangAnswer(entry?.answer || '', safeLang)).slice(0, Number(entry?.length || 0))
+    const stepRow = entry?.direction === 'down' ? 1 : 0
+    const stepCol = entry?.direction === 'across' ? 1 : 0
+    answerChars.forEach((char, offset) => {
+      const row = Number(entry?.row || 0) + (stepRow * offset)
+      const col = Number(entry?.col || 0) + (stepCol * offset)
+      if (row < 0 || col < 0) return
+      const key = `${row}:${col}`
+      if (!cellLetters.has(key) || !String(cellLetters.get(key) || '').trim()) {
+        cellLetters.set(key, char)
+      }
+    })
+  })
+  return cellLetters
+}
+
+function bindGuruUjianTekaSilangGridControls(no, gridWrap) {
+  if (!gridWrap) return
+  const handleGridCellEvent = event => {
+    const confirmBtn = event.target?.closest?.('[data-tts-confirm-draft]')
+    if (confirmBtn) {
+      event.preventDefault()
+      event.stopPropagation()
+      confirmGuruUjianTekaSilangDraft(no, String(confirmBtn.dataset.ttsConfirmDraft || '').trim())
+      return
+    }
+    const cell = event.target?.closest?.('[data-tts-grid-cell]')
+    if (!cell || !gridWrap.contains(cell)) return
+    event.preventDefault()
+    event.stopPropagation()
+    const row = Number(cell.dataset.ttsRow)
+    const col = Number(cell.dataset.ttsCol)
+    if (!Number.isInteger(row) || !Number.isInteger(col)) return
+    selectGuruUjianTekaSilangCell(no, row, col)
+  }
+  gridWrap.onclick = handleGridCellEvent
+  gridWrap.onpointerup = null
+  const endpointButton = document.getElementById(`guru-ujian-q-${no}-tts-endpoint-btn`)
+  if (endpointButton) {
+    endpointButton.onclick = () => confirmGuruUjianTekaSilangDraft(no)
+  }
+}
+
+function refreshGuruUjianTekaSilangGridPreview(no) {
+  const gridWrap = document.getElementById(`guru-ujian-q-${no}-tts-grid`)
+  if (!gridWrap) return
+  const config = readGuruUjianTekaSilangConfig(no)
+  gridWrap.innerHTML = buildGuruUjianTekaSilangGridHtml(no, config)
+  bindGuruUjianTekaSilangGridControls(no, gridWrap)
+}
+
+function onGuruUjianTekaSilangSlotInput(no) {
+  refreshGuruUjianTekaSilangGridPreview(no)
+}
+function buildGuruUjianTekaSilangGridHtml(no, config) {
+  const safeLang = String(config?.lang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+  const isRtl = safeLang === 'AR'
+  const rows = Math.max(5, Math.min(20, Number(config?.rows || 10) || 10))
+  const cols = Math.max(5, Math.min(20, Number(config?.cols || 10) || 10))
+  const numberMap = config?.numberMap instanceof Map ? config.numberMap : new Map()
+  const cellUsage = config?.cellUsage instanceof Map ? config.cellUsage : new Map()
+  const cellLetters = collectGuruUjianTekaSilangCellLetters(config)
+  const fontFamily = safeLang === 'AR' ? "'Traditional Arabic','Times New Roman',serif" : "'Times New Roman',serif"
+  const anchor = getGuruUjianTekaSilangAnchor(no)
+  const pendingEnd = getGuruUjianTekaSilangPendingEnd(no)
+  const hasDraftLine = anchor && pendingEnd && (anchor.row === pendingEnd.row || anchor.col === pendingEnd.col)
+  const cellSize = Math.max(14, Math.min(30, Math.floor(290 / Math.max(cols, 1))))
+  const rowHeaderSize = Math.max(24, Math.min(28, cellSize - 1))
+  const headerFontSize = cellSize <= 18 ? 10 : 11
+  const numberFontSize = cellSize <= 18 ? 8 : 9
+  const letterFontSize = safeLang === 'AR'
+    ? Math.max(11, Math.floor(cellSize * 0.62))
+    : Math.max(10, Math.floor(cellSize * 0.54))
+  const visualCols = Array.from({ length: cols }, (_, index) => (isRtl ? (cols - 1 - index) : index))
+  const rowsHtml = Array.from({ length: rows }, (_, rowIndex) => {
+    const rowHeaderHtml = `<th style="width:${rowHeaderSize}px; min-width:${rowHeaderSize}px; border:0; font-size:${headerFontSize}px; color:#7e22ce; font-weight:700;">${rowIndex + 1}</th>`
+    const cellsHtml = visualCols.map(colIndex => {
+      const usage = cellUsage.get(`${rowIndex}:${colIndex}`) || []
+      const number = numberMap.get(`${rowIndex}:${colIndex}`) || ''
+      const letter = String(cellLetters.get(`${rowIndex}:${colIndex}`) || '')
+      const isUsed = usage.length > 0
+      const isAnchor = anchor && anchor.row === rowIndex && anchor.col === colIndex
+      const isPendingEnd = pendingEnd && pendingEnd.row === rowIndex && pendingEnd.col === colIndex
+      const isSelectableEnd = anchor && !isAnchor && (anchor.row === rowIndex || anchor.col === colIndex)
+      const isDraftPath = hasDraftLine && !isAnchor && !isPendingEnd && (
+        (anchor.row === pendingEnd.row && rowIndex === anchor.row && colIndex >= Math.min(anchor.col, pendingEnd.col) && colIndex <= Math.max(anchor.col, pendingEnd.col)) ||
+        (anchor.col === pendingEnd.col && colIndex === anchor.col && rowIndex >= Math.min(anchor.row, pendingEnd.row) && rowIndex <= Math.max(anchor.row, pendingEnd.row))
+      )
+      const background = isAnchor
+        ? '#fde68a'
+        : isPendingEnd
+          ? '#86efac'
+          : isDraftPath
+            ? '#dcfce7'
+            : isSelectableEnd
+              ? '#ecfccb'
+              : (isUsed ? '#ede9fe' : '#ffffff')
+      const borderColor = isAnchor
+        ? '#d97706'
+        : isPendingEnd
+          ? '#16a34a'
+          : isDraftPath
+            ? '#22c55e'
+            : isSelectableEnd
+              ? '#84cc16'
+              : (isUsed ? '#8b5cf6' : '#d8b4fe')
+      const opacity = anchor && !isAnchor && !isSelectableEnd && !isUsed ? '0.45' : '1'
+      const title = isAnchor
+        ? 'Titik awal draft'
+        : isPendingEnd
+          ? 'Titik akhir draft. Klik centang untuk konfirmasi slot.'
+          : isSelectableEnd
+            ? 'Klik sebagai titik akhir draft'
+            : (isUsed ? 'Slot aktif' : 'Klik untuk memilih kotak')
+      return `<td data-tts-grid-cell="1" data-tts-row="${rowIndex}" data-tts-col="${colIndex}" title="${escapeHtml(title)}" style="position:relative; padding:0; border:1px solid ${borderColor}; width:${cellSize}px; height:${cellSize}px; opacity:${opacity}; transition:opacity .15s ease; cursor:pointer;">
+        <div style="position:relative; width:${cellSize}px; height:${cellSize}px; margin:0; padding:0; background:${background}; color:#111827; font-family:${fontFamily}; pointer-events:none; user-select:none; display:flex; align-items:center; justify-content:center; overflow:hidden;">
+          ${number ? `<span style="position:absolute; top:2px; ${isRtl ? 'right:3px' : 'left:3px'}; font-size:${numberFontSize}px; line-height:1; color:#7e22ce; font-weight:700;">${escapeHtml(String(number))}</span>` : ''}
+          ${letter ? `<span style="font-size:${letterFontSize}px; line-height:1; font-weight:700; color:#111827; ${safeLang === 'AR' ? 'direction:rtl;' : ''}">${escapeHtml(letter)}</span>` : ''}
+        </div>
+        ${isPendingEnd ? `<button type="button" data-tts-confirm-draft="${rowIndex}:${colIndex}" style="position:absolute; ${isRtl ? 'left:1px' : 'right:1px'}; top:1px; width:${Math.max(14, Math.min(18, cellSize - 4))}px; height:${Math.max(14, Math.min(18, cellSize - 4))}px; border:0; border-radius:999px; background:#16a34a; color:#fff; font-size:${Math.max(10, Math.min(12, cellSize - 8))}px; font-weight:700; line-height:1; cursor:pointer; z-index:2;">✓</button>` : ''}
+      </td>`
+    }).join('')
+    return `<tr>${isRtl ? `${cellsHtml}${rowHeaderHtml}` : `${rowHeaderHtml}${cellsHtml}`}</tr>`
+  }).join('')
+  const headerCols = visualCols.map(colIndex => `<th style="border:0; font-size:${headerFontSize}px; color:#7e22ce; font-weight:700; width:${cellSize}px; min-width:${cellSize}px;">${colIndex + 1}</th>`).join('')
+  const modeLabel = 'Mode draft + konfirmasi'
+  const anchorLabel = anchor ? `Mulai: baris ${anchor.row + 1}, kolom ${anchor.col + 1}` : 'Belum ada titik awal'
+  return `
+    <div style="padding:10px; border:1px solid #e9d5ff; border-radius:14px; background:#faf5ff; max-width:100%; overflow:hidden;">
+      <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; margin-bottom:8px;">
+        <div style="font-size:12px; color:#6b21a8; font-weight:700;">Grid Teka-Teki Silang</div>
+        <div style="font-size:11px; color:#7e22ce;">${escapeHtml(modeLabel)} • ${escapeHtml(anchorLabel)}</div>
+      </div>
+      <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+        <button type="button" onclick="clearGuruUjianTekaSilangEntries(${no})" class="guru-btn-secondary" style="padding:7px 12px; border-color:#f5c2e7; background:linear-gradient(180deg,#fff1f9 0%,#ffe4f1 100%); color:#9d174d; box-shadow:0 6px 18px rgba(236,72,153,0.12);">Hapus Semua Slot</button>
+      </div>
+      <div style="width:100%; overflow:auto hidden;">
+        <table style="border-collapse:collapse; margin:10px auto 0 auto; table-layout:fixed;"><thead><tr>${isRtl ? `${headerCols}<th style="border:0; width:${rowHeaderSize}px; min-width:${rowHeaderSize}px;"></th>` : `<th style="border:0; width:${rowHeaderSize}px; min-width:${rowHeaderSize}px;"></th>${headerCols}`}</tr></thead><tbody>${rowsHtml}</tbody></table>
+      </div>
+    </div>
+  `
+}
+
+function buildGuruUjianTekaSilangSlotsHtml(no, config) {
+  const safeLang = String(config?.lang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+  const labelAcross = safeLang === 'AR' ? '\u0623\u0641\u0642\u064a\u064b\u0627' : 'Mendatar'
+  const labelDown = safeLang === 'AR' ? '\u0639\u0645\u0648\u062f\u064a\u064b\u0627' : 'Menurun'
+  const clueLabel = safeLang === 'AR' ? '\u0627\u0644\u0642\u0631\u064a\u0646\u0629' : 'Petunjuk'
+  const answerLabel = safeLang === 'AR' ? '\u0627\u0644\u062c\u0648\u0627\u0628' : 'Jawaban'
+  const cluePlaceholder = safeLang === 'AR' ? '\u0627\u0643\u062a\u0628 \u0627\u0644\u0642\u0631\u064a\u0646\u0629' : 'Tulis petunjuk'
+  const answerPlaceholder = safeLang === 'AR' ? '\u0627\u0643\u062a\u0628 \u0627\u0644\u062c\u0648\u0627\u0628' : 'Tulis jawaban'
+  const emptyText = 'Belum ada slot. Klik sel awal lalu sel akhir, lalu konfirmasi slot dengan centang.'
+  const alignStyle = safeLang === 'AR' ? 'text-align:right; direction:rtl;' : ''
+  const cardDirection = safeLang === 'AR' ? 'direction:rtl; text-align:right;' : ''
+  const buildGroup = (title, entries, accentColor) => {
+    if (!entries.length) {
+      return `<div style="padding:10px 12px; border:1px dashed #d8b4fe; border-radius:12px; color:#7e22ce; font-size:12px; ${cardDirection}">${escapeHtml(emptyText)}</div>`
+    }
+    return entries.map(entry => `
+      <div data-tts-entry-key="${escapeHtml(entry.key)}" data-tts-direction="${escapeHtml(entry.direction)}" data-tts-row="${escapeHtml(String(entry.row))}" data-tts-col="${escapeHtml(String(entry.col))}" data-tts-length="${escapeHtml(String(entry.length))}" style="padding:10px; border:1px solid #e9d5ff; border-radius:12px; background:#fff; margin-bottom:8px; ${cardDirection}">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; flex-wrap:wrap; ${safeLang === 'AR' ? 'flex-direction:row-reverse;' : ''}">
+          <div style="font-size:12px; font-weight:700; color:${accentColor};">${escapeHtml(`${title} ${entry.number}`)}</div>
+          <div style="display:flex; align-items:center; gap:8px; ${safeLang === 'AR' ? 'flex-direction:row-reverse;' : ''}">
+            <div style="font-size:11px; color:#6b7280;">${escapeHtml(`${entry.length} kotak`)}</div>
+            <button type="button" class="guru-btn-secondary" onclick="removeGuruUjianTekaSilangEntry(${no}, '${escapeHtml(entry.key)}')" style="padding:4px 8px; font-size:11px;">Hapus</button>
+          </div>
+        </div>
+        <label class="guru-label">${escapeHtml(clueLabel)}</label>
+        <input data-tts-key="${escapeHtml(entry.key)}" data-tts-kind="clue" class="guru-field" type="text" value="${escapeHtml(String(entry.clue || ''))}" placeholder="${escapeHtml(cluePlaceholder)}" style="${alignStyle}" oninput="onGuruUjianTekaSilangSlotInput(${no})">
+        <label class="guru-label" style="margin-top:8px;">${escapeHtml(answerLabel)}</label>
+        <input data-tts-key="${escapeHtml(entry.key)}" data-tts-kind="answer" class="guru-field" type="text" value="${escapeHtml(String(entry.answer || ''))}" placeholder="${escapeHtml(answerPlaceholder)}" style="${alignStyle}" maxlength="${escapeHtml(String(entry.length || ''))}" oninput="onGuruUjianTekaSilangSlotInput(${no})">
+      </div>
+    `).join('')
+  }
+  return `
+    <div style="display:grid; gap:12px; ${safeLang === 'AR' ? 'direction:rtl;' : ''}">
+      <div>
+        <div style="font-size:13px; font-weight:700; color:#7e22ce; margin-bottom:8px; ${safeLang === 'AR' ? 'text-align:right;' : ''}">${escapeHtml(labelAcross)}</div>
+        ${buildGroup(labelAcross, config.entriesAcross || [], '#7e22ce')}
+      </div>
+      <div>
+        <div style="font-size:13px; font-weight:700; color:#6b21a8; margin-bottom:8px; ${safeLang === 'AR' ? 'text-align:right;' : ''}">${escapeHtml(labelDown)}</div>
+        ${buildGroup(labelDown, config.entriesDown || [], '#6b21a8')}
+      </div>
+    </div>
+  `
+}
+
+function renderGuruUjianTekaSilangEditor(no) {
+  const gridWrap = document.getElementById(`guru-ujian-q-${no}-tts-grid`)
+  const slotsWrap = document.getElementById(`guru-ujian-q-${no}-tts-slots`)
+  if (!gridWrap || !slotsWrap) return
+  const config = readGuruUjianTekaSilangConfig(no)
+  gridWrap.innerHTML = buildGuruUjianTekaSilangGridHtml(no, config)
+  slotsWrap.innerHTML = buildGuruUjianTekaSilangSlotsHtml(no, config)
+  bindGuruUjianTekaSilangGridControls(no, gridWrap)
+}
+
+function onGuruUjianTekaSilangInput(no) {
+  renderGuruUjianTekaSilangEditor(no)
+}
+
+function onGuruUjianTekaSilangSizeInput(no) {
+  const rows = Math.max(5, Math.min(20, Number(document.getElementById(`guru-ujian-q-${no}-rows`)?.value || 10) || 10))
+  const cols = Math.max(5, Math.min(20, Number(document.getElementById(`guru-ujian-q-${no}-cols`)?.value || 10) || 10))
+  const model = buildGuruUjianTekaSilangModel(rows, cols, readGuruUjianTekaSilangRawEntries(no, rows, cols))
+  persistGuruUjianTekaSilangSeedEntries(no, {
+    across: model.entriesAcross.map(({ key, number, ...entry }) => entry),
+    down: model.entriesDown.map(({ key, number, ...entry }) => entry)
+  })
+  setGuruUjianTekaSilangAnchor(no, null)
+  setGuruUjianTekaSilangPendingEnd(no, null)
+  renderGuruUjianTekaSilangEditor(no)
+}
+
+function setGuruUjianTekaSilangMode(no, mode) {
+  const input = document.getElementById(`guru-ujian-q-${no}-tts-mode`)
+  if (input) input.value = mode === 'down' ? 'down' : (mode === 'across' ? 'across' : '')
+  setGuruUjianTekaSilangAnchor(no, null)
+  setGuruUjianTekaSilangPendingEnd(no, null)
+  renderGuruUjianTekaSilangEditor(no)
+  setGuruUjianTekaSilangStatus(no, mode === 'down' ? 'Mode menurun aktif. Klik titik awal.' : 'Mode mendatar aktif. Klik titik awal.')
+}
+
+function clearGuruUjianTekaSilangAnchor(no) {
+  setGuruUjianTekaSilangAnchor(no, null)
+  setGuruUjianTekaSilangPendingEnd(no, null)
+  renderGuruUjianTekaSilangEditor(no)
+  setGuruUjianTekaSilangStatus(no, 'Draft slot dibatalkan.')
+}
+
+function removeGuruUjianTekaSilangEntriesByStart(no, row, col) {
+  const rows = Math.max(5, Math.min(20, Number(document.getElementById(`guru-ujian-q-${no}-rows`)?.value || 10) || 10))
+  const cols = Math.max(5, Math.min(20, Number(document.getElementById(`guru-ujian-q-${no}-cols`)?.value || 10) || 10))
+  const rawEntries = readGuruUjianTekaSilangRawEntries(no, rows, cols)
+  const removedAcross = rawEntries.across.filter(entry => entry.row === row && entry.col === col)
+  const removedDown = rawEntries.down.filter(entry => entry.row === row && entry.col === col)
+  if (!removedAcross.length && !removedDown.length) return false
+  persistGuruUjianTekaSilangSeedEntries(no, {
+    across: rawEntries.across.filter(entry => !(entry.row === row && entry.col === col)),
+    down: rawEntries.down.filter(entry => !(entry.row === row && entry.col === col))
+  })
+  const slotsWrap = document.getElementById(`guru-ujian-q-${no}-tts-slots`)
+  if (slotsWrap) slotsWrap.innerHTML = ''
+  setGuruUjianTekaSilangAnchor(no, null)
+  setGuruUjianTekaSilangPendingEnd(no, null)
+  renderGuruUjianTekaSilangEditor(no)
+  const removedCount = removedAcross.length + removedDown.length
+  setGuruUjianTekaSilangStatus(no, removedCount > 1 ? `${removedCount} slot dari titik awal ini berhasil dihapus.` : 'Slot dari titik awal ini berhasil dihapus.', 'success')
+  return true
+}
+function removeGuruUjianTekaSilangEntry(no, key) {
+  const rows = Math.max(5, Math.min(20, Number(document.getElementById(`guru-ujian-q-${no}-rows`)?.value || 10) || 10))
+  const cols = Math.max(5, Math.min(20, Number(document.getElementById(`guru-ujian-q-${no}-cols`)?.value || 10) || 10))
+  const rawEntries = readGuruUjianTekaSilangRawEntries(no, rows, cols)
+  persistGuruUjianTekaSilangSeedEntries(no, {
+    across: rawEntries.across.filter(entry => entry.key !== key),
+    down: rawEntries.down.filter(entry => entry.key !== key)
+  })
+  const slotsWrap = document.getElementById(`guru-ujian-q-${no}-tts-slots`)
+  if (slotsWrap) slotsWrap.innerHTML = ''
+  setGuruUjianTekaSilangAnchor(no, null)
+  setGuruUjianTekaSilangPendingEnd(no, null)
+  renderGuruUjianTekaSilangEditor(no)
+  setGuruUjianTekaSilangStatus(no, 'Slot berhasil dihapus.', 'success')
+}
+
+function clearGuruUjianTekaSilangEntries(no) {
+  persistGuruUjianTekaSilangSeedEntries(no, { across: [], down: [] })
+  const slotsWrap = document.getElementById(`guru-ujian-q-${no}-tts-slots`)
+  if (slotsWrap) slotsWrap.innerHTML = ''
+  setGuruUjianTekaSilangAnchor(no, null)
+  setGuruUjianTekaSilangPendingEnd(no, null)
+  renderGuruUjianTekaSilangEditor(no)
+  setGuruUjianTekaSilangStatus(no, 'Semua slot berhasil dihapus.', 'success')
+}
+
+function upsertGuruUjianTekaSilangEntry(no, direction, row, col, length) {
+  const rows = Math.max(5, Math.min(20, Number(document.getElementById(`guru-ujian-q-${no}-rows`)?.value || 10) || 10))
+  const cols = Math.max(5, Math.min(20, Number(document.getElementById(`guru-ujian-q-${no}-cols`)?.value || 10) || 10))
+  const normalized = normalizeGuruUjianTekaSilangEntry({ direction, row, col, length }, rows, cols)
+  if (!normalized) return
+  const rawEntries = readGuruUjianTekaSilangRawEntries(no, rows, cols)
+  const bucket = normalized.direction === 'down' ? 'down' : 'across'
+  const previous = rawEntries[bucket].find(entry => entry.row === normalized.row && entry.col === normalized.col)
+  const nextEntries = {
+    across: rawEntries.across.filter(entry => !(entry.direction === normalized.direction && entry.row === normalized.row && entry.col === normalized.col)),
+    down: rawEntries.down.filter(entry => !(entry.direction === normalized.direction && entry.row === normalized.row && entry.col === normalized.col))
+  }
+  nextEntries[bucket].push({
+    ...normalized,
+    clue: String(previous?.clue || ''),
+    answer: String(previous?.answer || '')
+  })
+  persistGuruUjianTekaSilangSeedEntries(no, nextEntries)
+  const slotsWrap = document.getElementById(`guru-ujian-q-${no}-tts-slots`)
+  if (slotsWrap) slotsWrap.innerHTML = ''
+  setGuruUjianTekaSilangAnchor(no, null)
+  setGuruUjianTekaSilangPendingEnd(no, null)
+  renderGuruUjianTekaSilangEditor(no)
+}
+
+function confirmGuruUjianTekaSilangDraft(no, rawOverride = '') {
+  try {
+    const anchor = getGuruUjianTekaSilangAnchor(no)
+    if (!anchor) {
+      setGuruUjianTekaSilangStatus(no, 'Titik awal belum dipilih.', 'error')
+      return
+    }
+    const pending = String(rawOverride || document.getElementById(`guru-ujian-q-${no}-tts-pending-end`)?.value || '').trim()
+    if (!pending) {
+      setGuruUjianTekaSilangStatus(no, 'Titik akhir draft belum dipilih.', 'error')
+      return
+    }
+    const [rowRaw, colRaw] = pending.split(':')
+    const row = Number(rowRaw)
+    const col = Number(colRaw)
+    if (!Number.isInteger(row) || !Number.isInteger(col)) {
+      setGuruUjianTekaSilangStatus(no, 'Format titik akhir draft tidak valid.', 'error')
+      return
+    }
+    if (anchor.row === row && anchor.col !== col) {
+      const startCol = Math.min(anchor.col, col)
+      const endCol = Math.max(anchor.col, col)
+      const length = (endCol - startCol) + 1
+      if (length < 2) {
+        setGuruUjianTekaSilangStatus(no, 'Panjang slot minimal 2 kotak.', 'error')
+        return
+      }
+      const rows = Math.max(5, Math.min(20, Number(document.getElementById(`guru-ujian-q-${no}-rows`)?.value || 10) || 10))
+      const cols = Math.max(5, Math.min(20, Number(document.getElementById(`guru-ujian-q-${no}-cols`)?.value || 10) || 10))
+      const rawEntries = readGuruUjianTekaSilangRawEntries(no, rows, cols)
+      const overlapsSameDirection = rawEntries.across.some(entry => {
+        if (Number(entry.row || 0) !== row) return false
+        const entryStart = Number(entry.col || 0)
+        const entryEnd = entryStart + Math.max(0, Number(entry.length || 0) - 1)
+        return startCol <= entryEnd && endCol >= entryStart
+      })
+      if (overlapsSameDirection) {
+        setGuruUjianTekaSilangStatus(no, 'Kotak mendatar yang dipilih sudah dipakai slot mendatar lain. Gunakan baris lain atau arah menurun.', 'error')
+        return
+      }
+      upsertGuruUjianTekaSilangEntry(no, 'across', row, startCol, length)
+      setGuruUjianTekaSilangStatus(no, `Slot mendatar ${length} kotak berhasil dibuat.`, 'success')
+      return
+    }
+    if (anchor.col === col && anchor.row !== row) {
+      const startRow = Math.min(anchor.row, row)
+      const endRow = Math.max(anchor.row, row)
+      const length = (endRow - startRow) + 1
+      if (length < 2) {
+        setGuruUjianTekaSilangStatus(no, 'Panjang slot minimal 2 kotak.', 'error')
+        return
+      }
+      const rows = Math.max(5, Math.min(20, Number(document.getElementById(`guru-ujian-q-${no}-rows`)?.value || 10) || 10))
+      const cols = Math.max(5, Math.min(20, Number(document.getElementById(`guru-ujian-q-${no}-cols`)?.value || 10) || 10))
+      const rawEntries = readGuruUjianTekaSilangRawEntries(no, rows, cols)
+      const overlapsSameDirection = rawEntries.down.some(entry => {
+        if (Number(entry.col || 0) !== col) return false
+        const entryStart = Number(entry.row || 0)
+        const entryEnd = entryStart + Math.max(0, Number(entry.length || 0) - 1)
+        return startRow <= entryEnd && endRow >= entryStart
+      })
+      if (overlapsSameDirection) {
+        setGuruUjianTekaSilangStatus(no, 'Kotak menurun yang dipilih sudah dipakai slot menurun lain. Gunakan kolom lain atau arah mendatar.', 'error')
+        return
+      }
+      upsertGuruUjianTekaSilangEntry(no, 'down', startRow, col, length)
+      setGuruUjianTekaSilangStatus(no, `Slot menurun ${length} kotak berhasil dibuat.`, 'success')
+      return
+    }
+    setGuruUjianTekaSilangStatus(no, 'Titik akhir draft harus satu baris atau satu kolom dengan titik awal.', 'error')
+  } catch (error) {
+    console.error('confirmGuruUjianTekaSilangDraft failed', error)
+    setGuruUjianTekaSilangStatus(no, `Gagal membuat slot: ${error?.message || error}`, 'error')
+  }
+}
+
+function createGuruUjianTekaSilangFromEndpoint(no, rawOverride = '') {
+  confirmGuruUjianTekaSilangDraft(no, rawOverride)
+}
+function selectGuruUjianTekaSilangCell(no, row, col) {
+  const anchor = getGuruUjianTekaSilangAnchor(no)
+  if (!anchor) {
+    setGuruUjianTekaSilangPendingEnd(no, null)
+    setGuruUjianTekaSilangAnchor(no, { row, col })
+    renderGuruUjianTekaSilangEditor(no)
+    setGuruUjianTekaSilangStatus(no, `Titik awal dipilih: baris ${row + 1}, kolom ${col + 1}. Klik titik akhir pada baris atau kolom yang sama.`)
+    return
+  }
+  if (anchor.row === row && anchor.col === col) {
+    setGuruUjianTekaSilangAnchor(no, null)
+    setGuruUjianTekaSilangPendingEnd(no, null)
+    renderGuruUjianTekaSilangEditor(no)
+    setGuruUjianTekaSilangStatus(no, 'Draft slot dibatalkan.')
+    return
+  }
+  if (anchor.row === row || anchor.col === col) {
+    setGuruUjianTekaSilangPendingEnd(no, { row, col })
+    renderGuruUjianTekaSilangEditor(no)
+    setGuruUjianTekaSilangStatus(no, `Titik akhir draft dipilih: baris ${row + 1}, kolom ${col + 1}. Klik centang untuk konfirmasi slot.`)
+    return
+  }
+  setGuruUjianTekaSilangPendingEnd(no, null)
+  setGuruUjianTekaSilangAnchor(no, { row, col })
+  renderGuruUjianTekaSilangEditor(no)
+  setGuruUjianTekaSilangStatus(no, `Draft lama dibatalkan. Titik awal dipindah ke baris ${row + 1}, kolom ${col + 1}.`)
+}
+
+function validateGuruUjianTekaSilangAnswers(config, exportNo) {
+  const letterMap = new Map()
+  const entries = [...config.entriesAcross, ...config.entriesDown]
+  for (const entry of entries) {
+    const normalizedAnswer = normalizeGuruUjianTekaSilangAnswer(entry.answer, config.lang)
+    if (normalizedAnswer && normalizedAnswer.length !== Number(entry.length || 0)) {
+      alert(`Jawaban TTS nomor ${exportNo} pada slot ${entry.number} ${entry.direction === 'down' ? 'menurun' : 'mendatar'} harus berisi ${entry.length} huruf.`)
+      return false
+    }
+    if (!normalizedAnswer) continue
+    const letters = Array.from(normalizedAnswer)
+    const stepRow = entry.direction === 'down' ? 1 : 0
+    const stepCol = entry.direction === 'across' ? 1 : 0
+    for (let idx = 0; idx < letters.length; idx += 1) {
+      const key = `${entry.row + (stepRow * idx)}:${entry.col + (stepCol * idx)}`
+      const current = letterMap.get(key)
+      if (current && current !== letters[idx]) {
+        alert(`Jawaban TTS nomor ${exportNo} bentrok pada perpotongan huruf. Periksa slot ${entry.number}.`)
+        return false
+      }
+      letterMap.set(key, letters[idx])
+    }
+  }
+  return true
+}
 function readGuruUjianMatchingColumn(no, side) {
   const wrap = document.getElementById(`guru-ujian-q-${no}-col-${side}`)
   if (!wrap) return []
@@ -14069,6 +15146,45 @@ function getGuruUjianDraftByNumber() {
         text,
         options,
         answer: String(document.getElementById(`guru-ujian-q-${no}-answer`)?.value || '').trim().toUpperCase()
+      })
+    } else if (type === 'benar-salah') {
+      map.set(no, {
+        no,
+        type,
+        text,
+        answer: String(document.getElementById(`guru-ujian-q-${no}-answer`)?.value || '').trim().toLowerCase()
+      })
+    } else if (type === 'cari-kata') {
+      const config = readGuruUjianCariKataConfig(no)
+      const puzzle = generateGuruUjianCariKataPuzzle({
+        rows: config.rows,
+        cols: config.cols,
+        words: config.words,
+        lang: config.lang,
+        seedText: `${no}|${text}|${config.wordsText}`
+      })
+      map.set(no, {
+        no,
+        type,
+        text,
+        rows: config.rows,
+        cols: config.cols,
+        words: puzzle.words,
+        grid: puzzle.grid,
+        placements: puzzle.placements
+      })
+    } else if (type === 'teka-silang') {
+      const config = readGuruUjianTekaSilangConfig(no)
+      map.set(no, {
+        no,
+        type,
+        text,
+        rows: config.rows,
+        cols: config.cols,
+        mask: config.maskRows,
+        maskText: config.maskText,
+        entriesAcross: config.entriesAcross,
+        entriesDown: config.entriesDown
       })
     } else if (type === 'pasangkan-kata') {
       map.set(no, {
@@ -14184,10 +15300,10 @@ async function createExamPdfDoc(jadwal, soal) {
         return false
       }
     }
-    arabicRegularReady = tryRegister(EXAM_ARABIC_FONT_VFS_KEY, EXAM_ARABIC_FONT_NAME, examArabicFontBase64, 'اختبار') ||
-      tryRegister(EXAM_ARABIC_FONT_FILE, EXAM_ARABIC_FONT_NAME, examArabicFontBase64, 'اختبار')
-    arabicBoldReady = tryRegister(EXAM_ARABIC_FONT_BOLD_VFS_KEY, EXAM_ARABIC_FONT_BOLD_NAME, examArabicFontBoldBase64, 'اختبار') ||
-      tryRegister(EXAM_ARABIC_FONT_BOLD_FILE, EXAM_ARABIC_FONT_BOLD_NAME, examArabicFontBoldBase64, 'اختبار')
+    arabicRegularReady = tryRegister(EXAM_ARABIC_FONT_VFS_KEY, EXAM_ARABIC_FONT_NAME, examArabicFontBase64, '??????') ||
+      tryRegister(EXAM_ARABIC_FONT_FILE, EXAM_ARABIC_FONT_NAME, examArabicFontBase64, '??????')
+    arabicBoldReady = tryRegister(EXAM_ARABIC_FONT_BOLD_VFS_KEY, EXAM_ARABIC_FONT_BOLD_NAME, examArabicFontBoldBase64, '??????') ||
+      tryRegister(EXAM_ARABIC_FONT_BOLD_FILE, EXAM_ARABIC_FONT_BOLD_NAME, examArabicFontBoldBase64, '??????')
     if (!arabicRegularReady) {
       console.warn('Registrasi font Arab regular gagal.')
     }
@@ -14195,7 +15311,7 @@ async function createExamPdfDoc(jadwal, soal) {
     if (arabicRegularReady) {
       try {
         doc.setFont(EXAM_ARABIC_FONT_NAME, 'normal')
-        doc.splitTextToSize('اختبار', 20)
+        doc.splitTextToSize('??????', 20)
       } catch (fontErr) {
         console.warn('Validasi font Arab regular gagal.', fontErr)
         if (isAr) return null
@@ -14698,6 +15814,15 @@ async function createExamPdfDoc(jadwal, soal) {
     }
     return rows
   }
+  const getExamTrueFalseOptionEntries = () => ([
+    { key: 'benar', label: isAr ? getArabicLetterByIndex(0) : 'a', value: isAr ? '????' : 'Benar' },
+    { key: 'salah', label: isAr ? getArabicLetterByIndex(1) : 'b', value: isAr ? '???' : 'Salah' }
+  ])
+  const getExamChoiceOptionEntries = question => {
+    const qType = normalizeExamQuestionType(question?.type, soal?.bentuk_soal)
+    if (qType === 'benar-salah') return getExamTrueFalseOptionEntries()
+    return getExamPgOptionEntries(question?.options || {})
+  }
   const formatPgOptionLine = item => `${String(item?.label || '-').trim()}. ${String(item?.value || '-').trim() || '-'}`
   const resolvePgOptionLayout = () => {
     const sampleRows = []
@@ -14776,8 +15901,8 @@ async function createExamPdfDoc(jadwal, soal) {
           y = margin
         }
         setBold()
-        const colA = isAr ? 'القائمة أ' : 'Qoimah A'
-        const colB = isAr ? 'القائمة ب' : 'Qoimah B'
+        const colA = isAr ? '??????? ?' : 'Qoimah A'
+        const colB = isAr ? '??????? ?' : 'Qoimah B'
         const arPairShift = isAr ? 8 : 0
         if (isAr) {
           const rightAX = lineX(optionIndent + 60 + arPairShift)
@@ -14827,7 +15952,7 @@ async function createExamPdfDoc(jadwal, soal) {
     }
 
     sectionItems.forEach((q, idx) => {
-      const isPg = section.type === 'pilihan-ganda'
+      const isPg = section.type === 'pilihan-ganda' || section.type === 'benar-salah'
       const no = idx + 1
       const qTextRaw = String(q?.text || '-')
       setNormal()
@@ -14839,7 +15964,7 @@ async function createExamPdfDoc(jadwal, soal) {
         drawLatinMarkerTextBlock(qMarker, qTextRaw, questionIndent, questionMarkerGap, usableWidth - questionIndent - questionMarkerGap)
       }
       if (isPg) {
-        const entries = getExamPgOptionEntries(q?.options || {})
+        const entries = getExamChoiceOptionEntries(q)
         const optionEntries = (entries.length ? entries : [
           { label: isAr ? getArabicLetterByIndex(0) : 'a', value: '-' },
           { label: isAr ? getArabicLetterByIndex(1) : 'b', value: '-' }
@@ -17125,6 +18250,34 @@ function buildGuruUjianQuestionPgHtml(i, localNo, prev) {
   return ''
 }
 
+function getGuruUjianSelectedLang() {
+  return String(document.getElementById('guru-ujian-lang')?.value || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+}
+
+function buildGuruUjianQuestionBenarSalahHtml(i, localNo, prev) {
+  const utils = getGuruExamEditorUtils()
+  if (typeof utils.buildQuestionBenarSalahHtml === 'function') {
+    return utils.buildQuestionBenarSalahHtml({ i, localNo, prev, escapeHtml, examLang: getGuruUjianSelectedLang() })
+  }
+  return ''
+}
+
+function buildGuruUjianQuestionCariKataHtml(i, localNo, prev) {
+  const utils = getGuruExamEditorUtils()
+  if (typeof utils.buildQuestionCariKataHtml === 'function') {
+    return utils.buildQuestionCariKataHtml({ i, localNo, prev, escapeHtml, examLang: getGuruUjianSelectedLang() })
+  }
+  return ''
+}
+
+function buildGuruUjianQuestionTekaSilangHtml(i, localNo, prev) {
+  const utils = getGuruExamEditorUtils()
+  if (typeof utils.buildQuestionTekaSilangHtml === 'function') {
+    return utils.buildQuestionTekaSilangHtml({ i, localNo, prev, escapeHtml, examLang: getGuruUjianSelectedLang() })
+  }
+  return ''
+}
+
 function buildGuruUjianQuestionPasangkanHtml(i, localNo, prev) {
   const utils = getGuruExamEditorUtils()
   if (typeof utils.buildQuestionPasangkanHtml === 'function') {
@@ -17152,9 +18305,12 @@ function buildGuruUjianQuestionEsaiHtml(i, localNo, prev) {
 function buildGuruUjianQuestionCardHtml(i, qType, localNo, prev, sectionForNo) {
   const utils = getGuruExamEditorUtils()
   if (typeof utils.buildQuestionCardHtml === 'function') {
-    return utils.buildQuestionCardHtml({ i, qType, localNo, prev, sectionForNo, escapeHtml })
+    return utils.buildQuestionCardHtml({ i, qType, localNo, prev, sectionForNo, escapeHtml, examLang: getGuruUjianSelectedLang() })
   }
   if (qType === 'pilihan-ganda') return buildGuruUjianQuestionPgHtml(i, localNo, prev)
+  if (qType === 'benar-salah') return buildGuruUjianQuestionBenarSalahHtml(i, localNo, prev)
+  if (qType === 'cari-kata') return buildGuruUjianQuestionCariKataHtml(i, localNo, prev)
+  if (qType === 'teka-silang') return buildGuruUjianQuestionTekaSilangHtml(i, localNo, prev)
   if (qType === 'pasangkan-kata') return buildGuruUjianQuestionPasangkanHtml(i, localNo, prev)
   if (qType === 'isi-titik') return buildGuruUjianQuestionIsiTitikHtml(i, localNo, prev, sectionForNo)
   return buildGuruUjianQuestionEsaiHtml(i, localNo, prev)
@@ -17321,6 +18477,16 @@ function renderGuruUjianQuestionRows(forcedSections = null, draftSections = null
     if (!Number.isFinite(no) || no <= 0) return
     ensureGuruUjianPgTrailingInput(no)
   })
+  listEl.querySelectorAll('.guru-ujian-question-row[data-type="cari-kata"]').forEach(rowEl => {
+    const no = Number(rowEl?.dataset?.no || 0)
+    if (!Number.isFinite(no) || no <= 0) return
+    renderGuruUjianCariKataPreview(no)
+  })
+  listEl.querySelectorAll('.guru-ujian-question-row[data-type="teka-silang"]').forEach(rowEl => {
+    const no = Number(rowEl?.dataset?.no || 0)
+    if (!Number.isFinite(no) || no <= 0) return
+    renderGuruUjianTekaSilangEditor(no)
+  })
 }
 function toggleGuruExamFolder(folderNameEncoded) {
   const key = decodeURIComponent(String(folderNameEncoded || '')).trim()
@@ -17342,6 +18508,329 @@ function resolveGuruUjianActiveSoal(decodedKey, jadwalId) {
   return ujianGuruState.soalByJadwal.get(decodedKey) || ujianGuruState.soalByJadwal.get(`${sid}|*`) || null
 }
 
+const GURU_UJIAN_AUTOSAVE_KEY_PREFIX = 'guru-ujian-autosave:'
+function getGuruUjianAutosaveRowKey() {
+  const jadwalId = String(ujianGuruState.activeJadwal?.id || '').trim()
+  if (!jadwalId) return ''
+  const kelasName = String(ujianGuruState.activeKelasName || '-').trim() || '-'
+  return `${jadwalId}|${kelasName}`
+}
+function getGuruUjianAutosaveStorageKey(rowKey = '') {
+  const safeRowKey = String(rowKey || getGuruUjianAutosaveRowKey()).trim()
+  return safeRowKey ? `${GURU_UJIAN_AUTOSAVE_KEY_PREFIX}${safeRowKey}` : ''
+}
+function loadGuruUjianAutosaveSnapshot(rowKey = '') {
+  try {
+    const key = getGuruUjianAutosaveStorageKey(rowKey)
+    if (!key || typeof localStorage === 'undefined') return null
+    const raw = String(localStorage.getItem(key) || '').trim()
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch (_err) {
+    return null
+  }
+}
+function clearGuruUjianAutosaveSnapshot(rowKey = '') {
+  try {
+    const key = getGuruUjianAutosaveStorageKey(rowKey)
+    if (!key || typeof localStorage === 'undefined') return
+    localStorage.removeItem(key)
+  } catch (_err) {
+  }
+}
+function buildGuruUjianAutosaveQuestions() {
+  return [...getGuruUjianDraftByNumber().values()]
+    .sort((a, b) => Number(a?.no || 0) - Number(b?.no || 0))
+}
+function buildGuruUjianAutosaveSnapshot() {
+  const rowKey = getGuruUjianAutosaveRowKey()
+  if (!rowKey) return null
+  const lang = getGuruUjianSelectedLang()
+  const instruksi = String(document.getElementById('guru-ujian-instruksi')?.value || '').trim()
+  const sections = buildGuruUjianSectionDefs(getGuruUjianSectionsSource())
+  const questions = buildGuruUjianAutosaveQuestions()
+  const count = estimateGuruUjianTotalFromSections(sections, questions.length)
+  return {
+    rowKey,
+    jadwalId: String(ujianGuruState.activeJadwal?.id || ''),
+    kelasName: String(ujianGuruState.activeKelasName || '-').trim() || '-',
+    lang,
+    instruksi,
+    sections,
+    questions,
+    count,
+    savedAt: new Date().toISOString()
+  }
+}
+function buildGuruUjianAutosaveSnapshotHash(snapshot = null) {
+  if (!snapshot || typeof snapshot !== 'object') return ''
+  try {
+    return JSON.stringify({
+      rowKey: String(snapshot.rowKey || ''),
+      lang: String(snapshot.lang || 'ID'),
+      instruksi: String(snapshot.instruksi || ''),
+      count: Number(snapshot.count || 0) || 0,
+      sections: Array.isArray(snapshot.sections) ? snapshot.sections : [],
+      questions: Array.isArray(snapshot.questions) ? snapshot.questions : []
+    })
+  } catch (_err) {
+    return ''
+  }
+}
+function hasGuruUjianAutosaveQuestionContent(item = null) {
+  if (!item || typeof item !== 'object') return false
+  const type = normalizeExamQuestionType(item.type, 'pilihan-ganda')
+  const text = String(item.text || '').trim()
+  if (type === 'pilihan-ganda') {
+    const options = item.options && typeof item.options === 'object' ? Object.values(item.options) : []
+    return Boolean(
+      text ||
+      options.some(option => String(option || '').trim()) ||
+      String(item.answer || '').trim()
+    )
+  }
+  if (type === 'benar-salah') return Boolean(text || String(item.answer || '').trim())
+  if (type === 'cari-kata') return Boolean(text || (Array.isArray(item.words) && item.words.length))
+  if (type === 'teka-silang') {
+    return Boolean(
+      text ||
+      (Array.isArray(item.entriesAcross) && item.entriesAcross.length) ||
+      (Array.isArray(item.entriesDown) && item.entriesDown.length)
+    )
+  }
+  if (type === 'pasangkan-kata') {
+    return Boolean(
+      (Array.isArray(item.columnA) && item.columnA.some(value => String(value || '').trim())) ||
+      (Array.isArray(item.columnB) && item.columnB.some(value => String(value || '').trim()))
+    )
+  }
+  if (type === 'isi-titik') return Boolean(text || String(item.answer || '').trim())
+  return Boolean(text)
+}
+function hasGuruUjianAutosaveSnapshotContent(snapshot = null) {
+  if (!snapshot || typeof snapshot !== 'object') return false
+  if (String(snapshot.instruksi || '').trim()) return true
+  const sections = Array.isArray(snapshot.sections) ? snapshot.sections : []
+  if (sections.some(item => String(item?.instruction || '').trim() || String(item?.wordPool || '').trim() || String(item?.score ?? '').trim())) {
+    return true
+  }
+  const questions = Array.isArray(snapshot.questions) ? snapshot.questions : []
+  return questions.some(item => hasGuruUjianAutosaveQuestionContent(item))
+}
+function persistGuruUjianAutosaveSnapshot(snapshot = null) {
+  try {
+    const safeSnapshot = snapshot || buildGuruUjianAutosaveSnapshot()
+    const key = getGuruUjianAutosaveStorageKey(safeSnapshot?.rowKey)
+    if (!key || !safeSnapshot || typeof localStorage === 'undefined') return
+    localStorage.setItem(key, JSON.stringify(safeSnapshot))
+  } catch (_err) {
+  }
+}
+function setGuruUjianAutosaveStatus(text = '', tone = 'muted') {
+  const el = document.getElementById('guru-ujian-autosave-status')
+  if (!el) return
+  const palette = {
+    muted: { bg: '#eff6ff', color: '#1d4ed8', border: '#bfdbfe' },
+    success: { bg: '#ecfdf5', color: '#047857', border: '#a7f3d0' },
+    warn: { bg: '#fff7ed', color: '#c2410c', border: '#fdba74' },
+    error: { bg: '#fef2f2', color: '#b91c1c', border: '#fecaca' }
+  }
+  const style = palette[tone] || palette.muted
+  el.textContent = String(text || '').trim()
+  el.style.display = el.textContent ? 'block' : 'none'
+  el.style.background = style.bg
+  el.style.color = style.color
+  el.style.border = `1px solid ${style.border}`
+}
+function buildGuruUjianAutosavePayload(snapshot, ctx) {
+  const safeSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : null
+  if (!safeSnapshot || !ctx?.guru?.id) return null
+  return {
+    jadwal_id: String(safeSnapshot.jadwalId || ''),
+    kelas_target: String(safeSnapshot.kelasName || '-').trim() || null,
+    guru_id: String(ctx.guru.id),
+    guru_nama: String(ctx.guru.nama || ctx.guru.id_karyawan || '').trim() || null,
+    bentuk_soal: 'campuran',
+    jumlah_nomor: Number(safeSnapshot.count || 0) || 0,
+    instruksi: buildExamInstruksiWithMeta(safeSnapshot.lang || 'ID', safeSnapshot.instruksi || ''),
+    questions_json: JSON.stringify({
+      questions: Array.isArray(safeSnapshot.questions) ? safeSnapshot.questions : [],
+      sections: Array.isArray(safeSnapshot.sections) ? safeSnapshot.sections : []
+    }),
+    status: 'draft',
+    updated_at: safeSnapshot.savedAt || new Date().toISOString()
+  }
+}
+function flushGuruUjianAutosaveNow() {
+  const snapshot = buildGuruUjianAutosaveSnapshot()
+  if (!snapshot) return null
+  persistGuruUjianAutosaveSnapshot(snapshot)
+  const hash = buildGuruUjianAutosaveSnapshotHash(snapshot)
+  ujianGuruState.autosaveLocalHash = hash
+  if (hash && hash !== ujianGuruState.autosaveServerHash && hasGuruUjianAutosaveSnapshotContent(snapshot)) {
+    setGuruUjianAutosaveStatus('Tersimpan lokal. Sinkron ke server akan menyusul otomatis.', 'warn')
+  } else {
+    setGuruUjianAutosaveStatus('Tersimpan otomatis di perangkat ini.', 'success')
+  }
+  return snapshot
+}
+function queueGuruUjianServerAutosave(snapshot = null, delayMs = 5000) {
+  const safeSnapshot = snapshot || buildGuruUjianAutosaveSnapshot()
+  if (!safeSnapshot || !ujianGuruState.activeJadwal?.id) return
+  const hash = buildGuruUjianAutosaveSnapshotHash(safeSnapshot)
+  if (!hash) return
+  ujianGuruState.autosaveLocalHash = hash
+  if (!hasGuruUjianAutosaveSnapshotContent(safeSnapshot)) {
+    if (ujianGuruState.autosaveServerTimer) {
+      clearTimeout(ujianGuruState.autosaveServerTimer)
+      ujianGuruState.autosaveServerTimer = null
+    }
+    setGuruUjianAutosaveStatus('Autosave aktif. Ketik soal untuk mulai sinkron ke server.', 'muted')
+    return
+  }
+  if (hash === ujianGuruState.autosaveServerHash) {
+    setGuruUjianAutosaveStatus('Tersimpan otomatis di perangkat dan server.', 'success')
+    return
+  }
+  if (ujianGuruState.autosaveServerTimer) clearTimeout(ujianGuruState.autosaveServerTimer)
+  ujianGuruState.autosaveServerTimer = setTimeout(() => {
+    ujianGuruState.autosaveServerTimer = null
+    void flushGuruUjianAutosaveToServer(safeSnapshot)
+  }, Math.max(500, Number(delayMs || 0)))
+  setGuruUjianAutosaveStatus('Tersimpan lokal. Sinkron ke server dalam 5 detik...', 'warn')
+}
+async function flushGuruUjianAutosaveToServer(snapshot = null) {
+  const safeSnapshot = snapshot || buildGuruUjianAutosaveSnapshot()
+  if (!safeSnapshot || !ujianGuruState.activeJadwal?.id) return null
+  const rowKey = String(safeSnapshot.rowKey || '').trim()
+  const hash = buildGuruUjianAutosaveSnapshotHash(safeSnapshot)
+  if (!rowKey || !hash || hash === ujianGuruState.autosaveServerHash || !hasGuruUjianAutosaveSnapshotContent(safeSnapshot)) return null
+  const savePromise = (async () => {
+    const ctx = await getGuruContext()
+    if (!ctx?.guru?.id) {
+      setGuruUjianAutosaveStatus('Tersimpan lokal, tapi identitas guru belum siap untuk sinkron server.', 'warn')
+      return null
+    }
+    const payload = buildGuruUjianAutosavePayload(safeSnapshot, ctx)
+    if (!payload) return null
+    if (!ujianGuruState.supportsKelasTarget) delete payload.kelas_target
+    const activeSoalKelas = String(ujianGuruState.activeSoal?.kelas_target || '').trim()
+    const isSameClassRecord = !ujianGuruState.supportsKelasTarget || activeSoalKelas === String(safeSnapshot.kelasName || '').trim()
+    let query
+    if (ujianGuruState.activeSoal?.id && isSameClassRecord) {
+      query = sb
+        .from(EXAM_QUESTION_TABLE)
+        .update(payload)
+        .eq('id', ujianGuruState.activeSoal.id)
+        .select('id, jadwal_id, kelas_target, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, updated_at')
+        .maybeSingle()
+    } else {
+      query = sb
+        .from(EXAM_QUESTION_TABLE)
+        .insert([payload])
+        .select('id, jadwal_id, kelas_target, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, updated_at')
+        .maybeSingle()
+    }
+    const { data, error } = await query
+    if (error) {
+      console.error('guru ujian autosave server error:', error)
+      if (isExamTableMissingError(error) || isExamColumnMissingError(error)) {
+        setGuruUjianAutosaveStatus('Tersimpan lokal. Struktur tabel server ujian belum siap untuk autosave.', 'warn')
+      } else {
+        setGuruUjianAutosaveStatus('Tersimpan lokal. Sinkron server gagal dan akan dicoba lagi saat ada perubahan baru.', 'error')
+      }
+      return null
+    }
+    if (data && typeof data === 'object') {
+      const dataRowKey = `${String(data.jadwal_id || '')}|${String(data.kelas_target || '-')}`
+      ujianGuruState.soalByJadwal.set(dataRowKey, data)
+      if (!String(data.kelas_target || '').trim()) {
+        ujianGuruState.soalByJadwal.set(`${String(data.jadwal_id || '')}|*`, data)
+      }
+      if (String(ujianGuruState.autosaveActiveRowKey || '') === rowKey) {
+        ujianGuruState.activeSoal = data
+      }
+    }
+    ujianGuruState.autosaveServerHash = hash
+    if (ujianGuruState.autosaveLocalHash && ujianGuruState.autosaveLocalHash !== hash) {
+      setGuruUjianAutosaveStatus('Tersimpan lokal. Ada perubahan baru, sinkron server akan dilanjutkan lagi.', 'warn')
+      queueGuruUjianServerAutosave()
+    } else {
+      setGuruUjianAutosaveStatus('Tersimpan otomatis di perangkat dan server.', 'success')
+    }
+    return data || null
+  })()
+  ujianGuruState.autosaveServerInFlight = true
+  ujianGuruState.autosaveServerPromise = savePromise
+  try {
+    return await savePromise
+  } finally {
+    if (ujianGuruState.autosaveServerPromise === savePromise) ujianGuruState.autosaveServerPromise = null
+    ujianGuruState.autosaveServerInFlight = false
+  }
+}
+function queueGuruUjianAutosave() {
+  if (!ujianGuruState.activeJadwal?.id) return
+  if (ujianGuruState.autosaveTimer) clearTimeout(ujianGuruState.autosaveTimer)
+  setGuruUjianAutosaveStatus('Perubahan terdeteksi. Menyimpan draft lokal...', 'muted')
+  ujianGuruState.autosaveTimer = setTimeout(() => {
+    ujianGuruState.autosaveTimer = null
+    const snapshot = flushGuruUjianAutosaveNow()
+    if (snapshot) queueGuruUjianServerAutosave(snapshot, 5000)
+  }, 450)
+}
+function buildGuruUjianAutosaveSoalRecord(baseSoal, snapshot) {
+  const safeSnapshot = snapshot || loadGuruUjianAutosaveSnapshot()
+  if (!safeSnapshot) return baseSoal
+  return {
+    ...(baseSoal || {}),
+    instruksi: buildExamInstruksiWithMeta(safeSnapshot.lang || 'ID', safeSnapshot.instruksi || ''),
+    questions_json: JSON.stringify({
+      questions: Array.isArray(safeSnapshot.questions) ? safeSnapshot.questions : [],
+      sections: Array.isArray(safeSnapshot.sections) ? safeSnapshot.sections : []
+    }),
+    jumlah_nomor: Number(safeSnapshot.count || 0) || 0,
+    status: 'draft',
+    updated_at: safeSnapshot.savedAt || new Date().toISOString()
+  }
+}
+function resolveGuruUjianAutosaveState(baseSoal, rowKey = '') {
+  const snapshot = loadGuruUjianAutosaveSnapshot(rowKey)
+  if (!snapshot) return { soal: baseSoal, restored: false }
+  const localMs = Date.parse(String(snapshot?.savedAt || '')) || 0
+  const serverMs = Date.parse(String(baseSoal?.updated_at || '')) || 0
+  if (serverMs && localMs && localMs < serverMs) {
+    clearGuruUjianAutosaveSnapshot(rowKey)
+    return { soal: baseSoal, restored: false }
+  }
+  return {
+    soal: buildGuruUjianAutosaveSoalRecord(baseSoal, snapshot),
+    restored: true
+  }
+}
+function bindGuruUjianAutosave() {
+  if (ujianGuruState.autosaveBound) return
+  const content = document.getElementById('guru-content')
+  if (!content) return
+  const handler = event => {
+    if (!ujianGuruState.activeJadwal?.id) return
+    const target = event?.target
+    if (!target || typeof target.closest !== 'function') return
+    const isEditorTarget =
+      target.closest('#guru-ujian-questions') ||
+      target.closest('#guru-ujian-sections') ||
+      String(target.id || '') === 'guru-ujian-instruksi' ||
+      String(target.id || '') === 'guru-ujian-lang'
+    if (!isEditorTarget) return
+    queueGuruUjianAutosave()
+  }
+  content.addEventListener('input', handler, true)
+  content.addEventListener('change', handler, true)
+  content.addEventListener('click', handler, true)
+  window.addEventListener('beforeunload', flushGuruUjianAutosaveNow)
+  ujianGuruState.autosaveBound = true
+}
 function buildGuruUjianSectionDefs(sections) {
   return (Array.isArray(sections) ? sections : []).map(item => ({
     type: normalizeExamQuestionType(item?.type, 'pilihan-ganda'),
@@ -17380,7 +18869,7 @@ function buildGuruUjianEditorShellHtml({ jadwal, kelasLabel, mapelLabel, countVa
       <div id="guru-ujian-type-info" style="font-size:12px; color:#64748b; margin:-4px 0 8px 0;"></div>
       <div style="margin-bottom:10px;">
         <label class="guru-label">Bahasa Soal</label>
-        <select id="guru-ujian-lang" class="guru-field" style="max-width:240px;">
+        <select id="guru-ujian-lang" class="guru-field" style="max-width:240px;" onchange="onGuruUjianLanguageChange()">
           <option value="ID" ${instruksiLang !== 'AR' ? 'selected' : ''}>Indonesia</option>
           <option value="AR" ${instruksiLang === 'AR' ? 'selected' : ''}>Arab</option>
         </select>
@@ -17391,11 +18880,11 @@ function buildGuruUjianEditorShellHtml({ jadwal, kelasLabel, mapelLabel, countVa
       </div>
       <div id="guru-ujian-questions"></div>
       <div id="guru-ujian-sections" style="margin-top:10px; margin-bottom:10px;"></div>
-      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; margin-top:8px;">
-        <button type="button" class="modal-btn" onclick="saveGuruUjian(false)" style="width:100%;">Simpan Draft</button>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; margin-top:8px;">
         <button type="button" class="modal-btn modal-btn-primary" onclick="saveGuruUjian(true)" style="width:100%;">Kirim Soal</button>
         <button type="button" class="modal-btn" onclick="chooseAndPrintGuruUjianActive()" style="width:100%;">Cetak</button>
       </div>
+      <div id="guru-ujian-autosave-status" style="display:block; margin-top:10px; padding:8px 10px; border-radius:10px; font-size:12px; background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe;">Autosave aktif. Perubahan akan disimpan otomatis di perangkat ini lalu disinkronkan ke server.</div>
     </div>
   `
 }
@@ -17406,7 +18895,11 @@ function openGuruUjianEditorPage(jadwalId) {
   const row = findGuruUjianRowByKey(decodedKey)
   if (!row?.jadwal) return
   const jadwal = row.jadwal
-  ujianGuruState.activeSoal = resolveGuruUjianActiveSoal(decodedKey, jadwal.id)
+  const kelasLabel = String(row.kelasNama || '-')
+  const autosaveRowKey = String(row.rowKey || (String(jadwal.id || '') + '|' + kelasLabel))
+  const serverSoal = resolveGuruUjianActiveSoal(decodedKey, jadwal.id)
+  const autosaveResolved = resolveGuruUjianAutosaveState(serverSoal, autosaveRowKey)
+  ujianGuruState.activeSoal = autosaveResolved.soal
 
   const content = document.getElementById('guru-content')
   if (!content) return
@@ -17420,11 +18913,11 @@ function openGuruUjianEditorPage(jadwalId) {
   const countValue = estimateGuruUjianTotalFromSections(sections, ujianGuruState.activeSoal?.jumlah_nomor || existing.length || 0)
   const instruksiMeta = parseExamInstruksiMeta(ujianGuruState.activeSoal?.instruksi)
   const instruksi = String(instruksiMeta.text || '').trim()
-  const kelasLabel = String(row.kelasNama || '-')
   const mapelLabel = String(row.mapelLabel || getExamRowMapelLabel(jadwal))
 
   ujianGuruState.activeJadwal = jadwal
   ujianGuruState.activeKelasName = kelasLabel
+  ujianGuruState.autosaveActiveRowKey = autosaveRowKey
   ujianGuruState.sectionDefs = buildGuruUjianSectionDefs(sections)
   ujianGuruState.sectionScoreDrafts = {}
   content.innerHTML = buildGuruUjianEditorShellHtml({
@@ -17437,11 +18930,35 @@ function openGuruUjianEditorPage(jadwalId) {
   })
   renderGuruUjianSectionRows(ujianGuruState.sectionDefs)
   renderGuruUjianQuestionRows(ujianGuruState.sectionDefs, ujianGuruState.sectionDefs)
+  bindGuruUjianAutosave()
+  const initialSnapshot = buildGuruUjianAutosaveSnapshot()
+  const initialHash = buildGuruUjianAutosaveSnapshotHash(initialSnapshot)
+  ujianGuruState.autosaveLocalHash = initialHash
+  ujianGuruState.autosaveServerHash = autosaveResolved.restored ? '' : initialHash
+  setGuruUjianAutosaveStatus(
+    autosaveResolved.restored
+      ? 'Draf terakhir dipulihkan otomatis dari perangkat ini. Sinkron server akan menyusul.'
+      : 'Autosave aktif. Perubahan akan disimpan otomatis di perangkat ini lalu disinkronkan ke server.',
+    autosaveResolved.restored ? 'warn' : 'muted'
+  )
+  if (autosaveResolved.restored && initialSnapshot && hasGuruUjianAutosaveSnapshotContent(initialSnapshot)) {
+    queueGuruUjianServerAutosave(initialSnapshot, 5000)
+  }
 }
-
 function backToGuruUjianList() {
+  if (ujianGuruState.autosaveTimer) {
+    clearTimeout(ujianGuruState.autosaveTimer)
+    ujianGuruState.autosaveTimer = null
+  }
+  if (ujianGuruState.autosaveServerTimer) {
+    clearTimeout(ujianGuruState.autosaveServerTimer)
+    ujianGuruState.autosaveServerTimer = null
+  }
   ujianGuruState.activeJadwal = null
   ujianGuruState.activeKelasName = ''
+  ujianGuruState.autosaveActiveRowKey = ''
+  ujianGuruState.autosaveLocalHash = ''
+  ujianGuruState.autosaveServerHash = ''
   ujianGuruState.sectionDefs = []
   ujianGuruState.sectionScoreDrafts = {}
   ujianGuruState.activeSoal = null
@@ -17469,6 +18986,10 @@ function onGuruUjianCountChange() {
 }
 
 function onGuruUjianShapeChange() {
+  syncGuruUjianSectionsFromSource()
+}
+
+function onGuruUjianLanguageChange() {
   syncGuruUjianSectionsFromSource()
 }
 
@@ -17554,6 +19075,74 @@ function collectGuruUjianQuestions() {
       const answer = answerRaw ? answerRaw.toUpperCase() : ''
       questions.push({ no: exportNo, type: qType, text, options, answer, ...sectionMeta })
       exportNo += 1
+    } else if (qType === 'benar-salah') {
+      if (!text) continue
+      const answer = String(document.getElementById(`guru-ujian-q-${i}-answer`)?.value || '').trim().toLowerCase()
+      if (answer && answer !== 'benar' && answer !== 'salah') {
+        alert(`Kunci jawaban soal nomor ${exportNo} (Benar / Salah) tidak valid.`)
+        return null
+      }
+      questions.push({ no: exportNo, type: qType, text, answer, ...sectionMeta })
+      exportNo += 1
+    } else if (qType === 'cari-kata') {
+      const config = readGuruUjianCariKataConfig(i)
+      if (!config.words.length) continue
+      const puzzle = generateGuruUjianCariKataPuzzle({
+        rows: config.rows,
+        cols: config.cols,
+        words: config.words,
+        lang: config.lang,
+        seedText: `${i}|${text}|${config.wordsText}`
+      })
+      if (puzzle.unplacedWords.length) {
+        alert(`Puzzle cari kata nomor ${exportNo} belum muat untuk semua kata. Perbesar grid atau kurangi kata: ${puzzle.unplacedWords.join(', ')}`)
+        return null
+      }
+      questions.push({
+        no: exportNo,
+        type: qType,
+        text,
+        rows: config.rows,
+        cols: config.cols,
+        words: config.words,
+        grid: puzzle.grid,
+        placements: puzzle.placements,
+        ...sectionMeta
+      })
+      exportNo += 1
+    } else if (qType === 'teka-silang') {
+      const config = readGuruUjianTekaSilangConfig(i)
+      const hasSlots = (config.entriesAcross.length + config.entriesDown.length) > 0
+      if (!text && !hasSlots) continue
+      if (!validateGuruUjianTekaSilangAnswers(config, exportNo)) return null
+      questions.push({
+        no: exportNo,
+        type: qType,
+        text,
+        rows: config.rows,
+        cols: config.cols,
+        mask: config.maskRows,
+        entriesAcross: config.entriesAcross.map(entry => ({
+          key: entry.key,
+          number: entry.number,
+          row: entry.row,
+          col: entry.col,
+          length: entry.length,
+          clue: String(entry.clue || ''),
+          answer: String(entry.answer || '')
+        })),
+        entriesDown: config.entriesDown.map(entry => ({
+          key: entry.key,
+          number: entry.number,
+          row: entry.row,
+          col: entry.col,
+          length: entry.length,
+          clue: String(entry.clue || ''),
+          answer: String(entry.answer || '')
+        })),
+        ...sectionMeta
+      })
+      exportNo += 1
     } else if (qType === 'pasangkan-kata') {
       const columnA = readGuruUjianMatchingColumn(i, 'a')
       const columnB = readGuruUjianMatchingColumn(i, 'b')
@@ -17575,7 +19164,84 @@ function collectGuruUjianQuestions() {
   return questions
 }
 
+function buildGuruUjianQuestionsForPrint(rawQuestions = [], lang = 'ID') {
+  const safeLang = String(lang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+  return (Array.isArray(rawQuestions) ? rawQuestions : []).map((item, index) => {
+    const type = normalizeExamQuestionType(item?.type, 'pilihan-ganda')
+    if (type !== 'cari-kata') {
+      return { ...item, type, no: Number(item?.no || (index + 1)) }
+    }
+
+    const rows = Math.max(5, Math.min(20, Number(item?.rows || 10) || 10))
+    const cols = Math.max(5, Math.min(20, Number(item?.cols || 10) || 10))
+    const sourceWords = Array.isArray(item?.words)
+      ? item.words
+      : String(item?.wordPool || '').split(/[\r\n,;]+/)
+    const words = sourceWords
+      .map(word => normalizeGuruUjianCariKataWord(word, safeLang))
+      .filter(Boolean)
+    const currentGrid = Array.isArray(item?.grid)
+      ? item.grid.map(row => Array.isArray(row) ? row.map(cell => String(cell || '')) : Array.from(String(row || '')))
+      : []
+    const hasValidShape = currentGrid.length === rows && currentGrid.every(row => Array.isArray(row) && row.length === cols)
+    const hasAsciiQuestionMark = currentGrid.some(row => row.some(cell => String(cell || '') === '?'))
+    let grid = currentGrid
+    let placements = Array.isArray(item?.placements) ? item.placements : []
+    if (words.length && (!hasValidShape || (safeLang === 'AR' && hasAsciiQuestionMark))) {
+      const puzzle = generateGuruUjianCariKataPuzzle({
+        rows,
+        cols,
+        words,
+        lang: safeLang,
+        seedText: `${Number(item?.no || (index + 1))}|${String(item?.text || '')}|${words.join('|')}`
+      })
+      grid = puzzle.grid
+      placements = puzzle.placements
+    }
+
+    return {
+      ...item,
+      no: Number(item?.no || (index + 1)),
+      type,
+      rows,
+      cols,
+      words,
+      grid,
+      placements
+    }
+  })
+}
+
+function buildGuruUjianSoalForPrint(soalSource, fallbackLang = 'ID') {
+  const payload = parseExamQuestionPayload(soalSource?.questions_json)
+  const instruksiMeta = parseExamInstruksiMeta(soalSource?.instruksi)
+  const safeLang = String(instruksiMeta.lang || fallbackLang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+  const questions = buildGuruUjianQuestionsForPrint(payload.questions, safeLang)
+  const nextPayload = Array.isArray(payload.sections) && payload.sections.length
+    ? { questions, sections: payload.sections }
+    : questions
+  return {
+    ...(soalSource || {}),
+    questions_json: JSON.stringify(nextPayload)
+  }
+}
+
 async function saveGuruUjian(submitMode) {
+  if (ujianGuruState.autosaveTimer) {
+    clearTimeout(ujianGuruState.autosaveTimer)
+    ujianGuruState.autosaveTimer = null
+  }
+  if (ujianGuruState.autosaveServerTimer) {
+    clearTimeout(ujianGuruState.autosaveServerTimer)
+    ujianGuruState.autosaveServerTimer = null
+  }
+  if (ujianGuruState.autosaveServerPromise) {
+    setGuruUjianAutosaveStatus('Menunggu sinkron draft server selesai sebelum menyimpan final...', 'warn')
+    try {
+      await ujianGuruState.autosaveServerPromise
+    } catch (_err) {
+    }
+  }
   const jadwal = ujianGuruState.activeJadwal
   const kelasTarget = String(ujianGuruState.activeKelasName || '').trim()
   if (!jadwal?.id) {
@@ -17680,6 +19346,7 @@ async function saveGuruUjian(submitMode) {
   const totalInput = document.getElementById('guru-ujian-jumlah')
   if (totalInput) totalInput.value = String(estimateGuruUjianTotalFromSections(normalizedSections, questions.length))
 
+  clearGuruUjianAutosaveSnapshot()
   alert(submitMode ? 'Soal berhasil dikirim.' : 'Draft soal berhasil disimpan.')
   if (submitMode) {
     await renderUjianPage()
@@ -17687,6 +19354,11 @@ async function saveGuruUjian(submitMode) {
   }
   renderGuruUjianSectionRows(ujianGuruState.sectionDefs)
   renderGuruUjianQuestionRows(ujianGuruState.sectionDefs)
+  const currentSnapshot = buildGuruUjianAutosaveSnapshot()
+  const currentHash = buildGuruUjianAutosaveSnapshotHash(currentSnapshot)
+  ujianGuruState.autosaveLocalHash = currentHash
+  ujianGuruState.autosaveServerHash = currentHash
+  setGuruUjianAutosaveStatus('Draft sudah tersimpan ke server. Autosave akan lanjut lagi saat ada perubahan baru.', 'success')
 }
 
 async function printGuruUjianByJadwal(jadwalId) {
@@ -17714,7 +19386,7 @@ async function printGuruUjianActive(format = '') {
     const bahasaSoal = String(document.getElementById('guru-ujian-lang')?.value || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
     const instruksi = String(document.getElementById('guru-ujian-instruksi')?.value || '').trim()
     const kelasTarget = String(ujianGuruState.activeKelasName || '-')
-    const soal = {
+    const soalRaw = {
       guru_nama: String(ujianGuruState.activeSoal?.guru_nama || ''),
       bentuk_soal: 'campuran',
       jumlah_nomor: questions.length,
@@ -17722,6 +19394,7 @@ async function printGuruUjianActive(format = '') {
       questions_json: JSON.stringify(questions),
       status: 'draft'
     }
+    const soal = buildGuruUjianSoalForPrint(soalRaw, bahasaSoal)
     if (mode === 'pdf' && bahasaSoal === 'AR') {
       alert('Cetak PDF untuk soal bahasa Arab dilakukan manual lewat Word. Pilih Word lalu cetak PDF dari Word.')
       return
@@ -17787,7 +19460,8 @@ async function printGuruUjianByRow(rowKeyEncoded, format = '') {
       alert('Soal belum tersedia untuk dicetak.')
       return
     }
-    const instruksiMeta = parseExamInstruksiMeta(soalRes.data?.instruksi)
+    const soalForPrint = buildGuruUjianSoalForPrint(soalRes.data, 'ID')
+    const instruksiMeta = parseExamInstruksiMeta(soalForPrint?.instruksi)
     const bahasaSoal = String(instruksiMeta.lang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
     if (mode === 'pdf' && bahasaSoal === 'AR') {
       alert('Cetak PDF untuk soal bahasa Arab dilakukan manual lewat Word. Pilih Word lalu cetak PDF dari Word.')
@@ -17796,20 +19470,20 @@ async function printGuruUjianByRow(rowKeyEncoded, format = '') {
     if (mode === 'word') {
       if (bahasaSoal === 'AR') {
         const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.docx`
-        await exportExamArabicTemplateFile({ ...jadwal, kelas: kelasNama }, soalRes.data, fileName)
+        await exportExamArabicTemplateFile({ ...jadwal, kelas: kelasNama }, soalForPrint, fileName)
         return
       }
       const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.docx`
-      await exportExamIndonesianTemplateFile({ ...jadwal, kelas: kelasNama }, soalRes.data, fileName)
+      await exportExamIndonesianTemplateFile({ ...jadwal, kelas: kelasNama }, soalForPrint, fileName)
       return
     }
     if (bahasaSoal === 'AR') {
       const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.docx`
-      await exportExamArabicTemplateFile({ ...jadwal, kelas: kelasNama }, soalRes.data, fileName)
+      await exportExamArabicTemplateFile({ ...jadwal, kelas: kelasNama }, soalForPrint, fileName)
       return
     }
 
-    const doc = await createExamPdfDoc({ ...jadwal, kelas: kelasNama }, soalRes.data)
+    const doc = await createExamPdfDoc({ ...jadwal, kelas: kelasNama }, soalForPrint)
     if (!doc) {
       alert('Cetak gagal: font Arab/PDF belum siap. Pastikan file TTF tersedia dan refresh halaman.')
       return
@@ -18537,6 +20211,18 @@ window.openGuruUjianEditor = openGuruUjianEditor
 window.closeGuruUjianEditor = closeGuruUjianEditor
 window.onGuruUjianCountChange = onGuruUjianCountChange
 window.onGuruUjianShapeChange = onGuruUjianShapeChange
+window.onGuruUjianLanguageChange = onGuruUjianLanguageChange
+window.onGuruUjianCariKataInput = onGuruUjianCariKataInput
+window.onGuruUjianTekaSilangInput = onGuruUjianTekaSilangInput
+window.onGuruUjianTekaSilangSizeInput = onGuruUjianTekaSilangSizeInput
+window.onGuruUjianTekaSilangSlotInput = onGuruUjianTekaSilangSlotInput
+window.setGuruUjianTekaSilangMode = setGuruUjianTekaSilangMode
+window.clearGuruUjianTekaSilangAnchor = clearGuruUjianTekaSilangAnchor
+window.selectGuruUjianTekaSilangCell = selectGuruUjianTekaSilangCell
+window.createGuruUjianTekaSilangFromEndpoint = createGuruUjianTekaSilangFromEndpoint
+window.confirmGuruUjianTekaSilangDraft = confirmGuruUjianTekaSilangDraft
+window.removeGuruUjianTekaSilangEntry = removeGuruUjianTekaSilangEntry
+window.clearGuruUjianTekaSilangEntries = clearGuruUjianTekaSilangEntries
 window.onGuruUjianSectionChange = onGuruUjianSectionChange
 window.onGuruUjianSectionScoreInput = onGuruUjianSectionScoreInput
 window.onGuruUjianSectionScoreKeydown = onGuruUjianSectionScoreKeydown
@@ -18646,6 +20332,31 @@ document.addEventListener('DOMContentLoaded', () => {
     closeTopbarNotifMenu()
   })
 })
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

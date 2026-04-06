@@ -3,6 +3,9 @@
 
   function getTypeShortLabel(type) {
     if (type === 'esai') return 'Esai'
+    if (type === 'benar-salah') return 'B/S'
+    if (type === 'cari-kata') return 'Cari Kata'
+    if (type === 'teka-silang') return 'TTS'
     if (type === 'pasangkan-kata') return 'Pasangkan Kata'
     if (type === 'isi-titik') return 'Isi Titik'
     return 'PG'
@@ -10,6 +13,9 @@
 
   function getTypeTitleLabel(type) {
     if (type === 'esai') return 'Esai'
+    if (type === 'benar-salah') return 'Benar atau Salah'
+    if (type === 'cari-kata') return 'Cari Kata'
+    if (type === 'teka-silang') return 'Teka-Teki Silang'
     if (type === 'pasangkan-kata') return 'Pasangkan Kata'
     if (type === 'isi-titik') return 'Isi Titik Kosong'
     return 'Pilihan Ganda'
@@ -46,6 +52,54 @@
         groupBackground: 'linear-gradient(180deg,#f5f3ff 0%,#ffffff 28%)',
         groupShadow: '0 10px 30px rgba(124,58,237,0.08)',
         groupStripe: '#8b5cf6'
+      }
+    }
+    if (type === 'benar-salah') {
+      return {
+        border: '#fbcfe8',
+        background: 'linear-gradient(180deg,#fdf2f8 0%,#ffffff 100%)',
+        badgeBg: '#fce7f3',
+        badgeText: '#be185d',
+        summaryText: '#db2777',
+        noteBorder: '#fbcfe8',
+        noteBg: '#fdf2f8',
+        noteText: '#9d174d',
+        groupBorder: '#fbcfe8',
+        groupBackground: 'linear-gradient(180deg,#fdf2f8 0%,#ffffff 28%)',
+        groupShadow: '0 10px 30px rgba(219,39,119,0.08)',
+        groupStripe: '#ec4899'
+      }
+    }
+    if (type === 'cari-kata') {
+      return {
+        border: '#bbf7d0',
+        background: 'linear-gradient(180deg,#f0fdf4 0%,#ffffff 100%)',
+        badgeBg: '#dcfce7',
+        badgeText: '#15803d',
+        summaryText: '#16a34a',
+        noteBorder: '#bbf7d0',
+        noteBg: '#f0fdf4',
+        noteText: '#166534',
+        groupBorder: '#bbf7d0',
+        groupBackground: 'linear-gradient(180deg,#f0fdf4 0%,#ffffff 28%)',
+        groupShadow: '0 10px 30px rgba(22,163,74,0.08)',
+        groupStripe: '#22c55e'
+      }
+    }
+    if (type === 'teka-silang') {
+      return {
+        border: '#e9d5ff',
+        background: 'linear-gradient(180deg,#faf5ff 0%,#ffffff 100%)',
+        badgeBg: '#f3e8ff',
+        badgeText: '#7e22ce',
+        summaryText: '#9333ea',
+        noteBorder: '#e9d5ff',
+        noteBg: '#faf5ff',
+        noteText: '#6b21a8',
+        groupBorder: '#e9d5ff',
+        groupBackground: 'linear-gradient(180deg,#faf5ff 0%,#ffffff 28%)',
+        groupShadow: '0 10px 30px rgba(147,51,234,0.08)',
+        groupStripe: '#a855f7'
       }
     }
     if (type === 'isi-titik') {
@@ -152,6 +206,9 @@
             <label class="guru-label">Model Soal</label>
             <select id="guru-ujian-section-type-${secIdx}" class="guru-field" onchange="onGuruUjianSectionChange()">
               <option value="pilihan-ganda" ${qType === 'pilihan-ganda' ? 'selected' : ''}>Pilihan Ganda</option>
+              <option value="benar-salah" ${qType === 'benar-salah' ? 'selected' : ''}>Benar / Salah</option>
+              <option value="cari-kata" ${qType === 'cari-kata' ? 'selected' : ''}>Cari Kata</option>
+              <option value="teka-silang" ${qType === 'teka-silang' ? 'selected' : ''}>Teka-Teki Silang</option>
               <option value="esai" ${qType === 'esai' ? 'selected' : ''}>Esai</option>
               <option value="pasangkan-kata" ${qType === 'pasangkan-kata' ? 'selected' : ''}>Pasangkan Kata (A-B)</option>
               <option value="isi-titik" ${qType === 'isi-titik' ? 'selected' : ''}>Isi Titik Kosong</option>
@@ -274,7 +331,116 @@
     `
   }
 
-  function buildQuestionPasangkanHtml({ i, localNo, prev, escapeHtml }) {
+  function buildQuestionBenarSalahHtml({ i, localNo, prev, escapeHtml, examLang = 'ID' }) {
+    const safeLang = String(examLang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+    const answerValue = String(prev.answer || '').trim().toLowerCase()
+    const optionTrue = safeLang === 'AR' ? 'صحيح' : 'Benar'
+    const optionFalse = safeLang === 'AR' ? 'خطأ' : 'Salah'
+    const helperText = safeLang === 'AR'
+      ? `الخيارات ثابتة: ${optionTrue} / ${optionFalse}`
+      : `Pilihan jawaban tetap: ${optionTrue} / ${optionFalse}`
+    return `
+      <div class="placeholder-card guru-ujian-question-row" data-no="${i}" data-type="benar-salah" style="margin-bottom:8px;">
+        <div style="font-weight:700; margin-bottom:6px;">Nomor ${localNo} <span style="font-weight:600; color:#db2777;">(Benar / Salah)</span></div>
+        <textarea id="guru-ujian-q-${i}" class="guru-field" rows="2" placeholder="Tulis pernyataan">${escapeHtml(String(prev.text || ''))}</textarea>
+        <div style="margin-top:8px; padding:10px 12px; border:1px solid #fbcfe8; border-radius:12px; background:#fdf2f8; color:#9d174d; font-size:12px;">
+          ${escapeHtml(helperText)}
+        </div>
+        <div style="margin-top:8px;">
+          <label class="guru-label">Kunci Jawaban</label>
+          <select id="guru-ujian-q-${i}-answer" class="guru-field" style="width:100%; max-width:220px;">
+            <option value="">Pilih</option>
+            <option value="benar" ${answerValue === 'benar' ? 'selected' : ''}>${escapeHtml(optionTrue)}</option>
+            <option value="salah" ${answerValue === 'salah' ? 'selected' : ''}>${escapeHtml(optionFalse)}</option>
+          </select>
+        </div>
+      </div>
+    `
+  }
+
+  function buildQuestionCariKataHtml({ i, localNo, prev, escapeHtml, examLang = 'ID' }) {
+    const safeLang = String(examLang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+    const rows = Math.max(5, Math.min(20, Number(prev.rows || prev.gridRows || 10) || 10))
+    const cols = Math.max(5, Math.min(20, Number(prev.cols || prev.gridCols || 10) || 10))
+    const wordsValue = Array.isArray(prev.words)
+      ? prev.words.join('\n')
+      : String(prev.wordList || prev.wordsText || '')
+    const statementPlaceholder = safeLang === 'AR'
+      ? 'اكتب عنوان اللغز أو التعليمات المختصرة'
+      : 'Tulis judul kecil atau petunjuk puzzle'
+    const wordsPlaceholder = safeLang === 'AR'
+      ? 'اكتب كلمة في كل سطر'
+      : 'Tulis satu kata per baris'
+    return `
+      <div class="placeholder-card guru-ujian-question-row" data-no="${i}" data-type="cari-kata" style="margin-bottom:8px;">
+        <div style="font-weight:700; margin-bottom:6px;">Nomor ${localNo} <span style="font-weight:600; color:#16a34a;">(Cari Kata)</span></div>
+        <textarea id="guru-ujian-q-${i}" class="guru-field" rows="2" placeholder="${escapeHtml(statementPlaceholder)}" oninput="onGuruUjianCariKataInput(${i})">${escapeHtml(String(prev.text || ''))}</textarea>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; margin-top:8px;">
+          <div>
+            <label class="guru-label">Jumlah Baris</label>
+            <input id="guru-ujian-q-${i}-rows" class="guru-field" type="number" min="5" max="20" value="${escapeHtml(String(rows))}" oninput="onGuruUjianCariKataInput(${i})">
+          </div>
+          <div>
+            <label class="guru-label">Jumlah Kolom</label>
+            <input id="guru-ujian-q-${i}-cols" class="guru-field" type="number" min="5" max="20" value="${escapeHtml(String(cols))}" oninput="onGuruUjianCariKataInput(${i})">
+          </div>
+        </div>
+        <div style="margin-top:8px;">
+          <label class="guru-label">Daftar Kata</label>
+          <textarea id="guru-ujian-q-${i}-words" class="guru-field" rows="5" placeholder="${escapeHtml(wordsPlaceholder)}" oninput="onGuruUjianCariKataInput(${i})">${escapeHtml(wordsValue)}</textarea>
+          <div style="margin-top:6px; font-size:11px; color:#166534;">Sistem akan menempatkan kata ke dalam grid lalu mengisi sisa kotak dengan huruf acak.</div>
+        </div>
+        <div id="guru-ujian-q-${i}-preview" style="margin-top:10px;"></div>
+      </div>
+    `
+  }
+
+  function buildQuestionTekaSilangHtml({ i, localNo, prev, escapeHtml, examLang = 'ID' }) {
+  const safeLang = String(examLang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+  const rows = Math.max(5, Math.min(20, Number(prev.rows || 10) || 10))
+  const cols = Math.max(5, Math.min(20, Number(prev.cols || 10) || 10))
+  const maskText = String(prev.maskText || (Array.isArray(prev.mask) ? prev.mask.join('\n') : ''))
+  const seedEntries = JSON.stringify({
+    across: Array.isArray(prev.entriesAcross) ? prev.entriesAcross : [],
+    down: Array.isArray(prev.entriesDown) ? prev.entriesDown : []
+  })
+  const statementPlaceholder = safeLang === 'AR'
+    ? '\u0627\u0643\u062a\u0628 \u062a\u0639\u0644\u064a\u0645\u0627\u062a \u0642\u0635\u064a\u0631\u0629 \u0623\u0648 \u0639\u0646\u0648\u0627\u0646\u064b\u0627 \u0644\u0644\u062a\u0643\u0627\u0645\u0644'
+    : 'Tulis petunjuk singkat atau judul teka-teki silang'
+  const noteText = safeLang === 'AR'
+    ? '\u0627\u062e\u062a\u0631 \u0627\u0644\u0627\u062a\u062c\u0627\u0647\u060c \u062b\u0645 \u0627\u0646\u0642\u0631 \u0646\u0642\u0637\u0629 \u0627\u0644\u0628\u062f\u0627\u064a\u0629 \u0648\u0646\u0642\u0637\u0629 \u0627\u0644\u0646\u0647\u0627\u064a\u0629 \u0644\u0643\u0644 \u0643\u0644\u0645\u0629. \u0633\u062a\u062a\u062d\u0648\u0644 \u0627\u0644\u062e\u0627\u0646\u0627\u062a \u063a\u064a\u0631 \u0627\u0644\u0645\u0633\u062a\u062e\u062f\u0645\u0629 \u062a\u0644\u0642\u0627\u0626\u064a\u064b\u0627 \u0625\u0644\u0649 \u062e\u0627\u0646\u0627\u062a \u0633\u0648\u062f\u0627\u0621 \u0639\u0646\u062f \u0627\u0644\u0637\u0628\u0627\u0639\u0629.'
+    : 'Klik titik awal lalu titik akhir untuk membuat draft slot. Setelah itu klik centang untuk konfirmasi. Klik lagi titik awal hanya untuk membatalkan draft yang belum dikonfirmasi. Sel yang tidak dipakai akan otomatis menjadi blok hitam saat dicetak.'
+  return `
+    <div class="placeholder-card guru-ujian-question-row" data-no="${i}" data-type="teka-silang" style="margin-bottom:8px; position:relative;">
+      <div style="font-weight:700; margin-bottom:6px;">Nomor ${localNo} <span style="font-weight:600; color:#9333ea;">(Teka-Teki Silang)</span></div>
+      <textarea id="guru-ujian-q-${i}" class="guru-field" rows="2" placeholder="${escapeHtml(statementPlaceholder)}" oninput="onGuruUjianTekaSilangInput(${i})">${escapeHtml(String(prev.text || ''))}</textarea>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; margin-top:8px;">
+        <div>
+          <label class="guru-label">Jumlah Baris</label>
+          <input id="guru-ujian-q-${i}-rows" class="guru-field" type="number" min="5" max="20" value="${escapeHtml(String(rows))}" oninput="onGuruUjianTekaSilangSizeInput(${i})">
+        </div>
+        <div>
+          <label class="guru-label">Jumlah Kolom</label>
+          <input id="guru-ujian-q-${i}-cols" class="guru-field" type="number" min="5" max="20" value="${escapeHtml(String(cols))}" oninput="onGuruUjianTekaSilangSizeInput(${i})">
+        </div>
+      </div>
+      <input id="guru-ujian-q-${i}-tts-mask" type="hidden" value="${escapeHtml(maskText)}">
+      <input id="guru-ujian-q-${i}-tts-seed" type="hidden" value="${escapeHtml(seedEntries)}">
+      <input id="guru-ujian-q-${i}-tts-mode" type="hidden" value="">
+      <input id="guru-ujian-q-${i}-tts-anchor" type="hidden" value="">
+      <input id="guru-ujian-q-${i}-tts-pending-end" type="hidden" value="">
+      <div style="margin-top:8px; padding:10px 12px; border:1px solid #e9d5ff; border-radius:12px; background:#faf5ff; color:#6b21a8; font-size:12px;">
+        ${escapeHtml(noteText)}
+      </div>
+      <div style="display:grid; grid-template-columns:minmax(280px,360px) minmax(0,1fr); gap:12px; align-items:start; margin-top:10px;">
+        <div id="guru-ujian-q-${i}-tts-grid"></div>
+        <div id="guru-ujian-q-${i}-tts-slots"></div>
+      </div>
+      <div id="guru-ujian-q-${i}-tts-status" style="display:none; margin-top:10px;"></div>
+    </div>
+  `
+}
+function buildQuestionPasangkanHtml({ i, localNo, prev, escapeHtml }) {
     const legacyPairs = Array.isArray(prev.pairs) ? prev.pairs : []
     const columnA = Array.isArray(prev.columnA)
       ? prev.columnA
@@ -337,8 +503,11 @@
     `
   }
 
-  function buildQuestionCardHtml({ i, qType, localNo, prev, sectionForNo, escapeHtml }) {
+  function buildQuestionCardHtml({ i, qType, localNo, prev, sectionForNo, escapeHtml, examLang = 'ID' }) {
     if (qType === 'pilihan-ganda') return buildQuestionPgHtml({ i, localNo, prev, escapeHtml })
+    if (qType === 'benar-salah') return buildQuestionBenarSalahHtml({ i, localNo, prev, escapeHtml, examLang })
+    if (qType === 'cari-kata') return buildQuestionCariKataHtml({ i, localNo, prev, escapeHtml, examLang })
+    if (qType === 'teka-silang') return buildQuestionTekaSilangHtml({ i, localNo, prev, escapeHtml, examLang })
     if (qType === 'pasangkan-kata') return buildQuestionPasangkanHtml({ i, localNo, prev, escapeHtml })
     if (qType === 'isi-titik') return buildQuestionIsiTitikHtml({ i, localNo, prev, sectionForNo, escapeHtml })
     return buildQuestionEsaiHtml({ i, localNo, prev, escapeHtml })
@@ -350,9 +519,17 @@
     buildTypeInfoText,
     buildSectionRowHtml,
     buildQuestionPgHtml,
+    buildQuestionBenarSalahHtml,
+    buildQuestionCariKataHtml,
+    buildQuestionTekaSilangHtml,
     buildQuestionPasangkanHtml,
     buildQuestionIsiTitikHtml,
     buildQuestionEsaiHtml,
     buildQuestionCardHtml
   }
 })()
+
+
+
+
+

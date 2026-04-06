@@ -112,6 +112,12 @@
   }
 
   function getExamPgOptionEntries(options, isAr) {
+    if (options && typeof options === 'object' && String(options.__questionType || '').trim().toLowerCase() === 'benar-salah') {
+      return [
+        { key: 'benar', label: isAr ? 'أ' : 'a', value: isAr ? 'صحيح' : 'Benar' },
+        { key: 'salah', label: isAr ? 'ب' : 'b', value: isAr ? 'خطأ' : 'Salah' }
+      ]
+    }
     const rows = []
     if (Array.isArray(options)) {
       options.forEach((rawVal, idx) => {
@@ -210,6 +216,80 @@
     `
   }
 
+  function buildExamWordSearchQuestionHtml({ q, qText, isAr, escapeHtml, renderText }) {
+    const words = Array.isArray(q?.words) ? q.words : []
+    const grid = Array.isArray(q?.grid) ? q.grid : []
+    const listLabel = isAr ? 'الكلمات المطلوبة' : 'Kata yang dicari'
+    const wordsHtml = words.length
+      ? words.map(word => `<span class="word-search-word">${renderText(String(word || '-'), isAr)}</span>`).join('')
+      : `<span class="word-search-word">-</span>`
+    const gridHtml = grid.length
+      ? `<table class="word-search-grid"><tbody>${grid.map(row => `
+          <tr>${(Array.isArray(row) ? row : []).map(cell => `<td>${escapeHtml(String(cell || ''))}</td>`).join('')}</tr>
+        `).join('')}</tbody></table>`
+      : `<div class="word-search-empty">-</div>`
+    return `
+      <li>
+        ${qText}
+        <div class="word-search-wrap">
+          <div class="word-search-words"><strong>${escapeHtml(listLabel)}:</strong> ${wordsHtml}</div>
+          ${gridHtml}
+        </div>
+      </li>
+    `
+  }
+
+  function buildCrosswordNumberMap(q) {
+    const map = new Map()
+    ;[...(Array.isArray(q?.entriesAcross) ? q.entriesAcross : []), ...(Array.isArray(q?.entriesDown) ? q.entriesDown : [])].forEach(entry => {
+      const key = `${Number(entry?.row || 0)}:${Number(entry?.col || 0)}`
+      if (!map.has(key)) map.set(key, Number(entry?.number || 0))
+    })
+    return map
+  }
+
+  function buildExamCrosswordQuestionHtml({ q, qText, isAr, escapeHtml, renderText }) {
+    const mask = Array.isArray(q?.mask) ? q.mask : []
+    const across = Array.isArray(q?.entriesAcross) ? q.entriesAcross : []
+    const down = Array.isArray(q?.entriesDown) ? q.entriesDown : []
+    const numberMap = buildCrosswordNumberMap(q)
+    const acrossLabel = isAr ? 'أفقيًا' : 'Mendatar'
+    const downLabel = isAr ? 'عموديًا' : 'Menurun'
+    const gridHtml = mask.length
+      ? `<table class="crossword-grid"><tbody>${mask.map((row, rowIndex) => `
+          <tr>${Array.from(String(row || '')).map((cell, colIndex) => {
+            const key = `${rowIndex}:${colIndex}`
+            const isBlocked = cell === '#'
+            const number = numberMap.get(key) || ''
+            return `<td class="${isBlocked ? 'crossword-block' : 'crossword-open'}">${!isBlocked && number ? `<span class="crossword-no">${escapeHtml(String(number))}</span>` : ''}</td>`
+          }).join('')}</tr>
+        `).join('')}</tbody></table>`
+      : `<div class="word-search-empty">-</div>`
+    const buildClueList = (entries, title) => {
+      if (!entries.length) return `<div class="crossword-clue-group"><strong>${escapeHtml(title)}</strong><div>-</div></div>`
+      return `
+        <div class="crossword-clue-group">
+          <strong>${escapeHtml(title)}</strong>
+          <ol>
+            ${entries.map(entry => `<li value="${Number(entry?.number || 0)}">${renderText(String(entry?.clue || '-'))} <span class="crossword-clue-len">(${escapeHtml(String(entry?.length || 0))})</span></li>`).join('')}
+          </ol>
+        </div>
+      `
+    }
+    return `
+      <li>
+        ${qText}
+        <div class="crossword-wrap">
+          <div class="crossword-grid-wrap">${gridHtml}</div>
+          <div class="crossword-clues">
+            ${buildClueList(across, acrossLabel)}
+            ${buildClueList(down, downLabel)}
+          </div>
+        </div>
+      </li>
+    `
+  }
+
   function buildExamBrowserQuestionHtml({
     section,
     q,
@@ -224,7 +304,14 @@
   }) {
     const no = idx + 1
     const qText = buildExamBrowserQuestionTitleHtml({ q, no, lang, isAr, escapeHtml, formatExamMarker, formatExamNumber, renderText })
-    if (section.type === 'pilihan-ganda') return buildExamBrowserPgQuestionHtml({ q, qText, lang, isAr, escapeHtml, formatExamMarker, renderText })
+    if (section.type === 'pilihan-ganda' || section.type === 'benar-salah') {
+      const qWithOptions = section.type === 'benar-salah'
+        ? { ...q, options: { __questionType: 'benar-salah' } }
+        : q
+      return buildExamBrowserPgQuestionHtml({ q: qWithOptions, qText, lang, isAr, escapeHtml, formatExamMarker, renderText })
+    }
+    if (section.type === 'cari-kata') return buildExamWordSearchQuestionHtml({ q, qText, isAr, escapeHtml, renderText })
+    if (section.type === 'teka-silang') return buildExamCrosswordQuestionHtml({ q, qText, isAr, escapeHtml, renderText })
     if (section.type === 'pasangkan-kata') return buildExamBrowserPairQuestionHtml({ q, qText, lang, isAr, escapeHtml, formatExamMarker, formatExamNumber, getArabicLetterByIndex, renderText })
     return `<li>${qText}</li>`
   }
@@ -373,6 +460,23 @@
     .pair-columns-ar { margin-right: 18px; }
     .pair-column-title { margin: 0 0 4px 0; font-weight: 700; text-decoration: underline; font-size: ${pairFontSize}; text-align: ${isAr ? 'right' : 'left'}; }
     .pair-item { font-size: ${pairFontSize}; line-height: 1.35; margin: 0 0 2px 0; text-align: ${isAr ? 'right' : 'left'}; }
+    .word-search-wrap { margin-top: 6px; }
+    .word-search-words { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin: 0 0 8px 0; font-size:${isAr ? '16pt' : '13px'}; }
+    .word-search-word { display:inline-flex; padding:2px 8px; border:1px solid #999; border-radius:999px; }
+    .word-search-grid { border-collapse:collapse; margin:0; }
+    .word-search-grid td { width:${isAr ? '28px' : '24px'}; height:${isAr ? '28px' : '24px'}; border:1px solid #999; text-align:center; vertical-align:middle; font-family:${bodyFontFamily}; font-size:${isAr ? '15pt' : '12px'}; font-weight:700; }
+    .word-search-empty { font-size:${contentFontSize}; color:#666; }
+    .crossword-wrap { margin-top: 6px; display:grid; grid-template-columns:minmax(0,auto) minmax(0,1fr); gap:14px; align-items:start; }
+    .crossword-grid { border-collapse:collapse; margin:0; }
+    .crossword-grid td { width:${isAr ? '28px' : '24px'}; height:${isAr ? '28px' : '24px'}; border:1px solid #999; position:relative; }
+    .crossword-grid td.crossword-block { background:#111827; }
+    .crossword-grid td.crossword-open { background:#fff; }
+    .crossword-no { position:absolute; top:2px; left:3px; font-size:8px; line-height:1; color:#444; }
+    .crossword-clues { display:grid; gap:10px; min-width:220px; }
+    .crossword-clue-group strong { display:block; margin-bottom:4px; }
+    .crossword-clue-group ol { margin:0; padding-${isAr ? 'right' : 'left'}: 18px; }
+    .crossword-clue-group li { margin:0 0 4px 0; }
+    .crossword-clue-len { color:#666; font-size:0.92em; }
     .mixed-ar { display:inline-block; direction:rtl; unicode-bidi:isolate-override; white-space:pre-wrap; font-family:'Traditional Arabic','Times New Roman',serif; font-size:1.15em; line-height:1; }
     @media print { body { margin: 10mm; } }
   </style>
@@ -406,8 +510,8 @@
     const qText = isAr
       ? `<div class="q-title q-title-ar"><span class="q-marker-num">${escapeHtml(String(formatExamNumber(no, lang)))}</span><span class="q-marker-dot">.</span><span class="q-title-text">${renderText(String(q?.text || '-'))}</span></div>`
       : `<div class="q-title">${markerHtml(formatExamNumber(no, lang))} ${renderText(String(q?.text || '-'))}</div>`
-    if (section.type === 'pilihan-ganda') {
-      const entries = getExamPgOptionEntries(q?.options || {}, isAr)
+    if (section.type === 'pilihan-ganda' || section.type === 'benar-salah') {
+      const entries = getExamPgOptionEntries(section.type === 'benar-salah' ? { __questionType: 'benar-salah' } : (q?.options || {}), isAr)
       const safeEntries = entries.length ? entries : [
         { label: isAr ? 'أ' : 'a', value: '-' },
         { label: isAr ? 'ب' : 'b', value: '-' }
@@ -419,6 +523,12 @@
           : `<div>${markerHtml(String(item.label || ''))} ${renderText(String(item.value || '-'))}</div>`
       )).join('')
       return `<li>${qText}<div class="pg-grid ${gridClass}">${optionsHtml}</div></li>`
+    }
+    if (section.type === 'cari-kata') {
+      return buildExamWordSearchQuestionHtml({ q, qText, isAr, escapeHtml, renderText })
+    }
+    if (section.type === 'teka-silang') {
+      return buildExamCrosswordQuestionHtml({ q, qText, isAr, escapeHtml, renderText })
     }
     return `<li>${qText}</li>`
   }
@@ -522,6 +632,23 @@ li { margin: 8px 0; font-size: ${contentFontSize}; }
 .pair-columns-ar { margin-right: 18px; }
 .pair-column-title { margin: 0 0 4px 0; font-weight: 700; text-decoration: underline; font-size: ${pairFontSize}; text-align: ${isAr ? 'right' : 'left'}; }
 .pair-item { font-size: ${pairFontSize}; line-height: 1.35; margin: 0 0 2px 0; text-align: ${isAr ? 'right' : 'left'}; }
+.word-search-wrap { margin-top: 6px; }
+.word-search-words { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin: 0 0 8px 0; font-size:${isAr ? '16pt' : '13px'}; }
+.word-search-word { display:inline-flex; padding:2px 8px; border:1px solid #999; border-radius:999px; }
+.word-search-grid { border-collapse:collapse; margin:0; }
+.word-search-grid td { width:${isAr ? '28px' : '24px'}; height:${isAr ? '28px' : '24px'}; border:1px solid #999; text-align:center; vertical-align:middle; font-family:${wordFontFamily}; font-size:${isAr ? '15pt' : '12px'}; font-weight:700; }
+.word-search-empty { font-size:${contentFontSize}; color:#666; }
+.crossword-wrap { margin-top: 6px; display:grid; grid-template-columns:minmax(0,auto) minmax(0,1fr); gap:14px; align-items:start; }
+.crossword-grid { border-collapse:collapse; margin:0; }
+.crossword-grid td { width:${isAr ? '28px' : '24px'}; height:${isAr ? '28px' : '24px'}; border:1px solid #999; position:relative; }
+.crossword-grid td.crossword-block { background:#111827; }
+.crossword-grid td.crossword-open { background:#fff; }
+.crossword-no { position:absolute; top:2px; left:3px; font-size:8px; line-height:1; color:#444; }
+.crossword-clues { display:grid; gap:10px; min-width:220px; }
+.crossword-clue-group strong { display:block; margin-bottom:4px; }
+.crossword-clue-group ol { margin:0; padding-${isAr ? 'right' : 'left'}: 18px; }
+.crossword-clue-group li { margin:0 0 4px 0; }
+.crossword-clue-len { color:#666; font-size:0.92em; }
 .ar-marker { display:inline-block; white-space:nowrap; direction:rtl; unicode-bidi:isolate-override; min-width:20px; }
 .mixed-ar { display:inline-block; direction:rtl; unicode-bidi:isolate-override; white-space:pre-wrap; font-family:'Traditional Arabic','Times New Roman',serif; font-size:1.15em; line-height:1; }
 * { font-family: ${wordFontFamily}; ${wordBidiCss} }

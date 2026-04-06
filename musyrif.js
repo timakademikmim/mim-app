@@ -5,7 +5,7 @@ const sb = window.createDesktopAwareSupabaseClient
   : supabase.createClient(supabaseUrl, supabaseKey)
 
 const MONTHLY_REPORT_TABLE = 'laporan_bulanan_wali'
-const MUHAFFIZ_LAST_PAGE_KEY = 'musyrif_last_page'
+const MUSYRIF_LAST_PAGE_KEY = 'musyrif_last_page'
 const TOPBAR_KALENDER_TABLE = 'kalender_akademik'
 const TOPBAR_KALENDER_DEFAULT_COLOR = '#2563eb'
 const HALAQAH_TABLE = 'kamar'
@@ -34,6 +34,7 @@ const MUSYRIF_SIDEBAR_ICON_ONLY_BREAKPOINT = 1180
 const PAGE_TITLES = {
   dashboard: 'Dashboard',
   'laporan-bulanan': 'Laporan Bulanan',
+  'input-absensi': 'Input Absen',
   chat: 'Chat',
   'data-kamar': 'Data Kamar',
   'perizinan-santri': 'Perizinan Santri',
@@ -124,6 +125,7 @@ function buildMusyrifSidebarIconSvg(pageKey = '') {
   const map = {
     dashboard: '<path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1V9.5Z"/>',
     'laporan-bulanan': '<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+    'input-absensi': '<path d="M7 4h10a2 2 0 0 1 2 2v14H5V6a2 2 0 0 1 2-2Z"/><path d="M8 9h8M8 13h5M8 17h3"/>',
     'data-kamar': '<path d="M4 8h16v11H4z"/><path d="M4 12h16M12 8v11"/>',
     'perizinan-santri': '<path d="M8 3h8M7 6h10a2 2 0 0 1 2 2v10a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V8a2 2 0 0 1 2-2Z"/><path d="M9 12l2 2 4-4"/>',
     'prestasi-pelanggaran': '<path d="M12 3.5l2.3 4.7 5.2.8-3.8 3.7.9 5.3L12 15.8 7.4 18l.9-5.3L4.5 9l5.2-.8L12 3.5Z"/>',
@@ -671,6 +673,40 @@ function setTopbarTitle(page) {
     year: 'numeric'
   })
   el.innerHTML = `<span class="topbar-title-main">${escapeHtml(title)}</span><span class="topbar-title-sep" aria-hidden="true"></span><button type="button" class="topbar-title-date-btn" onclick="openTopbarCalendarPopup()" title="Lihat kalender kegiatan">${escapeHtml(todayLabel)}</button>`
+}
+
+async function refreshMusyrifDelegatedAttendanceNav() {
+  const btn = document.getElementById('musyrif-nav-input-absensi')
+  if (!btn || !window.DelegatedAttendanceUtils?.hasPendingAssignments) return false
+  try {
+    const visible = await window.DelegatedAttendanceUtils.hasPendingAssignments({
+      sb,
+      getProfile: getCurrentMusyrif
+    })
+    btn.style.display = visible ? '' : 'none'
+    if (!visible && btn.classList.contains('active')) setNavActive('dashboard')
+    return visible
+  } catch (error) {
+    console.error(error)
+    btn.style.display = 'none'
+    return false
+  }
+}
+
+async function renderMusyrifDelegatedAttendancePage() {
+  const content = document.getElementById('musyrif-content')
+  if (!content) return
+  if (!window.DelegatedAttendanceUtils?.renderPage) {
+    content.innerHTML = '<div class="placeholder-card">Modul input absen belum termuat. Refresh halaman.</div>'
+    return
+  }
+  await window.DelegatedAttendanceUtils.renderPage({
+    scope: 'musyrif',
+    containerId: 'musyrif-content',
+    sb,
+    getProfile: getCurrentMusyrif,
+    onTasksChanged: refreshMusyrifDelegatedAttendanceNav
+  })
 }
 
 function toggleTopbarUserMenu() {
@@ -4212,7 +4248,7 @@ async function loadMusyrifPage(page, options = {}) {
   const isWakasekPrestasi = await setupMusyrifPrestasiPelanggaranAccess()
   setTopbarTitle(targetPage)
   setNavActive(targetPage === 'profil' ? '' : targetPage)
-  if (targetPage !== 'profil') localStorage.setItem(MUHAFFIZ_LAST_PAGE_KEY, targetPage)
+  if (targetPage !== 'profil') localStorage.setItem(MUSYRIF_LAST_PAGE_KEY, targetPage)
   if (updateHistory) {
     if (replaceHistory) replaceMusyrifTabHistory(targetPage)
     else pushMusyrifTabHistory(targetPage)
@@ -4228,6 +4264,10 @@ async function loadMusyrifPage(page, options = {}) {
   }
   if (targetPage === 'data-kamar') {
     await renderMusyrifManageKamarPage()
+    return
+  }
+  if (targetPage === 'input-absensi') {
+    await renderMusyrifDelegatedAttendancePage()
     return
   }
   if (targetPage === 'chat') {
@@ -4291,7 +4331,7 @@ function logout() {
   localStorage.removeItem('login_name')
   localStorage.removeItem('login_role')
   localStorage.removeItem('login_roles')
-  localStorage.removeItem(MUHAFFIZ_LAST_PAGE_KEY)
+  localStorage.removeItem(MUSYRIF_LAST_PAGE_KEY)
   location.href = 'index.html'
 }
 
@@ -4374,6 +4414,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await setMusyrifWelcomeName()
     await setupMusyrifEkskulAccess(true)
     await setupMusyrifPrestasiPelanggaranAccess(true)
+    await refreshMusyrifDelegatedAttendanceNav()
     if (!musyrifState.profile) {
       location.href = 'index.html'
       return
@@ -4393,7 +4434,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     return
   }
 
-  const lastPage = localStorage.getItem(MUHAFFIZ_LAST_PAGE_KEY) || 'dashboard'
+  const lastPage = localStorage.getItem(MUSYRIF_LAST_PAGE_KEY) || 'dashboard'
   await loadMusyrifPage(lastPage, { updateHistory: true, replaceHistory: true })
   refreshMusyrifTopbarNotifications().catch(error => console.error(error))
   refreshMusyrifTopbarChatBadge().catch(error => console.error(error))

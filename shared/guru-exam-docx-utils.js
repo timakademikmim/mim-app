@@ -20,6 +20,8 @@
     const marker = markerLetters[index % markerLetters.length] || (lang === 'AR' ? 'أ' : 'A')
     let label = lang === 'AR' ? 'اختيار من متعدد' : 'Pilihan Ganda'
     if (type === 'esai') label = lang === 'AR' ? 'مقال' : 'Esai'
+    else if (type === 'benar-salah') label = lang === 'AR' ? 'الصحيح أو الخطأ' : 'Pernyataan Benar atau Salah'
+    else if (type === 'cari-kata') label = lang === 'AR' ? 'ابحث عن الكلمات' : 'Cari Kata'
     else if (type === 'pasangkan-kata') label = lang === 'AR' ? 'وصل الكلمات' : 'Pasangkan Kata'
     else if (type === 'isi-titik') label = lang === 'AR' ? 'املأ الفراغ' : 'Isi Titik Kosong'
     return { marker, label }
@@ -44,6 +46,13 @@
   }
 
   function getPgOptionEntries(question, langCode = 'AR') {
+    if (String(question?.type || '').trim().toLowerCase() === 'benar-salah') {
+      const isAr = String(langCode || 'AR').toUpperCase() === 'AR'
+      return [
+        { key: 'benar', label: isAr ? 'أ' : 'a', value: isAr ? 'صحيح' : 'Benar' },
+        { key: 'salah', label: isAr ? 'ب' : 'b', value: isAr ? 'خطأ' : 'Salah' }
+      ]
+    }
     const printUtils = getPrintUtils()
     if (typeof window.guruExamHtmlUtils?.getExamPgOptionEntries === 'function') {
       return window.guruExamHtmlUtils.getExamPgOptionEntries(question?.options || {}, String(langCode || 'AR').toUpperCase() === 'AR')
@@ -219,6 +228,116 @@
     const pPr = first(paragraph, 'pPr', true)
     const ind = pPr ? first(pPr, 'ind', true) : null
     if (pPr && ind) pPr.removeChild(ind)
+  }
+
+  function ensureCellProperties(cell) {
+    let tcPr = first(cell, 'tcPr', true)
+    if (tcPr) return tcPr
+    tcPr = createWordNode(cell.ownerDocument, 'tcPr')
+    cell.insertBefore(tcPr, cell.firstChild || null)
+    return tcPr
+  }
+
+  function getCellWidth(cell) {
+    if (!cell) return 0
+    const tcPr = ensureCellProperties(cell)
+    const tcW = tcPr ? first(tcPr, 'tcW', true) : null
+    const width = Number(tcW?.getAttributeNS(WORD_NS, 'w') || tcW?.getAttribute('w:w') || 0)
+    return Number.isFinite(width) && width > 0 ? width : 0
+  }
+
+  function setCellWidth(cell, width) {
+    if (!cell || !(Number(width) > 0)) return
+    const tcPr = ensureCellProperties(cell)
+    const current = first(tcPr, 'tcW', true)
+    if (current) tcPr.removeChild(current)
+    const tcW = createWordNode(cell.ownerDocument, 'tcW')
+    tcW.setAttributeNS(WORD_NS, 'w:w', String(Math.round(Number(width))))
+    tcW.setAttributeNS(WORD_NS, 'w:type', 'dxa')
+    tcPr.appendChild(tcW)
+  }
+
+  function clearCellGridSpan(cell) {
+    if (!cell) return
+    const tcPr = ensureCellProperties(cell)
+    const gridSpan = first(tcPr, 'gridSpan', true)
+    if (gridSpan) tcPr.removeChild(gridSpan)
+  }
+
+  function setTableGrid(table, colWidths = []) {
+    if (!table || !Array.isArray(colWidths) || !colWidths.length) return
+    const existingGrid = first(table, 'tblGrid', true)
+    if (existingGrid) table.removeChild(existingGrid)
+    const tblGrid = createWordNode(table.ownerDocument, 'tblGrid')
+    colWidths.forEach(width => {
+      const gridCol = createWordNode(table.ownerDocument, 'gridCol')
+      gridCol.setAttributeNS(WORD_NS, 'w:w', String(Math.round(Number(width) || 0)))
+      tblGrid.appendChild(gridCol)
+    })
+    const firstRow = first(table, 'tr', true)
+    table.insertBefore(tblGrid, firstRow || null)
+    const tblPr = first(table, 'tblPr', true)
+    const tblW = tblPr ? first(tblPr, 'tblW', true) : null
+    if (tblW) {
+      tblW.setAttributeNS(WORD_NS, 'w:w', String(colWidths.reduce((sum, part) => sum + (Number(part) || 0), 0)))
+      tblW.setAttributeNS(WORD_NS, 'w:type', 'dxa')
+    }
+  }
+
+  function setCellBorderMode(cell, mode = 'visible') {
+    if (!cell) return
+    const tcPr = ensureCellProperties(cell)
+    let tcBorders = first(tcPr, 'tcBorders', true)
+    if (!tcBorders) {
+      tcBorders = createWordNode(cell.ownerDocument, 'tcBorders')
+      tcPr.appendChild(tcBorders)
+    }
+    const borderValue = mode === 'hidden' ? 'nil' : 'single'
+    ;['top', 'left', 'bottom', 'right'].forEach(side => {
+      let border = first(tcBorders, side, true)
+      if (!border) {
+        border = createWordNode(cell.ownerDocument, side)
+        tcBorders.appendChild(border)
+      }
+      border.setAttributeNS(WORD_NS, 'w:val', borderValue)
+      if (mode === 'hidden') {
+        border.removeAttributeNS(WORD_NS, 'w:sz')
+        border.removeAttributeNS(WORD_NS, 'w:space')
+        border.removeAttributeNS(WORD_NS, 'w:color')
+      } else {
+        if (!border.getAttributeNS(WORD_NS, 'w:sz')) border.setAttributeNS(WORD_NS, 'w:sz', '4')
+        if (!border.getAttributeNS(WORD_NS, 'w:space')) border.setAttributeNS(WORD_NS, 'w:space', '0')
+        if (!border.getAttributeNS(WORD_NS, 'w:color')) border.setAttributeNS(WORD_NS, 'w:color', 'auto')
+      }
+    })
+  }
+
+  function setCellBorderSides(cell, sides = {}) {
+    if (!cell) return
+    const tcPr = ensureCellProperties(cell)
+    let tcBorders = first(tcPr, 'tcBorders', true)
+    if (!tcBorders) {
+      tcBorders = createWordNode(cell.ownerDocument, 'tcBorders')
+      tcPr.appendChild(tcBorders)
+    }
+    ;['top', 'left', 'bottom', 'right'].forEach(side => {
+      let border = first(tcBorders, side, true)
+      if (!border) {
+        border = createWordNode(cell.ownerDocument, side)
+        tcBorders.appendChild(border)
+      }
+      const value = String(sides?.[side] || 'single').toLowerCase() === 'hidden' ? 'nil' : String(sides?.[side] || 'single')
+      border.setAttributeNS(WORD_NS, 'w:val', value)
+      if (value === 'nil') {
+        border.removeAttributeNS(WORD_NS, 'w:sz')
+        border.removeAttributeNS(WORD_NS, 'w:space')
+        border.removeAttributeNS(WORD_NS, 'w:color')
+      } else {
+        if (!border.getAttributeNS(WORD_NS, 'w:sz')) border.setAttributeNS(WORD_NS, 'w:sz', '4')
+        if (!border.getAttributeNS(WORD_NS, 'w:space')) border.setAttributeNS(WORD_NS, 'w:space', '0')
+        if (!border.getAttributeNS(WORD_NS, 'w:color')) border.setAttributeNS(WORD_NS, 'w:color', 'auto')
+      }
+    })
   }
 
   function getStaticText(langCode = 'ID') {
@@ -532,6 +651,10 @@
     return row.cloneNode(true)
   }
 
+  function maybeCloneRow(row) {
+    return row && typeof row.cloneNode === 'function' ? row.cloneNode(true) : null
+  }
+
   function pickTemplateRow(table, preferredIndexes = []) {
     const rows = getTableRows(table)
     const indexes = Array.isArray(preferredIndexes) ? preferredIndexes : [preferredIndexes]
@@ -553,7 +676,9 @@
 
   function fillSectionInfoRow(infoRow, text) {
     const cells = getRowCells(infoRow)
-    if (cells[1]) setCellLines(cells[1], splitPreserveLines(text))
+    const targetCell = cells[1] || cells[cells.length - 1] || cells[0] || null
+    const lines = Array.isArray(text) ? text : splitPreserveLines(text)
+    if (targetCell) setCellLines(targetCell, lines)
     return infoRow
   }
 
@@ -608,6 +733,43 @@
     })
   }
 
+  function fillTrueFalseTable(table, section, sectionIndex, templates, headerMeta = {}) {
+    clearTableRows(table)
+    const headerRow = cloneRow(templates.header)
+    setHeaderRow(headerRow, section, sectionIndex, headerMeta.lang || 'AR')
+    table.appendChild(headerRow)
+    const infoText = resolveSectionInfoText(section, headerMeta)
+    if (templates.info && infoText) {
+      table.appendChild(fillSectionInfoRow(cloneRow(templates.info), infoText))
+    }
+    if (templates.spacer) table.appendChild(cloneRow(templates.spacer))
+
+    const isAr = String(headerMeta.lang || 'AR').toUpperCase() === 'AR'
+    const optionA = isAr ? 'الصحيح' : 'Benar'
+    const optionB = isAr ? 'الخطأ' : 'Salah'
+    const labelA = isAr ? 'أ' : 'a'
+    const labelB = isAr ? 'ب' : 'b'
+
+    ;(section.items || []).forEach((item, idx) => {
+      const questionRow = cloneRow(templates.question)
+      const qCells = getRowCells(questionRow)
+      if (qCells[1]) setCellText(qCells[1], formatDocxNumber(idx + 1, headerMeta.lang || 'AR'))
+      if (qCells[2]) setCellText(qCells[2], '.')
+      if (qCells[3]) setCellText(qCells[3], String(item?.text || ''))
+      table.appendChild(questionRow)
+
+      const optionRow = cloneRow(templates.options)
+      const oCells = getRowCells(optionRow)
+      if (oCells[1]) setCellText(oCells[1], labelA)
+      if (oCells[2]) setCellText(oCells[2], '.')
+      if (oCells[3]) setCellText(oCells[3], optionA)
+      if (oCells[4]) setCellText(oCells[4], labelB)
+      if (oCells[5]) setCellText(oCells[5], '.')
+      if (oCells[6]) setCellText(oCells[6], optionB)
+      table.appendChild(optionRow)
+    })
+  }
+
   function fillEssayTable(table, section, sectionIndex, templates, headerMeta = {}) {
     clearTableRows(table)
     const headerRow = cloneRow(templates.header)
@@ -627,6 +789,459 @@
       if (cells[3]) setCellText(cells[3], String(item?.text || ''))
       table.appendChild(questionRow)
     })
+  }
+
+  function buildWordSearchDocxLines(item, langCode = 'AR') {
+    const safeLang = String(langCode || 'AR').toUpperCase() === 'AR' ? 'AR' : 'ID'
+    const lines = []
+    const intro = String(item?.text || '').trim()
+    if (intro) lines.push(intro)
+    const words = Array.isArray(item?.words)
+      ? item.words.map(word => String(word || '').trim()).filter(Boolean)
+      : []
+    if (words.length) {
+      lines.push(`${safeLang === 'AR' ? 'الكلمات المطلوبة' : 'Kata yang dicari'}: ${words.join(safeLang === 'AR' ? '، ' : ', ')}`)
+    }
+    const grid = Array.isArray(item?.grid) ? item.grid : []
+    if (grid.length) {
+      lines.push('')
+      grid.forEach(row => {
+        const text = (Array.isArray(row) ? row : []).map(cell => String(cell || '').trim()).join(' ')
+        if (text) lines.push(text)
+      })
+    }
+    return lines.length ? lines : ['-']
+  }
+
+  function buildCrosswordDocxLines(item, langCode = 'AR') {
+    const safeLang = String(langCode || 'AR').toUpperCase() === 'AR' ? 'AR' : 'ID'
+    const lines = []
+    const intro = String(item?.text || '').trim()
+    if (intro) lines.push(intro)
+    const mask = Array.isArray(item?.mask) ? item.mask : []
+    if (mask.length) {
+      lines.push('')
+      mask.forEach(row => {
+        const text = Array.from(String(row || '')).map(cell => (cell === '#' ? '■' : '□')).join(' ')
+        if (text) lines.push(text)
+      })
+    }
+    const buildListLines = (title, entries) => {
+      lines.push('')
+      lines.push(title)
+      if (!entries.length) {
+        lines.push('-')
+        return
+      }
+      entries.forEach(entry => {
+        const clue = String(entry?.clue || '-').trim() || '-'
+        const length = Number(entry?.length || 0) || 0
+        lines.push(`${formatDocxNumber(entry?.number || '', safeLang)}. ${clue} (${length})`)
+      })
+    }
+    buildListLines(safeLang === 'AR' ? 'أفقيًا' : 'Mendatar', Array.isArray(item?.entriesAcross) ? item.entriesAcross : [])
+    buildListLines(safeLang === 'AR' ? 'عموديًا' : 'Menurun', Array.isArray(item?.entriesDown) ? item.entriesDown : [])
+    return lines.length ? lines : ['-']
+  }
+
+  function buildCrosswordClueLines(item, langCode = 'AR') {
+    const safeLang = String(langCode || 'AR').toUpperCase() === 'AR' ? 'AR' : 'ID'
+    const acrossLabel = safeLang === 'AR' ? 'أفقيًا' : 'Mendatar'
+    const downLabel = safeLang === 'AR' ? 'عموديًا' : 'Menurun'
+    const across = (Array.isArray(item?.entriesAcross) ? item.entriesAcross : [])
+      .filter(entry => String(entry?.clue || '').trim())
+    const down = (Array.isArray(item?.entriesDown) ? item.entriesDown : [])
+      .filter(entry => String(entry?.clue || '').trim())
+    const lines = []
+    const pushGroup = (title, entries) => {
+      if (!entries.length) return
+      if (lines.length) lines.push('')
+      lines.push(title)
+      entries.forEach(entry => {
+        const clueLines = splitPreserveLines(String(entry?.clue || '').trim())
+        const firstLine = clueLines.shift() || ''
+        const length = Number(entry?.length || 0) || 0
+        lines.push(`${formatDocxNumber(entry?.number || '', safeLang)}. ${firstLine}${length ? ` (${length})` : ''}`)
+        clueLines.forEach(line => lines.push(line))
+      })
+    }
+    pushGroup(acrossLabel, across)
+    pushGroup(downLabel, down)
+    return lines
+  }
+
+  function buildWordSearchListLines(item, langCode = 'AR', headingText = '') {
+    const safeLang = String(langCode || 'AR').toUpperCase() === 'AR' ? 'AR' : 'ID'
+    const words = Array.isArray(item?.words)
+      ? item.words.map(word => String(word || '').trim()).filter(Boolean)
+      : []
+    const lines = []
+    const safeHeading = String(headingText || '').trim()
+    if (safeHeading) lines.push(safeHeading)
+    if (!words.length) {
+      if (!lines.length) lines.push('-')
+      return lines
+    }
+    const separator = safeLang === 'AR' ? '، ' : ', '
+    const maxChars = safeLang === 'AR' ? 34 : 42
+    let currentLine = ''
+    words.forEach(word => {
+      const nextLine = currentLine ? `${currentLine}${separator}${word}` : word
+      if (currentLine && nextLine.length > maxChars) {
+        lines.push(currentLine)
+        currentLine = word
+        return
+      }
+      currentLine = nextLine
+    })
+    if (currentLine) lines.push(currentLine)
+    return lines.length ? lines : ['-']
+  }
+
+  function fillWordSearchGridRow(rowNode, gridRow = []) {
+    const cells = getRowCells(rowNode)
+    cells.forEach((cell, index) => {
+      if (index === 0) {
+        setCellText(cell, '')
+        setCellBorderMode(cell, 'hidden')
+        return
+      }
+      const value = String(Array.isArray(gridRow) ? (gridRow[index - 1] || '') : '').trim()
+      setCellBorderMode(cell, value ? 'visible' : 'hidden')
+      setCellText(cell, value)
+    })
+    return rowNode
+  }
+
+  function buildCrosswordNumberMap(item) {
+    const map = new Map()
+    ;[
+      ...(Array.isArray(item?.entriesAcross) ? item.entriesAcross : []),
+      ...(Array.isArray(item?.entriesDown) ? item.entriesDown : [])
+    ].forEach(entry => {
+      const key = `${Number(entry?.row || 0)}:${Number(entry?.col || 0)}`
+      if (!map.has(key)) map.set(key, Number(entry?.number || 0) || 0)
+    })
+    return map
+  }
+
+  function buildCrosswordBounds(maskRows = []) {
+    let minRow = Infinity
+    let maxRow = -1
+    let minCol = Infinity
+    let maxCol = -1
+    ;(Array.isArray(maskRows) ? maskRows : []).forEach((rowText, rowIndex) => {
+      const safeRow = String(rowText || '')
+      for (let colIndex = 0; colIndex < safeRow.length; colIndex += 1) {
+        if (safeRow[colIndex] !== '.') continue
+        minRow = Math.min(minRow, rowIndex)
+        maxRow = Math.max(maxRow, rowIndex)
+        minCol = Math.min(minCol, colIndex)
+        maxCol = Math.max(maxCol, colIndex)
+      }
+    })
+    if (!Number.isFinite(minRow) || maxRow < 0 || !Number.isFinite(minCol) || maxCol < 0) {
+      return { minRow: 0, maxRow: -1, minCol: 0, maxCol: -1 }
+    }
+    return { minRow, maxRow, minCol, maxCol }
+  }
+
+  function fillCrosswordGridRowSingle(rowNode, maskRow = '', rowIndex = 0, numberMap = new Map(), langCode = 'AR', bounds = null) {
+    let cells = getRowCells(rowNode)
+    const safeMask = String(maskRow || '')
+    const rangeMin = Number.isInteger(bounds?.minCol) ? bounds.minCol : 0
+    const rangeMax = Number.isInteger(bounds?.maxCol) && bounds.maxCol >= rangeMin ? bounds.maxCol : Math.max(0, safeMask.length - 1)
+    const cellTemplate = cells[0]?.cloneNode(true) || null
+    const cellWidth = getCellWidth(cells[0]) || 340
+    if (cellTemplate) {
+      while (rowNode.firstChild) rowNode.removeChild(rowNode.firstChild)
+      for (let col = rangeMin; col <= rangeMax; col += 1) {
+        const cell = cellTemplate.cloneNode(true)
+        clearCellGridSpan(cell)
+        setCellWidth(cell, cellWidth)
+        const isOpen = safeMask[col] === '.'
+        if (!isOpen) {
+          setCellBorderMode(cell, 'hidden')
+          setCellText(cell, '')
+        } else {
+          setCellBorderMode(cell, 'visible')
+          const number = numberMap.get(`${rowIndex}:${col}`) || ''
+          setCellText(cell, number ? formatDocxNumber(number, langCode) : '')
+        }
+        rowNode.appendChild(cell)
+      }
+      return rowNode
+    }
+    cells.forEach((cell, index) => {
+      const actualColIndex = rangeMin + index
+      const isOpen = actualColIndex <= rangeMax && safeMask[actualColIndex] === '.'
+      if (!isOpen) {
+        setCellBorderMode(cell, 'hidden')
+        setCellText(cell, '')
+        return
+      }
+      setCellBorderMode(cell, 'visible')
+      const number = numberMap.get(`${rowIndex}:${actualColIndex}`) || ''
+      setCellText(cell, number ? formatDocxNumber(number, langCode) : '')
+    })
+    return rowNode
+  }
+
+  function fillCrosswordGridRow(rowNode, maskRow = '', rowIndex = 0, numberMap = new Map(), langCode = 'AR', bounds = null) {
+    let cells = getRowCells(rowNode)
+    const safeMask = String(maskRow || '')
+    const isRtl = String(langCode || 'AR').toUpperCase() === 'AR'
+    const rangeMin = Number.isInteger(bounds?.minCol) ? bounds.minCol : 0
+    const rangeMax = Number.isInteger(bounds?.maxCol) && bounds.maxCol >= rangeMin ? bounds.maxCol : Math.max(0, safeMask.length - 1)
+    const compactTemplate = cells.length > 0 && cells.length <= 5 && safeMask.length > 0
+    if (compactTemplate) {
+      const numberTemplate = cells[1]?.cloneNode(true) || cells[0]?.cloneNode(true) || null
+      const letterTemplate = cells[2]?.cloneNode(true) || cells[1]?.cloneNode(true) || null
+      const numberWidth = getCellWidth(cells[1] || cells[3] || cells[0]) || 120
+      const letterWidth = getCellWidth(cells[2] || cells[4] || cells[1]) || 320
+      while (rowNode.firstChild) rowNode.removeChild(rowNode.firstChild)
+      const visualCols = []
+      for (let col = rangeMin; col <= rangeMax; col += 1) visualCols.push(col)
+      visualCols.forEach(actualColIndex => {
+        if (numberTemplate) {
+          const cell = numberTemplate.cloneNode(true)
+          clearCellGridSpan(cell)
+          setCellWidth(cell, numberWidth)
+          const isOpen = safeMask[actualColIndex] === '.'
+          if (!isOpen) {
+            setCellBorderMode(cell, 'hidden')
+            setCellText(cell, '')
+          } else {
+            setCellBorderSides(cell, { top: 'single', left: 'single', bottom: 'single', right: 'nil' })
+            const number = numberMap.get(`${rowIndex}:${actualColIndex}`) || ''
+            setCellText(cell, number ? formatDocxNumber(number, langCode) : '')
+          }
+          rowNode.appendChild(cell)
+        }
+        if (letterTemplate) {
+          const cell = letterTemplate.cloneNode(true)
+          clearCellGridSpan(cell)
+          setCellWidth(cell, letterWidth)
+          const isOpen = safeMask[actualColIndex] === '.'
+          if (!isOpen) {
+            setCellBorderMode(cell, 'hidden')
+            setCellText(cell, '')
+          } else {
+            setCellBorderSides(cell, { top: 'single', left: 'nil', bottom: 'single', right: 'single' })
+            setCellText(cell, '')
+          }
+          rowNode.appendChild(cell)
+        }
+      })
+      return rowNode
+    }
+    const expectedPairCells = (safeMask.length * 2) + 1
+    if (safeMask.length && cells.length < expectedPairCells && cells.length >= 3) {
+      const numberTemplate = cells[1]?.cloneNode(true) || null
+      const letterTemplate = cells[2]?.cloneNode(true) || null
+      for (let index = cells.length; index < expectedPairCells; index += 1) {
+        const template = ((index - 1) % 2) === 0 ? numberTemplate : letterTemplate
+        if (!template) break
+        rowNode.appendChild(template.cloneNode(true))
+      }
+      cells = getRowCells(rowNode)
+    }
+    if (cells.length >= (safeMask.length * 2) + 1) {
+      cells.forEach((cell, index) => {
+        if (index === 0) {
+          setCellText(cell, '')
+          setCellBorderMode(cell, 'hidden')
+          return
+        }
+        const pairIndex = Math.floor((index - 1) / 2)
+        const actualColIndex = isRtl ? (safeMask.length - 1 - pairIndex) : pairIndex
+        const isNumberCell = ((index - 1) % 2) === 0
+        const isOpen = safeMask[actualColIndex] === '.'
+        if (!isOpen) {
+          setCellBorderMode(cell, 'hidden')
+          setCellText(cell, '')
+          return
+        }
+        if (isNumberCell) {
+          setCellBorderSides(cell, { top: 'single', left: 'single', bottom: 'single', right: 'nil' })
+          const number = numberMap.get(`${rowIndex}:${actualColIndex}`) || ''
+          setCellText(cell, number ? formatDocxNumber(number, langCode) : '')
+        } else {
+          setCellBorderSides(cell, { top: 'single', left: 'nil', bottom: 'single', right: 'single' })
+          setCellText(cell, '')
+        }
+      })
+      return rowNode
+    }
+    cells.forEach((cell, index) => {
+      if (index === 0) {
+        setCellText(cell, '')
+        setCellBorderMode(cell, 'hidden')
+        return
+      }
+      const actualColIndex = isRtl ? (safeMask.length - index) : (index - 1)
+      const isOpen = safeMask[actualColIndex] === '.'
+      if (!isOpen) {
+        setCellBorderMode(cell, 'hidden')
+        setCellText(cell, '')
+        return
+      }
+      setCellBorderMode(cell, 'visible')
+      const number = numberMap.get(`${rowIndex}:${actualColIndex}`) || ''
+      setCellText(cell, number ? formatDocxNumber(number, langCode) : '')
+    })
+    return rowNode
+  }
+
+  function fillWordSearchTable(table, section, sectionIndex, templates, headerMeta = {}) {
+    clearTableRows(table)
+    const headerRow = cloneRow(templates.header)
+    setHeaderRow(headerRow, section, sectionIndex, headerMeta.lang || 'AR')
+    table.appendChild(headerRow)
+    const infoText = resolveSectionInfoText(section, headerMeta)
+    if (templates.info && infoText) {
+      table.appendChild(fillSectionInfoRow(cloneRow(templates.info), infoText))
+    }
+    if (templates.spacer) table.appendChild(cloneRow(templates.spacer))
+
+    ;(section.items || []).forEach((item, idx) => {
+      const questionTemplate = idx === 0
+        ? (templates.firstQuestion || templates.question)
+        : (templates.question || templates.firstQuestion)
+      const questionRow = cloneRow(questionTemplate)
+      const cells = getRowCells(questionRow)
+      if (cells[1]) setCellText(cells[1], formatDocxNumber(idx + 1, headerMeta.lang || 'AR'))
+      if (cells[2]) setCellText(cells[2], '.')
+      if (cells[3]) setCellLines(cells[3], splitPreserveLines(String(item?.text || '')))
+      table.appendChild(questionRow)
+
+      if (templates.wordList) {
+        const wordListRow = cloneRow(templates.wordList)
+        const listCells = getRowCells(wordListRow)
+        const targetCell = listCells[listCells.length > 1 ? 1 : 0]
+        const headingText = targetCell ? getCellPlainText(targetCell).trim() : ''
+        if (targetCell) setCellLines(targetCell, buildWordSearchListLines(item, headerMeta.lang || 'AR', headingText))
+        table.appendChild(wordListRow)
+      }
+      if (templates.wordListSpacer) table.appendChild(cloneRow(templates.wordListSpacer))
+
+      const gridRows = Array.isArray(item?.grid) ? item.grid : []
+      if (templates.gridRow && gridRows.length) {
+        gridRows.forEach(row => {
+          const gridRowNode = cloneRow(templates.gridRow)
+          table.appendChild(fillWordSearchGridRow(gridRowNode, row))
+        })
+      }
+    })
+  }
+
+  function fillCrosswordTable(table, section, sectionIndex, templates, headerMeta = {}) {
+    const items = Array.isArray(section.items) ? section.items : []
+    const singleItem = items.length === 1 ? items[0] : null
+    const splitGridTemplate = !!templates.gridTable
+    if (splitGridTemplate) {
+      const headerRows = getTableRows(table)
+      if (headerRows[0]) {
+        setHeaderRow(headerRows[0], section, sectionIndex, headerMeta.lang || 'AR')
+      }
+      const outputGridTable = templates.gridTable.cloneNode(true)
+      clearTableRows(outputGridTable)
+      items.forEach(item => {
+        const maskRows = Array.isArray(item?.mask) ? item.mask : []
+        const numberMap = buildCrosswordNumberMap(item)
+        const bounds = buildCrosswordBounds(maskRows)
+        const sourceCells = getRowCells(templates.gridRow)
+        const cellWidth = getCellWidth(sourceCells[0]) || 340
+        if (bounds.maxCol >= bounds.minCol) {
+          setTableGrid(outputGridTable, Array.from({ length: (bounds.maxCol - bounds.minCol + 1) }, () => cellWidth))
+        }
+        if (templates.gridRow && maskRows.length) {
+          maskRows.forEach((maskRow, rowIndex) => {
+            if (rowIndex < bounds.minRow || rowIndex > bounds.maxRow) return
+            const gridRowNode = cloneRow(templates.gridRow)
+            outputGridTable.appendChild(
+              fillCrosswordGridRowSingle(gridRowNode, maskRow, rowIndex, numberMap, headerMeta.lang || 'AR', bounds)
+            )
+          })
+        }
+      })
+      return { gridTable: outputGridTable }
+    }
+
+    clearTableRows(table)
+    const headerRow = cloneRow(templates.header)
+    setHeaderRow(headerRow, section, sectionIndex, headerMeta.lang || 'AR')
+    table.appendChild(headerRow)
+    const infoText = resolveSectionInfoText(section, headerMeta)
+    const compactTemplate = !templates.question && !templates.wordList && !!templates.gridRow && !splitGridTemplate
+    const infoLines = infoText ? splitPreserveLines(infoText) : []
+    if (compactTemplate && singleItem) {
+      const questionLines = splitPreserveLines(String(singleItem?.text || '').trim()).filter(line => String(line || '').trim())
+      const clueLines = buildCrosswordClueLines(singleItem, headerMeta.lang || 'AR')
+      if (questionLines.length) {
+        if (infoLines.length) infoLines.push('')
+        infoLines.push(...questionLines)
+      }
+      if (clueLines.length) {
+        if (infoLines.length) infoLines.push('')
+        infoLines.push(...clueLines)
+      }
+    }
+    if (templates.info && infoLines.some(line => String(line || '').trim())) {
+      table.appendChild(fillSectionInfoRow(cloneRow(templates.info), infoLines))
+    }
+    if (templates.spacer) table.appendChild(cloneRow(templates.spacer))
+    if (compactTemplate && templates.gridRow && singleItem) {
+      const sourceCells = getRowCells(templates.gridRow)
+      const numberWidth = getCellWidth(sourceCells[1] || sourceCells[3] || sourceCells[0]) || 120
+      const letterWidth = getCellWidth(sourceCells[2] || sourceCells[4] || sourceCells[1]) || 320
+      const bounds = buildCrosswordBounds(Array.isArray(singleItem?.mask) ? singleItem.mask : [])
+      if (bounds.maxCol >= bounds.minCol) {
+        const colWidths = []
+        for (let col = bounds.minCol; col <= bounds.maxCol; col += 1) {
+          colWidths.push(numberWidth, letterWidth)
+        }
+        setTableGrid(table, colWidths)
+      }
+    }
+    items.forEach((item, idx) => {
+      const questionTemplate = idx === 0
+        ? (templates.firstQuestion || templates.question)
+        : (templates.question || templates.firstQuestion)
+      if (questionTemplate) {
+        const questionRow = cloneRow(questionTemplate)
+        const cells = getRowCells(questionRow)
+        if (cells[1]) setCellText(cells[1], formatDocxNumber(idx + 1, headerMeta.lang || 'AR'))
+        if (cells[2]) setCellText(cells[2], '.')
+        if (cells[3] || cells[cells.length - 1]) {
+          const targetCell = cells[3] || cells[cells.length - 1]
+          setCellLines(targetCell, splitPreserveLines(String(item?.text || '')))
+        }
+        table.appendChild(questionRow)
+      }
+
+      const clueLines = buildCrosswordClueLines(item, headerMeta.lang || 'AR')
+      if (templates.wordList && clueLines.length) {
+        const clueRow = cloneRow(templates.wordList)
+        const clueCells = getRowCells(clueRow)
+        const targetCell = clueCells[1] || clueCells[clueCells.length - 1] || clueCells[0]
+        if (targetCell) setCellLines(targetCell, clueLines)
+        table.appendChild(clueRow)
+        if (templates.wordListSpacer) table.appendChild(cloneRow(templates.wordListSpacer))
+      }
+
+      const maskRows = Array.isArray(item?.mask) ? item.mask : []
+      const numberMap = buildCrosswordNumberMap(item)
+      const bounds = buildCrosswordBounds(maskRows)
+      if (templates.gridRow && maskRows.length) {
+        maskRows.forEach((maskRow, rowIndex) => {
+          if (rowIndex < bounds.minRow || rowIndex > bounds.maxRow) return
+          const gridRowNode = cloneRow(templates.gridRow)
+          table.appendChild(fillCrosswordGridRow(gridRowNode, maskRow, rowIndex, numberMap, headerMeta.lang || 'AR', bounds))
+        })
+      }
+    })
+    return null
   }
 
   function fillMatchingTable(table, section, sectionIndex, templates, headerMeta = {}) {
@@ -661,6 +1276,22 @@
     if (cells[1]) setCellLines(cells[1], columnA)
     if (cells[2]) setCellLines(cells[2], columnB)
     table.appendChild(contentRow)
+  }
+
+  function buildCrosswordPrototype(table, gridTable = null) {
+    const rows = getTableRows(table)
+    const compact = rows.length <= 4
+    return {
+      table: table.cloneNode(true),
+      header: cloneRow(pickTemplateRow(table, [0])),
+      info: maybeCloneRow(pickTemplateRow(table, [1])),
+      spacer: maybeCloneRow(pickTemplateRow(table, [2])),
+      question: (compact || gridTable) ? null : maybeCloneRow(pickTemplateRow(table, [3])),
+      wordList: (compact || gridTable) ? null : maybeCloneRow(pickTemplateRow(table, [4])),
+      wordListSpacer: (compact || gridTable) ? null : maybeCloneRow(pickTemplateRow(table, [5])),
+      gridRow: maybeCloneRow(pickTemplateRow(gridTable || table, [gridTable ? 0 : (compact ? 3 : 6)])),
+      gridTable: gridTable ? gridTable.cloneNode(true) : null
+    }
   }
 
   function fillFillBlankTable(table, section, sectionIndex, templates, headerMeta = {}) {
@@ -704,11 +1335,15 @@
       const text = ((qsa(node, 't') || []).map(entry => String(entry?.textContent || '')).join('')).trim()
       return !text
     }) || paragraphs[paragraphs.length - 1] || null
-    if (tables.length < 5) {
-      throw new Error('Template ExamAR tidak lengkap. Tabel soal Arab tidak ditemukan utuh.')
+    if (tables.length < 8) {
+      throw new Error('Template ExamAR tidak lengkap. Tabel soal Arab termasuk Cari Kata belum ditemukan utuh.')
     }
     const hasHeaderInfoTable = tables.length >= 6
     const tableOffset = hasHeaderInfoTable ? 1 : 0
+    const splitCrossword = tables.length >= 10 && getTableRows(tables[tables.length - 1]).length === 1
+    const wordSearchTable = splitCrossword ? (tables[tables.length - 3] || tables[7]) : (tables[tables.length - 2] || tables[7])
+    const crosswordTable = splitCrossword ? (tables[tables.length - 2] || tables[7]) : (tables[tables.length - 1] || tables[7])
+    const crosswordGridTable = splitCrossword ? tables[tables.length - 1] : null
     return {
       body,
       sectionPr,
@@ -742,6 +1377,16 @@
           firstQuestion: cloneRow(pickTemplateRow(tables[2 + tableOffset], [2, 1])),
           question: cloneRow(pickTemplateRow(tables[2 + tableOffset], [2, 1]))
         },
+        'cari-kata': {
+          table: wordSearchTable.cloneNode(true),
+          header: cloneRow(pickTemplateRow(wordSearchTable, [0])),
+          info: cloneRow(pickTemplateRow(wordSearchTable, [1])),
+          question: cloneRow(pickTemplateRow(wordSearchTable, [2])),
+          wordList: cloneRow(pickTemplateRow(wordSearchTable, [3])),
+          wordListSpacer: cloneRow(pickTemplateRow(wordSearchTable, [4])),
+          gridRow: cloneRow(pickTemplateRow(wordSearchTable, [5]))
+        },
+        'teka-silang': buildCrosswordPrototype(crosswordTable, crosswordGridTable),
         'pasangkan-kata': {
           table: tables[3 + tableOffset].cloneNode(true),
           header: cloneRow(pickTemplateRow(tables[3 + tableOffset], [0])),
@@ -756,7 +1401,14 @@
           wordBank: cloneRow(pickTemplateRow(tables[4 + tableOffset], [2, 1])),
           firstQuestion: cloneRow(pickTemplateRow(tables[4 + tableOffset], [3, 2])),
           question: cloneRow(pickTemplateRow(tables[4 + tableOffset], [3, 2]))
-        }
+        },
+        'benar-salah': tables[5 + tableOffset] ? {
+          table: tables[5 + tableOffset].cloneNode(true),
+          header: cloneRow(pickTemplateRow(tables[5 + tableOffset], [0])),
+          info: cloneRow(pickTemplateRow(tables[5 + tableOffset], [1])),
+          question: cloneRow(pickTemplateRow(tables[5 + tableOffset], [2])),
+          options: cloneRow(pickTemplateRow(tables[5 + tableOffset], [3]))
+        } : null
       }
     }
   }
@@ -811,11 +1463,16 @@
       const proto = prototypes[section.type]
       if (!proto) return
       const table = proto.table.cloneNode(true)
+      let extra = null
       if (section.type === 'pilihan-ganda') fillPgTable(table, section, sectionIndex, proto, headerMeta)
+      else if (section.type === 'benar-salah') fillTrueFalseTable(table, section, sectionIndex, proto, headerMeta)
       else if (section.type === 'esai') fillEssayTable(table, section, sectionIndex, proto, headerMeta)
+      else if (section.type === 'cari-kata') fillWordSearchTable(table, section, sectionIndex, proto, headerMeta)
+      else if (section.type === 'teka-silang') extra = fillCrosswordTable(table, section, sectionIndex, proto, headerMeta)
       else if (section.type === 'pasangkan-kata') fillMatchingTable(table, section, sectionIndex, proto, headerMeta)
       else if (section.type === 'isi-titik') fillFillBlankTable(table, section, sectionIndex, proto, headerMeta)
       body.insertBefore(table, sectionPr)
+      if (extra?.gridTable) body.insertBefore(extra.gridTable, sectionPr)
       if (spacerParagraph) body.insertBefore(spacerParagraph.cloneNode(true), sectionPr)
     })
   }
@@ -830,9 +1487,13 @@
       const text = ((qsa(node, 't') || []).map(entry => String(entry?.textContent || '')).join('')).trim()
       return !text
     }) || paragraphs[paragraphs.length - 1] || null
-    if (tables.length < 6) {
-      throw new Error('Template ExamIN tidak lengkap. Tabel soal Indonesia tidak ditemukan utuh.')
+    if (tables.length < 8) {
+      throw new Error('Template ExamIN tidak lengkap. Tabel soal Indonesia termasuk Cari Kata belum ditemukan utuh.')
     }
+    const splitCrossword = tables.length >= 10 && getTableRows(tables[tables.length - 1]).length === 1
+    const wordSearchTable = splitCrossword ? (tables[tables.length - 3] || tables[7]) : (tables[tables.length - 2] || tables[7])
+    const crosswordTable = splitCrossword ? (tables[tables.length - 2] || tables[8] || tables[7]) : (tables[tables.length - 1] || tables[8] || tables[7])
+    const crosswordGridTable = splitCrossword ? tables[tables.length - 1] : null
     return {
       body,
       sectionPr,
@@ -863,6 +1524,17 @@
           firstQuestion: cloneRow(pickTemplateRow(tables[3], [3])),
           question: cloneRow(pickTemplateRow(tables[3], [3]))
         },
+        'cari-kata': {
+          table: wordSearchTable.cloneNode(true),
+          header: cloneRow(pickTemplateRow(wordSearchTable, [0])),
+          info: cloneRow(pickTemplateRow(wordSearchTable, [1])),
+          spacer: cloneRow(pickTemplateRow(wordSearchTable, [2])),
+          question: cloneRow(pickTemplateRow(wordSearchTable, [3])),
+          wordList: cloneRow(pickTemplateRow(wordSearchTable, [4])),
+          wordListSpacer: cloneRow(pickTemplateRow(wordSearchTable, [5])),
+          gridRow: cloneRow(pickTemplateRow(wordSearchTable, [6]))
+        },
+        'teka-silang': buildCrosswordPrototype(crosswordTable, crosswordGridTable),
         'pasangkan-kata': {
           table: tables[4].cloneNode(true),
           header: cloneRow(pickTemplateRow(tables[4], [0])),
@@ -880,7 +1552,15 @@
           wordBankSpacer: cloneRow(pickTemplateRow(tables[5], [4])),
           firstQuestion: cloneRow(pickTemplateRow(tables[5], [5])),
           question: cloneRow(pickTemplateRow(tables[5], [5]))
-        }
+        },
+        'benar-salah': tables[6] ? {
+          table: tables[6].cloneNode(true),
+          header: cloneRow(pickTemplateRow(tables[6], [0])),
+          info: cloneRow(pickTemplateRow(tables[6], [1])),
+          spacer: cloneRow(pickTemplateRow(tables[6], [2])),
+          question: cloneRow(pickTemplateRow(tables[6], [3])),
+          options: cloneRow(pickTemplateRow(tables[6], [4]))
+        } : null
       }
     }
   }
@@ -960,11 +1640,16 @@
       const proto = prototypes[section.type]
       if (!proto) return
       const table = proto.table.cloneNode(true)
+      let extra = null
       if (section.type === 'pilihan-ganda') fillPgTable(table, section, sectionIndex, proto, { ...headerMeta, lang: 'ID' })
+      else if (section.type === 'benar-salah') fillTrueFalseTable(table, section, sectionIndex, proto, { ...headerMeta, lang: 'ID' })
       else if (section.type === 'esai') fillEssayTable(table, section, sectionIndex, proto, { ...headerMeta, lang: 'ID' })
+      else if (section.type === 'cari-kata') fillWordSearchTable(table, section, sectionIndex, proto, { ...headerMeta, lang: 'ID' })
+      else if (section.type === 'teka-silang') extra = fillCrosswordTable(table, section, sectionIndex, proto, { ...headerMeta, lang: 'ID' })
       else if (section.type === 'pasangkan-kata') fillMatchingTable(table, section, sectionIndex, proto, { ...headerMeta, lang: 'ID' })
       else if (section.type === 'isi-titik') fillFillBlankTable(table, section, sectionIndex, proto, { ...headerMeta, lang: 'ID' })
       body.insertBefore(table, sectionPr)
+      if (extra?.gridTable) body.insertBefore(extra.gridTable, sectionPr)
       if (spacerParagraph) body.insertBefore(spacerParagraph.cloneNode(true), sectionPr)
     })
   }

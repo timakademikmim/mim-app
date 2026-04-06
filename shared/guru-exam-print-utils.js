@@ -80,10 +80,16 @@
     const raw = String(value || '').trim().toLowerCase()
     if (raw === 'esai' || raw === 'essay') return 'esai'
     if (raw === 'pilihan-ganda' || raw === 'pilihan ganda' || raw === 'pg') return 'pilihan-ganda'
+    if (raw === 'benar-salah' || raw === 'benar salah' || raw === 'true-false' || raw === 'true false' || raw === 'bs') return 'benar-salah'
+    if (raw === 'cari-kata' || raw === 'cari kata' || raw === 'word-search' || raw === 'word search' || raw === 'teka-kata') return 'cari-kata'
+    if (raw === 'teka-silang' || raw === 'teka silang' || raw === 'tts' || raw === 'crossword') return 'teka-silang'
     if (raw === 'pasangkan-kata' || raw === 'pasangkan kata' || raw === 'matching') return 'pasangkan-kata'
     if (raw === 'isi-titik' || raw === 'isi titik' || raw === 'fill-blank' || raw === 'fill blank') return 'isi-titik'
     const fallback = String(fallbackType || '').trim().toLowerCase()
     if (fallback === 'esai' || fallback === 'essay') return 'esai'
+    if (fallback === 'benar-salah' || fallback === 'benar salah' || fallback === 'true-false' || fallback === 'true false' || fallback === 'bs') return 'benar-salah'
+    if (fallback === 'cari-kata' || fallback === 'cari kata' || fallback === 'word-search' || fallback === 'word search' || fallback === 'teka-kata') return 'cari-kata'
+    if (fallback === 'teka-silang' || fallback === 'teka silang' || fallback === 'tts' || fallback === 'crossword') return 'teka-silang'
     if (fallback === 'pasangkan-kata' || fallback === 'pasangkan kata' || fallback === 'matching') return 'pasangkan-kata'
     if (fallback === 'isi-titik' || fallback === 'isi titik' || fallback === 'fill-blank' || fallback === 'fill blank') return 'isi-titik'
     return 'pilihan-ganda'
@@ -169,11 +175,17 @@
     let label = 'Pilihan Ganda'
     if (lang === 'AR') {
       if (type === 'esai') label = 'مقال'
+      else if (type === 'benar-salah') label = 'الصحيح أو الخطأ'
+      else if (type === 'cari-kata') label = 'ابحث عن الكلمات'
+      else if (type === 'teka-silang') label = 'الكلمات المتقاطعة'
       else if (type === 'pasangkan-kata') label = 'وصل الكلمات'
       else if (type === 'isi-titik') label = 'املأ الفراغ'
       else label = 'اختيار من متعدد'
     } else {
       if (type === 'esai') label = 'Esai'
+      else if (type === 'benar-salah') label = 'Pernyataan Benar atau Salah'
+      else if (type === 'cari-kata') label = 'Cari Kata'
+      else if (type === 'teka-silang') label = 'Teka-Teki Silang'
       else if (type === 'pasangkan-kata') label = 'Pasangkan Kata'
       else if (type === 'isi-titik') label = 'Isi Titik Kosong'
     }
@@ -193,11 +205,17 @@
     const lang = String(langCode || 'ID').toUpperCase()
     if (lang === 'AR') {
       if (type === 'esai') return 'أجب عن الأسئلة التالية بوضوح وصحة.'
+      if (type === 'benar-salah') return 'حدد هل العبارة التالية صحيحة أم خاطئة.'
+      if (type === 'cari-kata') return 'ابحث عن الكلمات المطلوبة في الشبكة، ثم ظللها أو ضع دائرة حولها.'
+      if (type === 'teka-silang') return 'املأ الشبكة اعتمادًا على القرائن الأفقية والعمودية.'
       if (type === 'pasangkan-kata') return 'صل كلمات العمود (أ) بما يناسبها في العمود (ب).'
       if (type === 'isi-titik') return 'أكمل الفراغ بالكلمة المناسبة من الكلمات المعطاة.'
       return 'اختر إجابة واحدة صحيحة.'
     }
     if (type === 'esai') return 'Jawablah soal berikut dengan jelas dan benar.'
+    if (type === 'benar-salah') return 'Tentukan apakah pernyataan berikut benar atau salah.'
+    if (type === 'cari-kata') return 'Temukan kata-kata berikut di dalam kotak huruf, lalu tandai dengan jelas.'
+    if (type === 'teka-silang') return 'Lengkapi teka-teki silang berdasarkan petunjuk mendatar dan menurun.'
     if (type === 'pasangkan-kata') return 'Pasangkan kata pada baris A dengan pasangan yang tepat pada baris B.'
     if (type === 'isi-titik') return 'Lengkapi bagian yang kosong dengan penggalan kata yang disediakan.'
     return 'Pilihlah satu jawaban yang paling tepat.'

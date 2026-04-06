@@ -35,6 +35,7 @@ const MUHAFFIZ_SIDEBAR_ICON_ONLY_BREAKPOINT = 1180
 const PAGE_TITLES = {
   dashboard: 'Dashboard',
   'laporan-bulanan': 'Laporan Bulanan',
+  'input-absensi': 'Input Absen',
   chat: 'Chat',
   'data-halaqah': 'Data Halaqah',
   'prestasi-pelanggaran': 'Prestasi & Pelanggaran',
@@ -117,6 +118,7 @@ function buildMuhaffizSidebarIconSvg(pageKey = '') {
   const map = {
     dashboard: '<path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1V9.5Z"/>',
     'laporan-bulanan': '<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+    'input-absensi': '<path d="M7 4h10a2 2 0 0 1 2 2v14H5V6a2 2 0 0 1 2-2Z"/><path d="M8 9h8M8 13h5M8 17h3"/>',
     'data-halaqah': '<path d="M5 5.5h14v13H5z"/><path d="M9 5.5v13"/>',
     'prestasi-pelanggaran': '<path d="M12 3.5l2.3 4.7 5.2.8-3.8 3.7.9 5.3L12 15.8 7.4 18l.9-5.3L4.5 9l5.2-.8L12 3.5Z"/>',
     ekskul: '<circle cx="12" cy="8" r="3.2"/><path d="M5.5 19a6.5 6.5 0 0 1 13 0"/><path d="M4 11.5h3M17 11.5h3"/>'
@@ -628,6 +630,40 @@ function setTopbarTitle(page) {
     year: 'numeric'
   })
   el.innerHTML = `<span class="topbar-title-main">${escapeHtml(title)}</span><span class="topbar-title-sep" aria-hidden="true"></span><button type="button" class="topbar-title-date-btn" onclick="openTopbarCalendarPopup()" title="Lihat kalender kegiatan">${escapeHtml(todayLabel)}</button>`
+}
+
+async function refreshMuhaffizDelegatedAttendanceNav() {
+  const btn = document.getElementById('muhaffiz-nav-input-absensi')
+  if (!btn || !window.DelegatedAttendanceUtils?.hasPendingAssignments) return false
+  try {
+    const visible = await window.DelegatedAttendanceUtils.hasPendingAssignments({
+      sb,
+      getProfile: getCurrentMuhaffiz
+    })
+    btn.style.display = visible ? '' : 'none'
+    if (!visible && btn.classList.contains('active')) setNavActive('dashboard')
+    return visible
+  } catch (error) {
+    console.error(error)
+    btn.style.display = 'none'
+    return false
+  }
+}
+
+async function renderMuhaffizDelegatedAttendancePage() {
+  const content = document.getElementById('muhaffiz-content')
+  if (!content) return
+  if (!window.DelegatedAttendanceUtils?.renderPage) {
+    content.innerHTML = '<div class="placeholder-card">Modul input absen belum termuat. Refresh halaman.</div>'
+    return
+  }
+  await window.DelegatedAttendanceUtils.renderPage({
+    scope: 'muhaffiz',
+    containerId: 'muhaffiz-content',
+    sb,
+    getProfile: getCurrentMuhaffiz,
+    onTasksChanged: refreshMuhaffizDelegatedAttendanceNav
+  })
 }
 
 function toggleTopbarUserMenu() {
@@ -3720,6 +3756,10 @@ async function loadMuhaffizPage(page, options = {}) {
     await renderMuhaffizManageHalaqahPage()
     return
   }
+  if (targetPage === 'input-absensi') {
+    await renderMuhaffizDelegatedAttendancePage()
+    return
+  }
   if (targetPage === 'chat') {
     await renderMuhaffizChatPage()
     return
@@ -3857,6 +3897,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await setMuhaffizWelcomeName()
     await setupMuhaffizEkskulAccess(true)
     await setupMuhaffizPrestasiPelanggaranAccess(true)
+    await refreshMuhaffizDelegatedAttendanceNav()
     if (!muhaffizState.profile) {
       location.href = 'index.html'
       return
