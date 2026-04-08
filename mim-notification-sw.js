@@ -16,6 +16,54 @@ function normalizeNotificationTargetUrl(rawUrl) {
   }
 }
 
+function normalizePushPayload(rawPayload) {
+  const payload = rawPayload && typeof rawPayload === 'object' ? rawPayload : {}
+  const options = payload && payload.options && typeof payload.options === 'object'
+    ? payload.options
+    : {
+        route: String(payload.route || '').trim().toLowerCase(),
+        threadId: String(payload.thread_id || payload.threadId || '').trim(),
+        scope: String(payload.scope || '').trim().toLowerCase(),
+        userId: String(payload.user_id || payload.userId || '').trim(),
+        tag: String(payload.tag || '').trim()
+      }
+  return {
+    title: String(payload.title || 'Notifikasi').trim() || 'Notifikasi',
+    body: String(payload.body || '').trim(),
+    icon: String(payload.icon || '').trim(),
+    badge: String(payload.badge || '').trim(),
+    targetUrl: normalizeNotificationTargetUrl(payload.targetUrl || payload.url || ''),
+    options
+  }
+}
+
+self.addEventListener('push', event => {
+  event.waitUntil((async () => {
+    let rawPayload = {}
+    try {
+      rawPayload = event.data ? await event.data.json() : {}
+    } catch (_error) {
+      try {
+        rawPayload = { body: String(event.data?.text() || '').trim() }
+      } catch (__error) {
+        rawPayload = {}
+      }
+    }
+    const payload = normalizePushPayload(rawPayload)
+    await self.registration.showNotification(payload.title, {
+      body: payload.body || '',
+      tag: String(payload.options?.tag || '').trim() || 'mim-notification',
+      icon: payload.icon || undefined,
+      badge: payload.badge || payload.icon || undefined,
+      data: {
+        type: 'mim-notification',
+        options: payload.options,
+        targetUrl: payload.targetUrl
+      }
+    })
+  })())
+})
+
 self.addEventListener('notificationclick', event => {
   const notification = event.notification
   const payload = notification && notification.data && typeof notification.data === 'object'

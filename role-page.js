@@ -60,6 +60,9 @@ function hasTauriRuntime() {
 
 const FCM_FUNCTION_BASE = 'https://optucpelkueqmlhwlbej.supabase.co/functions/v1'
 const CHAT_OPEN_STORAGE_KEY = 'chat_open_thread_id'
+const WEB_PUSH_REGISTER_FUNCTION = `${FCM_FUNCTION_BASE}/register-web-push-subscription`
+const WEB_PUSH_SEND_FUNCTION = `${FCM_FUNCTION_BASE}/send-web-push`
+const WEB_PUSH_ENDPOINT_CACHE_KEY = 'mim_web_push_endpoint'
 
 function isAndroidRuntime() {
   return hasTauriRuntime() && /android/i.test(String(navigator.userAgent || ''))
@@ -2481,6 +2484,8 @@ let browserNotifPermissionRequest = null
 let browserNotifPermissionAsked = false
 let browserNotifPermissionGestureBound = false
 let mimNotificationServiceWorkerRegistration = null
+let mimWebPushPublicKeyPromise = null
+let mimWebPushRegisterPromise = null
 
 function browserServiceWorkerNotificationSupported() {
   return (
@@ -2512,7 +2517,7 @@ async function ensureMimNotificationServiceWorker() {
   if (!browserServiceWorkerNotificationSupported()) return null
   if (mimNotificationServiceWorkerRegistration) return mimNotificationServiceWorkerRegistration
   try {
-    const registration = await navigator.serviceWorker.register('./mim-notification-sw.js?v=20260330-web-notif-sw-01', {
+    const registration = await navigator.serviceWorker.register('./mim-notification-sw.js?v=20260409-web-push-01', {
       scope: './'
     })
     mimNotificationServiceWorkerRegistration = registration || await navigator.serviceWorker.ready
@@ -2521,6 +2526,103 @@ async function ensureMimNotificationServiceWorker() {
     console.error('Failed to register notification service worker:', error)
     return null
   }
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const normalized = String(base64String || '').trim()
+  if (!normalized) return new Uint8Array()
+  const padding = '='.repeat((4 - (normalized.length % 4)) % 4)
+  const base64 = `${normalized}${padding}`.replace(/-/g, '+').replace(/_/g, '/')
+  const raw = atob(base64)
+  const outputArray = new Uint8Array(raw.length)
+  for (let i = 0; i < raw.length; i += 1) {
+    outputArray[i] = raw.charCodeAt(i)
+  }
+  return outputArray
+}
+
+async function fetchWebPushPublicKey() {
+  if (mimWebPushPublicKeyPromise) return mimWebPushPublicKeyPromise
+  mimWebPushPublicKeyPromise = (async () => {
+    const res = await fetch(WEB_PUSH_REGISTER_FUNCTION, {
+      method: 'GET',
+      headers: { accept: 'application/json' },
+      cache: 'no-store'
+    })
+    if (!res.ok) {
+      throw new Error(`Gagal memuat public key web push (${res.status}).`)
+    }
+    const json = await res.json()
+    const publicKey = String(json?.public_key || json?.publicKey || '').trim()
+    if (!publicKey) {
+      throw new Error('Public key web push belum diset di server.')
+    }
+    return publicKey
+  })()
+  try {
+    return await mimWebPushPublicKeyPromise
+  } catch (error) {
+    mimWebPushPublicKeyPromise = null
+    throw error
+  }
+}
+
+async function ensureWebPushSubscriptionRegistered(force = false) {
+  if (!isWebPlatform() || !browserServiceWorkerNotificationSupported() || !id) return false
+  const permission = String(window.Notification?.permission || 'default')
+  if (permission !== 'granted') return false
+  if (mimWebPushRegisterPromise && !force) return mimWebPushRegisterPromise
+  mimWebPushRegisterPromise = (async () => {
+    try {
+      const registration = await ensureMimNotificationServiceWorker()
+      if (!registration?.pushManager) return false
+      const publicKey = await fetchWebPushPublicKey()
+      let subscription = await registration.pushManager.getSubscription()
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(publicKey)
+        })
+      }
+      if (!subscription) return false
+      const subscriptionJson = subscription.toJSON ? subscription.toJSON() : {}
+      const endpoint = String(subscriptionJson?.endpoint || subscription.endpoint || '').trim()
+      const p256dh = String(subscriptionJson?.keys?.p256dh || '').trim()
+      const auth = String(subscriptionJson?.keys?.auth || '').trim()
+      if (!endpoint || !p256dh || !auth) return false
+      const cachedEndpoint = String(localStorage.getItem(WEB_PUSH_ENDPOINT_CACHE_KEY) || '').trim()
+      if (!force && cachedEndpoint === endpoint) return true
+      const payload = {
+        user_id: String(id || '').trim(),
+        endpoint,
+        keys: { p256dh, auth },
+        user_agent: String(navigator.userAgent || '').trim(),
+        role: String(getActiveRole() || '').trim().toLowerCase(),
+        device_id: getOrCreateDeviceId()
+      }
+      const res = await fetch(WEB_PUSH_REGISTER_FUNCTION, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(text || `HTTP ${res.status}`)
+      }
+      localStorage.setItem(WEB_PUSH_ENDPOINT_CACHE_KEY, endpoint)
+      return true
+    } catch (error) {
+      console.warn('Gagal register web push subscription:', error)
+      return false
+    } finally {
+      mimWebPushRegisterPromise = null
+    }
+  })()
+  return mimWebPushRegisterPromise
+}
+
+function hasActiveWebPushSubscriptionCached() {
+  return Boolean(String(localStorage.getItem(WEB_PUSH_ENDPOINT_CACHE_KEY) || '').trim())
 }
 
 function browserNotificationSupported() {
@@ -2541,9 +2643,15 @@ async function ensureBrowserNotificationPermission(forcePrompt = false) {
       const requestResult = window.Notification.requestPermission()
       if (requestResult && typeof requestResult.then === 'function') {
         resolvedPermission = String(await requestResult)
+        if (resolvedPermission === 'granted') {
+          ensureWebPushSubscriptionRegistered().catch(error => console.warn(error))
+        }
         return resolvedPermission
       }
       resolvedPermission = String(requestResult || window.Notification.permission || 'default')
+      if (resolvedPermission === 'granted') {
+        ensureWebPushSubscriptionRegistered().catch(error => console.warn(error))
+      }
       return resolvedPermission
     } catch (_error) {
       resolvedPermission = 'denied'
@@ -2608,7 +2716,15 @@ function buildBrowserNotificationData(options = {}) {
 
 function buildBrowserNotificationTargetUrl(options = {}) {
   try {
-    const url = new URL(window.location.href)
+    const role = String(options?.role || getActiveRole() || '').trim().toLowerCase()
+    const pagePath = role === 'admin'
+      ? 'admin.html'
+      : role === 'muhaffiz'
+        ? 'muhaffiz.html'
+        : role === 'musyrif'
+          ? 'musyrif.html'
+          : 'guru.html'
+    const url = new URL(pagePath, window.location.href)
     url.searchParams.delete('mim_notify')
     url.searchParams.delete('mim_route')
     url.searchParams.delete('mim_thread')
@@ -2625,6 +2741,33 @@ function buildBrowserNotificationTargetUrl(options = {}) {
   }
 }
 
+function tryOpenRouteFromNotification(route = '') {
+  const targetRoute = String(route || '').trim().toLowerCase()
+  if (!targetRoute) return false
+  if (targetRoute === 'chat') return tryOpenChatRoute()
+  const normalizedRoute = targetRoute === 'input-absensi-approval' ? 'input-absensi' : targetRoute
+  const role = getActiveRole()
+  try {
+    if (role === 'admin' && typeof window.loadPage === 'function') {
+      window.loadPage(normalizedRoute)
+      return true
+    }
+    if (role === 'guru' && typeof window.loadGuruPage === 'function') {
+      window.loadGuruPage(normalizedRoute)
+      return true
+    }
+    if (role === 'muhaffiz' && typeof window.loadMuhaffizPage === 'function') {
+      window.loadMuhaffizPage(normalizedRoute)
+      return true
+    }
+    if (role === 'musyrif' && typeof window.loadMusyrifPage === 'function') {
+      window.loadMusyrifPage(normalizedRoute)
+      return true
+    }
+  } catch (_error) {}
+  return false
+}
+
 function handleBrowserNotificationClick(options = {}) {
   const threadId = safeChatId(options?.threadId || '')
   if (threadId) {
@@ -2638,8 +2781,8 @@ function handleBrowserNotificationClick(options = {}) {
     return
   }
   const route = String(options?.route || '').trim().toLowerCase()
-  if (route === 'chat') {
-    openChatPanelFromNotification()
+  if (route) {
+    tryOpenRouteFromNotification(route)
   }
 }
 
@@ -2726,6 +2869,9 @@ if (browserServiceWorkerNotificationSupported() && !window.__mimNotificationSwMe
     handleBrowserNotificationClick(event?.data?.options || {})
   })
   ensureMimNotificationServiceWorker()
+  if (String(window.Notification?.permission || 'default') === 'granted') {
+    ensureWebPushSubscriptionRegistered().catch(error => console.warn(error))
+  }
 }
 
 bindBrowserNotificationPermissionGesture()
@@ -2753,6 +2899,9 @@ window.addEventListener('load', () => {
   const pendingThread = safeChatId(localStorage.getItem(CHAT_OPEN_STORAGE_KEY) || '')
   if (pendingThread) {
     openChatPageFromNotification(pendingThread)
+  }
+  if (String(window.Notification?.permission || 'default') === 'granted') {
+    ensureWebPushSubscriptionRegistered().catch(error => console.warn(error))
   }
 })
 
@@ -2823,6 +2972,63 @@ window.showLocalNotification = async function showLocalNotification(title, body,
   }
 }
 
+window.sendMimWebPushNotification = async function sendMimWebPushNotification({
+  userId = '',
+  userIds = [],
+  title = '',
+  body = '',
+  route = '',
+  scope = 'general',
+  eventType = 'info',
+  threadId = '',
+  tag = '',
+  dedupeKey = '',
+  storeEvent = true,
+  sourceUserId = '',
+  data = {}
+} = {}) {
+  const targets = [...new Set([
+    ...((Array.isArray(userIds) ? userIds : []).map(item => String(item || '').trim())),
+    String(userId || '').trim()
+  ].filter(Boolean))]
+  if (!targets.length) return false
+  const payloadData = {}
+  Object.entries(data && typeof data === 'object' ? data : {}).forEach(([key, value]) => {
+    payloadData[String(key || '').trim()] = String(value ?? '')
+  })
+  if (route) payloadData.route = String(route || '').trim()
+  if (threadId) payloadData.thread_id = String(threadId || '').trim()
+  try {
+    const res = await fetch(WEB_PUSH_SEND_FUNCTION, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        user_ids: targets,
+        title: String(title || '').trim() || 'Notifikasi baru',
+        body: String(body || '').trim(),
+        route: String(route || '').trim().toLowerCase(),
+        scope: String(scope || 'general').trim().toLowerCase(),
+        event_type: String(eventType || 'info').trim().toLowerCase(),
+        thread_id: String(threadId || '').trim(),
+        tag: String(tag || '').trim(),
+        dedupe_key: String(dedupeKey || '').trim(),
+        source_user_id: String(sourceUserId || '').trim(),
+        store_event: storeEvent !== false,
+        data: payloadData
+      })
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(text || `HTTP ${res.status}`)
+    }
+    const json = await res.json().catch(() => ({}))
+    return Boolean(json?.ok)
+  } catch (error) {
+    console.warn('Gagal mengirim web push notification:', error)
+    return false
+  }
+}
+
 window.maybeNotifyActivityItems = async function maybeNotifyActivityItems({
   scope = 'activity',
   userId = '',
@@ -2830,6 +3036,7 @@ window.maybeNotifyActivityItems = async function maybeNotifyActivityItems({
   readMap = {}
 } = {}) {
   if (!isWebPlatform()) return false
+  if (hasActiveWebPushSubscriptionCached()) return false
   if (!Array.isArray(items) || !items.length) return false
   const uid = safeChatId(userId)
   if (!uid) return false
@@ -2868,6 +3075,7 @@ window.maybeNotifyActivityItems = async function maybeNotifyActivityItems({
 }
 
 window.maybeNotifyChatMessage = async function maybeNotifyChatMessage({ userId, latestIncoming }) {
+  if (isWebPlatform() && hasActiveWebPushSubscriptionCached()) return false
   const uid = safeChatId(userId)
   if (!uid || !latestIncoming) return false
   const messageId = safeChatId(latestIncoming.id || latestIncoming.message_id)

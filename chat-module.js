@@ -1,4 +1,4 @@
-﻿(function initChatModule() {
+(function initChatModule() {
   const CHAT_THREADS_TABLE = 'chat_threads'
   const CHAT_MEMBERS_TABLE = 'chat_thread_members'
   const CHAT_MESSAGES_TABLE = 'chat_messages'
@@ -1099,22 +1099,72 @@
       }
       if (!messageText) return
 
-      const { error } = await sb
+      const { data: insertedRow, error } = await sb
         .from(CHAT_MESSAGES_TABLE)
         .insert([{
           thread_id: threadId,
           sender_id: state.currentUser.id,
           message_text: messageText
         }])
+        .select('id')
+        .single()
       if (error) {
         alert(`Gagal kirim pesan: ${error.message || 'Unknown error'}`)
         return
       }
 
-      await sb
+      const threadUpdateRes = await sb
         .from(CHAT_THREADS_TABLE)
         .update({ last_message_at: new Date().toISOString() })
         .eq('id', threadId)
+      if (threadUpdateRes.error) {
+        console.warn('Gagal update last_message_at thread chat:', threadUpdateRes.error)
+      }
+
+      let recipientIds = [...new Set(
+        (state.members || [])
+          .filter(item => safeId(item?.thread_id) === threadId)
+          .map(item => safeId(item?.karyawan_id))
+          .filter(memberId => memberId && memberId !== state.currentUser.id)
+      )]
+
+      if (!recipientIds.length) {
+        try {
+          const memberRes = await sb
+            .from(CHAT_MEMBERS_TABLE)
+            .select('karyawan_id')
+            .eq('thread_id', threadId)
+          if (!memberRes.error) {
+            recipientIds = [...new Set((memberRes.data || [])
+              .map(item => safeId(item?.karyawan_id))
+              .filter(memberId => memberId && memberId !== state.currentUser.id))]
+          }
+        } catch (notifyError) {
+          console.warn('Gagal memuat anggota thread untuk push chat:', notifyError)
+        }
+      }
+
+      if (recipientIds.length && typeof window.sendMimWebPushNotification === 'function') {
+        let previewBody = isStickerMessage(messageText) ? 'Sticker' : messageText
+        if (previewBody.length > 160) previewBody = `${previewBody.slice(0, 157)}...`
+        void window.sendMimWebPushNotification({
+          userIds: recipientIds,
+          title: `Pesan baru dari ${state.currentUser.nama || 'Pengguna'}`,
+          body: previewBody || 'Anda menerima pesan baru.',
+          route: 'chat',
+          scope: 'chat',
+          eventType: 'chat-message',
+          threadId,
+          tag: `mim-chat-${threadId}`,
+          dedupeKey: insertedRow?.id ? `chat:${insertedRow.id}` : `chat:${threadId}:${Date.now()}`,
+          storeEvent: true,
+          sourceUserId: state.currentUser.id,
+          data: {
+            sender_name: String(state.currentUser.nama || '').trim(),
+            thread_id: threadId
+          }
+        })
+      }
 
       if (customText === null) {
         if (textEl) textEl.value = ''
@@ -1124,7 +1174,6 @@
       state.forceStickBottom = true
       await refresh(false, threadId)
     }
-
     async function sendStickerMessage(url) {
       const stickerUrl = String(url || '').trim()
       if (!stickerUrl) return
@@ -2115,4 +2164,5 @@ create table if not exists public.chat_messages (
     stop
   }
 })()
+
 

@@ -853,6 +853,51 @@ async function openAddJadwalModal() {
   document.getElementById('add-jadwal-modal').style.display = 'block'
 }
 
+async function sendJadwalWebPush({
+  distribusiId = '',
+  userIds = [],
+  action = 'updated',
+  hari = '',
+  jamMulai = '',
+  jamSelesai = '',
+  rowId = ''
+} = {}) {
+  if (typeof window.sendMimWebPushNotification !== 'function') return false
+  const distribusi = (jadwalDistribusiList || []).find(item => String(item?.id || '') === String(distribusiId || '')) || null
+  const targets = [...new Set([
+    ...((Array.isArray(userIds) ? userIds : []).map(item => String(item || '').trim())),
+    String(distribusi?.guru_id || '').trim()
+  ].filter(Boolean))]
+  if (!targets.length) return false
+
+  const kelasNama = String(distribusi?.kelas?.nama_kelas || '-').trim() || '-'
+  const mapelNamaRaw = String(distribusi?.mapel?.nama || '-').trim() || '-'
+  const mapelNama = distribusi?.mapel?.kategori ? `${mapelNamaRaw} (${String(distribusi.mapel.kategori || '').trim()})` : mapelNamaRaw
+  const dayLabel = getHariLabel(hari || '-')
+  const timeLabel = `${toTimeLabel(jamMulai)}-${toTimeLabel(jamSelesai)}`
+  const titleMap = {
+    created: 'Jadwal belajar baru',
+    updated: 'Jadwal belajar diperbarui',
+    deleted: 'Jadwal belajar dibatalkan'
+  }
+  return window.sendMimWebPushNotification({
+    userIds: targets,
+    title: titleMap[String(action || 'updated').trim().toLowerCase()] || 'Perubahan jadwal belajar',
+    body: `${kelasNama} • ${mapelNama} • ${dayLabel} • ${timeLabel}`,
+    route: 'jadwal',
+    scope: 'schedule',
+    eventType: `schedule-${String(action || 'updated').trim().toLowerCase()}`,
+    tag: `mim-schedule-${String(distribusiId || '').trim() || 'general'}`,
+    dedupeKey: `schedule:${String(action || 'updated').trim().toLowerCase()}:${String(rowId || '').trim() || `${distribusiId}:${hari}:${jamMulai}:${jamSelesai}`}`,
+    storeEvent: true,
+    data: {
+      distribusi_id: String(distribusiId || '').trim(),
+      hari: String(hari || '').trim(),
+      jam_mulai: String(jamMulai || '').trim(),
+      jam_selesai: String(jamSelesai || '').trim()
+    }
+  })
+}
 async function tambahJadwalPelajaran() {
   const { payload, error: payloadError } = buildJadwalPayload('modal-add')
   if (payloadError) {
@@ -866,6 +911,14 @@ async function tambahJadwalPelajaran() {
     alert(`Gagal menambah jadwal: ${error.message || 'Unknown error'}`)
     return
   }
+
+  await sendJadwalWebPush({
+    distribusiId: payload.distribusi_id,
+    action: 'created',
+    hari: payload.hari,
+    jamMulai: payload.jam_mulai,
+    jamSelesai: payload.jam_selesai
+  })
 
   closeJadwalModal('add-jadwal-modal')
   clearAllJadwalCaches()
@@ -889,6 +942,7 @@ async function openEditJadwalModal(id) {
 async function simpanEditJadwalPelajaran() {
   if (!currentEditJadwalId) return
 
+  const previousRow = (jadwalList || []).find(item => String(item.id) === String(currentEditJadwalId)) || null
   const { payload, error: payloadError } = buildJadwalPayload('modal-edit')
   if (payloadError) {
     alert(payloadError)
@@ -902,6 +956,20 @@ async function simpanEditJadwalPelajaran() {
     return
   }
 
+  const notifiedUserIds = [...new Set([
+    String((jadwalDistribusiList || []).find(item => String(item?.id || '') === String(previousRow?.distribusi_id || ''))?.guru_id || '').trim(),
+    String((jadwalDistribusiList || []).find(item => String(item?.id || '') === String(payload.distribusi_id || ''))?.guru_id || '').trim()
+  ].filter(Boolean))]
+  await sendJadwalWebPush({
+    distribusiId: payload.distribusi_id,
+    userIds: notifiedUserIds,
+    action: 'updated',
+    hari: payload.hari,
+    jamMulai: payload.jam_mulai,
+    jamSelesai: payload.jam_selesai,
+    rowId: currentEditJadwalId
+  })
+
   closeJadwalModal('edit-jadwal-modal')
   currentEditJadwalId = null
   clearAllJadwalCaches()
@@ -909,6 +977,7 @@ async function simpanEditJadwalPelajaran() {
 }
 
 async function hapusJadwal(id) {
+  const existingRow = (jadwalList || []).find(item => String(item.id) === String(id)) || null
   const confirmed = typeof showPopupConfirm === 'function'
     ? await showPopupConfirm('Yakin ingin hapus jadwal ini?')
     : confirm('Yakin ingin hapus jadwal ini?')
@@ -921,10 +990,18 @@ async function hapusJadwal(id) {
     return
   }
 
+  await sendJadwalWebPush({
+    distribusiId: String(existingRow?.distribusi_id || '').trim(),
+    action: 'deleted',
+    hari: String(existingRow?.hari || '').trim(),
+    jamMulai: String(existingRow?.jam_mulai || '').trim(),
+    jamSelesai: String(existingRow?.jam_selesai || '').trim(),
+    rowId: String(id || '').trim()
+  })
+
   clearAllJadwalCaches()
   await loadJadwalPelajaran(true)
 }
-
 function openAddJamPelajaranModal() {
   createJamPelajaranModal('add-jam-pelajaran-modal', 'Tambah Jam Pelajaran', 'tambahJamPelajaran')
   document.getElementById('add-jam-pelajaran-modal').style.display = 'block'
@@ -1152,4 +1229,7 @@ function initJadwalPage() {
   setupJadwalSortHandlers()
   setJadwalSubtab(currentJadwalSubtab || 'jadwal')
 }
+
+
+
 

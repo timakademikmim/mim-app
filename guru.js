@@ -1,4 +1,4 @@
-﻿const supabaseUrl = 'https://optucpelkueqmlhwlbej.supabase.co'
+const supabaseUrl = 'https://optucpelkueqmlhwlbej.supabase.co'
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9wdHVjcGVsa3VlcW1saHdsYmVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAxOTY4MTgsImV4cCI6MjA4NTc3MjgxOH0.Vqaey9pcnltu9uRbPk0J-AGWaGDZjQLw92pcRv67GNE'
 const sb = window.createDesktopAwareSupabaseClient
   ? window.createDesktopAwareSupabaseClient(supabaseUrl, supabaseKey)
@@ -1018,9 +1018,9 @@ function normalizeLaporanUtsBulkKey(value) {
     .replace(/\bsirah nabawi\b/g, 'sirah')
     .replace(/\bsiroh\b/g, 'sirah')
     .replace(/\btarikh\b/g, 'sirah')
-    .replace(/al[\s\-']*qur['’`]?an/g, 'al quran')
-    .replace(/qur['’`]?an/g, 'quran')
-    .replace(/['’`]/g, '')
+    .replace(/al[\s\-']*qur['�`]?an/g, 'al quran')
+    .replace(/qur['�`]?an/g, 'quran')
+    .replace(/['�`]/g, '')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
 }
@@ -7132,6 +7132,56 @@ function renderAbsensiApprovalPanel() {
   box.innerHTML = html
 }
 
+function buildAbsensiNotificationMeta({ tanggal = '', kelasId = '', mapelId = '', jamIds = [] } = {}) {
+  const ctx = guruContextCache || {}
+  const kelasNama = String(ctx?.kelasMap?.get(String(kelasId || '').trim())?.nama_kelas || '-').trim() || '-'
+  const mapelLabel = getMapelLabel(ctx?.mapelMap?.get(String(mapelId || '').trim())) || '-'
+  const jamMap = new Map((ctx?.jamList || []).map(item => [String(item.id || '').trim(), item]))
+  const jamLabels = [...new Set((Array.isArray(jamIds) ? jamIds : []).map(item => String(item || '').trim()).filter(Boolean))]
+    .map(jamId => {
+      const jam = jamMap.get(jamId)
+      return jam
+        ? String(jam.nama || 'Jam') + ' (' + toTimeLabel(jam.jam_mulai) + '-' + toTimeLabel(jam.jam_selesai) + ')'
+        : jamId
+    })
+    .filter(Boolean)
+  const dateLabel = String(tanggal || '').trim() || '-'
+  const body = [kelasNama, mapelLabel, dateLabel].join(' | ') + (jamLabels.length ? ' | ' + jamLabels.join(', ') : '')
+  return { kelasNama, mapelLabel, jamLabels, body }
+}
+
+async function sendAttendanceWebPush({
+  userId = '',
+  userIds = [],
+  title = '',
+  body = '',
+  route = 'input-absensi',
+  eventType = 'attendance',
+  dedupeKey = '',
+  sourceUserId = '',
+  data = {}
+} = {}) {
+  if (typeof window.sendMimWebPushNotification !== 'function') return false
+  const targets = [...new Set([
+    ...((Array.isArray(userIds) ? userIds : []).map(item => String(item || '').trim())),
+    String(userId || '').trim()
+  ].filter(Boolean))]
+  if (!targets.length) return false
+  return window.sendMimWebPushNotification({
+    userIds: targets,
+    title: String(title || '').trim() || 'Notifikasi absensi',
+    body: String(body || '').trim(),
+    route: String(route || 'input-absensi').trim().toLowerCase(),
+    scope: 'attendance',
+    eventType: String(eventType || 'attendance').trim().toLowerCase(),
+    tag: 'mim-attendance',
+    dedupeKey: String(dedupeKey || '').trim(),
+    storeEvent: true,
+    sourceUserId: String(sourceUserId || '').trim(),
+    data
+  })
+}
+
 async function reviewAbsensiSubmission(id, nextStatus = 'approved') {
   const sid = String(id || '').trim()
   const status = String(nextStatus || '').trim().toLowerCase()
@@ -7242,6 +7292,22 @@ async function reviewAbsensiSubmission(id, nextStatus = 'approved') {
   renderAbsensiApprovalPanel()
   refreshGuruTopbarNotificationsSafe(true)
   clearGuruPageCache('laporan-absensi')
+  const reviewNotif = buildAbsensiNotificationMeta({
+    tanggal: row.tanggal,
+    kelasId: row.kelas_id,
+    mapelId: row.mapel_id,
+    jamIds: [row.jam_pelajaran_1_id, row.jam_pelajaran_2_id]
+  })
+  await sendAttendanceWebPush({
+    userId: String(row.guru_pengganti_id || '').trim(),
+    title: status === 'approved' ? 'Absensi pengganti disetujui' : 'Pengajuan absensi ditolak',
+    body: reviewNotif.body,
+    route: 'input-absensi',
+    eventType: status === 'approved' ? 'attendance-approved' : 'attendance-rejected',
+    dedupeKey: 'attendance:review:' + sid + ':' + status,
+    sourceUserId: reviewerId || '',
+    data: { tanggal: String(row.tanggal || ''), kelas_id: String(row.kelas_id || ''), mapel_id: String(row.mapel_id || '') }
+  })
   alert(status === 'approved' ? 'Absensi pengganti disetujui dan disimpan ke data akhir.' : 'Pengajuan absensi pengganti ditolak.')
 }
 
@@ -7344,6 +7410,17 @@ async function saveGuruAbsensi() {
       }
 
       absensiDelegationState.byDateKey.delete(getAbsensiDelegationCacheKey(penggantiId, tanggal))
+      const delegationNotif = buildAbsensiNotificationMeta({ tanggal, kelasId, mapelId, jamIds })
+      await sendAttendanceWebPush({
+        userId: penggantiId,
+        title: 'Amanah absensi baru',
+        body: delegationNotif.body,
+        route: 'input-absensi',
+        eventType: 'attendance-delegated',
+        dedupeKey: 'attendance:delegated:' + tanggal + ':' + kelasId + ':' + mapelId + ':' + guruId + ':' + jamIds.join(','),
+        sourceUserId: guruId,
+        data: { tanggal, kelas_id: kelasId, mapel_id: mapelId }
+      })
       alert('Berhasil mengamanatkan pengisian absensi ke guru pengganti.')
       clearGuruPageCache('input-absensi')
       document.getElementById('absensi-pakai-pengganti').checked = false
@@ -7399,18 +7476,33 @@ async function saveGuruAbsensi() {
         })),
         status: 'pending'
       }
-      const submissionRes = await sb.from(ATTENDANCE_SUBMISSION_TABLE).insert(submissionPayload)
-      if (submissionRes.error) {
-        console.error(submissionRes.error)
-        if (isMissingAbsensiSubmissionTableError(submissionRes.error)) {
+      const { data: submissionRow, error: submissionError } = await sb
+        .from(ATTENDANCE_SUBMISSION_TABLE)
+        .insert(submissionPayload)
+        .select('id')
+        .single()
+      if (submissionError) {
+        console.error(submissionError)
+        if (isMissingAbsensiSubmissionTableError(submissionError)) {
           alert(buildAbsensiSubmissionTableMessage())
           return
         }
-        alert(`Gagal mengirim pengajuan absensi pengganti: ${submissionRes.error.message || 'Unknown error'}`)
+        alert(`Gagal mengirim pengajuan absensi pengganti: ${submissionError.message || 'Unknown error'}`)
         return
       }
       document.querySelectorAll('[data-absen-santri-id]').forEach(selectEl => {
         selectEl.value = 'Hadir'
+      })
+      const submissionNotif = buildAbsensiNotificationMeta({ tanggal, kelasId, mapelId, jamIds })
+      await sendAttendanceWebPush({
+        userId: guruAsalId,
+        title: 'Persetujuan absensi menunggu',
+        body: submissionNotif.body,
+        route: 'input-absensi-approval',
+        eventType: 'attendance-submission',
+        dedupeKey: 'attendance:submission:' + String(submissionRow?.id || [tanggal, kelasId, mapelId, guruAsalId].join(':')),
+        sourceUserId: guruId,
+        data: { tanggal, kelas_id: kelasId, mapel_id: mapelId }
       })
       alert('Pengajuan absensi guru pengganti berhasil dikirim dan menunggu persetujuan guru asli.')
       return
@@ -8264,7 +8356,7 @@ async function renderGuruProfil() {
         <label class="guru-label">Password</label>
         <div style="position:relative;">
           <input id="guru-profil-password" type="password" value="${escapeHtml(guru.password || '')}" placeholder="Password" class="guru-field" autocomplete="off" style="padding-right:46px;">
-          <button id="guru-profil-password-toggle" type="button" onclick="toggleGuruProfilePassword()" aria-label="Tampilkan password" title="Tampilkan/Sembunyikan password" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); border:none; background:transparent; cursor:pointer; font-size:16px; line-height:1;">Ã°Å¸â€˜Â</button>
+          <button id="guru-profil-password-toggle" type="button" onclick="toggleGuruProfilePassword()" aria-label="Tampilkan password" title="Tampilkan/Sembunyikan password" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); border:none; background:transparent; cursor:pointer; font-size:16px; line-height:1;">ðŸ‘</button>
         </div>
       </div>
       <button type="button" class="modal-btn modal-btn-primary" onclick="saveGuruProfil('${escapeHtml(guru.id)}')">Simpan Profil</button>
@@ -8286,7 +8378,7 @@ function toggleGuruProfilePassword() {
   if (!input || !btn) return
   const willShow = input.type === 'password'
   input.type = willShow ? 'text' : 'password'
-  btn.textContent = willShow ? 'Ã°Å¸â€˜ÂÃŒÂ¶' : 'Ã°Å¸â€˜Â'
+  btn.textContent = willShow ? 'ðŸ‘Ì¶' : 'ðŸ‘'
   btn.setAttribute('aria-label', willShow ? 'Sembunyikan password' : 'Tampilkan password')
 }
 
@@ -17035,7 +17127,7 @@ function removeGuruUjianOptionImage(buttonEl) {
 
 function getGuruUjianCariKataAlphabet(lang = 'ID') {
   return String(lang || 'ID').toUpperCase() === 'AR'
-    ? Array.from('ابتثجحخدذرزسشصضطظعغفقكلمنهوي')
+    ? Array.from('????????????????????????????')
     : Array.from('ABCDEFGHIJKLMNOPQRSTUVWXYZ')
 }
 
@@ -17185,11 +17277,11 @@ function buildGuruUjianCariKataPreviewHtml(puzzle, config = {}) {
   const grid = Array.isArray(puzzle?.grid) ? puzzle.grid : []
   const placements = Array.isArray(puzzle?.placements) ? puzzle.placements : []
   const introText = String(config.text || '').trim()
-  const infoTitle = safeLang === 'AR' ? 'الكلمات المطلوبة' : 'Kata yang dicari'
-  const warningTitle = safeLang === 'AR' ? 'هناك كلمات لم تدخل في الشبكة' : 'Ada kata yang belum muat di grid'
-  const emptyText = safeLang === 'AR' ? 'اكتب الكلمات أولاً لعرض المعاينة.' : 'Isi daftar kata untuk melihat preview.'
+  const infoTitle = safeLang === 'AR' ? '??????? ????????' : 'Kata yang dicari'
+  const warningTitle = safeLang === 'AR' ? '???? ????? ?? ???? ?? ??????' : 'Ada kata yang belum muat di grid'
+  const emptyText = safeLang === 'AR' ? '???? ??????? ????? ???? ????????.' : 'Isi daftar kata untuk melihat preview.'
   const markerNote = safeLang === 'AR'
-    ? 'المربعات الملوّنة تبيّن مواضع الكلمات للمعلم فقط.'
+    ? '???????? ???????? ????? ????? ??????? ?????? ???.'
     : 'Kotak berwarna menunjukkan posisi kata untuk guru.'
   const fontFamily = safeLang === 'AR' ? "'Traditional Arabic','Times New Roman',serif" : "'Times New Roman',serif"
   const palette = ['#fde68a', '#bfdbfe', '#bbf7d0', '#fbcfe8', '#ddd6fe', '#fecdd3', '#a7f3d0', '#fed7aa']
@@ -17634,13 +17726,13 @@ function buildGuruUjianTekaSilangEndpointHtml(no, rows, cols) {
     if (col === anchor.col) continue
     const value = `${anchor.row}:${col}`
     const selected = pendingEnd && pendingEnd.row === anchor.row && pendingEnd.col === col ? ' selected' : ''
-    options.push(`<option value="${value}"${selected}>Mendatar · Kolom ${col + 1}</option>`)
+    options.push(`<option value="${value}"${selected}>Mendatar � Kolom ${col + 1}</option>`)
   }
   for (let row = 0; row < rows; row += 1) {
     if (row === anchor.row) continue
     const value = `${row}:${anchor.col}`
     const selected = pendingEnd && pendingEnd.row === row && pendingEnd.col === anchor.col ? ' selected' : ''
-    options.push(`<option value="${value}"${selected}>Menurun · Baris ${row + 1}</option>`)
+    options.push(`<option value="${value}"${selected}>Menurun � Baris ${row + 1}</option>`)
   }
   return `
     <div style="margin-top:10px; padding:10px; border:1px dashed #d8b4fe; border-radius:12px; background:#fff;">
@@ -17784,7 +17876,7 @@ function buildGuruUjianTekaSilangGridHtml(no, config) {
           ${number ? `<span style="position:absolute; top:2px; ${isRtl ? 'right:3px' : 'left:3px'}; font-size:${numberFontSize}px; line-height:1; color:#7e22ce; font-weight:700;">${escapeHtml(String(number))}</span>` : ''}
           ${letter ? `<span style="font-size:${letterFontSize}px; line-height:1; font-weight:700; color:#111827; ${safeLang === 'AR' ? 'direction:rtl;' : ''}">${escapeHtml(letter)}</span>` : ''}
         </div>
-        ${isPendingEnd ? `<button type="button" data-tts-confirm-draft="${rowIndex}:${colIndex}" style="position:absolute; ${isRtl ? 'left:1px' : 'right:1px'}; top:1px; width:${Math.max(14, Math.min(18, cellSize - 4))}px; height:${Math.max(14, Math.min(18, cellSize - 4))}px; border:0; border-radius:999px; background:#16a34a; color:#fff; font-size:${Math.max(10, Math.min(12, cellSize - 8))}px; font-weight:700; line-height:1; cursor:pointer; z-index:2;">✓</button>` : ''}
+        ${isPendingEnd ? `<button type="button" data-tts-confirm-draft="${rowIndex}:${colIndex}" style="position:absolute; ${isRtl ? 'left:1px' : 'right:1px'}; top:1px; width:${Math.max(14, Math.min(18, cellSize - 4))}px; height:${Math.max(14, Math.min(18, cellSize - 4))}px; border:0; border-radius:999px; background:#16a34a; color:#fff; font-size:${Math.max(10, Math.min(12, cellSize - 8))}px; font-weight:700; line-height:1; cursor:pointer; z-index:2;">?</button>` : ''}
       </td>`
     }).join('')
     return `<tr>${isRtl ? `${cellsHtml}${rowHeaderHtml}` : `${rowHeaderHtml}${cellsHtml}`}</tr>`
@@ -17796,7 +17888,7 @@ function buildGuruUjianTekaSilangGridHtml(no, config) {
     <div style="padding:10px; border:1px solid #e9d5ff; border-radius:14px; background:#faf5ff; max-width:100%; overflow:hidden;">
       <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; margin-bottom:8px;">
         <div style="font-size:12px; color:#6b21a8; font-weight:700;">Grid Teka-Teki Silang</div>
-        <div style="font-size:11px; color:#7e22ce;">${escapeHtml(modeLabel)} • ${escapeHtml(anchorLabel)}</div>
+        <div style="font-size:11px; color:#7e22ce;">${escapeHtml(modeLabel)} � ${escapeHtml(anchorLabel)}</div>
       </div>
       <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
         <button type="button" onclick="clearGuruUjianTekaSilangEntries(${no})" class="guru-btn-secondary" style="padding:7px 12px; border-color:#f5c2e7; background:linear-gradient(180deg,#fff1f9 0%,#ffe4f1 100%); color:#9d174d; box-shadow:0 6px 18px rgba(236,72,153,0.12);">Hapus Semua Slot</button>
@@ -18522,7 +18614,7 @@ async function createExamPdfDoc(jadwal, soal) {
     })
   }
   const mixedArabicRe = /[\u0600-\u06FF\u0750-\u077F\u0870-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/u
-  const mixedMojibakeRe = /[Ã˜Ã™][\u0080-\u00BF]/u
+  const mixedMojibakeRe = /[ØÙ][\u0080-\u00BF]/u
   const repairArabicMojibake = text => {
     const source = String(text || '')
     if (!source || !mixedMojibakeRe.test(source) || typeof TextDecoder !== 'function') return source
@@ -23455,6 +23547,7 @@ document.addEventListener('DOMContentLoaded', () => {
     closeTopbarNotifMenu()
   })
 })
+
 
 
 
