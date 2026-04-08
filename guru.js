@@ -21,6 +21,27 @@ const MAPEL_PATRON_MATERI_TABLE = 'mapel_patron_materi'
 const MONTHLY_REPORT_TABLE = 'laporan_bulanan_wali'
 const MONTHLY_REPORT_STORAGE_BUCKET = 'laporan-bulanan'
 const MONTHLY_REPORT_WA_TEMPLATE_KEY = 'laporan_bulanan_wa_template'
+const UTS_REPORT_OVERRIDE_TABLE = 'laporan_uts_input_massal'
+const UTS_REPORT_STORAGE_BUCKET = 'laporan-uts'
+const UTS_REPORT_WA_TEMPLATE_KEY = 'laporan_uts_wa_template'
+const UTS_REPORT_BULK_TEMPLATE_FILE = 'UTSInput.xlsx'
+const LAPORAN_UTS_TEMPLATE_SUBJECT_ORDER = [
+  'bhs arab',
+  'akhlak',
+  'tafsir',
+  'hadits',
+  'akidah',
+  'fikih',
+  'sirah',
+  'nahwu',
+  'sharf',
+  'matematika',
+  'ipa',
+  'ips',
+  'pkn',
+  'bhs inggris',
+  'bhs indonesia'
+]
 const DAILY_TASK_TEMPLATE_TABLE = 'tugas_harian_template'
 const DAILY_TASK_SUBMIT_TABLE = 'tugas_harian_submit'
 const GURU_PERIZINAN_TABLE = 'izin_karyawan'
@@ -35,13 +56,17 @@ const SANTRI_PELANGGARAN_TABLE = 'santri_pelanggaran'
 const SANTRI_SURAT_BUCKET = 'surat-pemberitahuan'
 const KARYAWAN_FOTO_BUCKET = 'karyawan-foto'
 const KARYAWAN_FOTO_MAX_SIZE_BYTES = 300 * 1024
+const EXAM_QUESTION_IMAGE_BUCKET = 'soal-ujian-media'
+const EXAM_QUESTION_IMAGE_MAX_SIZE_BYTES = 2 * 1024 * 1024
+const EXAM_IMAGE_MARKER_TOKEN = '[[gambar]]'
+const EXAM_IMAGE_MARKER_RE = /\[\[\s*gambar(?:\d+)?\s*\]\]/gi
 const CHAT_MEMBERS_TABLE = 'chat_thread_members'
 const CHAT_MESSAGES_TABLE = 'chat_messages'
 const TOPBAR_CHAT_BADGE_TICK_MS = 10000
 const TOPBAR_NOTIF_TICK_MS = 30000
 const TOPBAR_NOTIF_RANGE_OPTIONS = [1, 3, 7]
 const GURU_SIDEBAR_ICON_ONLY_BREAKPOINT = 1180
-const GURU_LAPORAN_PAGE_SET = new Set(['laporan', 'laporan-absensi', 'laporan-pekanan', 'laporan-bulanan'])
+const GURU_LAPORAN_PAGE_SET = new Set(['laporan', 'laporan-absensi', 'laporan-uts', 'laporan-pekanan', 'laporan-bulanan'])
 const MONTHLY_REPORT_SELECT_NEW = 'id, nilai_akhlak, predikat, catatan_wali, muhaffiz, no_hp_muhaffiz, nilai_kehadiran_halaqah, sakit_halaqah, izin_halaqah, nilai_akhlak_halaqah, keterangan_akhlak_halaqah, nilai_ujian_bulanan, keterangan_ujian_bulanan, nilai_target_hafalan, keterangan_target_hafalan, nilai_capaian_hafalan_bulanan, nilai_jumlah_hafalan_halaman, nilai_jumlah_hafalan_juz, catatan_muhaffiz, musyrif, no_hp_musyrif, nilai_kehadiran_liqa_muhasabah, sakit_liqa_muhasabah, izin_liqa_muhasabah, nilai_ibadah, keterangan_ibadah, nilai_kedisiplinan, keterangan_kedisiplinan, nilai_kebersihan, keterangan_kebersihan, nilai_adab, keterangan_adab, prestasi_kesantrian, pelanggaran_kesantrian, catatan_musyrif'
 const MONTHLY_REPORT_SELECT_LEGACY = 'id, nilai_akhlak, predikat, catatan_wali'
 const EXAM_SCHEDULE_TABLE = 'jadwal_ujian'
@@ -74,6 +99,7 @@ const GURU_PAGE_CACHEABLE = new Set([
   'tugas',
   'laporan-pekanan',
   'laporan-absensi',
+  'laporan-uts',
   'laporan-bulanan',
   'rapor',
   'ujian',
@@ -93,6 +119,7 @@ const PAGE_TITLES = {
   'input-absensi': 'Input Absen',
   laporan: 'Laporan',
   'laporan-absensi': 'Absensi',
+  'laporan-uts': 'Laporan UTS',
   'laporan-pekanan': 'Laporan Pekanan',
   'laporan-bulanan': 'Laporan Bulanan',
   jadwal: 'Jadwal',
@@ -120,6 +147,7 @@ let guruContextCache = null
 let activeTahunAjaranCache = null
 let activeSemesterCache = null
 let currentGuruRowCache = null
+let pdfBackgroundDataUrlCache = new Map()
 let currentMapelDetailDistribusiId = ''
 let currentAbsensiSantriList = []
 let absensiDelegationState = {
@@ -170,6 +198,33 @@ let laporanBulananState = {
   selectedSantriId: '',
   currentDetail: null,
   absensiRows: [],
+  waTemplate: '',
+  waTemplateEditing: false
+}
+let laporanUtsState = {
+  guru: null,
+  kelasMap: new Map(),
+  santriList: [],
+  semesterList: [],
+  semesterId: '',
+  tahunAjaranId: '',
+  tahunAjaranNama: '',
+  semesterDateMap: new Map(),
+  tahunAjaranDateMap: new Map(),
+  examScheduleCacheKey: '',
+  examScheduleRows: [],
+  subjectDisplayNameMap: new Map(),
+  subjectDisplayNameCacheKey: '',
+  subjectDisplayColumns: [],
+  bulkOverrideMap: new Map(),
+  bulkOverrideCacheKey: '',
+  bulkOverrideTableMissing: false,
+  bulkPendingUpload: null,
+  detailDataCache: new Map(),
+  pdfArtifactCache: new Map(),
+  pdfUploadCache: new Map(),
+  selectedSantriId: '',
+  currentDetail: null,
   waTemplate: '',
   waTemplateEditing: false
 }
@@ -843,8 +898,13 @@ function blobToDataUrl(blob) {
   })
 }
 
-async function loadPdfBackgroundDataUrl(url) {
-  const response = await fetch(encodeURI(String(url || '')), { cache: 'no-cache' })
+async function loadPdfBackgroundDataUrl(url, forceReload = false) {
+  const cacheKey = String(url || '').trim()
+  if (!cacheKey) throw new Error('URL background kosong.')
+  if (!forceReload && pdfBackgroundDataUrlCache.has(cacheKey)) {
+    return String(pdfBackgroundDataUrlCache.get(cacheKey) || '')
+  }
+  const response = await fetch(encodeURI(cacheKey), { cache: 'no-cache' })
   if (!response.ok) {
     throw new Error(`Background rapor tidak ditemukan (${response.status}).`)
   }
@@ -853,12 +913,18 @@ async function loadPdfBackgroundDataUrl(url) {
   if (!String(dataUrl || '').startsWith('data:image/')) {
     throw new Error('Format background rapor harus berupa gambar.')
   }
+  pdfBackgroundDataUrlCache.set(cacheKey, dataUrl)
   return dataUrl
 }
 
 function getMonthlyWaTemplateStorageKey(guruId) {
   const suffix = String(guruId || '').trim() || 'default'
   return `${MONTHLY_REPORT_WA_TEMPLATE_KEY}:${suffix}`
+}
+
+function getLaporanUtsWaTemplateStorageKey(guruId) {
+  const suffix = String(guruId || '').trim() || 'default'
+  return `${UTS_REPORT_WA_TEMPLATE_KEY}:${suffix}`
 }
 
 function getDefaultMonthlyWaTemplate() {
@@ -882,14 +948,436 @@ function getDefaultMonthlyWaTemplate() {
   ].join('\n')
 }
 
+function getDefaultLaporanUtsWaTemplate() {
+  return [
+    "Assalamu'alaikum warahmatullahi wabarakatuh",
+    '',
+    "Bapak/Ibu hafizakumullahu ta'ala",
+    '',
+    'Berikut kami sampaikan laporan UTS ananda <nama santri>.',
+    '',
+    'Silakan membuka dokumen laporan pada tautan berikut:',
+    '<link>',
+    '',
+    'Syukron wajazakumullahu khairan.'
+  ].join('\n')
+}
+
 function loadMonthlyWaTemplate(guruId) {
   const key = getMonthlyWaTemplateStorageKey(guruId)
   const saved = String(localStorage.getItem(key) || '').trim()
   return saved || getDefaultMonthlyWaTemplate()
 }
 
+function loadLaporanUtsWaTemplate(guruId) {
+  const key = getLaporanUtsWaTemplateStorageKey(guruId)
+  const saved = String(localStorage.getItem(key) || '').trim()
+  return saved || getDefaultLaporanUtsWaTemplate()
+}
+
 function buildMonthlyReportStorageMissingMessage() {
   return `Bucket storage '${MONTHLY_REPORT_STORAGE_BUCKET}' belum ada atau belum bisa diakses.\n\nBuat bucket public di Supabase Storage dengan nama: ${MONTHLY_REPORT_STORAGE_BUCKET}`
+}
+
+function buildLaporanUtsStorageMissingMessage() {
+  return `Bucket storage '${UTS_REPORT_STORAGE_BUCKET}' belum ada atau belum bisa diakses.\n\nBuat bucket public di Supabase Storage dengan nama: ${UTS_REPORT_STORAGE_BUCKET}`
+}
+
+function isMissingLaporanUtsOverrideTableError(error) {
+  return isMissingTableErrorByName(error, UTS_REPORT_OVERRIDE_TABLE)
+}
+
+function buildLaporanUtsOverrideMissingTableMessage() {
+  return `Tabel '${UTS_REPORT_OVERRIDE_TABLE}' belum ada di Supabase.\n\nSilakan buat tabel dengan kolom minimal:\n- id (primary key)\n- guru_id\n- semester_id\n- kelas_id (nullable)\n- santri_id\n- override_json (jsonb)\n- updated_at (timestamptz)\n\nDisarankan unique key: (guru_id, semester_id, santri_id).\n\nContoh SQL sudah disiapkan di file:\n- scripts/supabase-laporan-uts-input-massal-setup.sql`
+}
+
+function normalizeLaporanUtsBulkKey(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\bbahasa\b/g, 'bhs')
+    .replace(/\bmata pelajaran\b/g, '')
+    .replace(/\bmtk\b/g, 'matematika')
+    .replace(/\bmath(?:ematics)?\b/g, 'matematika')
+    .replace(/\bilmu pengetahuan alam\b/g, 'ipa')
+    .replace(/\bscience\b/g, 'ipa')
+    .replace(/\bilmu pengetahuan sosial\b/g, 'ips')
+    .replace(/\bsocial studies\b/g, 'ips')
+    .replace(/\bppkn\b/g, 'pkn')
+    .replace(/\bpendidikan kewarganegaraan\b/g, 'pkn')
+    .replace(/\bpkn\b/g, 'pkn')
+    .replace(/\baqidah\b/g, 'akidah')
+    .replace(/\bfiqih\b/g, 'fikih')
+    .replace(/\bsiroh\s+nabaw\w*\b/g, 'sirah')
+    .replace(/\bsirah\s+nabaw\w*\b/g, 'sirah')
+    .replace(/\bsiroh nabawiyah\b/g, 'sirah')
+    .replace(/\bsirah nabawiyah\b/g, 'sirah')
+    .replace(/\bsiroh nabawiyyah\b/g, 'sirah')
+    .replace(/\bsirah nabawiyyah\b/g, 'sirah')
+    .replace(/\bsirah nabawi\b/g, 'sirah')
+    .replace(/\bsiroh\b/g, 'sirah')
+    .replace(/\btarikh\b/g, 'sirah')
+    .replace(/al[\s\-']*qur['’`]?an/g, 'al quran')
+    .replace(/qur['’`]?an/g, 'quran')
+    .replace(/['’`]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+const LAPORAN_UTS_BULK_META_FIELDS = {
+  no: 'no',
+  studentName: 'nama',
+  studentNisn: 'nisn',
+  className: 'kelas',
+  midTahfizCapaian: 'capaian hafalan',
+  midTahfizScore: 'al quran',
+  halaqahSakitText: 'sakit halaqah',
+  halaqahIzinText: 'izin halaqah',
+  kelasSakitText: 'sakit kelas',
+  kelasIzinText: 'izin kelas'
+}
+
+const LAPORAN_UTS_BULK_META_KEY_SET = new Set(Object.values(LAPORAN_UTS_BULK_META_FIELDS))
+
+function normalizeLaporanUtsBulkCompareValue(value) {
+  const raw = String(value ?? '').trim()
+  if (!raw || raw === '-') return ''
+  const numeric = toNullableNumber(raw.replace(',', '.'))
+  if (numeric === null || Number.isNaN(numeric)) return raw.toLowerCase()
+  return String(round2(numeric))
+}
+
+function getLaporanUtsBulkStoredText(value) {
+  const raw = String(value ?? '').trim()
+  return raw && raw !== '-' ? raw : ''
+}
+
+function getLaporanUtsBulkStoredScoreEntry(name, rawValue) {
+  const text = getLaporanUtsBulkStoredText(rawValue)
+  if (!text) return null
+  const numeric = toNullableNumber(text.replace(',', '.'))
+  return {
+    key: normalizeLaporanUtsBulkKey(name),
+    name: String(name || '').trim() || '-',
+    scoreText: text,
+    scoreValue: numeric === null || Number.isNaN(numeric) ? null : numeric
+  }
+}
+
+function sortLaporanUtsSubjectsByTemplate(subjects = []) {
+  const orderMap = new Map(LAPORAN_UTS_TEMPLATE_SUBJECT_ORDER.map((key, index) => [key, index]))
+  return [...(Array.isArray(subjects) ? subjects : [])].sort((a, b) => {
+    const keyA = normalizeLaporanUtsBulkKey(a?.name || '')
+    const keyB = normalizeLaporanUtsBulkKey(b?.name || '')
+    const idxA = orderMap.has(keyA) ? orderMap.get(keyA) : Number.MAX_SAFE_INTEGER
+    const idxB = orderMap.has(keyB) ? orderMap.get(keyB) : Number.MAX_SAFE_INTEGER
+    if (idxA !== idxB) return idxA - idxB
+    return String(a?.name || '').localeCompare(String(b?.name || ''), 'id')
+  })
+}
+
+function getLaporanUtsDefaultSubjectLabelMap() {
+  return new Map([
+    ['bhs arab', 'Bahasa Arab'],
+    ['akhlak', 'Akhlak'],
+    ['tafsir', 'Tafsir'],
+    ['hadits', 'Hadits'],
+    ['akidah', 'Akidah'],
+    ['fikih', 'Fikih'],
+    ['sirah', 'Sirah'],
+    ['nahwu', 'Nahwu'],
+    ['sharf', 'Sharf'],
+    ['matematika', 'Matematika'],
+    ['ipa', 'IPA'],
+    ['ips', 'IPS'],
+    ['pkn', 'PKn'],
+    ['bhs inggris', 'Bahasa Inggris'],
+    ['bhs indonesia', 'Bahasa Indonesia']
+  ])
+}
+
+function buildLaporanUtsSubjectDisplayColumns(displayMap = null) {
+  const sourceMap = displayMap instanceof Map ? displayMap : getLaporanUtsDefaultSubjectLabelMap()
+  return LAPORAN_UTS_TEMPLATE_SUBJECT_ORDER.map(key => ({
+    key,
+    label: String(sourceMap.get(key) || key || '-')
+  }))
+}
+
+function getLaporanUtsSubjectDisplayLabel(key) {
+  const normalized = normalizeLaporanUtsBulkKey(key)
+  if (!normalized) return '-'
+  if (laporanUtsState.subjectDisplayNameMap instanceof Map && laporanUtsState.subjectDisplayNameMap.has(normalized)) {
+    return String(laporanUtsState.subjectDisplayNameMap.get(normalized) || '-')
+  }
+  return String(getLaporanUtsDefaultSubjectLabelMap().get(normalized) || key || '-')
+}
+
+async function ensureLaporanUtsSubjectDisplayNameMap(forceReload = false) {
+  const semesterId = String(laporanUtsState?.semesterId || '').trim()
+  const kelasIds = [...(laporanUtsState.kelasMap instanceof Map ? laporanUtsState.kelasMap.keys() : [])]
+  const cacheKey = [semesterId, kelasIds.join(',')].join('|')
+  const existingCacheKey = String(laporanUtsState.subjectDisplayNameCacheKey || '')
+  if (!forceReload && cacheKey && cacheKey === existingCacheKey && laporanUtsState.subjectDisplayNameMap instanceof Map && laporanUtsState.subjectDisplayNameMap.size) {
+    return laporanUtsState.subjectDisplayNameMap
+  }
+
+  const displayMap = getLaporanUtsDefaultSubjectLabelMap()
+  if (!semesterId || !kelasIds.length) {
+    laporanUtsState.subjectDisplayNameMap = displayMap
+    laporanUtsState.subjectDisplayNameCacheKey = cacheKey
+    laporanUtsState.subjectDisplayColumns = buildLaporanUtsSubjectDisplayColumns(displayMap)
+    return displayMap
+  }
+
+  const distribusiRes = await sb
+    .from('distribusi_mapel')
+    .select('mapel_id')
+    .eq('semester_id', semesterId)
+    .in('kelas_id', kelasIds)
+
+  if (distribusiRes.error) throw distribusiRes.error
+  const mapelIds = [...new Set((distribusiRes.data || []).map(item => String(item?.mapel_id || '').trim()).filter(Boolean))]
+  if (!mapelIds.length) {
+    laporanUtsState.subjectDisplayNameMap = displayMap
+    laporanUtsState.subjectDisplayNameCacheKey = cacheKey
+    laporanUtsState.subjectDisplayColumns = buildLaporanUtsSubjectDisplayColumns(displayMap)
+    return displayMap
+  }
+
+  const mapelRes = await getMapelRowsByIds(mapelIds)
+  if (mapelRes.error) throw mapelRes.error
+  const preferredLabelMap = new Map()
+  ;(mapelRes.data || []).forEach(mapel => {
+    const displayName = String(getMapelPlainName(mapel) || '').trim()
+    const key = normalizeLaporanUtsBulkKey(displayName)
+    if (!key || !displayName) return
+    const existing = String(preferredLabelMap.get(key) || '').trim()
+    if (!existing || displayName.length > existing.length) {
+      preferredLabelMap.set(key, displayName)
+    }
+  })
+
+  preferredLabelMap.forEach((displayName, key) => {
+    displayMap.set(key, displayName)
+  })
+
+  laporanUtsState.subjectDisplayNameMap = displayMap
+  laporanUtsState.subjectDisplayNameCacheKey = cacheKey
+  laporanUtsState.subjectDisplayColumns = buildLaporanUtsSubjectDisplayColumns(displayMap)
+  return displayMap
+}
+
+function sanitizeLaporanUtsOverrideObject(raw = null) {
+  const source = (() => {
+    if (!raw) return {}
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw)
+        return parsed && typeof parsed === 'object' ? parsed : {}
+      } catch (_error) {
+        return {}
+      }
+    }
+    return typeof raw === 'object' ? raw : {}
+  })()
+
+  const output = {}
+  ;['midTahfizCapaian', 'midTahfizScore', 'halaqahSakitText', 'halaqahIzinText', 'kelasSakitText', 'kelasIzinText'].forEach(key => {
+    const text = getLaporanUtsBulkStoredText(source[key])
+    if (text) output[key] = text
+  })
+
+  const subjectRows = []
+  const rawSubjects = Array.isArray(source.subjects)
+    ? source.subjects
+    : (Array.isArray(source.subject_overrides) ? source.subject_overrides : [])
+  rawSubjects.forEach(item => {
+    const entry = getLaporanUtsBulkStoredScoreEntry(item?.name || item?.label || item?.header || item?.key || '', item?.scoreText ?? item?.score ?? item?.nilai)
+    if (!entry) return
+    if (!entry.key) return
+    if (!subjectRows.some(existing => existing.key === entry.key)) {
+      subjectRows.push(entry)
+    }
+  })
+  if (subjectRows.length) output.subjects = sortLaporanUtsSubjectsByTemplate(subjectRows)
+
+  return output
+}
+
+function getLaporanUtsOverrideEntryBySantriId(santriId) {
+  return laporanUtsState.bulkOverrideMap.get(String(santriId || '').trim()) || null
+}
+
+function applyLaporanUtsOverrideToPayload(payload, overrideObject = null) {
+  const override = sanitizeLaporanUtsOverrideObject(overrideObject)
+  if (!Object.keys(override).length) return payload
+
+  const next = {
+    ...payload,
+    subjects: Array.isArray(payload?.subjects) ? payload.subjects.map(item => ({ ...item })) : []
+  }
+
+  if (Object.prototype.hasOwnProperty.call(override, 'midTahfizCapaian')) {
+    next.midTahfizCapaian = override.midTahfizCapaian
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'midTahfizScore')) {
+    next.midTahfizScore = override.midTahfizScore
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'halaqahSakitText')) {
+    next.halaqahSakitText = override.halaqahSakitText
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'halaqahIzinText')) {
+    next.halaqahIzinText = override.halaqahIzinText
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'kelasSakitText')) {
+    next.kelasSakitText = override.kelasSakitText
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'kelasIzinText')) {
+    next.kelasIzinText = override.kelasIzinText
+  }
+
+  if (Array.isArray(override.subjects) && override.subjects.length) {
+    const subjectIndexMap = new Map()
+    next.subjects.forEach((item, index) => {
+      const key = normalizeLaporanUtsBulkKey(item?.name || '')
+      if (key && !subjectIndexMap.has(key)) subjectIndexMap.set(key, index)
+    })
+
+    override.subjects.forEach(item => {
+      const key = normalizeLaporanUtsBulkKey(item?.key || item?.name || '')
+      if (!key) return
+      const nextSubject = {
+        name: String(item?.name || '-'),
+        kkmText: '17',
+        scoreText: String(item?.scoreText || '-'),
+        scoreValue: item?.scoreValue === null || item?.scoreValue === undefined || Number.isNaN(Number(item?.scoreValue))
+          ? null
+          : Number(item.scoreValue)
+      }
+      if (subjectIndexMap.has(key)) {
+        const targetIndex = subjectIndexMap.get(key)
+        next.subjects[targetIndex] = {
+          ...next.subjects[targetIndex],
+          scoreText: nextSubject.scoreText,
+          scoreValue: nextSubject.scoreValue
+        }
+        return
+      }
+      next.subjects.push(nextSubject)
+      subjectIndexMap.set(key, next.subjects.length - 1)
+    })
+  }
+
+  next.subjects = sortLaporanUtsSubjectsByTemplate(next.subjects)
+  const summary = buildLaporanUtsScoreSummary(next.subjects)
+  next.totalScoreText = summary.totalText
+  next.averageScoreText = summary.averageText
+  return next
+}
+
+async function ensureLaporanUtsBulkOverrideMap(forceReload = false) {
+  const guruId = String(laporanUtsState?.guru?.id || '').trim()
+  const semesterId = String(laporanUtsState?.semesterId || '').trim()
+  const santriIds = (laporanUtsState.santriList || []).map(item => String(item?.id || '').trim()).filter(Boolean)
+  const cacheKey = [guruId, semesterId, santriIds.join(',')].join('|')
+
+  if (!forceReload && cacheKey && cacheKey === String(laporanUtsState.bulkOverrideCacheKey || '')) {
+    return laporanUtsState.bulkOverrideMap
+  }
+
+  const nextMap = new Map()
+  laporanUtsState.bulkOverrideTableMissing = false
+
+  if (!guruId || !semesterId || !santriIds.length) {
+    laporanUtsState.bulkOverrideMap = nextMap
+    laporanUtsState.bulkOverrideCacheKey = cacheKey
+    return nextMap
+  }
+
+  const res = await sb
+    .from(UTS_REPORT_OVERRIDE_TABLE)
+    .select('id, santri_id, override_json, updated_at')
+    .eq('guru_id', guruId)
+    .eq('semester_id', semesterId)
+    .in('santri_id', santriIds)
+
+  if (res.error) {
+    if (isMissingLaporanUtsOverrideTableError(res.error)) {
+      laporanUtsState.bulkOverrideTableMissing = true
+      laporanUtsState.bulkOverrideMap = nextMap
+      laporanUtsState.bulkOverrideCacheKey = cacheKey
+      return nextMap
+    }
+    throw res.error
+  }
+
+  ;(res.data || []).forEach(row => {
+    const sid = String(row?.santri_id || '').trim()
+    if (!sid) return
+    const override = sanitizeLaporanUtsOverrideObject(row?.override_json)
+    nextMap.set(sid, {
+      id: String(row?.id || '').trim(),
+      santriId: sid,
+      updatedAt: String(row?.updated_at || '').trim(),
+      override
+    })
+  })
+
+  laporanUtsState.bulkOverrideMap = nextMap
+  laporanUtsState.bulkOverrideCacheKey = cacheKey
+  return nextMap
+}
+
+function buildExamQuestionImageStorageMissingMessage() {
+  return `Bucket storage '${EXAM_QUESTION_IMAGE_BUCKET}' belum ada atau belum bisa diakses.\n\nBuat bucket public di Supabase Storage dengan nama: ${EXAM_QUESTION_IMAGE_BUCKET}`
+}
+
+let examQuestionImageBucketReady = false
+let examQuestionImageBucketEnsurePromise = null
+
+function isExamQuestionImageBucketMissingError(error) {
+  const msg = String(error?.message || error || '').toLowerCase()
+  const code = String(error?.code || error?.statusCode || error?.status || '').toLowerCase()
+  if (msg.includes('bucket not found')) return true
+  if (msg.includes('bucket') && msg.includes('not found')) return true
+  if (msg.includes(EXAM_QUESTION_IMAGE_BUCKET.toLowerCase()) && msg.includes('not found')) return true
+  if (code === '404' || code === 'not_found') return true
+  return false
+}
+
+function isExamQuestionImageBucketAlreadyExistsError(error) {
+  const msg = String(error?.message || error || '').toLowerCase()
+  const code = String(error?.code || error?.statusCode || error?.status || '').toLowerCase()
+  if (msg.includes('already exists')) return true
+  if (msg.includes('duplicate')) return true
+  if (code === '409' || code === 'conflict') return true
+  return false
+}
+
+function getExamQuestionImageBucketErrorDetail(error) {
+  return String(error?.message || error || '').trim()
+}
+
+async function ensureExamQuestionImageStorageBucket() {
+  if (examQuestionImageBucketReady) return true
+  if (examQuestionImageBucketEnsurePromise) return examQuestionImageBucketEnsurePromise
+  examQuestionImageBucketEnsurePromise = (async () => {
+    const { error: createError } = await sb.storage.createBucket(EXAM_QUESTION_IMAGE_BUCKET, {
+      public: true
+    })
+    if (createError && !isExamQuestionImageBucketAlreadyExistsError(createError)) {
+      throw createError
+    }
+    examQuestionImageBucketReady = true
+    return true
+  })()
+  try {
+    return await examQuestionImageBucketEnsurePromise
+  } finally {
+    examQuestionImageBucketEnsurePromise = null
+  }
 }
 
 function buildDailyTaskMissingTableMessage() {
@@ -954,6 +1442,128 @@ function pickLabelByKeys(item, keys) {
     }
   }
   return ''
+}
+
+const SANTRI_PARENT_CONTACT_KEYS = [
+  'no_hp_ayah',
+  'hp_ayah',
+  'no_hp_ibu',
+  'hp_ibu',
+  'no_hp_orang_tua',
+  'hp_orang_tua',
+  'no_hp_wali',
+  'hp_wali',
+  'no_hp',
+  'hp',
+  'no_telp',
+  'nomor_hp',
+  'telepon'
+]
+
+function mergeSantriParentContactsFromHistory(targetRow, historyRows = []) {
+  const target = targetRow || {}
+  SANTRI_PARENT_CONTACT_KEYS.forEach(key => {
+    const currentValue = target?.[key]
+    if (currentValue !== null && currentValue !== undefined && String(currentValue).trim() !== '') return
+    const sourceRow = (historyRows || []).find(row => {
+      const value = row?.[key]
+      return value !== null && value !== undefined && String(value).trim() !== ''
+    })
+    if (sourceRow && Object.prototype.hasOwnProperty.call(sourceRow || {}, key)) {
+      target[key] = sourceRow[key]
+    }
+  })
+  return target
+}
+
+async function enrichSantriRowsWithParentContacts(rows = []) {
+  if (!Array.isArray(rows) || !rows.length) return rows || []
+  const rowsNeedFallback = rows.filter(row => !pickLabelByKeys(row, SANTRI_PARENT_CONTACT_KEYS))
+  const nisnList = [...new Set(rowsNeedFallback.map(row => String(row?.nisn || '').trim()).filter(Boolean))]
+  if (!nisnList.length) return rows
+
+  const selectVariants = [
+    'id, nisn, no_hp_ayah, hp_ayah, no_hp_ibu, hp_ibu, no_hp_orang_tua, hp_orang_tua, no_hp_wali, hp_wali, no_hp, hp, no_telp, nomor_hp, telepon, created_at, aktif',
+    'id, nisn, no_hp_ayah, hp_ayah, no_hp_ibu, hp_ibu, no_hp, hp, no_telp, nomor_hp, telepon, created_at, aktif',
+    'id, nisn, no_hp_ayah, hp_ayah, no_hp_ibu, hp_ibu, created_at, aktif',
+    'id, nisn, no_hp, hp, nomor_hp, telepon, created_at, aktif',
+    'id, nisn, created_at, aktif'
+  ]
+
+  let historyRows = []
+  for (const selectText of selectVariants) {
+    const res = await sb
+      .from('santri')
+      .select(selectText)
+      .in('nisn', nisnList)
+    if (!res.error) {
+      historyRows = res.data || []
+      break
+    }
+  }
+  if (!historyRows.length) return rows
+
+  const grouped = new Map()
+  historyRows.forEach(row => {
+    const nisn = String(row?.nisn || '').trim()
+    if (!nisn) return
+    if (!grouped.has(nisn)) grouped.set(nisn, [])
+    grouped.get(nisn).push(row)
+  })
+  grouped.forEach(list => {
+    list.sort((a, b) => {
+      if (Boolean(b?.aktif) !== Boolean(a?.aktif)) return Number(Boolean(b?.aktif)) - Number(Boolean(a?.aktif))
+      const aCreated = new Date(a?.created_at || 0).getTime()
+      const bCreated = new Date(b?.created_at || 0).getTime()
+      return bCreated - aCreated
+    })
+  })
+
+  rows.forEach(row => {
+    const nisn = String(row?.nisn || '').trim()
+    if (!nisn) return
+    mergeSantriParentContactsFromHistory(row, grouped.get(nisn) || [])
+  })
+  return rows
+}
+
+function getSantriHistoryIdentityCandidates(row) {
+  return [
+    { column: 'nisn', value: String(row?.nisn || '').trim() },
+    { column: 'id_santri', value: String(row?.id_santri || '').trim() },
+    { column: 'no_induk', value: String(row?.no_induk || '').trim() },
+    { column: 'nomor_induk', value: String(row?.nomor_induk || '').trim() }
+  ].filter(item => item.value)
+}
+
+async function enrichSingleSantriParentContacts(row) {
+  if (!row || pickLabelByKeys(row, SANTRI_PARENT_CONTACT_KEYS)) return row
+  const candidates = getSantriHistoryIdentityCandidates(row)
+  if (!candidates.length) return row
+  const selectVariants = [
+    'id, nisn, id_santri, no_induk, nomor_induk, no_hp_ayah, hp_ayah, no_hp_ibu, hp_ibu, no_hp_orang_tua, hp_orang_tua, no_hp_wali, hp_wali, no_hp, hp, no_telp, nomor_hp, telepon, created_at, aktif',
+    'id, nisn, id_santri, no_induk, nomor_induk, no_hp_ayah, hp_ayah, no_hp_ibu, hp_ibu, no_hp, hp, no_telp, nomor_hp, telepon, created_at, aktif',
+    'id, nisn, id_santri, no_induk, nomor_induk, no_hp, hp, nomor_hp, telepon, created_at, aktif',
+    'id, nisn, id_santri, no_induk, nomor_induk, created_at, aktif'
+  ]
+  for (const candidate of candidates) {
+    for (const selectText of selectVariants) {
+      const res = await sb
+        .from('santri')
+        .select(selectText)
+        .eq(candidate.column, candidate.value)
+      if (res.error || !Array.isArray(res.data) || !res.data.length) continue
+      const sorted = [...res.data].sort((a, b) => {
+        if (Boolean(b?.aktif) !== Boolean(a?.aktif)) return Number(Boolean(b?.aktif)) - Number(Boolean(a?.aktif))
+        const aCreated = new Date(a?.created_at || 0).getTime()
+        const bCreated = new Date(b?.created_at || 0).getTime()
+        return bCreated - aCreated
+      })
+      mergeSantriParentContactsFromHistory(row, sorted)
+      if (pickLabelByKeys(row, SANTRI_PARENT_CONTACT_KEYS)) return row
+    }
+  }
+  return row
 }
 
 function getSemesterLabel(semester) {
@@ -1488,7 +2098,7 @@ function setNavActive(page) {
   if (!page) return
 
   const isInputPage = page === 'input-nilai' || page === 'input-absensi' || page === 'nilai' || page === 'absensi'
-  const isLaporanPage = page === 'laporan-absensi' || page === 'laporan-pekanan' || page === 'laporan-bulanan' || page === 'laporan'
+  const isLaporanPage = page === 'laporan-absensi' || page === 'laporan-uts' || page === 'laporan-pekanan' || page === 'laporan-bulanan' || page === 'laporan'
 
   if (isInputPage) {
     document.querySelector('.guru-nav-btn[data-page="input"]')?.classList.add('active')
@@ -1503,6 +2113,8 @@ function setNavActive(page) {
     document.querySelector('.guru-nav-btn[data-page="laporan"]')?.classList.add('active')
     const subPage = page === 'laporan-bulanan'
       ? 'laporan-bulanan'
+      : page === 'laporan-uts'
+        ? 'laporan-uts'
       : page === 'laporan-absensi'
         ? 'laporan-absensi'
         : 'laporan-pekanan'
@@ -5120,6 +5732,34 @@ function validateRange(value, label, maxValue) {
   return true
 }
 
+function normalizeBoundedNumberInputText(rawValue, maxValue) {
+  const text = String(rawValue ?? '')
+  if (!text.trim()) return ''
+  const num = Number(text)
+  if (!Number.isFinite(num)) return text
+  let nextValue = num
+  if (nextValue < 0) nextValue = 0
+  if (maxValue !== null && maxValue !== undefined && nextValue > maxValue) {
+    nextValue = maxValue
+  }
+  return String(Number.isInteger(nextValue) ? nextValue : round2(nextValue))
+}
+
+function applyNilaiInputBounds(inputEl, maxValue) {
+  if (!inputEl) return null
+  const normalized = normalizeBoundedNumberInputText(inputEl.value, maxValue)
+  if (normalized !== String(inputEl.value ?? '')) {
+    inputEl.value = normalized
+  }
+  return toNullableNumber(inputEl.value || '')
+}
+
+function onInputNilaiSantriScoreInput(inputEl) {
+  const jenis = String(document.getElementById('input-nilai-jenis')?.value || '').trim()
+  const maxValue = getJenisNilaiMax(jenis)
+  applyNilaiInputBounds(inputEl, maxValue)
+}
+
 function normalizePatronMateriList(rawValue) {
   if (Array.isArray(rawValue)) {
     return rawValue
@@ -7138,6 +7778,7 @@ function renderInputNilaiSantriRows() {
   }
 
   let html = `
+    ${maxValue !== null ? `<div style="margin:4px 0 10px; font-size:12px; color:#7c3aed;">Nilai ${escapeHtml(jenis)} maksimal ${escapeHtml(String(maxValue))}.</div>` : ''}
     <div style="overflow-x:${containerOverflowX}; overflow-y:visible; border:1px solid #e2e8f0; border-radius:10px; margin-top:10px;">
       <table style="width:100%; min-width:${tableMinWidth}px; table-layout:${tableLayout}; border-collapse:collapse; font-size:${tableFontSize}px;">
         <thead>
@@ -7155,7 +7796,7 @@ function renderInputNilaiSantriRows() {
       <td style="padding:${cellPadding}px; border:1px solid #e2e8f0; text-align:center;">${index + 1}</td>
       <td style="padding:${cellPadding}px; border:1px solid #e2e8f0; font-size:${nameFontSize}px; line-height:1.35; word-break:break-word;">${escapeHtml(santri.nama || '-')}</td>
       <td style="padding:${cellPadding}px; border:1px solid #e2e8f0; text-align:center;">
-        <input type="number" step="1" min="0" ${maxValue !== null ? `max="${maxValue}"` : ''} class="guru-field" style="max-width:${inputMaxWidth}px; width:100%; text-align:center;" data-input-nilai-santri-id="${escapeHtml(santri.id)}" placeholder="0">
+        <input type="number" step="1" min="0" ${maxValue !== null ? `max="${maxValue}"` : ''} class="guru-field" style="max-width:${inputMaxWidth}px; width:100%; text-align:center;" data-input-nilai-santri-id="${escapeHtml(santri.id)}" placeholder="0" oninput="onInputNilaiSantriScoreInput(this)" onblur="onInputNilaiSantriScoreInput(this)">
       </td>
     </tr>
   `).join('')
@@ -7421,6 +8062,7 @@ async function saveInputNilaiBatch() {
   document.querySelectorAll('[data-input-nilai-santri-id]').forEach(inputEl => {
     if (hasInvalidValue) return
     const sid = String(inputEl.getAttribute('data-input-nilai-santri-id') || '').trim()
+    applyNilaiInputBounds(inputEl, maxJenis)
     const nilaiRaw = toNullableNumber(inputEl.value || '')
     if (!sid) return
     const nilai = nilaiRaw === null ? 0 : nilaiRaw
@@ -8325,6 +8967,60 @@ function saveMonthlyWaTemplate() {
   localStorage.setItem(getMonthlyWaTemplateStorageKey(guruId), template)
   setMonthlyWaTemplateEditMode(false)
   alert('Template pesan berhasil disimpan.')
+}
+
+function getCurrentLaporanUtsWaTemplate() {
+  const el = document.getElementById('laporan-uts-wa-template')
+  if (el) {
+    const value = String(el.value || '').trim()
+    if (value) return value
+  }
+  return String(laporanUtsState.waTemplate || '').trim() || getDefaultLaporanUtsWaTemplate()
+}
+
+function setLaporanUtsWaTemplateEditMode(editing) {
+  const isEditing = editing === true
+  laporanUtsState.waTemplateEditing = isEditing
+
+  const textarea = document.getElementById('laporan-uts-wa-template')
+  if (textarea) {
+    textarea.readOnly = !isEditing
+    textarea.style.background = isEditing ? '#ffffff' : '#f8fafc'
+    textarea.style.color = isEditing ? '#0f172a' : '#475569'
+    if (isEditing) textarea.focus()
+  }
+
+  const editBtn = document.getElementById('btn-laporan-uts-wa-template-edit')
+  const saveBtn = document.getElementById('btn-laporan-uts-wa-template-save')
+  const cancelBtn = document.getElementById('btn-laporan-uts-wa-template-cancel')
+  if (editBtn) editBtn.style.display = isEditing ? 'none' : ''
+  if (saveBtn) saveBtn.style.display = isEditing ? '' : 'none'
+  if (cancelBtn) cancelBtn.style.display = isEditing ? '' : 'none'
+}
+
+function startLaporanUtsWaTemplateEdit() {
+  setLaporanUtsWaTemplateEditMode(true)
+}
+
+function cancelLaporanUtsWaTemplateEdit() {
+  const guruId = String(laporanUtsState?.guru?.id || '').trim()
+  laporanUtsState.waTemplate = loadLaporanUtsWaTemplate(guruId)
+  const el = document.getElementById('laporan-uts-wa-template')
+  if (el) el.value = laporanUtsState.waTemplate || ''
+  setLaporanUtsWaTemplateEditMode(false)
+}
+
+function saveLaporanUtsWaTemplate() {
+  const guruId = String(laporanUtsState?.guru?.id || '').trim()
+  if (!guruId) {
+    alert('Data guru belum siap.')
+    return
+  }
+  const template = getCurrentLaporanUtsWaTemplate()
+  laporanUtsState.waTemplate = template
+  localStorage.setItem(getLaporanUtsWaTemplateStorageKey(guruId), template)
+  setLaporanUtsWaTemplateEditMode(false)
+  alert('Template pesan Laporan UTS berhasil disimpan.')
 }
 
 async function openLaporanBulananDetail(santriId) {
@@ -9282,8 +9978,14 @@ async function quickSendLaporanBulananWA(santriId) {
   }
   if (typeof window.openExternalUrl === 'function') {
     const isAndroid = /android/i.test(String(navigator.userAgent || ''))
+    const isTauriApp = !!(window.__TAURI__ || window.__TAURI_INTERNALS__)
     let opened = false
     let copied = false
+    if (!isTauriApp) {
+      opened = await window.openExternalUrl(waUrl)
+      if (!opened) alert('Tidak bisa membuka WhatsApp otomatis. Silakan coba lagi.')
+      return
+    }
     if (isAndroid) {
       if (shouldCopyClipboard) {
         copied = await copyTextToClipboard(message)
@@ -9900,6 +10602,241 @@ function createLaporanBulananPdfDoc(detail) {
     alert('Plugin tabel PDF belum termuat. Refresh halaman lalu coba lagi.')
     return null
   }
+
+  return doc
+}
+
+function createLaporanUtsPdfDoc(payload, options = {}) {
+  if (!payload) return null
+  const jsPdfApi = window.jspdf
+  if (!jsPdfApi || typeof jsPdfApi.jsPDF !== 'function') {
+    alert('Library PDF belum termuat. Refresh halaman lalu coba lagi.')
+    return null
+  }
+  if (typeof window.jspdf?.jsPDF !== 'function' || typeof window.jspdf?.jsPDF === 'undefined') return null
+  const { jsPDF } = jsPdfApi
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const pageHeight = doc.internal.pageSize.getHeight()
+  const margin = 25.4
+  const bgDataUrl = String(options?.bgDataUrl || '').trim()
+  const schoolName = String(options?.schoolName || getSchoolName() || 'PESANTREN QUR`AN PUTRA MARKAZ IMAM MALIK').trim() || '-'
+  const waliKelasName = String(options?.waliKelasName || payload?.waliKelasName || '-').trim() || '-'
+  const semesterSuffix = String(payload?.semesterLabel || '')
+    .trim()
+    .toLowerCase()
+    .includes('genap')
+    ? 'GENAP'
+    : String(payload?.semesterLabel || '').trim().toLowerCase().includes('ganjil')
+      ? 'GANJIL'
+      : (String(payload?.semesterLabel || '').trim().toUpperCase() || 'GANJIL')
+  const titleText = `LAPORAN HASIL UJIAN SUMATIF TENGAH SEMESTER (USTS) ${semesterSuffix}`
+  const tableLineColor = [0, 0, 0]
+  const textColor = [0, 0, 0]
+  const subjectTableWidth = 142.4
+  const subjectTableX = (pageWidth - subjectTableWidth) / 2
+  const midTableWidth = 142.5
+  const midTableX = (pageWidth - midTableWidth) / 2
+  const attendanceTableWidth = 99.1
+  const attendanceTableX = subjectTableX
+  const signatureWidth = 56.6
+  const signatureX = 127.8
+  const fieldLabelX = margin
+  const fieldColonX = margin + 29
+  const fieldValueX = margin + 33
+  const fieldValueWidth = pageWidth - margin - fieldValueX
+  const baseTextSize = 10
+  const bodyLineGap = 4.8
+  const backgroundPages = new Set()
+  const topStartY = 42.6
+
+  const applyBackground = () => {
+    if (!bgDataUrl) return
+    try {
+      doc.addImage(bgDataUrl, 'PNG', 0, 0, pageWidth, pageHeight)
+      const pageNo = Number(doc.internal?.getCurrentPageInfo?.().pageNumber || doc.getCurrentPageInfo?.().pageNumber || 1)
+      backgroundPages.add(pageNo)
+    } catch (error) {
+      console.warn('Gagal menambahkan background laporan UTS ke PDF.', error)
+    }
+  }
+
+  const ensurePageBackground = () => {
+    const pageNo = Number(doc.internal?.getCurrentPageInfo?.().pageNumber || doc.getCurrentPageInfo?.().pageNumber || 1)
+    if (backgroundPages.has(pageNo)) return
+    applyBackground()
+  }
+
+  const ensureSpace = needed => {
+    if ((y + needed) <= (pageHeight - 10)) return
+    doc.addPage()
+    applyBackground()
+    y = topStartY
+  }
+
+  const drawFieldRow = (label, value) => {
+    const safeLines = doc.splitTextToSize(String(value || '-'), fieldValueWidth)
+    const lines = Array.isArray(safeLines) && safeLines.length ? safeLines : ['-']
+    doc.setFont('times', 'normal')
+    doc.setFontSize(baseTextSize)
+    doc.text(String(label || '-'), fieldLabelX, y)
+    doc.text(':', fieldColonX, y)
+    doc.text(lines, fieldValueX, y)
+    y += Math.max(bodyLineGap, (lines.length * bodyLineGap))
+  }
+
+  const commonTableStyles = {
+    font: 'times',
+    fontSize: baseTextSize,
+    cellPadding: 1.8,
+    textColor,
+    lineWidth: 0.18,
+    lineColor: tableLineColor,
+    valign: 'middle'
+  }
+
+  const commonHeadStyles = {
+    fillColor: [255, 255, 255],
+    textColor,
+    halign: 'center',
+    fontStyle: 'bold',
+    lineWidth: 0.18,
+    lineColor: tableLineColor
+  }
+
+  applyBackground()
+
+  doc.setTextColor(...textColor)
+  doc.setDrawColor(...tableLineColor)
+  doc.setLineWidth(0.2)
+
+  let y = topStartY
+  doc.setFont('times', 'bold')
+  doc.setFontSize(baseTextSize)
+  doc.text(titleText, pageWidth / 2, y, { align: 'center' })
+  y += bodyLineGap
+  doc.text(String(schoolName || '-').toUpperCase(), pageWidth / 2, y, { align: 'center' })
+
+  y += 9
+  drawFieldRow('NAMA SANTRI', payload?.studentName || '-')
+  drawFieldRow('NISN', payload?.studentNisn || '-')
+  drawFieldRow('KELAS', payload?.className || '-')
+  doc.line(margin, y, pageWidth - margin, y)
+  y += 7
+
+  const subjectRows = Array.isArray(payload?.subjects) ? payload.subjects : []
+  const subjectBody = subjectRows.map((item, index) => [
+    String(index + 1),
+    String(item?.name || '-'),
+    String(item?.kkmText || '17'),
+    String(item?.scoreText || '-')
+  ])
+  subjectBody.push([
+    { content: 'Jumlah', colSpan: 3, styles: { halign: 'center', fontStyle: 'bold' } },
+    { content: String(payload?.totalScoreText || '-'), styles: { halign: 'center', fontStyle: 'bold' } }
+  ])
+  subjectBody.push([
+    { content: 'Rata-Rata', colSpan: 3, styles: { halign: 'center', fontStyle: 'bold' } },
+    { content: String(payload?.averageScoreText || '-'), styles: { halign: 'center', fontStyle: 'bold' } }
+  ])
+
+  if (typeof doc.autoTable !== 'function') {
+    alert('Plugin tabel PDF belum termuat. Refresh halaman lalu coba lagi.')
+    return null
+  }
+
+  doc.setFont('times', 'bold')
+  doc.setFontSize(baseTextSize)
+  doc.text('A. MATA PELAJARAN', margin, y)
+  y += 4.5
+  doc.autoTable({
+    startY: y,
+    margin: { left: subjectTableX },
+    tableWidth: subjectTableWidth,
+    head: [['No', 'Mata Pelajaran', 'KKM', 'Nilai']],
+    body: subjectBody,
+    theme: 'grid',
+    styles: commonTableStyles,
+    headStyles: commonHeadStyles,
+    bodyStyles: { lineWidth: 0.18, lineColor: tableLineColor },
+    columnStyles: {
+      0: { cellWidth: 9.9, halign: 'center' },
+      1: { cellWidth: 62.5 },
+      2: { cellWidth: 32.5, halign: 'center' },
+      3: { cellWidth: 37.5, halign: 'center' }
+    },
+    willDrawPage: () => {
+      ensurePageBackground()
+    }
+  })
+
+  y = Number(doc.lastAutoTable?.finalY || y) + 7
+  ensureSpace(40)
+
+  doc.setFont('times', 'bold')
+  doc.setFontSize(baseTextSize)
+  doc.text('B. UJIAN MID SEMESTER KETAHFIZAN', margin, y)
+  y += 4.5
+  doc.autoTable({
+    startY: y,
+    margin: { left: midTableX },
+    tableWidth: midTableWidth,
+    head: [['CAPAIAN HAFALAN', 'NILAI']],
+    body: [[String(payload?.midTahfizCapaian || '-'), String(payload?.midTahfizScore || '-')]],
+    theme: 'grid',
+    styles: commonTableStyles,
+    headStyles: commonHeadStyles,
+    bodyStyles: { lineWidth: 0.18, lineColor: tableLineColor, halign: 'center' },
+    columnStyles: {
+      0: { cellWidth: 78.7, halign: 'center' },
+      1: { cellWidth: 63.8, halign: 'center' }
+    },
+    willDrawPage: () => {
+      ensurePageBackground()
+    }
+  })
+
+  y = Number(doc.lastAutoTable?.finalY || y) + 7
+  ensureSpace(70)
+  doc.setFont('times', 'bold')
+  doc.setFontSize(baseTextSize)
+  doc.text('C. KEHADIRAN', margin, y)
+  y += 4.5
+  doc.autoTable({
+    startY: y,
+    margin: { left: attendanceTableX },
+    tableWidth: attendanceTableWidth,
+    head: [['No', 'Kehadiran', 'Izin', 'Sakit']],
+    body: [
+      ['1', 'Kelas', String(payload?.kelasIzinText || '0'), String(payload?.kelasSakitText || '0')],
+      ['2', 'Halaqah Tahfizh', String(payload?.halaqahIzinText || '0'), String(payload?.halaqahSakitText || '0')]
+    ],
+    theme: 'grid',
+    styles: commonTableStyles,
+    headStyles: commonHeadStyles,
+    bodyStyles: { lineWidth: 0.18, lineColor: tableLineColor },
+    columnStyles: {
+      0: { cellWidth: 9.5, halign: 'center' },
+      1: { cellWidth: 37.0 },
+      2: { cellWidth: 27.5, halign: 'center' },
+      3: { cellWidth: 25.0, halign: 'center' }
+    },
+    willDrawPage: () => {
+      ensurePageBackground()
+    }
+  })
+
+  y = Number(doc.lastAutoTable?.finalY || y) + 11
+  ensureSpace(26)
+  const signCenterX = signatureX + (signatureWidth / 2)
+  doc.setFont('times', 'normal')
+  doc.setFontSize(baseTextSize)
+  doc.text('Mengetahui,', signCenterX, y, { align: 'center' })
+  y += 5
+  doc.text('Wali Kelas', signCenterX, y, { align: 'center' })
+  y += 18
+  doc.setFont('times', 'bold')
+  doc.text(waliKelasName, signCenterX, y, { align: 'center' })
 
   return doc
 }
@@ -11199,7 +12136,7 @@ function renderNilaiDetailModalContent() {
         <input type="date" class="guru-field" style="padding:6px 8px;" value="${escapeHtml(row.tanggal || '')}" oninput="updateNilaiDetailRow(${index}, 'tanggal', this.value)">
       </td>
       <td style="padding:8px; border:1px solid #e2e8f0;">
-        <input type="number" step="1" min="0" ${maxValue !== null ? `max="${maxValue}"` : ''} class="guru-field" style="padding:6px 8px; text-align:center;" value="${escapeHtml(String(row.nilai ?? ''))}" oninput="updateNilaiDetailRow(${index}, 'nilai', this.value)">
+        <input type="number" step="1" min="0" ${maxValue !== null ? `max="${maxValue}"` : ''} class="guru-field" style="padding:6px 8px; text-align:center;" value="${escapeHtml(String(row.nilai ?? ''))}" oninput="onNilaiDetailRowNilaiInput(${index}, this)" onblur="onNilaiDetailRowNilaiInput(${index}, this)">
       </td>
       <td style="padding:8px; border:1px solid #e2e8f0;">
         <input type="text" class="guru-field" style="padding:6px 8px;" value="${escapeHtml(String(row.materi || ''))}" placeholder="Materi (opsional)" oninput="updateNilaiDetailRow(${index}, 'materi', this.value)">
@@ -11212,7 +12149,7 @@ function renderNilaiDetailModalContent() {
 
   const avg = calculateNilaiDetailAverage(rows)
   body.innerHTML = `
-    <div style="margin-bottom:10px; font-size:13px; color:#475569;">Rata-rata saat ini: <strong>${avg === null ? '-' : avg}</strong></div>
+    <div style="margin-bottom:10px; font-size:13px; color:#475569;">Rata-rata saat ini: <strong id="nilai-detail-average-value">${avg === null ? '-' : avg}</strong></div>
     <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px;">
       <table style="width:100%; min-width:520px; border-collapse:collapse; font-size:13px;">
         <thead>
@@ -11241,10 +12178,25 @@ function calculateNilaiDetailAverage(rows = []) {
   return round2(sum / valid.length)
 }
 
+function refreshNilaiDetailAverageValue() {
+  const avgEl = document.getElementById('nilai-detail-average-value')
+  const rows = currentNilaiDetailModalState?.rows || []
+  const avg = calculateNilaiDetailAverage(rows)
+  if (avgEl) avgEl.textContent = avg === null ? '-' : String(avg)
+}
+
 function updateNilaiDetailRow(index, field, value) {
   const state = currentNilaiDetailModalState
   if (!state?.rows || !state.rows[index]) return
   state.rows[index][field] = String(value ?? '')
+  if (field === 'nilai') refreshNilaiDetailAverageValue()
+}
+
+function onNilaiDetailRowNilaiInput(index, inputEl) {
+  const state = currentNilaiDetailModalState
+  if (!state?.rows || !state.rows[index]) return
+  applyNilaiInputBounds(inputEl, getJenisNilaiMax(state.jenis))
+  updateNilaiDetailRow(index, 'nilai', inputEl?.value || '')
 }
 
 function addNilaiDetailRow() {
@@ -11281,7 +12233,9 @@ async function saveNilaiDetailChanges() {
 
   for (const row of state.rows) {
     const tanggal = String(row.tanggal || '').trim()
-    const nilai = toNullableNumber(row.nilai)
+    const normalizedNilai = normalizeBoundedNumberInputText(row.nilai, maxJenis)
+    row.nilai = normalizedNilai
+    const nilai = toNullableNumber(normalizedNilai)
     const materi = String(row.materi || '').trim()
     if (!tanggal || nilai === null) continue
     if (Number.isNaN(nilai)) {
@@ -11689,6 +12643,1803 @@ function pickRaporDeskripsiByPredikat(descRow, aspek, predikat) {
   const field = getRaporDescFieldName(aspek, predikat)
   if (!field) return ''
   return String(descRow[field] || '').trim()
+}
+
+async function loadSemesterRowsForLaporanUts(tahunAjaranId = '') {
+  const attempts = [
+    'id, nama, aktif, tahun_ajaran_id, tanggal_mulai, tanggal_selesai',
+    'id, nama, aktif, tahun_ajaran_id'
+  ]
+  let lastError = null
+  for (const fields of attempts) {
+    let query = sb
+      .from('semester')
+      .select(fields)
+      .order('id', { ascending: true })
+    if (tahunAjaranId) query = query.eq('tahun_ajaran_id', tahunAjaranId)
+    const res = await query
+    if (!res.error) return res.data || []
+    lastError = res.error
+  }
+  throw lastError || new Error('Gagal memuat data semester.')
+}
+
+async function loadTahunAjaranRowsForLaporanUts(ids = []) {
+  const idList = [...new Set((Array.isArray(ids) ? ids : []).map(item => String(item || '').trim()).filter(Boolean))]
+  if (!idList.length) return []
+  const attempts = [
+    'id, nama, tanggal_mulai, tanggal_selesai',
+    'id, nama'
+  ]
+  let lastError = null
+  for (const fields of attempts) {
+    const res = await sb
+      .from('tahun_ajaran')
+      .select(fields)
+      .in('id', idList)
+    if (!res.error) return res.data || []
+    lastError = res.error
+  }
+  throw lastError || new Error('Gagal memuat data tahun ajaran.')
+}
+
+function getSelectedLaporanUtsSemester() {
+  const semesterId = String(laporanUtsState.semesterId || '')
+  return (laporanUtsState.semesterList || []).find(item => String(item.id) === semesterId) || null
+}
+
+function formatLaporanUtsDateLabel(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return '-'
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(`${raw}T00:00:00`) : new Date(raw)
+  if (Number.isNaN(date.getTime())) return raw
+  return date.toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })
+}
+
+function toIsoDateOnly(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) return ''
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function shiftIsoDate(value, dayOffset = 0) {
+  const iso = toIsoDateOnly(value)
+  if (!iso) return ''
+  const date = new Date(`${iso}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return ''
+  date.setDate(date.getDate() + Number(dayOffset || 0))
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function isLaporanUtsExamRow(row) {
+  const text = `${String(row?.jenis || '')} ${String(row?.nama || '')}`.toUpperCase()
+  return /(^|\b)(UTS|PTS)(\b|$)|TENGAH|MID/.test(text)
+}
+
+function doesLaporanUtsExamRowMatchKelas(row, kelas) {
+  const classId = String(kelas?.id || '').trim()
+  const className = String(kelas?.nama_kelas || '').trim()
+  if (!className) return false
+  const normalizedClassName = normalizePersonName(className)
+  const meta = parseExamMetaFromSchedule(row)
+  const classRows = Array.isArray(meta?.class_rows) ? meta.class_rows : []
+  if (classRows.length) {
+    return classRows.some(item => {
+      const rowClassId = String(item?.kelas_id || '').trim()
+      const rowClassName = normalizePersonName(item?.kelas_nama || item?.kelas || '')
+      return (classId && rowClassId === classId) || (rowClassName && rowClassName === normalizedClassName)
+    })
+  }
+  const classList = getExamRowClassList(row, [className])
+  if (classList.some(item => normalizePersonName(item) === normalizedClassName)) return true
+  const rowPerangkatan = normalizePersonName(row?.kelas)
+  const kelasPerangkatan = normalizePersonName(getExamPerangkatanFromClassName(className))
+  return !!rowPerangkatan && !!kelasPerangkatan && rowPerangkatan === kelasPerangkatan
+}
+
+async function ensureLaporanUtsExamScheduleRows() {
+  const semester = getSelectedLaporanUtsSemester()
+  if (!semester?.id) return []
+  const semesterStart = toIsoDateOnly(semester?.tanggal_mulai)
+  const semesterEnd = toIsoDateOnly(semester?.tanggal_selesai)
+  const cacheKey = [semester.id, semesterStart, semesterEnd, laporanUtsState.tahunAjaranId].join('|')
+  if (cacheKey === laporanUtsState.examScheduleCacheKey && Array.isArray(laporanUtsState.examScheduleRows)) {
+    return laporanUtsState.examScheduleRows
+  }
+
+  let query = sb
+    .from(EXAM_SCHEDULE_TABLE)
+    .select('id, jenis, nama, kelas, tanggal, keterangan')
+    .order('tanggal', { ascending: true })
+  if (semesterStart) query = query.gte('tanggal', semesterStart)
+  if (semesterEnd) query = query.lte('tanggal', semesterEnd)
+  const res = await query
+  if (res.error) {
+    if (isExamTableMissingError(res.error)) {
+      laporanUtsState.examScheduleCacheKey = cacheKey
+      laporanUtsState.examScheduleRows = []
+      return []
+    }
+    throw res.error
+  }
+
+  const rows = (res.data || []).filter(row => {
+    const meta = parseExamMetaFromSchedule(row)
+    const semesterId = String(meta?.semester_id || '').trim()
+    const tahunAjaranId = String(meta?.tahun_ajaran_id || '').trim()
+    if (semesterId && semesterId !== String(semester.id)) return false
+    if (laporanUtsState.tahunAjaranId && tahunAjaranId && tahunAjaranId !== String(laporanUtsState.tahunAjaranId)) return false
+    return isLaporanUtsExamRow(row)
+  })
+
+  laporanUtsState.examScheduleCacheKey = cacheKey
+  laporanUtsState.examScheduleRows = rows
+  return rows
+}
+
+function findLaporanUtsPtsDateForKelas(scheduleRows = [], kelas = null) {
+  const matched = (Array.isArray(scheduleRows) ? scheduleRows : [])
+    .filter(row => doesLaporanUtsExamRowMatchKelas(row, kelas))
+    .map(row => String(row?.tanggal || '').slice(0, 10))
+    .filter(value => /^\d{4}-\d{2}-\d{2}$/.test(value))
+    .sort((a, b) => a.localeCompare(b))
+  return matched[0] || ''
+}
+
+function buildLaporanUtsScoreSummary(subjects = []) {
+  const numericScores = (Array.isArray(subjects) ? subjects : [])
+    .map(item => Number(item?.scoreValue))
+    .filter(value => Number.isFinite(value))
+  if (!numericScores.length) {
+    return { totalText: '-', averageText: '-' }
+  }
+  const total = round2(numericScores.reduce((sum, value) => sum + value, 0))
+  const average = round2(total / numericScores.length)
+  return {
+    totalText: toInputValue(total),
+    averageText: toInputValue(average)
+  }
+}
+
+async function buildLaporanUtsPayload(santriId, options = {}) {
+  const sid = String(santriId || '').trim()
+  const santri = (laporanUtsState.santriList || []).find(item => String(item.id || '') === sid)
+  if (!santri) throw new Error('Data santri tidak ditemukan.')
+  const skipOverrides = options?.skipOverrides === true
+
+  const semester = getSelectedLaporanUtsSemester()
+  if (!semester?.id) throw new Error('Semester belum dipilih.')
+
+  if (!skipOverrides) {
+    await ensureLaporanUtsBulkOverrideMap()
+  }
+
+  const kelas = laporanUtsState.kelasMap.get(String(santri.kelas_id || ''))
+  const tahunAjaranRow = laporanUtsState.tahunAjaranDateMap.get(String(semester.tahun_ajaran_id || laporanUtsState.tahunAjaranId || '')) || null
+
+  const [nilaiRes, distribusiRes, scheduleRows] = await Promise.all([
+    sb
+      .from('nilai_akademik')
+      .select('id, mapel_id, nilai_pts')
+      .eq('santri_id', sid)
+      .eq('semester_id', String(semester.id))
+      .order('id', { ascending: false }),
+    sb
+      .from('distribusi_mapel')
+      .select('id, mapel_id')
+      .eq('kelas_id', String(santri.kelas_id || ''))
+      .eq('semester_id', String(semester.id)),
+    ensureLaporanUtsExamScheduleRows()
+  ])
+
+  if (nilaiRes.error) throw nilaiRes.error
+  if (distribusiRes.error) throw distribusiRes.error
+
+  const nilaiByMapelId = new Map()
+  ;(nilaiRes.data || []).forEach(item => {
+    const mapelId = String(item?.mapel_id || '').trim()
+    if (!mapelId || nilaiByMapelId.has(mapelId)) return
+    nilaiByMapelId.set(mapelId, item)
+  })
+
+  const mapelIds = []
+  ;(distribusiRes.data || []).forEach(item => {
+    const mapelId = String(item?.mapel_id || '').trim()
+    if (mapelId && !mapelIds.includes(mapelId)) mapelIds.push(mapelId)
+  })
+  ;([...nilaiByMapelId.keys()]).forEach(mapelId => {
+    if (!mapelIds.includes(mapelId)) mapelIds.push(mapelId)
+  })
+
+  const mapelRes = await getMapelRowsByIds(mapelIds)
+  if (mapelRes.error) throw mapelRes.error
+  const mapelMap = new Map((mapelRes.data || []).map(item => [String(item.id || ''), item]))
+
+  const subjects = sortLaporanUtsSubjectsByTemplate(mapelIds.map(mapelId => {
+    const mapel = mapelMap.get(String(mapelId || ''))
+    const nilaiRow = nilaiByMapelId.get(String(mapelId || ''))
+    const scoreValue = toNullableNumber(nilaiRow?.nilai_pts)
+    const scoreText = scoreValue === null || Number.isNaN(scoreValue) ? '-' : toInputValue(scoreValue)
+    return {
+      name: getMapelPlainName(mapel) || '-',
+      kkmText: '17',
+      scoreText,
+      scoreValue: scoreValue === null || Number.isNaN(scoreValue) ? null : scoreValue
+    }
+  }).filter(item => String(item?.name || '').trim()))
+
+  const ptsDate = findLaporanUtsPtsDateForKelas(scheduleRows, kelas)
+  const semesterStart = toIsoDateOnly(semester?.tanggal_mulai) || toIsoDateOnly(tahunAjaranRow?.tanggal_mulai)
+  const attendanceEnd = ptsDate
+    ? shiftIsoDate(ptsDate, -1)
+    : shiftIsoDate(getDateInputToday(), -1) || getDateInputToday()
+
+  let kelasIzinCount = 0
+  let kelasSakitCount = 0
+  if (semesterStart && attendanceEnd && semesterStart <= attendanceEnd) {
+    const attendanceRes = await sb
+      .from(ATTENDANCE_TABLE)
+      .select('tanggal, status')
+      .eq('santri_id', sid)
+      .eq('kelas_id', String(santri.kelas_id || ''))
+      .gte('tanggal', semesterStart)
+      .lte('tanggal', attendanceEnd)
+    if (attendanceRes.error && !isMissingAbsensiTableError(attendanceRes.error)) {
+      throw attendanceRes.error
+    }
+    const academicHolidayDates = attendanceRes.error
+      ? new Set()
+      : await getAcademicHolidayDateSetByRange(semesterStart, attendanceEnd)
+    const filteredRows = (attendanceRes.data || []).filter(row => !academicHolidayDates.has(String(row?.tanggal || '').slice(0, 10)))
+    const dailyRows = aggregateAttendanceByDay(filteredRows)
+    kelasIzinCount = dailyRows.filter(item => item.status === 'Izin').length
+    kelasSakitCount = dailyRows.filter(item => item.status === 'Sakit').length
+  }
+
+  const nomorInduk = pickLabelByKeys(santri, ['nisn', 'id_santri', 'no_induk', 'nomor_induk']) || '-'
+  const summary = buildLaporanUtsScoreSummary(subjects)
+  const payload = {
+    studentName: String(santri.nama || '-'),
+    studentNisn: String(nomorInduk || '-'),
+    className: String(kelas?.nama_kelas || '-'),
+    waliKelasName: String(laporanUtsState?.guru?.nama || guru?.nama || '-'),
+    subjects,
+    totalScoreText: summary.totalText,
+    averageScoreText: summary.averageText,
+    kelasIzinText: String(kelasIzinCount),
+    kelasSakitText: String(kelasSakitCount),
+    halaqahIzinText: '',
+    halaqahSakitText: '',
+    midTahfizCapaian: '',
+    midTahfizScore: '',
+    ptsDate,
+    semesterLabel: getSemesterLabel(semester),
+    attendanceRangeLabel: semesterStart
+      ? `${formatLaporanUtsDateLabel(semesterStart)} s.d. ${formatLaporanUtsDateLabel(attendanceEnd || semesterStart)}`
+      : '-'
+  }
+
+  if (skipOverrides) return payload
+  const overrideEntry = getLaporanUtsOverrideEntryBySantriId(sid)
+  return applyLaporanUtsOverrideToPayload(payload, overrideEntry?.override || null)
+}
+
+function ensureLaporanUtsBulkModal() {
+  let overlay = document.getElementById('laporan-uts-bulk-overlay')
+  if (overlay) return overlay
+  overlay = document.createElement('div')
+  overlay.id = 'laporan-uts-bulk-overlay'
+  overlay.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.35); display:none; align-items:center; justify-content:center; z-index:11000; padding:16px; box-sizing:border-box;'
+  overlay.innerHTML = `
+    <div style="width:min(920px, calc(100vw - 32px)); max-height:calc(100vh - 32px); overflow:hidden; border:1px solid #dbeafe; border-radius:0; background:#fff; box-shadow:0 18px 34px rgba(15,23,42,0.18); display:flex; flex-direction:column;">
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid #e2e8f0; gap:10px;">
+        <div style="font-weight:700; color:#0f172a;">Input Massal Laporan UTS</div>
+        <button type="button" class="modal-btn" onclick="closeLaporanUtsBulkInputModal()">Tutup</button>
+      </div>
+      <div id="laporan-uts-bulk-body" style="padding:12px; overflow:auto;">Loading...</div>
+    </div>
+  `
+  overlay.addEventListener('click', event => {
+    if (event.target !== overlay) return
+    closeLaporanUtsBulkInputModal()
+  })
+  document.body.appendChild(overlay)
+  return overlay
+}
+
+function closeLaporanUtsBulkInputModal() {
+  const overlay = document.getElementById('laporan-uts-bulk-overlay')
+  if (!overlay) return
+  overlay.style.display = 'none'
+}
+
+function setLaporanUtsBulkModalStatus(message = '', tone = 'info') {
+  const el = document.getElementById('laporan-uts-bulk-status')
+  if (!el) return
+  const palette = {
+    info: { bg: '#eef2ff', border: '#c7d2fe', color: '#4338ca' },
+    success: { bg: '#ecfdf5', border: '#a7f3d0', color: '#047857' },
+    warning: { bg: '#fff7ed', border: '#fdba74', color: '#c2410c' },
+    error: { bg: '#fef2f2', border: '#fecaca', color: '#b91c1c' }
+  }
+  const selected = palette[tone] || palette.info
+  el.style.display = message ? 'block' : 'none'
+  el.style.background = selected.bg
+  el.style.borderColor = selected.border
+  el.style.color = selected.color
+  el.textContent = String(message || '')
+}
+
+function clearLaporanUtsBulkPendingUpload() {
+  laporanUtsState.bulkPendingUpload = null
+}
+
+function renderLaporanUtsBulkReviewSection() {
+  const wrap = document.getElementById('laporan-uts-bulk-review-wrap')
+  if (!wrap) return
+  const pending = laporanUtsState.bulkPendingUpload
+  if (!pending) {
+    wrap.innerHTML = ''
+    return
+  }
+
+  const reviewRows = Array.isArray(pending.reviewRows) ? pending.reviewRows : []
+  const subjectHeaders = Array.isArray(laporanUtsState.subjectDisplayColumns) && laporanUtsState.subjectDisplayColumns.length
+    ? laporanUtsState.subjectDisplayColumns
+    : buildLaporanUtsSubjectDisplayColumns(laporanUtsState.subjectDisplayNameMap)
+  const rowsHtml = reviewRows.map((item, index) => `
+    <tr>
+      <td style="padding:6px; border:1px solid #e2e8f0; text-align:center;">${index + 1}</td>
+      <td style="padding:6px; border:1px solid #e2e8f0;">${escapeHtml(item.studentName || '-')}</td>
+      <td style="padding:6px; border:1px solid #e2e8f0;">${escapeHtml(item.className || '-')}</td>
+      <td style="padding:6px; border:1px solid #e2e8f0;">${escapeHtml(item.reviewMeta?.midTahfizCapaian || '-')}</td>
+      <td style="padding:6px; border:1px solid #e2e8f0; text-align:center;">${escapeHtml(item.reviewMeta?.midTahfizScore || '-')}</td>
+      <td style="padding:6px; border:1px solid #e2e8f0; text-align:center;">${escapeHtml(item.reviewMeta?.halaqahSakitText || '-')}</td>
+      <td style="padding:6px; border:1px solid #e2e8f0; text-align:center;">${escapeHtml(item.reviewMeta?.halaqahIzinText || '-')}</td>
+      <td style="padding:6px; border:1px solid #e2e8f0; text-align:center;">${escapeHtml(item.reviewMeta?.kelasSakitText || '-')}</td>
+      <td style="padding:6px; border:1px solid #e2e8f0; text-align:center;">${escapeHtml(item.reviewMeta?.kelasIzinText || '-')}</td>
+      ${subjectHeaders.map(subject => `<td style="padding:6px; border:1px solid #e2e8f0; text-align:center;">${escapeHtml(item.subjectMap?.[subject.key] || '-')}</td>`).join('')}
+      <td style="padding:6px; border:1px solid #e2e8f0; text-align:center;">${escapeHtml(item.actionLabel || '-')}</td>
+    </tr>
+  `).join('')
+
+  wrap.innerHTML = `
+    <div class="placeholder-card" style="margin:0;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+        <div>
+          <div style="font-weight:700; color:#0f172a;">Review Upload Input Massal</div>
+          <div style="font-size:12px; color:#64748b; margin-top:2px;">File: ${escapeHtml(pending.fileName || '-')}</div>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button type="button" class="modal-btn" onclick="cancelLaporanUtsBulkReview()">Batal</button>
+          <button type="button" class="modal-btn modal-btn-primary" onclick="confirmSaveLaporanUtsBulkUpload(this)">Simpan Override</button>
+        </div>
+      </div>
+      <div style="font-size:13px; color:#334155; margin-bottom:10px;">
+        Akan disimpan: <b>${escapeHtml(String(pending.upsertPayload?.length || 0))}</b> santri |
+        Reset ke otomatis: <b>${escapeHtml(String(pending.deleteSantriIds?.length || 0))}</b> santri
+      </div>
+      <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px;">
+        <table style="width:100%; min-width:1600px; border-collapse:collapse; font-size:12px;">
+          <thead>
+            <tr style="background:#f8fafc;">
+              <th style="padding:6px; border:1px solid #e2e8f0; width:44px;">No</th>
+              <th style="padding:6px; border:1px solid #e2e8f0; text-align:left;">Santri</th>
+              <th style="padding:6px; border:1px solid #e2e8f0; text-align:left;">Kelas</th>
+              <th style="padding:6px; border:1px solid #e2e8f0; text-align:left; min-width:180px;">Capaian Hafalan</th>
+              <th style="padding:6px; border:1px solid #e2e8f0; min-width:110px;">Mid Ketahfizan</th>
+              <th style="padding:6px; border:1px solid #e2e8f0; min-width:90px;">Sakit Halaqah</th>
+              <th style="padding:6px; border:1px solid #e2e8f0; min-width:90px;">Izin Halaqah</th>
+              <th style="padding:6px; border:1px solid #e2e8f0; min-width:90px;">Sakit Kelas</th>
+              <th style="padding:6px; border:1px solid #e2e8f0; min-width:90px;">Izin Kelas</th>
+              ${subjectHeaders.map(subject => `<th style="padding:6px; border:1px solid #e2e8f0; min-width:90px;">${escapeHtml(subject.label)}</th>`).join('')}
+              <th style="padding:6px; border:1px solid #e2e8f0; width:110px;">Aksi</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml || `<tr><td colspan="${10 + subjectHeaders.length}" style="padding:10px; border:1px solid #e2e8f0; text-align:center;">Tidak ada perubahan yang perlu disimpan.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `
+}
+
+function cancelLaporanUtsBulkReview() {
+  clearLaporanUtsBulkPendingUpload()
+  renderLaporanUtsBulkReviewSection()
+  setLaporanUtsBulkModalStatus('Review upload dibatalkan. Tidak ada perubahan yang disimpan.', 'warning')
+}
+
+function getLaporanUtsExcelJs() {
+  if (!window.ExcelJS || typeof window.ExcelJS.Workbook !== 'function') {
+    throw new Error('Library Excel belum termuat. Refresh halaman lalu coba lagi.')
+  }
+  return window.ExcelJS
+}
+
+async function loadLaporanUtsBulkTemplateWorkbook() {
+  const ExcelJS = getLaporanUtsExcelJs()
+  const templateUrl = new URL(UTS_REPORT_BULK_TEMPLATE_FILE, window.location.href)
+  const response = await fetch(templateUrl.toString(), { cache: 'no-cache' })
+  if (!response.ok) {
+    throw new Error(`Template ${UTS_REPORT_BULK_TEMPLATE_FILE} tidak ditemukan.`)
+  }
+  const workbook = new ExcelJS.Workbook()
+  await workbook.xlsx.load(await response.arrayBuffer())
+  return workbook
+}
+
+function getLaporanUtsWorkbookCellText(value) {
+  if (value === null || value === undefined) return ''
+  if (value instanceof Date) return toIsoDateOnly(value) || ''
+  if (typeof value === 'object') {
+    if (Array.isArray(value.richText)) {
+      return value.richText.map(item => String(item?.text || '')).join('').trim()
+    }
+    if (Object.prototype.hasOwnProperty.call(value, 'text')) {
+      return String(value.text || '').trim()
+    }
+    if (Object.prototype.hasOwnProperty.call(value, 'result')) {
+      return getLaporanUtsWorkbookCellText(value.result)
+    }
+  }
+  return String(value).trim()
+}
+
+function findLaporanUtsBulkHeaderRow(worksheet) {
+  const maxRow = Math.max(worksheet?.actualRowCount || 0, worksheet?.rowCount || 0, 10)
+  for (let rowNumber = 1; rowNumber <= Math.min(maxRow, 12); rowNumber += 1) {
+    const row = worksheet.getRow(rowNumber)
+    const maxCol = Math.max(row?.actualCellCount || 0, row?.cellCount || 0, worksheet?.columnCount || 0, 24)
+    let hits = 0
+    for (let col = 1; col <= maxCol; col += 1) {
+      const key = normalizeLaporanUtsBulkKey(getLaporanUtsWorkbookCellText(row.getCell(col).value))
+      if (!key) continue
+      if (key === LAPORAN_UTS_BULK_META_FIELDS.studentName) hits += 1
+      if (key === LAPORAN_UTS_BULK_META_FIELDS.studentNisn) hits += 1
+      if (key === LAPORAN_UTS_BULK_META_FIELDS.className) hits += 1
+    }
+    if (hits >= 3) return rowNumber
+  }
+  return 2
+}
+
+function buildLaporanUtsBulkHeaderMap(worksheet, headerRowNumber) {
+  const row = worksheet.getRow(headerRowNumber)
+  const maxCol = Math.max(row?.actualCellCount || 0, row?.cellCount || 0, worksheet?.columnCount || 0, 24)
+  const headerMap = new Map()
+  for (let col = 1; col <= maxCol; col += 1) {
+    const label = getLaporanUtsWorkbookCellText(row.getCell(col).value)
+    const key = normalizeLaporanUtsBulkKey(label)
+    if (!key) continue
+    if (!headerMap.has(key)) {
+      headerMap.set(key, { col, label })
+    }
+  }
+  return headerMap
+}
+
+function setLaporanUtsWorkbookCellValue(cell, value, options = {}) {
+  if (!cell) return
+  if (value === null || value === undefined || value === '') {
+    cell.value = null
+    return
+  }
+  if (options.asText) {
+    cell.value = String(value)
+    return
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    cell.value = value
+    return
+  }
+  const rawText = String(value).trim()
+  if (!rawText || rawText === '-') {
+    cell.value = null
+    return
+  }
+  const numeric = toNullableNumber(rawText.replace(',', '.'))
+  if (numeric !== null && !Number.isNaN(numeric)) {
+    cell.value = Number(numeric)
+    return
+  }
+  cell.value = rawText
+}
+
+function downloadLaporanUtsBulkBlob(blob, fileName) {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = fileName
+  document.body.appendChild(anchor)
+  anchor.click()
+  document.body.removeChild(anchor)
+  setTimeout(() => URL.revokeObjectURL(url), 1500)
+}
+
+function buildLaporanUtsSantriLookupMaps() {
+  const byIdentity = new Map()
+  const byNameClass = new Map()
+  ;(laporanUtsState.santriList || []).forEach(santri => {
+    const sid = String(santri?.id || '').trim()
+    const kelasNama = String(laporanUtsState.kelasMap.get(String(santri?.kelas_id || ''))?.nama_kelas || '').trim()
+    ;['nisn', 'id_santri', 'no_induk', 'nomor_induk'].forEach(key => {
+      const value = String(santri?.[key] || '').trim().toLowerCase()
+      if (value) byIdentity.set(value, santri)
+    })
+    const compositeKey = `${normalizePersonName(santri?.nama || '')}|${normalizePersonName(kelasNama)}`
+    if (compositeKey && compositeKey !== '|') byNameClass.set(compositeKey, santri)
+    if (sid) byIdentity.set(sid.toLowerCase(), santri)
+  })
+  return { byIdentity, byNameClass }
+}
+
+function getLaporanUtsWorkbookRowData(worksheet, rowNumber, headerMap) {
+  const row = worksheet.getRow(rowNumber)
+  const data = {}
+  headerMap.forEach((meta, key) => {
+    data[key] = getLaporanUtsWorkbookCellText(row.getCell(meta.col).value)
+  })
+  return data
+}
+
+function isLaporanUtsWorkbookRowBlank(rowData = {}) {
+  return !Object.values(rowData).some(value => String(value || '').trim())
+}
+
+function resolveLaporanUtsWorkbookSantri(rowData, lookup) {
+  const identityCandidates = [
+    String(rowData[LAPORAN_UTS_BULK_META_FIELDS.studentNisn] || '').trim().toLowerCase(),
+    String(rowData.id_santri || '').trim().toLowerCase(),
+    String(rowData.nomor_induk || '').trim().toLowerCase(),
+    String(rowData.no_induk || '').trim().toLowerCase()
+  ].filter(Boolean)
+  for (const key of identityCandidates) {
+    if (lookup.byIdentity.has(key)) return lookup.byIdentity.get(key)
+  }
+  const compositeKey = `${normalizePersonName(rowData[LAPORAN_UTS_BULK_META_FIELDS.studentName] || '')}|${normalizePersonName(rowData[LAPORAN_UTS_BULK_META_FIELDS.className] || '')}`
+  if (lookup.byNameClass.has(compositeKey)) return lookup.byNameClass.get(compositeKey)
+  return null
+}
+
+function buildLaporanUtsOverrideFromWorkbookRow(rowData, headerMap, autoPayload) {
+  const override = {}
+
+  const midTahfizCapaian = getLaporanUtsBulkStoredText(rowData[LAPORAN_UTS_BULK_META_FIELDS.midTahfizCapaian])
+  if (midTahfizCapaian && normalizeLaporanUtsBulkCompareValue(midTahfizCapaian) !== normalizeLaporanUtsBulkCompareValue(autoPayload?.midTahfizCapaian)) {
+    override.midTahfizCapaian = midTahfizCapaian
+  }
+  const midTahfizScore = getLaporanUtsBulkStoredText(rowData[LAPORAN_UTS_BULK_META_FIELDS.midTahfizScore])
+  if (midTahfizScore && normalizeLaporanUtsBulkCompareValue(midTahfizScore) !== normalizeLaporanUtsBulkCompareValue(autoPayload?.midTahfizScore)) {
+    override.midTahfizScore = midTahfizScore
+  }
+
+  ;['halaqahSakitText', 'halaqahIzinText', 'kelasSakitText', 'kelasIzinText'].forEach(fieldName => {
+    const headerKey = LAPORAN_UTS_BULK_META_FIELDS[fieldName]
+    const rawText = getLaporanUtsBulkStoredText(rowData[headerKey])
+    if (!rawText) return
+    if (normalizeLaporanUtsBulkCompareValue(rawText) === normalizeLaporanUtsBulkCompareValue(autoPayload?.[fieldName])) return
+    override[fieldName] = rawText
+  })
+
+  const autoSubjectMap = new Map((autoPayload?.subjects || []).map(item => [
+    normalizeLaporanUtsBulkKey(item?.name || ''),
+    item
+  ]))
+  const subjectOverrides = []
+  headerMap.forEach((meta, key) => {
+    if (LAPORAN_UTS_BULK_META_KEY_SET.has(key)) return
+    const rawText = getLaporanUtsBulkStoredText(rowData[key])
+    if (!rawText) return
+    const autoSubject = autoSubjectMap.get(key)
+    if (normalizeLaporanUtsBulkCompareValue(rawText) === normalizeLaporanUtsBulkCompareValue(autoSubject?.scoreText)) return
+    const entry = getLaporanUtsBulkStoredScoreEntry(meta.label, rawText)
+    if (entry) subjectOverrides.push(entry)
+  })
+  if (subjectOverrides.length) override.subjects = subjectOverrides
+
+  return override
+}
+
+function describeLaporanUtsOverrideReview(override = {}) {
+  const changes = []
+  if (override.midTahfizCapaian) changes.push(`Capaian Hafalan: ${override.midTahfizCapaian}`)
+  if (override.midTahfizScore) changes.push(`Mid Ketahfizan: ${override.midTahfizScore}`)
+  if (override.halaqahSakitText) changes.push(`Sakit Halaqah: ${override.halaqahSakitText}`)
+  if (override.halaqahIzinText) changes.push(`Izin Halaqah: ${override.halaqahIzinText}`)
+  if (override.kelasSakitText) changes.push(`Sakit Kelas: ${override.kelasSakitText}`)
+  if (override.kelasIzinText) changes.push(`Izin Kelas: ${override.kelasIzinText}`)
+  ;(override.subjects || []).forEach(item => {
+    changes.push(`${item?.name || '-'}: ${item?.scoreText || '-'}`)
+  })
+  return changes
+}
+
+async function openLaporanUtsBulkInputModal() {
+  if (!laporanUtsState?.guru?.id || !String(laporanUtsState.semesterId || '').trim()) {
+    alert('Data laporan UTS belum siap untuk input massal.')
+    return
+  }
+
+  const overlay = ensureLaporanUtsBulkModal()
+  const body = document.getElementById('laporan-uts-bulk-body')
+  if (!overlay || !body) return
+  overlay.style.display = 'flex'
+  body.innerHTML = 'Menyiapkan input massal laporan UTS...'
+
+  try {
+    await ensureLaporanUtsBulkOverrideMap()
+  } catch (error) {
+    console.error('Gagal memuat override laporan UTS.', error)
+  }
+
+  const semester = getSelectedLaporanUtsSemester()
+  const overrideCount = [...(laporanUtsState.bulkOverrideMap?.values?.() || [])]
+    .filter(entry => Object.keys(entry?.override || {}).length)
+    .length
+
+  body.innerHTML = `
+    <div style="display:grid; gap:12px;">
+      <div class="placeholder-card" style="margin:0;">
+        <div style="font-weight:700; margin-bottom:6px;">Override hanya untuk isian laporan UTS</div>
+        <div style="font-size:13px; color:#475569; line-height:1.7;">
+          File hasil input massal akan menggantikan isi laporan UTS saat dilihat, dicetak, dan dikirim WhatsApp.
+          Data asli nilai maupun absensi tidak akan diubah.
+        </div>
+      </div>
+
+      ${laporanUtsState.bulkOverrideTableMissing
+        ? `<div class="placeholder-card" style="margin:0; border-color:#fdba74; background:#fff7ed; color:#9a3412; white-space:pre-wrap;">${escapeHtml(buildLaporanUtsOverrideMissingTableMessage())}</div>`
+        : ''}
+
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+        <div style="font-size:13px; color:#334155;">
+          Semester: <strong>${escapeHtml(getSemesterLabel(semester))}</strong> |
+          Santri: <strong>${escapeHtml(String((laporanUtsState.santriList || []).length))}</strong> |
+          Override aktif: <strong>${escapeHtml(String(overrideCount))}</strong>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button type="button" class="modal-btn" onclick="downloadLaporanUtsBulkTemplate(this)">Unduh Template</button>
+          <button type="button" class="modal-btn modal-btn-primary" onclick="triggerLaporanUtsBulkFilePicker()">Upload Hasil</button>
+        </div>
+      </div>
+
+      <input id="laporan-uts-bulk-file" type="file" accept=".xlsx,.xlsm,.xls" style="display:none;" onchange="handleLaporanUtsBulkFileSelected(event)">
+
+      <div id="laporan-uts-bulk-status" style="display:none; padding:10px 12px; border:1px solid #c7d2fe; border-radius:10px; font-size:13px;"></div>
+
+      <div class="placeholder-card" style="margin:0;">
+        <div style="font-weight:700; margin-bottom:6px;">Alur pakai</div>
+        <ol style="margin:0; padding-left:18px; color:#475569; line-height:1.8; font-size:13px;">
+          <li>Unduh template <b>${escapeHtml(UTS_REPORT_BULK_TEMPLATE_FILE)}</b> yang sudah diisi otomatis sesuai data saat ini.</li>
+          <li>Edit nilai/kehadiran/capaian hafalan seperlunya di Excel.</li>
+          <li>Upload kembali file hasil edit, review dulu perubahannya, lalu baru simpan override.</li>
+        </ol>
+      </div>
+
+      <div id="laporan-uts-bulk-review-wrap" style="display:grid; gap:12px;"></div>
+    </div>
+  `
+  renderLaporanUtsBulkReviewSection()
+}
+
+function triggerLaporanUtsBulkFilePicker() {
+  const input = document.getElementById('laporan-uts-bulk-file')
+  if (!input) return
+  input.value = ''
+  input.click()
+}
+
+async function downloadLaporanUtsBulkTemplate(buttonEl = null) {
+  try {
+    setButtonLoading(buttonEl, true, 'Menyiapkan...')
+    setLaporanUtsBulkModalStatus('Menyiapkan template input massal...', 'info')
+    await ensureLaporanUtsBulkOverrideMap()
+    const workbook = await loadLaporanUtsBulkTemplateWorkbook()
+    const worksheet = workbook.worksheets?.[0]
+    if (!worksheet) throw new Error(`Template ${UTS_REPORT_BULK_TEMPLATE_FILE} tidak memiliki worksheet.`)
+
+    const headerRowNumber = findLaporanUtsBulkHeaderRow(worksheet)
+    const headerMap = buildLaporanUtsBulkHeaderMap(worksheet, headerRowNumber)
+    const headerRow = worksheet.getRow(headerRowNumber)
+    await ensureLaporanUtsSubjectDisplayNameMap()
+    headerMap.forEach((meta, key) => {
+      if (LAPORAN_UTS_BULK_META_KEY_SET.has(key)) return
+      const nextLabel = getLaporanUtsSubjectDisplayLabel(key)
+      if (!nextLabel) return
+      setLaporanUtsWorkbookCellValue(headerRow.getCell(meta.col), nextLabel, { asText: true })
+    })
+    const dataStartRow = headerRowNumber + 1
+    const maxCol = Math.max(...[...headerMap.values()].map(item => item.col), 1)
+    const maxRowToClear = Math.max(worksheet.rowCount || 0, dataStartRow + (laporanUtsState.santriList || []).length + 20)
+
+    for (let rowNumber = dataStartRow; rowNumber <= maxRowToClear; rowNumber += 1) {
+      const row = worksheet.getRow(rowNumber)
+      for (let col = 1; col <= maxCol; col += 1) {
+        row.getCell(col).value = null
+      }
+    }
+
+    for (let index = 0; index < (laporanUtsState.santriList || []).length; index += 1) {
+      const santri = laporanUtsState.santriList[index]
+      setLaporanUtsBulkModalStatus(`Menyusun template ${index + 1}/${laporanUtsState.santriList.length}: ${santri?.nama || '-'}`, 'info')
+      const payload = await buildLaporanUtsPayload(String(santri?.id || ''))
+      const row = worksheet.getRow(dataStartRow + index)
+      const kelasNama = laporanUtsState.kelasMap.get(String(santri?.kelas_id || ''))?.nama_kelas || payload?.className || '-'
+      const subjectMap = new Map((payload?.subjects || []).map(item => [normalizeLaporanUtsBulkKey(item?.name || ''), item]))
+
+      setLaporanUtsWorkbookCellValue(row.getCell(headerMap.get(LAPORAN_UTS_BULK_META_FIELDS.no)?.col || 1), index + 1)
+      if (headerMap.has(LAPORAN_UTS_BULK_META_FIELDS.studentName)) {
+        setLaporanUtsWorkbookCellValue(row.getCell(headerMap.get(LAPORAN_UTS_BULK_META_FIELDS.studentName).col), payload?.studentName || santri?.nama || '', { asText: true })
+      }
+      if (headerMap.has(LAPORAN_UTS_BULK_META_FIELDS.studentNisn)) {
+        setLaporanUtsWorkbookCellValue(row.getCell(headerMap.get(LAPORAN_UTS_BULK_META_FIELDS.studentNisn).col), payload?.studentNisn || pickLabelByKeys(santri, ['nisn', 'id_santri', 'no_induk', 'nomor_induk']) || '', { asText: true })
+      }
+      if (headerMap.has(LAPORAN_UTS_BULK_META_FIELDS.className)) {
+        setLaporanUtsWorkbookCellValue(row.getCell(headerMap.get(LAPORAN_UTS_BULK_META_FIELDS.className).col), kelasNama, { asText: true })
+      }
+      if (headerMap.has(LAPORAN_UTS_BULK_META_FIELDS.midTahfizCapaian)) {
+        setLaporanUtsWorkbookCellValue(row.getCell(headerMap.get(LAPORAN_UTS_BULK_META_FIELDS.midTahfizCapaian).col), payload?.midTahfizCapaian || '', { asText: true })
+      }
+      if (headerMap.has(LAPORAN_UTS_BULK_META_FIELDS.midTahfizScore)) {
+        setLaporanUtsWorkbookCellValue(row.getCell(headerMap.get(LAPORAN_UTS_BULK_META_FIELDS.midTahfizScore).col), payload?.midTahfizScore || '')
+      }
+      ;['halaqahSakitText', 'halaqahIzinText', 'kelasSakitText', 'kelasIzinText'].forEach(fieldName => {
+        const headerKey = LAPORAN_UTS_BULK_META_FIELDS[fieldName]
+        if (!headerMap.has(headerKey)) return
+        setLaporanUtsWorkbookCellValue(row.getCell(headerMap.get(headerKey).col), payload?.[fieldName] || '')
+      })
+      headerMap.forEach((meta, key) => {
+        if (LAPORAN_UTS_BULK_META_KEY_SET.has(key)) return
+        const subject = subjectMap.get(key)
+        setLaporanUtsWorkbookCellValue(row.getCell(meta.col), subject?.scoreText || '')
+      })
+    }
+
+    const buffer = await workbook.xlsx.writeBuffer()
+    const semesterLabel = sanitizeFileNamePart(getSemesterLabel(getSelectedLaporanUtsSemester()) || 'Semester').replace(/\s+/g, '-')
+    const fileName = `UTSInput - ${semesterLabel}.xlsx`
+    downloadLaporanUtsBulkBlob(new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), fileName)
+    setLaporanUtsBulkModalStatus('Template input massal berhasil diunduh.', 'success')
+  } catch (error) {
+    console.error(error)
+    setLaporanUtsBulkModalStatus(`Gagal menyiapkan template: ${error?.message || 'Unknown error'}`, 'error')
+  } finally {
+    setButtonLoading(buttonEl, false)
+  }
+}
+
+async function handleLaporanUtsBulkFileSelected(event) {
+  const file = event?.target?.files?.[0]
+  if (!file) return
+  try {
+    setLaporanUtsBulkModalStatus(`Membaca file ${file.name}...`, 'info')
+    clearLaporanUtsBulkPendingUpload()
+    renderLaporanUtsBulkReviewSection()
+    await ensureLaporanUtsBulkOverrideMap()
+    const ExcelJS = getLaporanUtsExcelJs()
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(await file.arrayBuffer())
+    const worksheet = workbook.worksheets?.[0]
+    if (!worksheet) throw new Error('File input massal tidak memiliki worksheet.')
+
+    const headerRowNumber = findLaporanUtsBulkHeaderRow(worksheet)
+    const headerMap = buildLaporanUtsBulkHeaderMap(worksheet, headerRowNumber)
+    if (!headerMap.has(LAPORAN_UTS_BULK_META_FIELDS.studentName) || !headerMap.has(LAPORAN_UTS_BULK_META_FIELDS.studentNisn)) {
+      throw new Error('Header template UTSInput tidak dikenali.')
+    }
+
+    const lookup = buildLaporanUtsSantriLookupMaps()
+    const processedRows = []
+    let consecutiveBlankRows = 0
+    let hasDataRows = false
+    const maxRow = Math.max(worksheet.actualRowCount || 0, worksheet.rowCount || 0)
+    for (let rowNumber = headerRowNumber + 1; rowNumber <= maxRow; rowNumber += 1) {
+      const rowData = getLaporanUtsWorkbookRowData(worksheet, rowNumber, headerMap)
+      if (isLaporanUtsWorkbookRowBlank(rowData)) {
+        consecutiveBlankRows += 1
+        if (hasDataRows && consecutiveBlankRows >= 20) break
+        continue
+      }
+      hasDataRows = true
+      consecutiveBlankRows = 0
+      const santri = resolveLaporanUtsWorkbookSantri(rowData, lookup)
+      if (!santri) continue
+      processedRows.push({ santri, rowData })
+    }
+
+    if (!processedRows.length) {
+      throw new Error('Tidak ada baris santri yang cocok ditemukan di file input massal.')
+    }
+
+    const autoPayloadMap = new Map()
+    for (let index = 0; index < processedRows.length; index += 1) {
+      const item = processedRows[index]
+      const sid = String(item?.santri?.id || '').trim()
+      if (autoPayloadMap.has(sid)) continue
+      setLaporanUtsBulkModalStatus(`Membandingkan data ${index + 1}/${processedRows.length}: ${item?.santri?.nama || '-'}`, 'info')
+      autoPayloadMap.set(sid, await buildLaporanUtsPayload(sid, { skipOverrides: true }))
+    }
+
+    const upsertPayload = []
+    const processedSantriIds = new Set()
+    const deleteSantriIds = []
+    const reviewRows = []
+
+    processedRows.forEach(item => {
+      const sid = String(item?.santri?.id || '').trim()
+      if (!sid || processedSantriIds.has(sid)) return
+      processedSantriIds.add(sid)
+      const override = buildLaporanUtsOverrideFromWorkbookRow(item.rowData, headerMap, autoPayloadMap.get(sid))
+      const hasOverride = Object.keys(override).length > 0
+      if (hasOverride) {
+        const subjectMap = Object.fromEntries((override.subjects || []).map(subject => [normalizeLaporanUtsBulkKey(subject?.name || subject?.key || ''), String(subject?.scoreText || '-')]))
+        upsertPayload.push({
+          guru_id: String(laporanUtsState?.guru?.id || ''),
+          semester_id: String(laporanUtsState?.semesterId || ''),
+          kelas_id: String(item?.santri?.kelas_id || ''),
+          santri_id: sid,
+          override_json: override
+        })
+        reviewRows.push({
+          santriId: sid,
+          studentName: String(item?.santri?.nama || '-'),
+          className: String(laporanUtsState.kelasMap.get(String(item?.santri?.kelas_id || ''))?.nama_kelas || '-'),
+          reviewMeta: {
+            midTahfizCapaian: override.midTahfizCapaian || '',
+            midTahfizScore: override.midTahfizScore || '',
+            halaqahSakitText: override.halaqahSakitText || '',
+            halaqahIzinText: override.halaqahIzinText || '',
+            kelasSakitText: override.kelasSakitText || '',
+            kelasIzinText: override.kelasIzinText || ''
+          },
+          subjectMap,
+          actionLabel: 'Override'
+        })
+      } else if (laporanUtsState.bulkOverrideMap.has(sid)) {
+        deleteSantriIds.push(sid)
+        reviewRows.push({
+          santriId: sid,
+          studentName: String(item?.santri?.nama || '-'),
+          className: String(laporanUtsState.kelasMap.get(String(item?.santri?.kelas_id || ''))?.nama_kelas || '-'),
+          reviewMeta: {
+            midTahfizCapaian: '',
+            midTahfizScore: '',
+            halaqahSakitText: '',
+            halaqahIzinText: '',
+            kelasSakitText: '',
+            kelasIzinText: ''
+          },
+          subjectMap: {},
+          actionLabel: 'Reset'
+        })
+      }
+    })
+
+    if (!upsertPayload.length && !deleteSantriIds.length) {
+      setLaporanUtsBulkModalStatus('Tidak ada perubahan override yang perlu disimpan.', 'warning')
+      return
+    }
+    laporanUtsState.bulkPendingUpload = {
+      fileName: String(file.name || ''),
+      upsertPayload,
+      deleteSantriIds,
+      reviewRows
+    }
+    renderLaporanUtsBulkReviewSection()
+    setLaporanUtsBulkModalStatus(`Review siap. Periksa ${reviewRows.length} perubahan lalu klik Simpan Override.`, 'success')
+  } catch (error) {
+    console.error(error)
+    setLaporanUtsBulkModalStatus(`Gagal memproses input massal: ${error?.message || 'Unknown error'}`, 'error')
+  } finally {
+    if (event?.target) event.target.value = ''
+  }
+}
+
+async function confirmSaveLaporanUtsBulkUpload(buttonEl = null) {
+  const pending = laporanUtsState.bulkPendingUpload
+  if (!pending) {
+    setLaporanUtsBulkModalStatus('Belum ada review upload yang siap disimpan.', 'warning')
+    return
+  }
+  try {
+    setButtonLoading(buttonEl, true, 'Menyimpan...')
+    setLaporanUtsBulkModalStatus('Menyimpan override input massal...', 'info')
+
+    if (pending.upsertPayload?.length) {
+      const { error } = await sb
+        .from(UTS_REPORT_OVERRIDE_TABLE)
+        .upsert(pending.upsertPayload, { onConflict: 'guru_id,semester_id,santri_id' })
+      if (error) {
+        if (isMissingLaporanUtsOverrideTableError(error)) {
+          laporanUtsState.bulkOverrideTableMissing = true
+          throw new Error(buildLaporanUtsOverrideMissingTableMessage())
+        }
+        throw error
+      }
+    }
+
+    if (pending.deleteSantriIds?.length) {
+      const { error } = await sb
+        .from(UTS_REPORT_OVERRIDE_TABLE)
+        .delete()
+        .eq('guru_id', String(laporanUtsState?.guru?.id || ''))
+        .eq('semester_id', String(laporanUtsState?.semesterId || ''))
+        .in('santri_id', pending.deleteSantriIds)
+      if (error) {
+        if (isMissingLaporanUtsOverrideTableError(error)) {
+          laporanUtsState.bulkOverrideTableMissing = true
+          throw new Error(buildLaporanUtsOverrideMissingTableMessage())
+        }
+        throw error
+      }
+    }
+
+    await ensureLaporanUtsBulkOverrideMap(true)
+    clearLaporanUtsBulkPendingUpload()
+    laporanUtsState.detailDataCache = new Map()
+    const summaryMessage = `Input massal berhasil disimpan. Override aktif diperbarui untuk ${pending.upsertPayload?.length || 0} santri, reset ${pending.deleteSantriIds?.length || 0} santri.`
+    closeLaporanUtsBulkInputModal()
+    renderLaporanUtsSantriList()
+    alert(summaryMessage)
+  } catch (error) {
+    console.error(error)
+    setLaporanUtsBulkModalStatus(`Gagal menyimpan override: ${error?.message || 'Unknown error'}`, 'error')
+  } finally {
+    setButtonLoading(buttonEl, false)
+  }
+}
+
+async function renderLaporanUtsPage(forceReload = false) {
+  const content = document.getElementById('guru-content')
+  if (!content) return
+
+  content.innerHTML = 'Loading laporan UTS...'
+
+  let ctx
+  try {
+    ctx = await getGuruContext(forceReload)
+  } catch (error) {
+    console.error(error)
+    content.innerHTML = `<div class="placeholder-card">Gagal load laporan UTS: ${escapeHtml(error.message || 'Unknown error')}</div>`
+    return
+  }
+
+  const guru = ctx.guru
+  if (!guru?.id) {
+    content.innerHTML = '<div class="placeholder-card">Data guru tidak ditemukan.</div>'
+    return
+  }
+
+  const tahunAktif = await getActiveTahunAjaran()
+  const tahunAjaranId = String(tahunAktif?.id || '').trim()
+
+  let kelasQuery = sb
+    .from('kelas')
+    .select('id, nama_kelas, wali_kelas_id, tahun_ajaran_id')
+    .eq('wali_kelas_id', guru.id)
+    .order('nama_kelas')
+  if (tahunAjaranId) kelasQuery = kelasQuery.eq('tahun_ajaran_id', tahunAjaranId)
+  const kelasRes = await kelasQuery
+  if (kelasRes.error) {
+    console.error(kelasRes.error)
+    content.innerHTML = `<div class="placeholder-card">Gagal load data kelas wali: ${escapeHtml(kelasRes.error.message || 'Unknown error')}</div>`
+    return
+  }
+
+  const kelasList = kelasRes.data || []
+  if (!kelasList.length) {
+    content.innerHTML = '<div class="placeholder-card">Anda belum terdaftar sebagai wali kelas.</div>'
+    return
+  }
+
+  const kelasMap = new Map(kelasList.map(item => [String(item.id || ''), item]))
+  const kelasIds = [...kelasMap.keys()]
+
+  let santriData = []
+  let santriError = null
+  const santriSelectAttempts = [
+    'id, nama, kelas_id, aktif, nisn, id_santri, no_induk, nomor_induk, no_hp_ayah, hp_ayah, no_hp_ibu, hp_ibu, no_hp_orang_tua, hp_orang_tua, no_hp_wali, hp_wali, no_hp, hp, no_telp, nomor_hp, telepon',
+    'id, nama, kelas_id, aktif, nisn, no_induk, nomor_induk, no_hp_ayah, hp_ayah, no_hp_ibu, hp_ibu, no_hp_orang_tua, hp_orang_tua, no_hp_wali, hp_wali',
+    'id, nama, kelas_id, aktif, nisn, nomor_induk, no_hp_ayah, hp_ayah, no_hp_ibu, hp_ibu',
+    'id, nama, kelas_id, aktif, nisn, no_hp_ayah, hp_ayah, no_hp_ibu, hp_ibu',
+    'id, nama, kelas_id, aktif, nisn',
+    'id, nama, kelas_id, aktif'
+  ]
+  for (const fields of santriSelectAttempts) {
+    const res = await sb
+      .from('santri')
+      .select(fields)
+      .in('kelas_id', kelasIds)
+      .eq('aktif', true)
+      .order('nama')
+    if (!res.error) {
+      santriData = res.data || []
+      santriError = null
+      break
+    }
+    santriError = res.error
+  }
+  if (santriError) {
+    console.error(santriError)
+    content.innerHTML = `<div class="placeholder-card">Gagal load data santri: ${escapeHtml(santriError.message || 'Unknown error')}</div>`
+    return
+  }
+
+  let semesterList = []
+  let tahunAjaranRows = []
+  try {
+    semesterList = await loadSemesterRowsForLaporanUts(tahunAjaranId)
+    const tahunAjaranIds = [...new Set(semesterList.map(item => String(item?.tahun_ajaran_id || '').trim()).filter(Boolean))]
+    tahunAjaranRows = await loadTahunAjaranRowsForLaporanUts(tahunAjaranIds)
+  } catch (error) {
+    console.error(error)
+    content.innerHTML = `<div class="placeholder-card">Gagal load semester laporan UTS: ${escapeHtml(error.message || 'Unknown error')}</div>`
+    return
+  }
+
+  if (!semesterList.length) {
+    content.innerHTML = '<div class="placeholder-card">Data semester belum tersedia.</div>'
+    return
+  }
+
+  const santriList = (santriData || []).sort((a, b) => {
+    const kelasA = kelasMap.get(String(a.kelas_id || ''))?.nama_kelas || ''
+    const kelasB = kelasMap.get(String(b.kelas_id || ''))?.nama_kelas || ''
+    const kelasCmp = kelasA.localeCompare(kelasB)
+    if (kelasCmp !== 0) return kelasCmp
+    return String(a.nama || '').localeCompare(String(b.nama || ''))
+  })
+
+  const activeSemester = semesterList.find(item => asBool(item.aktif))
+  const prevSemesterId = String(laporanUtsState.semesterId || '')
+  const semesterId = semesterList.some(item => String(item.id) === prevSemesterId)
+    ? prevSemesterId
+    : String(activeSemester?.id || semesterList[0]?.id || '')
+
+  laporanUtsState = {
+    ...laporanUtsState,
+    guru,
+    kelasMap,
+    santriList,
+    semesterList,
+    semesterId,
+    tahunAjaranId,
+    tahunAjaranNama: String(tahunAktif?.nama || ''),
+    semesterDateMap: new Map(semesterList.map(item => [String(item.id || ''), item])),
+    tahunAjaranDateMap: new Map((tahunAjaranRows || []).map(item => [String(item.id || ''), item])),
+    examScheduleCacheKey: '',
+    examScheduleRows: [],
+    subjectDisplayNameMap: new Map(),
+    subjectDisplayNameCacheKey: '',
+    subjectDisplayColumns: [],
+    bulkOverrideMap: new Map(),
+    bulkOverrideCacheKey: '',
+    bulkOverrideTableMissing: false,
+    bulkPendingUpload: null,
+    detailDataCache: new Map(),
+    selectedSantriId: '',
+    currentDetail: null
+  }
+
+  if (!laporanUtsState.waTemplate) {
+    laporanUtsState.waTemplate = loadLaporanUtsWaTemplate(guru.id)
+  }
+
+  try {
+    await ensureLaporanUtsSubjectDisplayNameMap(true)
+    await ensureLaporanUtsBulkOverrideMap(true)
+  } catch (error) {
+    console.error('Gagal memuat data pendukung input massal laporan UTS.', error)
+    laporanUtsState.subjectDisplayNameMap = getLaporanUtsDefaultSubjectLabelMap()
+    laporanUtsState.subjectDisplayNameCacheKey = ''
+    laporanUtsState.subjectDisplayColumns = buildLaporanUtsSubjectDisplayColumns(laporanUtsState.subjectDisplayNameMap)
+    laporanUtsState.bulkOverrideMap = new Map()
+    laporanUtsState.bulkOverrideCacheKey = ''
+    laporanUtsState.bulkOverrideTableMissing = false
+  }
+
+  Promise.allSettled([
+    getSchoolProfile(false),
+    loadPdfBackgroundDataUrl(RAPOR_PDF_BACKGROUND_URL)
+  ]).catch(() => {})
+
+  renderLaporanUtsSantriList()
+}
+
+function renderLaporanUtsSantriList() {
+  const content = document.getElementById('guru-content')
+  if (!content) return
+  laporanUtsState.currentDetail = null
+  const isTemplateEditing = laporanUtsState.waTemplateEditing === true
+  const bulkOverrideCount = Array.from(laporanUtsState.bulkOverrideMap instanceof Map ? laporanUtsState.bulkOverrideMap.values() : [])
+    .filter(entry => Object.keys(entry?.override || {}).length)
+    .length
+
+  const semesterOptions = (laporanUtsState.semesterList || [])
+    .map(item => `<option value="${escapeHtml(String(item.id))}" ${String(item.id) === String(laporanUtsState.semesterId) ? 'selected' : ''}>${escapeHtml(getSemesterLabel(item))}${asBool(item.aktif) ? ' (Aktif)' : ''}</option>`)
+    .join('')
+
+  const rowsHtml = (laporanUtsState.santriList || []).map((item, index) => {
+    const kelasNama = laporanUtsState.kelasMap.get(String(item.kelas_id || ''))?.nama_kelas || '-'
+    return `
+      <tr>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${index + 1}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.nama || '-')}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(kelasNama)}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${escapeHtml(pickLabelByKeys(item, ['nisn', 'id_santri', 'no_induk', 'nomor_induk']) || '-')}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0; text-align:center; width:320px;">
+          <div style="display:flex; align-items:center; justify-content:center; gap:6px; flex-wrap:wrap;">
+            <button type="button" class="modal-btn modal-btn-primary" style="padding:6px 10px; font-size:12px;" onclick="openLaporanUtsDetail('${escapeHtml(String(item.id || ''))}')">Detail</button>
+            <button type="button" class="modal-btn" style="padding:6px 10px; font-size:12px;" onclick="openLaporanUtsPrintActions('${escapeHtml(String(item.id || ''))}', this)">Cetak</button>
+            <button type="button" class="modal-btn" style="padding:6px 10px; font-size:12px;" onclick="quickSendLaporanUtsWA('${escapeHtml(String(item.id || ''))}', this)">Kirim WA</button>
+          </div>
+        </td>
+      </tr>
+    `
+  }).join('')
+
+  content.innerHTML = `
+    <div class="placeholder-card" style="margin-bottom:12px;">
+      <div style="font-weight:700; margin-bottom:8px;">Template Pesan WhatsApp Laporan UTS</div>
+      <div style="font-size:12px; color:#475569; margin-bottom:8px;">
+        Gunakan placeholder: <code>&lt;nama santri&gt;</code> dan <code>&lt;link&gt;</code>. Saat kirim, placeholder akan diganti otomatis.
+      </div>
+      <textarea id="laporan-uts-wa-template" class="guru-field" rows="7" placeholder="Tulis template pesan..." ${isTemplateEditing ? '' : 'readonly'} style="${isTemplateEditing ? '' : 'background:#f8fafc; color:#475569;'}">${escapeHtml(laporanUtsState.waTemplate || '')}</textarea>
+      <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
+        <button id="btn-laporan-uts-wa-template-edit" type="button" class="modal-btn" onclick="startLaporanUtsWaTemplateEdit()" ${isTemplateEditing ? 'style="display:none;"' : ''}>Edit Template</button>
+        <button id="btn-laporan-uts-wa-template-save" type="button" class="modal-btn modal-btn-primary" onclick="saveLaporanUtsWaTemplate()" ${isTemplateEditing ? '' : 'style="display:none;"'}>Simpan Template</button>
+        <button id="btn-laporan-uts-wa-template-cancel" type="button" class="modal-btn" onclick="cancelLaporanUtsWaTemplateEdit()" ${isTemplateEditing ? '' : 'style="display:none;"'}>Batal</button>
+      </div>
+    </div>
+
+    <div class="placeholder-card" style="margin-bottom:12px;">
+      <div style="font-weight:700; margin-bottom:6px;">Laporan UTS Wali Kelas</div>
+      <div style="font-size:12px; color:#475569; line-height:1.6;">
+        KKM laporan ini memakai nilai tetap <b>17</b>. Daftar mapel akan menyesuaikan data santri/kelas pada semester yang dipilih.
+        Kehadiran kelas dihitung mulai awal semester sampai sehari sebelum tanggal PTS kelas.
+      </div>
+    </div>
+
+    <div style="display:flex; align-items:end; justify-content:space-between; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
+      <div>
+        <label class="guru-label">Semester</label>
+        <select id="laporan-uts-semester" class="guru-field" onchange="onLaporanUtsSemesterChange(this.value)">
+          ${semesterOptions}
+        </select>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <div style="font-size:13px; color:#475569;">Override input massal aktif: <b>${bulkOverrideCount}</b> santri.</div>
+        <button type="button" class="modal-btn modal-btn-primary" onclick="openLaporanUtsBulkInputModal()">Input Massal</button>
+      </div>
+    </div>
+
+    <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px;">
+      <table style="width:100%; min-width:860px; border-collapse:collapse; font-size:13px;">
+        <thead>
+          <tr style="background:#f8fafc;">
+            <th style="padding:8px; border:1px solid #e2e8f0; width:44px;">No</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Nama Santri</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Kelas</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; width:180px;">NISN / Induk</th>
+            <th style="padding:8px; border:1px solid #e2e8f0; width:320px;">Aksi</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml || '<tr><td colspan="5" style="padding:10px; border:1px solid #e2e8f0; text-align:center;">Belum ada santri aktif.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `
+}
+
+function onLaporanUtsSemesterChange(value) {
+  laporanUtsState.semesterId = String(value || '').trim()
+  laporanUtsState.examScheduleCacheKey = ''
+  laporanUtsState.examScheduleRows = []
+  laporanUtsState.subjectDisplayNameCacheKey = ''
+  laporanUtsState.subjectDisplayNameMap = new Map()
+  laporanUtsState.subjectDisplayColumns = []
+  laporanUtsState.bulkOverrideCacheKey = ''
+  laporanUtsState.bulkOverrideMap = new Map()
+  laporanUtsState.bulkOverrideTableMissing = false
+  laporanUtsState.bulkPendingUpload = null
+  laporanUtsState.detailDataCache = new Map()
+  laporanUtsState.selectedSantriId = ''
+  laporanUtsState.currentDetail = null
+  Promise.all([
+    ensureLaporanUtsSubjectDisplayNameMap(true),
+    ensureLaporanUtsBulkOverrideMap(true)
+  ])
+    .catch(error => {
+      console.error('Gagal memuat data laporan UTS saat ganti semester.', error)
+    })
+    .finally(() => {
+      renderLaporanUtsSantriList()
+    })
+}
+
+async function quickPrintLaporanUtsSantri(santriId, buttonEl = null) {
+  const sid = String(santriId || '').trim()
+  if (!sid) return
+  await printLaporanUtsSantri(sid, buttonEl)
+}
+
+async function quickPrintLaporanUtsSantriPdf(santriId, buttonEl = null) {
+  const sid = String(santriId || '').trim()
+  if (!sid) return
+  await printLaporanUtsSantriPdf(sid, buttonEl)
+}
+
+async function getLaporanUtsDetailData(santriId, opts = {}) {
+  const showError = opts.showError !== false
+  const forceReload = opts.forceReload === true
+  const sid = String(santriId || '').trim()
+  if (!sid) {
+    if (showError) alert('Data santri tidak ditemukan.')
+    return null
+  }
+
+  if (!forceReload && laporanUtsState.detailDataCache instanceof Map && laporanUtsState.detailDataCache.has(sid)) {
+    return laporanUtsState.detailDataCache.get(sid) || null
+  }
+
+  const santri = (laporanUtsState.santriList || []).find(item => String(item.id || '') === sid)
+  if (!santri) {
+    if (showError) alert('Data santri tidak ditemukan.')
+    return null
+  }
+
+  const kelas = laporanUtsState.kelasMap.get(String(santri.kelas_id || ''))
+  const semester = getSelectedLaporanUtsSemester()
+  const payload = await buildLaporanUtsPayload(sid)
+  const currentDetail = {
+    santriId: sid,
+    payload
+  }
+  const detailData = {
+    santri,
+    kelas,
+    semester,
+    payload,
+    currentDetail
+  }
+
+  if (!(laporanUtsState.detailDataCache instanceof Map)) {
+    laporanUtsState.detailDataCache = new Map()
+  }
+  laporanUtsState.detailDataCache.set(sid, detailData)
+  return detailData
+}
+
+function getCachedLaporanUtsPayload(santriId) {
+  const sid = String(santriId || '').trim()
+  if (!sid) return null
+  const detail = laporanUtsState.currentDetail
+  if (detail?.payload && String(detail.santriId || '') === sid) return detail.payload
+  const cached = laporanUtsState.detailDataCache instanceof Map ? laporanUtsState.detailDataCache.get(sid) : null
+  return cached?.payload || null
+}
+
+async function getLaporanUtsPayloadForOutput(santriId, options = {}) {
+  const sid = String(santriId || '').trim()
+  if (!sid) throw new Error('Data santri tidak ditemukan.')
+  if (options?.forceReload !== true) {
+    const cached = getCachedLaporanUtsPayload(sid)
+    if (cached) return cached
+  }
+  return buildLaporanUtsPayload(sid, options)
+}
+
+async function chooseLaporanUtsPrintFormat(triggerEl = null) {
+  if (triggerEl instanceof HTMLElement) {
+    window.__popupAnchorEl = triggerEl
+  } else {
+    window.__popupAnchorEl = null
+  }
+  if (typeof window.showPopupChoices !== 'function') {
+    const useWord = confirm('Pilih OK untuk cetak Word, atau Cancel untuk cetak PDF.')
+    window.__popupAnchorEl = null
+    return useWord ? 'word' : 'pdf'
+  }
+  return String(await window.showPopupChoices('', [
+    { label: 'Word', value: 'word', primary: true },
+    { label: 'PDF', value: 'pdf' }
+  ]) || '').trim().toLowerCase()
+}
+
+async function openLaporanUtsPrintActions(santriId, triggerEl = null) {
+  const sid = String(santriId || '').trim()
+  if (!sid) return
+  const choice = await chooseLaporanUtsPrintFormat(triggerEl)
+  if (choice === 'word') await quickPrintLaporanUtsSantri(sid, triggerEl)
+  if (choice === 'pdf') await quickPrintLaporanUtsSantriPdf(sid, triggerEl)
+}
+
+async function openLaporanUtsDetailPrintActions(buttonEl = null) {
+  const detail = laporanUtsState.currentDetail
+  if (!detail?.santriId) {
+    alert('Detail laporan UTS belum dibuka.')
+    return
+  }
+  const choice = await chooseLaporanUtsPrintFormat(buttonEl)
+  if (choice === 'word') await printLaporanUtsDetail(buttonEl)
+  if (choice === 'pdf') await printLaporanUtsDetailPdf(buttonEl)
+}
+
+async function openLaporanUtsDetail(santriId, options = {}) {
+  const content = document.getElementById('guru-content')
+  const shouldRender = options?.render !== false
+  const silent = options?.silent === true
+  if (shouldRender && !content) return
+
+  if (shouldRender && !silent) {
+    content.innerHTML = 'Loading detail laporan UTS...'
+  }
+
+  const sid = String(santriId || '').trim()
+  const detailData = await getLaporanUtsDetailData(sid, { showError: !silent })
+  if (!detailData) return
+  const { santri, kelas, semester, payload, currentDetail } = detailData
+  const subjectRows = Array.isArray(payload.subjects) ? payload.subjects : []
+
+  laporanUtsState.selectedSantriId = sid
+  laporanUtsState.currentDetail = currentDetail
+
+  if (!shouldRender) return
+
+  const subjectRowsHtml = subjectRows.map((item, index) => `
+    <tr>
+      <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${index + 1}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.name || '-')}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${escapeHtml(item.kkmText || '17')}</td>
+      <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${escapeHtml(item.scoreText || '-')}</td>
+    </tr>
+  `).join('')
+
+  content.innerHTML = `
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+      <button type="button" class="mapel-back-btn" onclick="backToLaporanUtsList()">&lt;</button>
+      <div style="font-weight:700; color:#0f172a;">Laporan UTS ${escapeHtml(santri.nama || '-')} - ${escapeHtml(kelas?.nama_kelas || '-')} - ${escapeHtml(getSemesterLabel(semester))}</div>
+      <div style="margin-left:auto; display:flex; gap:8px; flex-wrap:wrap;">
+        <button type="button" class="modal-btn" onclick="quickSendLaporanUtsWA('${escapeHtml(sid)}', this)">Kirim WA</button>
+        <button type="button" class="modal-btn modal-btn-primary" onclick="openLaporanUtsDetailPrintActions(this)">Cetak</button>
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:10px; margin-bottom:10px;">
+      <div class="placeholder-card">
+        <div><b>Nama Santri:</b> ${escapeHtml(payload.studentName || '-')}</div>
+        <div><b>NISN / Induk:</b> ${escapeHtml(payload.studentNisn || '-')}</div>
+        <div><b>Kelas:</b> ${escapeHtml(payload.className || '-')}</div>
+      </div>
+      <div class="placeholder-card">
+        <div><b>Semester:</b> ${escapeHtml(getSemesterLabel(semester))}</div>
+        <div><b>Tahun Ajaran:</b> ${escapeHtml(laporanUtsState.tahunAjaranNama || '-')}</div>
+        <div><b>Tanggal PTS:</b> ${escapeHtml(payload.ptsDate ? formatLaporanUtsDateLabel(payload.ptsDate) : '-')}</div>
+      </div>
+      <div class="placeholder-card">
+        <div><b>Rentang Kehadiran Kelas:</b></div>
+        <div style="margin-top:4px; color:#475569;">${escapeHtml(payload.attendanceRangeLabel || '-')}</div>
+      </div>
+    </div>
+
+    <div class="placeholder-card" style="margin-bottom:10px;">
+      <div style="font-weight:700; margin-bottom:8px;">A. Nilai UTS</div>
+      <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px; background:#fff;">
+        <table style="width:100%; min-width:620px; border-collapse:collapse; font-size:13px;">
+          <thead>
+            <tr style="background:#f8fafc;">
+              <th style="padding:8px; border:1px solid #e2e8f0; width:44px;">No</th>
+              <th style="padding:8px; border:1px solid #e2e8f0; text-align:left;">Mata Pelajaran</th>
+              <th style="padding:8px; border:1px solid #e2e8f0; width:90px;">KKM</th>
+              <th style="padding:8px; border:1px solid #e2e8f0; width:110px;">Nilai</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${subjectRowsHtml || '<tr><td colspan="4" style="padding:10px; border:1px solid #e2e8f0; text-align:center;">Belum ada nilai UTS.</td></tr>'}
+            <tr style="background:#f8fafc; font-weight:700;">
+              <td colspan="3" style="padding:8px; border:1px solid #e2e8f0; text-align:right;">Jumlah</td>
+              <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${escapeHtml(payload.totalScoreText || '-')}</td>
+            </tr>
+            <tr style="background:#f8fafc; font-weight:700;">
+              <td colspan="3" style="padding:8px; border:1px solid #e2e8f0; text-align:right;">Rata-Rata</td>
+              <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${escapeHtml(payload.averageScoreText || '-')}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:10px;">
+      <div class="placeholder-card">
+        <div style="font-weight:700; margin-bottom:8px;">B. Ujian Mid Semester Ketahfizan</div>
+        <div><b>Capaian Hafalan:</b> ${escapeHtml(payload.midTahfizCapaian || '-')}</div>
+        <div style="margin-top:6px;"><b>Nilai:</b> ${escapeHtml(payload.midTahfizScore || '-')}</div>
+      </div>
+      <div class="placeholder-card">
+        <div style="font-weight:700; margin-bottom:8px;">C. Kehadiran</div>
+        <div><b>Kelas:</b> Izin ${escapeHtml(payload.kelasIzinText || '0')} | Sakit ${escapeHtml(payload.kelasSakitText || '0')}</div>
+        <div style="margin-top:6px;"><b>Halaqah Tahfizh:</b> Izin ${escapeHtml(payload.halaqahIzinText || '0')} | Sakit ${escapeHtml(payload.halaqahSakitText || '0')}</div>
+      </div>
+    </div>
+  `
+}
+
+async function printLaporanUtsSantri(santriId, buttonEl = null) {
+  try {
+    setButtonLoading(buttonEl, true, 'Menyiapkan...')
+    const detailData = await getLaporanUtsDetailData(santriId, { showError: true })
+    if (!detailData) return
+    laporanUtsState.currentDetail = detailData.currentDetail
+    const payload = detailData.payload
+    const docxUtils = getGuruLaporanUtsDocxUtils()
+    if (typeof docxUtils.exportLaporanUtsDocx !== 'function') {
+      throw new Error('Fitur cetak Laporan UTS belum siap.')
+    }
+    const fileName = `Laporan UTS - ${sanitizeFileNamePart(payload.studentName || 'Santri')} - ${sanitizeFileNamePart(payload.className || 'Kelas')}.docx`
+    await docxUtils.exportLaporanUtsDocx(payload, fileName)
+  } catch (error) {
+    console.error(error)
+    alert(`Gagal mencetak laporan UTS: ${error?.message || 'Unknown error'}`)
+  } finally {
+    setButtonLoading(buttonEl, false)
+  }
+}
+
+async function convertDocxBlobToPdfForCurrentPlatform(docxBlob, fileName) {
+  const isDesktopApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
+  if (typeof window.printDocxBlobInBrowser === 'function') {
+    const browserResult = await window.printDocxBlobInBrowser(docxBlob, {
+      fileName,
+      title: `Preview PDF ${String(fileName || '').replace(/\.pdf$/i, '')}`
+    })
+    if (browserResult?.ok) return browserResult
+    if (!isDesktopApp) {
+      throw new Error(browserResult?.error || 'Preview DOCX di browser gagal dibuka.')
+    }
+  }
+  if (typeof window.convertDocxBlobToPdfDesktopAndOpen !== 'function') {
+    throw new Error('Converter DOCX ke PDF belum tersedia di browser ini.')
+  }
+  const result = await window.convertDocxBlobToPdfDesktopAndOpen(docxBlob, fileName)
+  if (!result?.ok) {
+    throw new Error(result?.error || 'Gagal mengubah DOCX ke PDF.')
+  }
+  return result
+}
+
+async function printLaporanUtsSantriPdf(santriId, buttonEl = null) {
+  try {
+    setButtonLoading(buttonEl, true, 'Menyiapkan PDF...')
+    const detailData = await getLaporanUtsDetailData(santriId, { showError: true })
+    if (!detailData) return
+    laporanUtsState.currentDetail = detailData.currentDetail
+    const payload = detailData.payload
+    let bgDataUrl = ''
+    try {
+      bgDataUrl = await loadPdfBackgroundDataUrl(RAPOR_PDF_BACKGROUND_URL)
+    } catch (error) {
+      console.warn(error)
+    }
+    let schoolProfile = null
+    try {
+      schoolProfile = await getSchoolProfile()
+    } catch (error) {
+      console.warn('Gagal memuat profil sekolah untuk PDF Laporan UTS.', error)
+    }
+    const doc = createLaporanUtsPdfDoc(payload, {
+      bgDataUrl,
+      schoolName: schoolProfile?.nama_sekolah || '',
+      schoolAddress: schoolProfile?.alamat_sekolah || '',
+      tahunAjaranLabel: laporanUtsState?.tahunAjaranNama || '',
+      waliKelasName: payload?.waliKelasName || ''
+    })
+    if (!doc) {
+      throw new Error('Generator PDF Laporan UTS belum siap.')
+    }
+    const fileName = `Laporan UTS - ${sanitizeFileNamePart(payload.studentName || 'Santri')} - ${sanitizeFileNamePart(payload.className || 'Kelas')}.pdf`
+    await savePdfDocForCurrentPlatform(doc, fileName)
+  } catch (error) {
+    console.error(error)
+    alert(`Gagal mencetak PDF laporan UTS: ${error?.message || 'Unknown error'}`)
+  } finally {
+    setButtonLoading(buttonEl, false)
+  }
+}
+
+async function printLaporanUtsDetail(buttonEl = null) {
+  const detail = laporanUtsState.currentDetail
+  if (!detail?.santriId) {
+    alert('Detail laporan UTS belum dibuka.')
+    return
+  }
+  try {
+    setButtonLoading(buttonEl, true, 'Menyiapkan...')
+    const payload = detail.payload || await getLaporanUtsPayloadForOutput(detail.santriId)
+    const docxUtils = getGuruLaporanUtsDocxUtils()
+    if (typeof docxUtils.exportLaporanUtsDocx !== 'function') {
+      throw new Error('Fitur cetak Laporan UTS belum siap.')
+    }
+    const fileName = `Laporan UTS - ${sanitizeFileNamePart(payload.studentName || 'Santri')} - ${sanitizeFileNamePart(payload.className || 'Kelas')}.docx`
+    await docxUtils.exportLaporanUtsDocx(payload, fileName)
+  } catch (error) {
+    console.error(error)
+    alert(`Gagal mencetak laporan UTS: ${error?.message || 'Unknown error'}`)
+  } finally {
+    setButtonLoading(buttonEl, false)
+  }
+}
+
+async function printLaporanUtsDetailPdf(buttonEl = null) {
+  const detail = laporanUtsState.currentDetail
+  if (!detail?.santriId) {
+    alert('Detail laporan UTS belum dibuka.')
+    return
+  }
+  try {
+    setButtonLoading(buttonEl, true, 'Menyiapkan PDF...')
+    const payload = detail.payload || await getLaporanUtsPayloadForOutput(detail.santriId)
+    let bgDataUrl = ''
+    try {
+      bgDataUrl = await loadPdfBackgroundDataUrl(RAPOR_PDF_BACKGROUND_URL)
+    } catch (error) {
+      console.warn(error)
+    }
+    let schoolProfile = null
+    try {
+      schoolProfile = await getSchoolProfile()
+    } catch (error) {
+      console.warn('Gagal memuat profil sekolah untuk PDF Laporan UTS.', error)
+    }
+    const doc = createLaporanUtsPdfDoc(payload, {
+      bgDataUrl,
+      schoolName: schoolProfile?.nama_sekolah || '',
+      schoolAddress: schoolProfile?.alamat_sekolah || '',
+      tahunAjaranLabel: laporanUtsState?.tahunAjaranNama || '',
+      waliKelasName: payload?.waliKelasName || ''
+    })
+    if (!doc) {
+      throw new Error('Generator PDF Laporan UTS belum siap.')
+    }
+    const fileName = `Laporan UTS - ${sanitizeFileNamePart(payload.studentName || 'Santri')} - ${sanitizeFileNamePart(payload.className || 'Kelas')}.pdf`
+    await savePdfDocForCurrentPlatform(doc, fileName)
+  } catch (error) {
+    console.error(error)
+    alert(`Gagal mencetak PDF laporan UTS: ${error?.message || 'Unknown error'}`)
+  } finally {
+    setButtonLoading(buttonEl, false)
+  }
+}
+
+async function quickSendLaporanUtsWA(santriId, buttonEl = null) {
+  const sid = String(santriId || '').trim()
+  if (!sid) return
+
+  try {
+    const detailData = await getLaporanUtsDetailData(sid, { showError: true })
+    if (!detailData) return
+    laporanUtsState.currentDetail = detailData.currentDetail
+    const { santri, payload } = detailData
+
+    try {
+      await enrichSingleSantriParentContacts(santri)
+    } catch (error) {
+      console.warn('Gagal melengkapi nomor orang tua dari riwayat santri.', error)
+    }
+
+    const noHpAyahRaw = pickLabelByKeys(santri, ['no_hp_ayah', 'hp_ayah']) || ''
+    const noHpIbuRaw = pickLabelByKeys(santri, ['no_hp_ibu', 'hp_ibu']) || ''
+    const noHpOrtuRaw = pickLabelByKeys(
+      santri,
+      [
+        'no_hp_ayah',
+        'hp_ayah',
+        'no_hp_ibu',
+        'hp_ibu',
+        'no_hp_orang_tua',
+        'hp_orang_tua',
+        'no_hp_wali',
+        'hp_wali',
+        'no_hp',
+        'hp',
+        'no_telp',
+        'nomor_hp',
+        'telepon'
+      ]
+    ) || ''
+
+    const parentChoices = []
+    if (String(noHpAyahRaw || '').trim()) {
+      parentChoices.push({ label: 'Ayah', number: String(noHpAyahRaw || '').trim() })
+    }
+    if (String(noHpIbuRaw || '').trim()) {
+      parentChoices.push({ label: 'Ibu', number: String(noHpIbuRaw || '').trim() })
+    }
+    if (String(noHpOrtuRaw || '').trim()) {
+      const genericNumber = String(noHpOrtuRaw || '').trim()
+      if (!parentChoices.some(item => String(item.number || '').trim() === genericNumber)) {
+        parentChoices.push({ label: 'Orang Tua/Wali', number: genericNumber })
+      }
+    }
+
+    const chosenPhoneRaw = await askWaTargetNumber(String(noHpOrtuRaw || '').trim(), parentChoices)
+    if (chosenPhoneRaw === null) return
+
+    const phone = normalizeWhatsappNumber(chosenPhoneRaw)
+    if (!phone) {
+      alert('Nomor WhatsApp tujuan belum valid. Isi nomor yang benar lalu coba lagi.')
+      return
+    }
+
+    let bgDataUrl = ''
+    try {
+      bgDataUrl = await loadPdfBackgroundDataUrl(RAPOR_PDF_BACKGROUND_URL)
+    } catch (error) {
+      console.warn(error)
+    }
+    let schoolProfile = null
+    try {
+      schoolProfile = await getSchoolProfile()
+    } catch (error) {
+      console.warn('Gagal memuat profil sekolah untuk PDF Laporan UTS WA.', error)
+    }
+    const doc = createLaporanUtsPdfDoc(payload, {
+      bgDataUrl,
+      schoolName: schoolProfile?.nama_sekolah || '',
+      schoolAddress: schoolProfile?.alamat_sekolah || '',
+      tahunAjaranLabel: laporanUtsState?.tahunAjaranNama || '',
+      waliKelasName: payload?.waliKelasName || ''
+    })
+    if (!doc) {
+      throw new Error('Fitur kirim PDF Laporan UTS belum siap.')
+    }
+    const fileName = `Laporan UTS - ${sanitizeFileNamePart(payload.studentName || 'Santri')} - ${sanitizeFileNamePart(payload.className || 'Kelas')}.pdf`
+    const pdfBlob = doc.output('blob')
+
+    const semesterSlug = sanitizeFileNamePart(payload.semesterLabel || '').replace(/\s+/g, '-')
+    const namaSlug = sanitizeFileNamePart(payload.studentName || '').replace(/\s+/g, '-')
+    const storagePath = `${String(laporanUtsState?.guru?.id || 'guru')}/${semesterSlug || 'semester'}/${namaSlug || sid}-${Date.now()}.pdf`
+
+    const uploadRes = await sb
+      .storage
+      .from(UTS_REPORT_STORAGE_BUCKET)
+      .upload(storagePath, pdfBlob, {
+        cacheControl: '3600',
+        contentType: 'application/pdf',
+        upsert: true
+      })
+
+    if (uploadRes.error) {
+      const msg = String(uploadRes.error.message || '').toLowerCase()
+      if (msg.includes('bucket') || msg.includes('not found')) {
+        alert(buildLaporanUtsStorageMissingMessage())
+        return
+      }
+      alert(`Gagal upload PDF laporan UTS: ${uploadRes.error.message || 'Unknown error'}`)
+      return
+    }
+
+    const { data: publicUrlData } = sb
+      .storage
+      .from(UTS_REPORT_STORAGE_BUCKET)
+      .getPublicUrl(storagePath)
+
+    const publicUrl = publicUrlData?.publicUrl || ''
+    if (!publicUrl) {
+      alert('Gagal mendapatkan link PDF laporan UTS.')
+      return
+    }
+
+    const rawTemplate = getCurrentLaporanUtsWaTemplate()
+    const message = rawTemplate
+      .replace(/<nama santri>/gi, String(payload.studentName || '-'))
+      .replace(/<link>/gi, publicUrl)
+
+    const waApiUrl = `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`
+    const waUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
+    const waScheme = `whatsapp://send?phone=${phone}&text=${encodeURIComponent(message)}`
+    const waShortUrl = `https://wa.me/${phone}`
+    const waShortApi = `https://api.whatsapp.com/send?phone=${phone}`
+    const shouldCopyClipboard = message.length > 700
+    const copyTextToClipboard = async text => {
+      const payloadText = String(text || '')
+      if (!payloadText) return false
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(payloadText)
+          return true
+        }
+      } catch (_error) {}
+      try {
+        const textarea = document.createElement('textarea')
+        textarea.value = payloadText
+        textarea.style.position = 'fixed'
+        textarea.style.left = '-9999px'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.focus()
+        textarea.select()
+        const ok = document.execCommand('copy')
+        textarea.remove()
+        return ok
+      } catch (_error) {
+        return false
+      }
+    }
+
+  if (typeof window.openExternalUrl === 'function') {
+    const isAndroid = /android/i.test(String(navigator.userAgent || ''))
+    const isTauriApp = !!(window.__TAURI__ || window.__TAURI_INTERNALS__)
+    let opened = false
+    let copied = false
+    if (!isTauriApp) {
+      opened = await window.openExternalUrl(waUrl)
+      if (!opened) alert('Tidak bisa membuka WhatsApp otomatis. Silakan coba lagi.')
+      return
+    }
+    if (isAndroid) {
+      if (shouldCopyClipboard) copied = await copyTextToClipboard(message)
+        try {
+          if (window.__TAURI__?.core?.invoke) {
+            opened = await window.__TAURI__.core.invoke('open_whatsapp_message', { phone, message }) === true
+          } else if (window.__TAURI_INTERNALS__?.invoke) {
+            opened = await window.__TAURI_INTERNALS__.invoke('open_whatsapp_message', { phone, message }) === true
+          }
+        } catch (_error) {}
+        if (opened && shouldCopyClipboard && copied) {
+          alert('Pesan disalin ke clipboard. Tempelkan di WhatsApp.')
+          return
+        }
+        if (!opened) opened = await window.openExternalUrl(waApiUrl)
+        if (!opened) opened = await window.openExternalUrl(waScheme)
+        if (!opened) opened = await window.openExternalUrl(waUrl)
+        if (!opened) {
+          copied = copied || await copyTextToClipboard(message)
+          let openedShort = await window.openExternalUrl(waShortUrl)
+          if (!openedShort) openedShort = await window.openExternalUrl(waShortApi)
+          if (openedShort) {
+            alert(copied
+              ? 'Pesan disalin ke clipboard. Tempelkan di WhatsApp.'
+              : 'WhatsApp terbuka. Tempelkan pesan secara manual.')
+            return
+          }
+          if (copied) {
+            alert('Pesan disalin ke clipboard. Buka WhatsApp dan tempelkan secara manual.')
+            return
+          }
+        }
+      } else {
+        opened = await window.openExternalUrl(waUrl)
+        if (!opened) opened = await window.openExternalUrl(waScheme)
+      }
+      if (!opened) alert('Tidak bisa membuka WhatsApp otomatis. Silakan coba lagi.')
+      return
+    }
+
+    window.open(waUrl, '_blank')
+  } catch (error) {
+    console.error(error)
+    alert(`Gagal mengirim laporan UTS via WhatsApp: ${error?.message || 'Unknown error'}`)
+  } finally {
+    setButtonLoading(buttonEl, false)
+  }
+}
+
+function backToLaporanUtsList() {
+  laporanUtsState.selectedSantriId = ''
+  laporanUtsState.currentDetail = null
+  renderLaporanUtsSantriList()
 }
 
 async function renderRaporPage(forceReload = false) {
@@ -13886,7 +16637,8 @@ function normalizeGuruUjianPgOptionEntries(rawOptions) {
   const rows = []
   if (Array.isArray(rawOptions)) {
     rawOptions.forEach((item, idx) => {
-      const text = String(item || '').trim()
+      const isObject = item && typeof item === 'object' && !Array.isArray(item)
+      const text = String(isObject ? (item.text || item.label || '') : (item || '')).trim()
       if (!text) return
       rows.push({ key: getGuruUjianPgOptionKeyByIndex(idx), text })
     })
@@ -13894,7 +16646,8 @@ function normalizeGuruUjianPgOptionEntries(rawOptions) {
   }
   if (rawOptions && typeof rawOptions === 'object') {
     Object.entries(rawOptions).forEach(([rawKey, rawVal], idx) => {
-      const text = String(rawVal || '').trim()
+      const isObject = rawVal && typeof rawVal === 'object' && !Array.isArray(rawVal)
+      const text = String(isObject ? (rawVal.text || rawVal.label || '') : (rawVal || '')).trim()
       if (!text) return
       const normalizedKey = /^[a-z]+$/i.test(String(rawKey || '').trim())
         ? String(rawKey || '').trim().toLowerCase()
@@ -13915,14 +16668,228 @@ function normalizeGuruUjianPgOptionEntries(rawOptions) {
   return rows
 }
 
+function getGuruUjianImageFileExt(fileName = '') {
+  if (typeof window.getProfilePhotoFileExt === 'function') {
+    return window.getProfilePhotoFileExt(fileName)
+  }
+  const raw = String(fileName || '').trim().toLowerCase()
+  const parts = raw.split('.')
+  const ext = parts.length > 1 ? parts.pop() : ''
+  if (!ext) return 'jpg'
+  if (ext === 'jpeg') return 'jpg'
+  if (ext === 'png' || ext === 'jpg' || ext === 'webp') return ext
+  return 'jpg'
+}
+
+function readGuruUjianQuestionImageValue(no) {
+  return ''
+}
+
+let guruUjianImageContextState = null
+
+function stripGuruUjianImageMarkers(text) {
+  return String(text || '')
+    .replace(EXAM_IMAGE_MARKER_RE, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/ *\n */g, '\n')
+}
+
+function parseGuruUjianImageItems(rawValue) {
+  return []
+}
+
+function serializeGuruUjianImageItems(items = []) {
+  return ''
+}
+
+function readGuruUjianQuestionImageItems(no) {
+  const raw = document.getElementById(`guru-ujian-q-${no}-image`)?.value || ''
+  return parseGuruUjianImageItems(raw)
+}
+
+function getGuruUjianImageItemsTextMarkers(text) {
+  const markers = new Set()
+  const source = String(text || '')
+  let match
+  EXAM_IMAGE_MARKER_RE.lastIndex = 0
+  while ((match = EXAM_IMAGE_MARKER_RE.exec(source))) {
+    const raw = String(match[0] || '').toLowerCase()
+    const inner = raw.replace(/\[|\]|\s/g, '')
+    markers.add(inner === 'gambar' ? 'gambar1' : inner)
+  }
+  EXAM_IMAGE_MARKER_RE.lastIndex = 0
+  return markers
+}
+
+function syncGuruUjianContextImages(context) {
+  return []
+}
+
+function buildGuruUjianImageMarkerToken(index = 1) {
+  const safeIndex = Math.max(1, Number(index || 1))
+  return `[[gambar${safeIndex}]]`
+}
+
+function getNextGuruUjianImageMarkerName(items = []) {
+  let nextIndex = 1
+  ;(Array.isArray(items) ? items : []).forEach(item => {
+    const marker = String(item?.marker || '').toLowerCase()
+    const match = marker.match(/^gambar(\d+)$/)
+    if (!match) return
+    nextIndex = Math.max(nextIndex, Number(match[1] || 0) + 1)
+  })
+  return `gambar${nextIndex}`
+}
+
+function getGuruUjianImageContextFromField(fieldEl) {
+  if (!(fieldEl instanceof HTMLElement)) return null
+  if (fieldEl.id && /^guru-ujian-q-(\d+)$/.test(fieldEl.id)) {
+    const match = fieldEl.id.match(/^guru-ujian-q-(\d+)$/)
+    const no = Number(match?.[1] || 0)
+    if (!Number.isFinite(no) || no <= 0) return null
+    return {
+      type: 'question',
+      no,
+      selectionStart: Number.isFinite(fieldEl.selectionStart) ? Number(fieldEl.selectionStart) : String(fieldEl.value || '').length,
+      selectionEnd: Number.isFinite(fieldEl.selectionEnd) ? Number(fieldEl.selectionEnd) : Number.isFinite(fieldEl.selectionStart) ? Number(fieldEl.selectionStart) : String(fieldEl.value || '').length
+    }
+  }
+  if (fieldEl.classList?.contains('guru-ujian-pg-option-input')) {
+    const rowEl = fieldEl.closest('.guru-ujian-pg-option-row')
+    const questionRow = fieldEl.closest('.guru-ujian-question-row')
+    const no = Number(questionRow?.dataset?.no || 0)
+    const optionIndex = Number(rowEl?.dataset?.optionIndex || 0)
+    if (!Number.isFinite(no) || no <= 0 || !Number.isFinite(optionIndex) || optionIndex < 0) return null
+    return {
+      type: 'option',
+      no,
+      optionIndex,
+      selectionStart: Number.isFinite(fieldEl.selectionStart) ? Number(fieldEl.selectionStart) : String(fieldEl.value || '').length,
+      selectionEnd: Number.isFinite(fieldEl.selectionEnd) ? Number(fieldEl.selectionEnd) : Number.isFinite(fieldEl.selectionStart) ? Number(fieldEl.selectionStart) : String(fieldEl.value || '').length
+    }
+  }
+  return null
+}
+
+function findGuruUjianImageFieldByContext(context) {
+  const safeType = String(context?.type || '').trim().toLowerCase()
+  const no = Number(context?.no || 0)
+  if (!Number.isFinite(no) || no <= 0) return null
+  if (safeType === 'question') return document.getElementById(`guru-ujian-q-${no}`) || null
+  if (safeType === 'option') {
+    const rowsWrap = document.getElementById(`guru-ujian-q-${no}-options`)
+    const rowEl = rowsWrap?.querySelector?.(`.guru-ujian-pg-option-row[data-option-index="${Number(context?.optionIndex || 0)}"]`) || null
+    return rowEl?.querySelector?.('.guru-ujian-pg-option-input') || null
+  }
+  return null
+}
+
+function findGuruUjianImageValueInputByContext(context) {
+  return null
+}
+
+function findGuruUjianImageFileInputByContext(context) {
+  return null
+}
+
+function getGuruUjianImageUrlByContext(context) {
+  return String(parseGuruUjianImageItems(findGuruUjianImageValueInputByContext(context)?.value || '')[0]?.url || '').trim()
+}
+
+function insertGuruUjianImageMarkerInFieldValue(rawValue, markerToken, insertionStart, insertionEnd) {
+  const source = String(rawValue || '')
+  const start = Math.max(0, Math.min(source.length, Number(insertionStart || 0)))
+  const end = Math.max(start, Math.min(source.length, Number(insertionEnd ?? start)))
+  const before = source.slice(0, start)
+  const after = source.slice(end)
+  const joinLeft = before && !/[\s(\[{]$/.test(before) ? ' ' : ''
+  const joinRight = after && !/^[\s,.;:!?)\]}]/.test(after) ? ' ' : ''
+  return `${before}${joinLeft}${String(markerToken || EXAM_IMAGE_MARKER_TOKEN)}${joinRight}${after}`
+}
+
+function applyGuruUjianImageMarkerToContext(context, markerName = 'gambar1') {
+  const fieldEl = findGuruUjianImageFieldByContext(context)
+  if (!fieldEl) return
+  const nextValue = insertGuruUjianImageMarkerInFieldValue(
+    String(fieldEl.value || ''),
+    buildGuruUjianImageMarkerToken(String(markerName || 'gambar1').replace(/^gambar/i, '')),
+    Number(context?.selectionStart || 0),
+    Number(context?.selectionEnd || context?.selectionStart || 0)
+  )
+  fieldEl.value = nextValue
+}
+
+function removeGuruUjianImageByContext(context) {
+  const fieldEl = findGuruUjianImageFieldByContext(context)
+  if (fieldEl) fieldEl.value = stripGuruUjianImageMarkers(String(fieldEl.value || ''))
+  syncGuruUjianContextImages(context)
+  queueGuruUjianAutosave()
+  renderGuruUjianQuestionRows(ujianGuruState.sectionDefs, ujianGuruState.sectionDefs)
+}
+
+async function openGuruUjianImageContextMenu(fieldEl, clientX = 0, clientY = 0) {
+  guruUjianImageContextState = null
+}
+
+function bindGuruUjianImageContextMenus(rootEl) {
+  return
+}
+
+function buildGuruUjianOptionImagePreviewHtml(imageUrl = '', label = 'opsi') {
+  return ''
+}
+
+function buildGuruUjianQuestionImagePreviewHtml(imageUrl = '', label = 'soal') {
+  return ''
+}
+
+function updateGuruUjianQuestionImagePreview(no) {
+  const previewEl = document.getElementById(`guru-ujian-q-${no}-image-preview`)
+  if (!previewEl) return
+  previewEl.innerHTML = buildGuruUjianQuestionImagePreviewHtml(readGuruUjianQuestionImageItems(no), `soal ${no}`)
+}
+
+function updateGuruUjianOptionImagePreview(rowEl, label = 'opsi') {
+  if (!rowEl) return
+  const previewEl = rowEl.querySelector('.guru-ujian-pg-option-image-preview')
+  if (!previewEl) return
+  const imageInput = rowEl.querySelector('.guru-ujian-pg-option-image-url')
+  previewEl.innerHTML = buildGuruUjianOptionImagePreviewHtml(parseGuruUjianImageItems(String(imageInput?.value || '').trim()), label)
+}
+
+function createGuruUjianPgOptionRow(no, idx, value = '', imageUrl = '') {
+  const rowEl = document.createElement('div')
+  rowEl.className = 'guru-ujian-pg-option-row'
+  rowEl.dataset.optionIndex = String(idx)
+  rowEl.style.padding = '10px'
+  rowEl.style.border = '1px solid #dbeafe'
+  rowEl.style.borderRadius = '14px'
+  rowEl.style.background = '#ffffff'
+  rowEl.innerHTML = `
+    <div style="font-size:12px; font-weight:700; color:#1d4ed8; margin-bottom:6px;">Opsi ${escapeHtml(getGuruUjianPgOptionKeyByIndex(idx).toUpperCase())}</div>
+    <input
+      class="guru-field guru-ujian-pg-option-input"
+      type="text"
+      data-option-index="${idx}"
+      placeholder="Teks opsi ${escapeHtml(getGuruUjianPgOptionKeyByIndex(idx).toUpperCase())}"
+      value="${escapeHtml(String(value || ''))}"
+      oninput="onGuruUjianPgOptionInput(${no})"
+    >
+  `
+  return rowEl
+}
+
 function readGuruUjianPgOptionEntries(no) {
   const wrap = document.getElementById(`guru-ujian-q-${no}-options`)
   if (!wrap) return []
-  return [...wrap.querySelectorAll('.guru-ujian-pg-option-input')]
-    .map((inputEl, idx) => ({
-      key: getGuruUjianPgOptionKeyByIndex(idx),
-      text: String(inputEl?.value || '').trim()
-    }))
+  return [...wrap.querySelectorAll('.guru-ujian-pg-option-row')]
+    .map((rowEl, idx) => {
+      const inputEl = rowEl.querySelector('.guru-ujian-pg-option-input')
+      return {
+        key: getGuruUjianPgOptionKeyByIndex(idx),
+        text: String(inputEl?.value || '').trim()
+      }
+    })
     .filter(item => item.text)
 }
 
@@ -13941,48 +16908,129 @@ function syncGuruUjianPgAnswerOptions(no) {
 function ensureGuruUjianPgTrailingInput(no) {
   const wrap = document.getElementById(`guru-ujian-q-${no}-options`)
   if (!wrap) return
-  let inputs = [...wrap.querySelectorAll('.guru-ujian-pg-option-input')]
-  while (inputs.length < 2) {
-    const idx = inputs.length
-    const inputEl = document.createElement('input')
-    inputEl.type = 'text'
-    inputEl.className = 'guru-field guru-ujian-pg-option-input'
-    inputEl.dataset.optionIndex = String(idx)
-    inputEl.placeholder = `Opsi ${getGuruUjianPgOptionKeyByIndex(idx).toUpperCase()}`
-    inputEl.oninput = () => onGuruUjianPgOptionInput(no)
-    wrap.appendChild(inputEl)
-    inputs = [...wrap.querySelectorAll('.guru-ujian-pg-option-input')]
+  let rows = [...wrap.querySelectorAll('.guru-ujian-pg-option-row')]
+  while (rows.length < 2) {
+    const idx = rows.length
+    wrap.appendChild(createGuruUjianPgOptionRow(no, idx, '', ''))
+    rows = [...wrap.querySelectorAll('.guru-ujian-pg-option-row')]
   }
 
-  const last = inputs[inputs.length - 1]
-  if (String(last?.value || '').trim()) {
-    const idx = inputs.length
-    const inputEl = document.createElement('input')
-    inputEl.type = 'text'
-    inputEl.className = 'guru-field guru-ujian-pg-option-input'
-    inputEl.dataset.optionIndex = String(idx)
-    inputEl.placeholder = `Opsi ${getGuruUjianPgOptionKeyByIndex(idx).toUpperCase()}`
-    inputEl.oninput = () => onGuruUjianPgOptionInput(no)
-    wrap.appendChild(inputEl)
-    inputs = [...wrap.querySelectorAll('.guru-ujian-pg-option-input')]
+  const lastRow = rows[rows.length - 1]
+  const lastText = String(lastRow?.querySelector('.guru-ujian-pg-option-input')?.value || '').trim()
+  if (lastText) {
+    const idx = rows.length
+    wrap.appendChild(createGuruUjianPgOptionRow(no, idx, '', ''))
+    rows = [...wrap.querySelectorAll('.guru-ujian-pg-option-row')]
   }
 
-  const trailingBlankInputs = [...inputs].reverse().filter(inputEl => !String(inputEl?.value || '').trim())
-  while (inputs.length > 2 && trailingBlankInputs.length > 1) {
-    const removeInput = trailingBlankInputs.shift()
-    if (removeInput?.parentNode === wrap) removeInput.parentNode.removeChild(removeInput)
-    inputs = [...wrap.querySelectorAll('.guru-ujian-pg-option-input')]
+  const trailingBlankRows = [...rows].reverse().filter(rowEl => {
+    const text = String(rowEl?.querySelector('.guru-ujian-pg-option-input')?.value || '').trim()
+    return !text
+  })
+  while (rows.length > 2 && trailingBlankRows.length > 1) {
+    const removeRow = trailingBlankRows.shift()
+    if (removeRow?.parentNode === wrap) removeRow.parentNode.removeChild(removeRow)
+    rows = [...wrap.querySelectorAll('.guru-ujian-pg-option-row')]
   }
 
-  inputs.forEach((inputEl, idx) => {
-    inputEl.dataset.optionIndex = String(idx)
-    inputEl.placeholder = `Opsi ${getGuruUjianPgOptionKeyByIndex(idx).toUpperCase()}`
+  rows.forEach((rowEl, idx) => {
+    rowEl.dataset.optionIndex = String(idx)
+    const label = getGuruUjianPgOptionKeyByIndex(idx).toUpperCase()
+    const titleEl = rowEl.querySelector('div')
+    if (titleEl) titleEl.textContent = `Opsi ${label}`
+    const inputEl = rowEl.querySelector('.guru-ujian-pg-option-input')
+    if (inputEl) {
+      inputEl.dataset.optionIndex = String(idx)
+      inputEl.placeholder = `Teks opsi ${label}`
+    }
   })
   syncGuruUjianPgAnswerOptions(no)
 }
 
 function onGuruUjianPgOptionInput(no) {
   ensureGuruUjianPgTrailingInput(no)
+}
+
+function triggerGuruUjianQuestionImagePicker(no) {
+  return
+}
+
+function triggerGuruUjianOptionImagePicker(buttonEl) {
+  return
+}
+
+async function uploadGuruUjianImageToStorage(file, no, slotLabel = 'question') {
+  if (!file) return ''
+  if (!String(file.type || '').toLowerCase().startsWith('image/')) {
+    throw new Error('File harus berupa gambar.')
+  }
+  if (Number(file.size || 0) > EXAM_QUESTION_IMAGE_MAX_SIZE_BYTES) {
+    throw new Error('Ukuran gambar maksimal 2 MB.')
+  }
+  const ctx = await getGuruContext()
+  if (!ctx?.guru?.id || !ujianGuruState.activeJadwal?.id) {
+    throw new Error('Data guru atau jadwal ujian belum siap.')
+  }
+  const ext = getGuruUjianImageFileExt(file.name)
+  const safeSlot = String(slotLabel || 'question').trim().replace(/[^a-z0-9_-]+/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'question'
+  const storagePath = `${String(ctx.guru.id).trim()}/${String(ujianGuruState.activeJadwal.id).trim()}/q-${Number(no || 0) || 0}/${Date.now()}-${safeSlot}.${ext}`
+  const uploadPayload = {
+    upsert: true,
+    cacheControl: '3600',
+    contentType: String(file.type || 'image/jpeg')
+  }
+  const tryUpload = () => sb.storage.from(EXAM_QUESTION_IMAGE_BUCKET).upload(storagePath, file, uploadPayload)
+
+  let { error: uploadError } = await tryUpload()
+  if (uploadError && isExamQuestionImageBucketMissingError(uploadError)) {
+    try {
+      await ensureExamQuestionImageStorageBucket()
+    } catch (ensureError) {
+      const detail = getExamQuestionImageBucketErrorDetail(ensureError)
+      const suffix = detail ? `\n\nDetail: ${detail}` : ''
+      throw new Error(`${buildExamQuestionImageStorageMissingMessage()}${suffix}`)
+    }
+    ;({ error: uploadError } = await tryUpload())
+  }
+  if (uploadError) {
+    if (isExamQuestionImageBucketMissingError(uploadError)) {
+      const detail = getExamQuestionImageBucketErrorDetail(uploadError)
+      const suffix = detail ? `\n\nDetail: ${detail}` : ''
+      throw new Error(`${buildExamQuestionImageStorageMissingMessage()}${suffix}`)
+    }
+    throw uploadError
+  }
+  examQuestionImageBucketReady = true
+  const { data: publicUrlData } = sb.storage.from(EXAM_QUESTION_IMAGE_BUCKET).getPublicUrl(storagePath)
+  const publicUrl = String(publicUrlData?.publicUrl || '').trim()
+  if (!publicUrl) throw new Error('URL gambar tidak valid.')
+  return publicUrl
+}
+
+async function onGuruUjianQuestionImageSelected(no, inputEl) {
+  guruUjianImageContextState = null
+  if (inputEl) inputEl.value = ''
+}
+
+function removeGuruUjianQuestionImage(no) {
+  const fieldEl = document.getElementById(`guru-ujian-q-${no}`)
+  if (fieldEl) fieldEl.value = stripGuruUjianImageMarkers(String(fieldEl.value || ''))
+  queueGuruUjianAutosave()
+  renderGuruUjianQuestionRows(ujianGuruState.sectionDefs, ujianGuruState.sectionDefs)
+}
+
+async function onGuruUjianOptionImageSelected(no, inputEl) {
+  guruUjianImageContextState = null
+  if (inputEl) inputEl.value = ''
+}
+
+function removeGuruUjianOptionImage(buttonEl) {
+  const rowEl = buttonEl?.closest?.('.guru-ujian-pg-option-row')
+  if (!rowEl) return
+  const fieldEl = rowEl.querySelector('.guru-ujian-pg-option-input')
+  if (fieldEl) fieldEl.value = stripGuruUjianImageMarkers(String(fieldEl.value || ''))
+  queueGuruUjianAutosave()
+  renderGuruUjianQuestionRows(ujianGuruState.sectionDefs, ujianGuruState.sectionDefs)
 }
 
 function getGuruUjianCariKataAlphabet(lang = 'ID') {
@@ -16283,6 +19331,10 @@ function getGuruExamDocxUtils() {
   return window.guruExamDocxUtils || {}
 }
 
+function getGuruLaporanUtsDocxUtils() {
+  return window.guruLaporanUtsDocxUtils || {}
+}
+
 async function buildExamDocxHeaderMeta(jadwal, soal = null) {
   const toExamDateLabelLocal = value => {
     const raw = String(value || '').trim()
@@ -16373,6 +19425,15 @@ async function exportExamArabicTemplateFile(jadwal, soal, fileName) {
   return docxUtils.exportArabicExamDocx(jadwal, soal, fileName, headerMeta)
 }
 
+async function buildExamArabicTemplateBlob(jadwal, soal) {
+  const docxUtils = getGuruExamDocxUtils()
+  if (typeof docxUtils.buildArabicExamDocxBlob !== 'function') {
+    throw new Error('Builder template DOCX Arab belum siap.')
+  }
+  const headerMeta = await buildExamDocxHeaderMeta(jadwal, soal)
+  return docxUtils.buildArabicExamDocxBlob(jadwal, soal, headerMeta)
+}
+
 async function exportExamIndonesianTemplateFile(jadwal, soal, fileName) {
   const docxUtils = getGuruExamDocxUtils()
   if (typeof docxUtils.exportIndonesianExamDocx !== 'function') {
@@ -16380,6 +19441,15 @@ async function exportExamIndonesianTemplateFile(jadwal, soal, fileName) {
   }
   const headerMeta = await buildExamDocxHeaderMeta(jadwal, soal)
   return docxUtils.exportIndonesianExamDocx(jadwal, soal, fileName, { ...headerMeta, lang: 'ID' })
+}
+
+async function buildExamIndonesianTemplateBlob(jadwal, soal) {
+  const docxUtils = getGuruExamDocxUtils()
+  if (typeof docxUtils.buildIndonesianExamDocxBlob !== 'function') {
+    throw new Error('Builder template DOCX Indonesia belum siap.')
+  }
+  const headerMeta = await buildExamDocxHeaderMeta(jadwal, soal)
+  return docxUtils.buildIndonesianExamDocxBlob(jadwal, soal, { ...headerMeta, lang: 'ID' })
 }
 
 function getGuruExamDistribusiMaps(ctx) {
@@ -18586,7 +21656,12 @@ function hasGuruUjianAutosaveQuestionContent(item = null) {
     const options = item.options && typeof item.options === 'object' ? Object.values(item.options) : []
     return Boolean(
       text ||
-      options.some(option => String(option || '').trim()) ||
+      options.some(option => {
+        if (option && typeof option === 'object' && !Array.isArray(option)) {
+          return Boolean(String(option.text || option.label || '').trim())
+        }
+        return Boolean(String(option || '').trim())
+      }) ||
       String(item.answer || '').trim()
     )
   }
@@ -19086,7 +22161,7 @@ function collectGuruUjianQuestions() {
       exportNo += 1
     } else if (qType === 'cari-kata') {
       const config = readGuruUjianCariKataConfig(i)
-      if (!config.words.length) continue
+      if (!config.words.length && !text) continue
       const puzzle = generateGuruUjianCariKataPuzzle({
         rows: config.rows,
         cols: config.cols,
@@ -19395,10 +22470,6 @@ async function printGuruUjianActive(format = '') {
       status: 'draft'
     }
     const soal = buildGuruUjianSoalForPrint(soalRaw, bahasaSoal)
-    if (mode === 'pdf' && bahasaSoal === 'AR') {
-      alert('Cetak PDF untuk soal bahasa Arab dilakukan manual lewat Word. Pilih Word lalu cetak PDF dari Word.')
-      return
-    }
     if (mode === 'word') {
       if (bahasaSoal === 'AR') {
         const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasTarget || '-')}.docx`
@@ -19407,6 +22478,18 @@ async function printGuruUjianActive(format = '') {
       }
       const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasTarget || '-')}.docx`
       await exportExamIndonesianTemplateFile({ ...jadwal, kelas: kelasTarget }, soal, fileName)
+      return
+    }
+    if (mode === 'pdf' && typeof window.convertDocxBlobToPdfDesktopAndOpen === 'function') {
+      const pdfFileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasTarget || '-')}.pdf`
+      const docxBlob = bahasaSoal === 'AR'
+        ? await buildExamArabicTemplateBlob({ ...jadwal, kelas: kelasTarget }, soal)
+        : await buildExamIndonesianTemplateBlob({ ...jadwal, kelas: kelasTarget }, soal)
+      await convertDocxBlobToPdfForCurrentPlatform(docxBlob, pdfFileName)
+      return
+    }
+    if (mode === 'pdf' && bahasaSoal === 'AR') {
+      alert('Cetak PDF untuk soal bahasa Arab dilakukan manual lewat Word. Pilih Word lalu cetak PDF dari Word.')
       return
     }
     if (bahasaSoal === 'AR') {
@@ -19463,10 +22546,6 @@ async function printGuruUjianByRow(rowKeyEncoded, format = '') {
     const soalForPrint = buildGuruUjianSoalForPrint(soalRes.data, 'ID')
     const instruksiMeta = parseExamInstruksiMeta(soalForPrint?.instruksi)
     const bahasaSoal = String(instruksiMeta.lang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
-    if (mode === 'pdf' && bahasaSoal === 'AR') {
-      alert('Cetak PDF untuk soal bahasa Arab dilakukan manual lewat Word. Pilih Word lalu cetak PDF dari Word.')
-      return
-    }
     if (mode === 'word') {
       if (bahasaSoal === 'AR') {
         const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.docx`
@@ -19475,6 +22554,18 @@ async function printGuruUjianByRow(rowKeyEncoded, format = '') {
       }
       const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.docx`
       await exportExamIndonesianTemplateFile({ ...jadwal, kelas: kelasNama }, soalForPrint, fileName)
+      return
+    }
+    if (mode === 'pdf' && typeof window.convertDocxBlobToPdfDesktopAndOpen === 'function') {
+      const pdfFileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.pdf`
+      const docxBlob = bahasaSoal === 'AR'
+        ? await buildExamArabicTemplateBlob({ ...jadwal, kelas: kelasNama }, soalForPrint)
+        : await buildExamIndonesianTemplateBlob({ ...jadwal, kelas: kelasNama }, soalForPrint)
+      await convertDocxBlobToPdfForCurrentPlatform(docxBlob, pdfFileName)
+      return
+    }
+    if (mode === 'pdf' && bahasaSoal === 'AR') {
+      alert('Cetak PDF untuk soal bahasa Arab dilakukan manual lewat Word. Pilih Word lalu cetak PDF dari Word.')
       return
     }
     if (bahasaSoal === 'AR') {
@@ -19992,6 +23083,8 @@ async function loadGuruPage(page, options = {}) {
       return
     case 'laporan-absensi':
       return renderGuruPageAndHandleCache({ pageKey: targetPage, renderFn: renderLaporanAbsensiPage })
+    case 'laporan-uts':
+      return renderGuruPageAndHandleCache({ pageKey: targetPage, renderFn: renderLaporanUtsPage, cacheAction: 'clear' })
     case 'laporan-bulanan':
       return renderGuruPageAndHandleCache({ pageKey: targetPage, renderFn: renderLaporanBulananPage, cacheAction: 'clear' })
     case 'rapor':
@@ -20170,6 +23263,7 @@ window.onInputNilaiTanggalChange = onInputNilaiTanggalChange
 window.onInputNilaiKelasChange = onInputNilaiKelasChange
 window.onInputNilaiMapelChange = onInputNilaiMapelChange
 window.onInputNilaiJenisChange = onInputNilaiJenisChange
+window.onInputNilaiSantriScoreInput = onInputNilaiSantriScoreInput
 window.onInputNilaiPatronMateriSelectChange = onInputNilaiPatronMateriSelectChange
 window.onInputNilaiPatronMateriInputChange = onInputNilaiPatronMateriInputChange
 window.saveInputNilaiBatch = saveInputNilaiBatch
@@ -20183,6 +23277,9 @@ window.onLaporanBulananUjianBulananChange = onLaporanBulananUjianBulananChange
 window.saveMonthlyWaTemplate = saveMonthlyWaTemplate
 window.startMonthlyWaTemplateEdit = startMonthlyWaTemplateEdit
 window.cancelMonthlyWaTemplateEdit = cancelMonthlyWaTemplateEdit
+window.saveLaporanUtsWaTemplate = saveLaporanUtsWaTemplate
+window.startLaporanUtsWaTemplateEdit = startLaporanUtsWaTemplateEdit
+window.cancelLaporanUtsWaTemplateEdit = cancelLaporanUtsWaTemplateEdit
 window.openLaporanBulananDetail = openLaporanBulananDetail
 window.openLaporanBulananActions = openLaporanBulananActions
 window.openLaporanAbsensiSantriDetail = openLaporanAbsensiSantriDetail
@@ -20192,6 +23289,25 @@ window.backToLaporanBulananList = backToLaporanBulananList
 window.onLaporanBulananNilaiAkhlakChange = onLaporanBulananNilaiAkhlakChange
 window.saveLaporanBulananDetail = saveLaporanBulananDetail
 window.printLaporanBulanan = printLaporanBulanan
+window.onLaporanUtsSemesterChange = onLaporanUtsSemesterChange
+window.openLaporanUtsDetail = openLaporanUtsDetail
+window.openLaporanUtsPrintActions = openLaporanUtsPrintActions
+window.openLaporanUtsDetailPrintActions = openLaporanUtsDetailPrintActions
+window.quickPrintLaporanUtsSantri = quickPrintLaporanUtsSantri
+window.quickPrintLaporanUtsSantriPdf = quickPrintLaporanUtsSantriPdf
+window.quickSendLaporanUtsWA = quickSendLaporanUtsWA
+window.printLaporanUtsSantri = printLaporanUtsSantri
+window.printLaporanUtsSantriPdf = printLaporanUtsSantriPdf
+window.printLaporanUtsDetail = printLaporanUtsDetail
+window.printLaporanUtsDetailPdf = printLaporanUtsDetailPdf
+window.openLaporanUtsBulkInputModal = openLaporanUtsBulkInputModal
+window.closeLaporanUtsBulkInputModal = closeLaporanUtsBulkInputModal
+window.downloadLaporanUtsBulkTemplate = downloadLaporanUtsBulkTemplate
+window.triggerLaporanUtsBulkFilePicker = triggerLaporanUtsBulkFilePicker
+window.handleLaporanUtsBulkFileSelected = handleLaporanUtsBulkFileSelected
+window.confirmSaveLaporanUtsBulkUpload = confirmSaveLaporanUtsBulkUpload
+window.cancelLaporanUtsBulkReview = cancelLaporanUtsBulkReview
+window.backToLaporanUtsList = backToLaporanUtsList
 window.onRaporSemesterChange = onRaporSemesterChange
 window.openRaporSantriDetail = openRaporSantriDetail
 window.quickPrintRaporSantri = quickPrintRaporSantri
@@ -20227,6 +23343,12 @@ window.onGuruUjianSectionChange = onGuruUjianSectionChange
 window.onGuruUjianSectionScoreInput = onGuruUjianSectionScoreInput
 window.onGuruUjianSectionScoreKeydown = onGuruUjianSectionScoreKeydown
 window.onGuruUjianPgOptionInput = onGuruUjianPgOptionInput
+window.triggerGuruUjianQuestionImagePicker = triggerGuruUjianQuestionImagePicker
+window.onGuruUjianQuestionImageSelected = onGuruUjianQuestionImageSelected
+window.removeGuruUjianQuestionImage = removeGuruUjianQuestionImage
+window.triggerGuruUjianOptionImagePicker = triggerGuruUjianOptionImagePicker
+window.onGuruUjianOptionImageSelected = onGuruUjianOptionImageSelected
+window.removeGuruUjianOptionImage = removeGuruUjianOptionImage
 window.addGuruUjianSection = addGuruUjianSection
 window.removeGuruUjianSection = removeGuruUjianSection
 window.saveGuruUjian = saveGuruUjian
@@ -20249,6 +23371,7 @@ window.openMapelNilaiDetail = openMapelNilaiDetail
 window.closeNilaiDetailModal = closeNilaiDetailModal
 window.addNilaiDetailRow = addNilaiDetailRow
 window.updateNilaiDetailRow = updateNilaiDetailRow
+window.onNilaiDetailRowNilaiInput = onNilaiDetailRowNilaiInput
 window.removeNilaiDetailRow = removeNilaiDetailRow
 window.saveNilaiDetailChanges = saveNilaiDetailChanges
 window.setMapelDetailTab = setMapelDetailTab

@@ -261,11 +261,19 @@
     return value
   }
 
+  function stripExamImageMarkers(text) {
+    return String(text || '')
+      .replace(/\[\[\s*gambar(?:\d+)?\s*\]\]/gi, '')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/ *\n */g, '\n')
+  }
+
   function normalizePgOptionEntries(rawOptions) {
     const rows = []
     if (Array.isArray(rawOptions)) {
       rawOptions.forEach((item, idx) => {
-        const text = String(item || '').trim()
+        const isObject = item && typeof item === 'object' && !Array.isArray(item)
+        const text = stripExamImageMarkers(String(isObject ? (item.text || item.label || '') : (item || ''))).trim()
         if (!text) return
         rows.push({ key: getPgOptionKeyByIndex(idx), text })
       })
@@ -273,7 +281,8 @@
     }
     if (rawOptions && typeof rawOptions === 'object') {
       Object.entries(rawOptions).forEach(([rawKey, rawVal], idx) => {
-        const text = String(rawVal || '').trim()
+        const isObject = rawVal && typeof rawVal === 'object' && !Array.isArray(rawVal)
+        const text = stripExamImageMarkers(String(isObject ? (rawVal.text || rawVal.label || '') : (rawVal || ''))).trim()
         if (!text) return
         const normalizedKey = /^[a-z]+$/i.test(String(rawKey || '').trim())
           ? String(rawKey || '').trim().toLowerCase()
@@ -294,11 +303,59 @@
     return rows
   }
 
+  function normalizeExamImageItems(rawValue) {
+    if (Array.isArray(rawValue)) {
+      return rawValue
+        .map((item, index) => {
+          const url = String(item?.url || item?.imageUrl || item?.image_url || '').trim()
+          if (!url) return null
+          const markerRaw = String(item?.marker || item?.key || `gambar${index + 1}`).trim().toLowerCase()
+          const marker = /^gambar\d*$/i.test(markerRaw) ? markerRaw.replace(/^gambar$/i, 'gambar1') : `gambar${index + 1}`
+          return { marker, url }
+        })
+        .filter(Boolean)
+    }
+    const raw = String(rawValue || '').trim()
+    if (!raw) return []
+    try {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed) || (parsed && typeof parsed === 'object')) {
+        return normalizeExamImageItems(parsed)
+      }
+    } catch (_err) {
+    }
+    return [{ marker: 'gambar1', url: raw }]
+  }
+
+  function serializeExamImageItems(items = []) {
+    const safeItems = normalizeExamImageItems(items)
+    return safeItems.length ? JSON.stringify(safeItems) : ''
+  }
+
+  function buildImagePreviewHtml(items = [], escapeHtml, altLabel = 'Gambar', maxWidth = 220, maxHeight = 180) {
+    const safeItems = normalizeExamImageItems(items)
+    if (!safeItems.length) return ''
+    return safeItems.map(item => `
+      <div style="display:inline-flex; flex-direction:column; gap:4px; margin:0 8px 8px 0;">
+        <div style="font-size:10px; font-weight:700; color:#475569;">${escapeHtml(String(item.marker || altLabel || 'gambar'))}</div>
+        <img src="${escapeHtml(String(item.url || ''))}" alt="${escapeHtml(altLabel)}" style="display:block; max-width:${maxWidth}px; max-height:${maxHeight}px; width:auto; height:auto; border:1px solid #cbd5e1; border-radius:10px; background:#fff; object-fit:contain;">
+      </div>
+    `).join('')
+  }
+
+  function buildQuestionImageBlockHtml({ i }) {
+    return ''
+  }
+
+  function buildOptionImageBlockHtml() {
+    return ''
+  }
+
   function buildQuestionPgHtml({ i, localNo, prev, escapeHtml }) {
     const options = normalizePgOptionEntries(prev.options)
-    const values = options.map(item => item.text)
-    while (values.length < 2) values.push('')
-    values.push('')
+    const values = options.map(item => ({ text: item.text }))
+    while (values.length < 2) values.push({ text: '' })
+    values.push({ text: '' })
     const answerValue = String(prev.answer || '').trim().toLowerCase()
     const answerOptions = options.length
       ? options.map(item => `<option value="${escapeHtml(item.key)}" ${answerValue === item.key ? 'selected' : ''}>${escapeHtml(item.key.toUpperCase())}</option>`).join('')
@@ -306,17 +363,22 @@
     return `
       <div class="placeholder-card guru-ujian-question-row" data-no="${i}" data-type="pilihan-ganda" style="margin-bottom:8px;">
         <div style="font-weight:700; margin-bottom:6px;">Nomor ${localNo} <span style="font-weight:600; color:#2563eb;">(Pilihan Ganda)</span></div>
-        <textarea id="guru-ujian-q-${i}" class="guru-field" rows="2" placeholder="Tulis pertanyaan">${escapeHtml(String(prev.text || ''))}</textarea>
+        <textarea id="guru-ujian-q-${i}" class="guru-field" rows="2" placeholder="Tulis pertanyaan">${escapeHtml(stripExamImageMarkers(String(prev.text || '')))}</textarea>
+        ${buildQuestionImageBlockHtml({ i })}
         <div id="guru-ujian-q-${i}-options" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:8px; margin-top:8px;">
           ${values.map((value, idx) => `
-            <input
-              class="guru-field guru-ujian-pg-option-input"
-              type="text"
-              data-option-index="${idx}"
-              placeholder="Opsi ${escapeHtml(getPgOptionKeyByIndex(idx).toUpperCase())}"
-              value="${escapeHtml(String(value || ''))}"
-              oninput="onGuruUjianPgOptionInput(${i})"
-            >
+            <div class="guru-ujian-pg-option-row" data-option-index="${idx}" style="padding:10px; border:1px solid #dbeafe; border-radius:14px; background:#ffffff;">
+              <div style="font-size:12px; font-weight:700; color:#1d4ed8; margin-bottom:6px;">Opsi ${escapeHtml(getPgOptionKeyByIndex(idx).toUpperCase())}</div>
+              <input
+                class="guru-field guru-ujian-pg-option-input"
+                type="text"
+                data-option-index="${idx}"
+                placeholder="Teks opsi ${escapeHtml(getPgOptionKeyByIndex(idx).toUpperCase())}"
+                value="${escapeHtml(String(value?.text || ''))}"
+                oninput="onGuruUjianPgOptionInput(${i})"
+              >
+              ${buildOptionImageBlockHtml()}
+            </div>
           `).join('')}
         </div>
         <div style="margin-top:6px; font-size:11px; color:#475569;">Minimal 2 opsi. Tambah opsi dengan mengisi kolom kosong terakhir.</div>
@@ -342,7 +404,8 @@
     return `
       <div class="placeholder-card guru-ujian-question-row" data-no="${i}" data-type="benar-salah" style="margin-bottom:8px;">
         <div style="font-weight:700; margin-bottom:6px;">Nomor ${localNo} <span style="font-weight:600; color:#db2777;">(Benar / Salah)</span></div>
-        <textarea id="guru-ujian-q-${i}" class="guru-field" rows="2" placeholder="Tulis pernyataan">${escapeHtml(String(prev.text || ''))}</textarea>
+        <textarea id="guru-ujian-q-${i}" class="guru-field" rows="2" placeholder="Tulis pernyataan">${escapeHtml(stripExamImageMarkers(String(prev.text || '')))}</textarea>
+        ${buildQuestionImageBlockHtml({ i })}
         <div style="margin-top:8px; padding:10px 12px; border:1px solid #fbcfe8; border-radius:12px; background:#fdf2f8; color:#9d174d; font-size:12px;">
           ${escapeHtml(helperText)}
         </div>
@@ -374,7 +437,8 @@
     return `
       <div class="placeholder-card guru-ujian-question-row" data-no="${i}" data-type="cari-kata" style="margin-bottom:8px;">
         <div style="font-weight:700; margin-bottom:6px;">Nomor ${localNo} <span style="font-weight:600; color:#16a34a;">(Cari Kata)</span></div>
-        <textarea id="guru-ujian-q-${i}" class="guru-field" rows="2" placeholder="${escapeHtml(statementPlaceholder)}" oninput="onGuruUjianCariKataInput(${i})">${escapeHtml(String(prev.text || ''))}</textarea>
+        <textarea id="guru-ujian-q-${i}" class="guru-field" rows="2" placeholder="${escapeHtml(statementPlaceholder)}" oninput="onGuruUjianCariKataInput(${i})">${escapeHtml(stripExamImageMarkers(String(prev.text || '')))}</textarea>
+        ${buildQuestionImageBlockHtml({ i })}
         <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; margin-top:8px;">
           <div>
             <label class="guru-label">Jumlah Baris</label>
@@ -413,7 +477,8 @@
   return `
     <div class="placeholder-card guru-ujian-question-row" data-no="${i}" data-type="teka-silang" style="margin-bottom:8px; position:relative;">
       <div style="font-weight:700; margin-bottom:6px;">Nomor ${localNo} <span style="font-weight:600; color:#9333ea;">(Teka-Teki Silang)</span></div>
-      <textarea id="guru-ujian-q-${i}" class="guru-field" rows="2" placeholder="${escapeHtml(statementPlaceholder)}" oninput="onGuruUjianTekaSilangInput(${i})">${escapeHtml(String(prev.text || ''))}</textarea>
+      <textarea id="guru-ujian-q-${i}" class="guru-field" rows="2" placeholder="${escapeHtml(statementPlaceholder)}" oninput="onGuruUjianTekaSilangInput(${i})">${escapeHtml(stripExamImageMarkers(String(prev.text || '')))}</textarea>
+      ${buildQuestionImageBlockHtml({ i })}
       <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; margin-top:8px;">
         <div>
           <label class="guru-label">Jumlah Baris</label>
@@ -488,7 +553,8 @@ function buildQuestionPasangkanHtml({ i, localNo, prev, escapeHtml }) {
       <div class="placeholder-card guru-ujian-question-row" data-no="${i}" data-type="isi-titik" style="margin-bottom:8px;">
         <div style="font-weight:700; margin-bottom:6px;">Nomor ${localNo} <span style="font-weight:600; color:#ea580c;">(Isi Titik Kosong)</span></div>
         <div style="font-size:12px; color:#64748b; margin-bottom:6px;">Pilihan kata: (${escapeHtml(fragments.join(', ') || '-')})</div>
-        <textarea id="guru-ujian-q-${i}" class="guru-field" rows="2" placeholder="Tulis kalimat dengan titik kosong, contoh: Ana ... ila madrasah.">${escapeHtml(String(prev.text || ''))}</textarea>
+        <textarea id="guru-ujian-q-${i}" class="guru-field" rows="2" placeholder="Tulis kalimat dengan titik kosong, contoh: Ana ... ila madrasah.">${escapeHtml(stripExamImageMarkers(String(prev.text || '')))}</textarea>
+        ${buildQuestionImageBlockHtml({ i })}
         <input id="guru-ujian-q-${i}-answer" class="guru-field" type="text" placeholder="Jawaban benar" value="${escapeHtml(String(prev.answer || ''))}" style="margin-top:8px;">
       </div>
     `
@@ -498,7 +564,8 @@ function buildQuestionPasangkanHtml({ i, localNo, prev, escapeHtml }) {
     return `
       <div class="placeholder-card guru-ujian-question-row" data-no="${i}" data-type="esai" style="margin-bottom:8px;">
         <div style="font-weight:700; margin-bottom:6px;">Nomor ${localNo} <span style="font-weight:600; color:#0f766e;">(Esai)</span></div>
-        <textarea id="guru-ujian-q-${i}" class="guru-field" rows="3" placeholder="Tulis pertanyaan">${escapeHtml(String(prev.text || ''))}</textarea>
+        <textarea id="guru-ujian-q-${i}" class="guru-field" rows="3" placeholder="Tulis pertanyaan">${escapeHtml(stripExamImageMarkers(String(prev.text || '')))}</textarea>
+        ${buildQuestionImageBlockHtml({ i })}
       </div>
     `
   }

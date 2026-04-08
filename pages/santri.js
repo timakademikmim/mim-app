@@ -17,11 +17,57 @@ const santriSelectFilters = {
 const SANTRI_CACHE_KEY = 'santri:list'
 const SANTRI_ALL_CACHE_KEY = 'santri:list:all'
 const SANTRI_CACHE_TTL_MS = 2 * 60 * 1000
+const SANTRI_PARENT_FIELD_GROUPS = [
+  ['ayah', 'nama_ayah'],
+  ['ibu', 'nama_ibu'],
+  ['no_hp_ayah', 'hp_ayah'],
+  ['no_hp_ibu', 'hp_ibu'],
+  ['no_hp_orang_tua', 'hp_orang_tua'],
+  ['no_hp_wali', 'hp_wali']
+]
 
 function buildSantriIdentityKey(item) {
   const nisn = String(item?.nisn || '').trim().toLowerCase()
   if (nisn) return `nisn:${nisn}`
+  const idSantri = String(item?.id_santri || '').trim().toLowerCase()
+  if (idSantri) return `id_santri:${idSantri}`
+  const noInduk = String(item?.no_induk || item?.nomor_induk || '').trim().toLowerCase()
+  if (noInduk) return `no_induk:${noInduk}`
   return `id:${String(item?.id || '')}`
+}
+
+function fillSantriParentFieldsFromHistory(targetRow, historyRows = []) {
+  const target = targetRow || {}
+  SANTRI_PARENT_FIELD_GROUPS.forEach(keys => {
+    const hasCurrentValue = keys.some(key => {
+      const value = target?.[key]
+      return value !== null && value !== undefined && String(value).trim() !== ''
+    })
+    if (hasCurrentValue) return
+    const sourceRow = (historyRows || []).find(row => keys.some(key => {
+      const value = row?.[key]
+      return value !== null && value !== undefined && String(value).trim() !== ''
+    }))
+    if (!sourceRow) return
+    keys.forEach(key => {
+      if (Object.prototype.hasOwnProperty.call(sourceRow || {}, key)) {
+        target[key] = sourceRow[key]
+      }
+    })
+  })
+  return target
+}
+
+function buildSantriParentCarryPayload(sourceRow = {}) {
+  const payload = {}
+  SANTRI_PARENT_FIELD_GROUPS.forEach(keys => {
+    keys.forEach(key => {
+      if (Object.prototype.hasOwnProperty.call(sourceRow || {}, key)) {
+        payload[key] = sourceRow[key] ?? null
+      }
+    })
+  })
+  return payload
 }
 
 function pickCurrentSantriRows(rows) {
@@ -43,6 +89,7 @@ function pickCurrentSantriRows(rows) {
     })
     const current = sorted[0]
     if (!current) return
+    fillSantriParentFieldsFromHistory(current, sorted)
     current.__santri_key = buildSantriIdentityKey(current)
     current.__history_ids = sorted.map(item => String(item.id))
     result.push(current)
@@ -83,6 +130,7 @@ function pickSantriRowsBySelectedYear(rows, selectedTahunId = '') {
           kelas: null,
           kelas_id: null
         }
+    fillSantriParentFieldsFromHistory(picked, groupRows)
     picked.__santri_key = buildSantriIdentityKey(current)
     picked.__history_ids = groupRows.map(item => String(item.id))
     result.push(picked)
@@ -846,16 +894,17 @@ async function promoteSantriToNextYear(santriId, currentKelasId, basePayload) {
 
   const suffix = getKelasSuffix(currentKelas.nama_kelas)
   const targetKelas = targetKelasList.find(row => getKelasSuffix(row.nama_kelas) === suffix) || targetKelasList[0]
+  const currentRow = (window.santriAllRows || window.santriList || []).find(item => String(item.id) === String(santriId))
 
   const payload = {
     ...basePayload,
+    ...buildSantriParentCarryPayload(currentRow || {}),
     kelas_id: targetKelas.id,
     aktif: true,
     status: 'aktif'
   }
   delete payload.tahun_lulus
 
-  const currentRow = (window.santriAllRows || window.santriList || []).find(item => String(item.id) === String(santriId))
   const nisn = String(payload.nisn || currentRow?.nisn || '').trim()
 
   if (nisn) {
@@ -1397,4 +1446,9 @@ function initSantriPage() {
   resetSantriSearchAndSortState()
   loadSantri()
 }
+
+window.initSantriPage = initSantriPage
+window.showEditSantriForm = showEditSantriForm
+window.openSantriDetail = openSantriDetail
+window.hapusSantri = hapusSantri
 

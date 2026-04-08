@@ -2345,8 +2345,26 @@ window.openExternalUrl = async function openExternalUrl(url) {
   const isTauriApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
   const isAndroidApp = /android/i.test(String(navigator.userAgent || ''))
   if (!isTauriApp) {
-    const popup = window.open(target, '_blank', 'noopener,noreferrer')
-    return !!popup
+    try {
+      const popup = window.open(target, '_blank', 'noopener,noreferrer')
+      if (popup) return true
+      // Some mobile browsers can open the new tab/app but still return null.
+      // Treat the attempt itself as success to avoid triggering a second open.
+      return true
+    } catch (_error) {
+      try {
+        const a = document.createElement('a')
+        a.href = target
+        a.target = '_blank'
+        a.rel = 'noopener noreferrer'
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        return true
+      } catch (_error2) {
+        return false
+      }
+    }
   }
   try {
     const opened = await invokeTauriCommand('open_external_url', { url: target })
@@ -2988,6 +3006,197 @@ window.printPdfBlobInPlace = async function printPdfBlobInPlace(blob) {
   }
 }
 
+window.printDocxBlobInBrowser = async function printDocxBlobInBrowser(blob, options = {}) {
+  if (!(blob instanceof Blob)) return { ok: false, error: 'Blob DOCX tidak valid.' }
+  try {
+    const popup = window.open('about:blank', '_blank')
+    if (!popup) {
+      return { ok: false, error: 'Popup browser diblokir. Izinkan popup lalu coba lagi.' }
+    }
+
+    const fileName = String(options.fileName || 'Dokumen.pdf').trim() || 'Dokumen.pdf'
+    const title = String(options.title || 'Preview PDF dari DOCX').trim() || 'Preview PDF dari DOCX'
+    const objectUrl = URL.createObjectURL(blob)
+    const escapedTitle = title
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+    const escapedFileName = fileName
+      .replace(/\\/g, '\\\\')
+      .replace(/`/g, '\\`')
+    const escapedObjectUrl = objectUrl
+      .replace(/\\/g, '\\\\')
+      .replace(/`/g, '\\`')
+
+    popup.document.open()
+    popup.document.write(`<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapedTitle}</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      background: #e2e8f0;
+      color: #0f172a;
+    }
+    .docx-browser-toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 16px;
+      background: rgba(255,255,255,0.95);
+      border-bottom: 1px solid #cbd5e1;
+      backdrop-filter: blur(8px);
+    }
+    .docx-browser-toolbar h1 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 700;
+    }
+    .docx-browser-toolbar p {
+      margin: 2px 0 0;
+      font-size: 12px;
+      color: #475569;
+    }
+    .docx-browser-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .docx-browser-actions button {
+      border: 1px solid #cbd5e1;
+      background: #fff;
+      color: #0f172a;
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .docx-browser-actions button.primary {
+      background: #0f172a;
+      border-color: #0f172a;
+      color: #fff;
+    }
+    .docx-browser-status {
+      padding: 10px 16px;
+      font-size: 13px;
+      color: #334155;
+      border-bottom: 1px solid #cbd5e1;
+      background: #f8fafc;
+    }
+    #docx-browser-mount {
+      padding: 18px;
+      min-height: calc(100vh - 110px);
+    }
+    #docx-browser-mount .docx-wrapper {
+      background: transparent !important;
+    }
+    #docx-browser-mount .docx {
+      margin: 0 auto 18px auto !important;
+      box-shadow: 0 10px 28px rgba(15,23,42,0.12);
+    }
+    @media print {
+      body { background: #fff; }
+      .docx-browser-toolbar, .docx-browser-status { display: none !important; }
+      #docx-browser-mount { padding: 0 !important; }
+      #docx-browser-mount .docx {
+        box-shadow: none !important;
+        margin: 0 auto !important;
+      }
+      @page { margin: 12mm; size: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div class="docx-browser-toolbar">
+    <div>
+      <h1>${escapedTitle}</h1>
+      <p>Eksperimental browser-only. Bandingkan hasil ini dengan file DOCX template.</p>
+    </div>
+    <div class="docx-browser-actions">
+      <button type="button" class="primary" id="docx-browser-print-btn">Cetak / Simpan PDF</button>
+      <button type="button" id="docx-browser-close-btn">Tutup</button>
+    </div>
+  </div>
+  <div class="docx-browser-status" id="docx-browser-status">Menyiapkan preview DOCX...</div>
+  <div id="docx-browser-mount"></div>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"><\/script>
+  <script src="https://cdn.jsdelivr.net/npm/docx-preview/dist/docx-preview.min.js"><\/script>
+  <script>
+    (function () {
+      const fileName = \`${escapedFileName}\`
+      const objectUrl = \`${escapedObjectUrl}\`
+      const mount = document.getElementById('docx-browser-mount')
+      const statusEl = document.getElementById('docx-browser-status')
+      const printBtn = document.getElementById('docx-browser-print-btn')
+      const closeBtn = document.getElementById('docx-browser-close-btn')
+
+      function setStatus(text, isError) {
+        statusEl.textContent = text || ''
+        statusEl.style.color = isError ? '#b91c1c' : '#334155'
+      }
+
+      printBtn.addEventListener('click', function () {
+        try {
+          document.title = fileName
+        } catch (_err) {}
+        window.focus()
+        window.print()
+      })
+      closeBtn.addEventListener('click', function () {
+        window.close()
+      })
+      window.addEventListener('beforeunload', function () {
+        try { URL.revokeObjectURL(objectUrl) } catch (_err) {}
+      })
+
+      ;(async function () {
+        try {
+          if (!window.docx || typeof window.docx.renderAsync !== 'function') {
+            throw new Error('Library docx-preview tidak berhasil dimuat.')
+          }
+          const response = await fetch(objectUrl)
+          if (!response.ok) throw new Error('Gagal membaca blob DOCX.')
+          const buffer = await response.arrayBuffer()
+          await window.docx.renderAsync(buffer, mount, document.head, {
+            inWrapper: true,
+            breakPages: true,
+            ignoreWidth: false,
+            ignoreHeight: false,
+            ignoreFonts: false,
+            renderHeaders: true,
+            renderFooters: true,
+            useBase64URL: true
+          })
+          setStatus('Preview siap. Gunakan tombol "Cetak / Simpan PDF" untuk membandingkan hasil browser dengan template Word.', false)
+        } catch (error) {
+          console.error('docx browser preview failed:', error)
+          setStatus('Gagal merender DOCX di browser: ' + (error && error.message ? error.message : 'Unknown error'), true)
+        }
+      })()
+    })()
+  <\/script>
+</body>
+</html>`)
+    popup.document.close()
+    return { ok: true, mode: 'browser-preview' }
+  } catch (error) {
+    console.error('printDocxBlobInBrowser failed:', error)
+    return { ok: false, error: String(error?.message || error || 'Unknown error') }
+  }
+}
+
 window.savePdfDesktopAndOpen = async function savePdfDesktopAndOpen(blob, fileName) {
   if (!(blob instanceof Blob)) return { ok: false, path: '', error: 'Blob tidak valid.' }
   const isDesktopApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
@@ -3010,6 +3219,32 @@ window.savePdfDesktopAndOpen = async function savePdfDesktopAndOpen(blob, fileNa
     return { ok: true, path: String(savedPath || '') }
   } catch (error) {
     console.error('savePdfDesktopAndOpen failed:', error)
+    return { ok: false, path: '', error: String(error?.message || error || 'Unknown error') }
+  }
+}
+
+window.convertDocxBlobToPdfDesktopAndOpen = async function convertDocxBlobToPdfDesktopAndOpen(blob, fileName) {
+  if (!(blob instanceof Blob)) return { ok: false, path: '', error: 'Blob DOCX tidak valid.' }
+  const isDesktopApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
+  if (!isDesktopApp) {
+    return { ok: false, path: '', error: 'Converter DOCX ke PDF hanya tersedia di aplikasi desktop.' }
+  }
+  try {
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    let binary = ''
+    const chunk = 0x8000
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
+    }
+    const base64Data = btoa(binary)
+    const savedPath = await invokeTauriCommand('convert_docx_base64_to_pdf', {
+      fileName: String(fileName || 'Dokumen.pdf'),
+      base64Data
+    })
+    await invokeTauriCommand('open_file_path', { path: String(savedPath || '') })
+    return { ok: true, path: String(savedPath || '') }
+  } catch (error) {
+    console.error('convertDocxBlobToPdfDesktopAndOpen failed:', error)
     return { ok: false, path: '', error: String(error?.message || error || 'Unknown error') }
   }
 }

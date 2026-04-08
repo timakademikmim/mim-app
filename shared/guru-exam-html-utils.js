@@ -4,6 +4,7 @@
   const ARABIC_INLINE_RE = /[\u0600-\u06FF\u0750-\u077F\u0870-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/u
   const ARABIC_INLINE_RUN_RE = /[\u0600-\u06FF\u0750-\u077F\u0870-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]+/gu
   const ARABIC_MOJIBAKE_RE = /[ØÙ][\u0080-\u00BF]/u
+  const EXAM_IMAGE_MARKER_RE = /\[\[\s*(gambar(?:\d+)?)\s*\]\]/gi
 
   function repairArabicMojibake(text) {
     const source = String(text || '')
@@ -50,6 +51,34 @@
         ? `<span class="mixed-ar">${escapeHtml(token.text)}</span>`
         : escapeHtml(token.text)))
       .join('')
+  }
+
+  function stripExamImageMarkers(text) {
+    return String(text || '')
+      .replace(EXAM_IMAGE_MARKER_RE, '')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/ *\n */g, '\n')
+  }
+
+  function normalizeExamImageItems(rawValue) {
+    if (Array.isArray(rawValue)) {
+      return rawValue
+        .map((item, index) => {
+          const url = String(item?.url || item?.imageUrl || item?.image_url || '').trim()
+          if (!url) return null
+          const markerRaw = String(item?.marker || item?.key || `gambar${index + 1}`).trim().toLowerCase()
+          const marker = /^gambar\d*$/i.test(markerRaw) ? markerRaw.replace(/^gambar$/i, 'gambar1') : `gambar${index + 1}`
+          return { marker, url }
+        })
+        .filter(Boolean)
+    }
+    const raw = String(rawValue || '').trim()
+    if (!raw) return []
+    try {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed) || (parsed && typeof parsed === 'object')) return normalizeExamImageItems(parsed)
+    } catch (_err) {}
+    return [{ marker: 'gambar1', url: raw }]
   }
 
   function buildExamIsiTitikExtraLineHtml({ items, isAr, escapeHtml, renderText }) {
@@ -114,14 +143,15 @@
   function getExamPgOptionEntries(options, isAr) {
     if (options && typeof options === 'object' && String(options.__questionType || '').trim().toLowerCase() === 'benar-salah') {
       return [
-        { key: 'benar', label: isAr ? 'أ' : 'a', value: isAr ? 'صحيح' : 'Benar' },
-        { key: 'salah', label: isAr ? 'ب' : 'b', value: isAr ? 'خطأ' : 'Salah' }
+        { key: 'benar', label: isAr ? 'أ' : 'a', value: isAr ? 'صحيح' : 'Benar', imageUrl: '' },
+        { key: 'salah', label: isAr ? 'ب' : 'b', value: isAr ? 'خطأ' : 'Salah', imageUrl: '' }
       ]
     }
     const rows = []
     if (Array.isArray(options)) {
       options.forEach((rawVal, idx) => {
-        const value = String(rawVal || '').trim()
+        const isObject = rawVal && typeof rawVal === 'object' && !Array.isArray(rawVal)
+        const value = stripExamImageMarkers(String(isObject ? (rawVal.text || rawVal.label || '') : (rawVal || ''))).trim()
         if (!value) return
         const key = getExamOptionKeyByIndex(idx)
         rows.push({
@@ -134,7 +164,8 @@
     }
     if (options && typeof options === 'object') {
       Object.entries(options).forEach(([rawKey, rawVal], idx) => {
-        const value = String(rawVal || '').trim()
+        const isObject = rawVal && typeof rawVal === 'object' && !Array.isArray(rawVal)
+        const value = stripExamImageMarkers(String(isObject ? (rawVal.text || rawVal.label || '') : (rawVal || ''))).trim()
         if (!value) return
         const normalizedKey = /^[a-z]+$/i.test(String(rawKey || '').trim())
           ? String(rawKey || '').trim().toLowerCase()
@@ -158,11 +189,32 @@
     return rows
   }
 
+  function renderExamImageHtml(imageUrl, escapeHtml, alt = 'Gambar soal', className = 'exam-question-image') {
+    const safeUrl = String(imageUrl || '').trim()
+    if (!safeUrl) return ''
+    return `<span class="${className}"><img src="${escapeHtml(safeUrl)}" alt="${escapeHtml(alt)}"></span>`
+  }
+
+  function renderExamTextWithImageMarkerHtml({
+    text,
+    renderText
+  }) {
+    return renderText(stripExamImageMarkers(String(text || '')))
+  }
+
   function buildExamBrowserQuestionTitleHtml({ q, no, lang, isAr, escapeHtml, formatExamMarker, formatExamNumber, renderText }) {
+    const contentHtml = renderExamTextWithImageMarkerHtml({
+      text: String(q?.text || '-'),
+      imageItems: q?.images || q?.imageItems || q?.image_items || q?.imageUrl || q?.image_url,
+      escapeHtml,
+      renderText: value => renderText(value, isAr),
+      alt: `Gambar soal ${String(q?.no || '')}`,
+      className: 'exam-question-image'
+    })
     if (isAr) {
-      return `<div class="q-title q-title-ar"><span class="q-marker-num">${escapeHtml(String(formatExamNumber(no, lang)))}</span><span class="q-marker-dot">.</span><span class="q-title-text">${renderText(String(q?.text || '-'), isAr)}</span></div>`
+      return `<div class="q-title q-title-ar"><span class="q-marker-num">${escapeHtml(String(formatExamNumber(no, lang)))}</span><span class="q-marker-dot">.</span><div class="q-title-text">${contentHtml}</div></div>`
     }
-    return `<div class="q-title">${escapeHtml(formatExamMarker(formatExamNumber(no, lang), lang))} ${renderText(String(q?.text || '-'), isAr)}</div>`
+    return `<div class="q-title">${escapeHtml(formatExamMarker(formatExamNumber(no, lang), lang))} <span class="q-title-inline">${contentHtml}</span></div>`
   }
 
   function getExamPgGridClass(optionEntries, isAr) {
@@ -178,14 +230,14 @@
   function buildExamBrowserPgQuestionHtml({ q, qText, lang, isAr, escapeHtml, formatExamMarker, renderText }) {
     const entries = getExamPgOptionEntries(q?.options || {}, isAr)
     const safeEntries = entries.length ? entries : [
-      { label: isAr ? 'أ' : 'a', value: '-' },
-      { label: isAr ? 'ب' : 'b', value: '-' }
+      { label: isAr ? 'أ' : 'a', value: '-', imageUrl: '' },
+      { label: isAr ? 'ب' : 'b', value: '-', imageUrl: '' }
     ]
     const gridClass = getExamPgGridClass(safeEntries, isAr)
     const optionsHtml = safeEntries.map(item => (
       isAr
-        ? `<div class="pg-opt-ar"><span class="q-marker-num">${escapeHtml(String(item.label || ''))}</span><span class="q-marker-dot">.</span><span class="q-title-text">${renderText(String(item.value || '-'), isAr)}</span></div>`
-        : `<div>${escapeHtml(formatExamMarker(String(item.label || ''), lang))} ${renderText(String(item.value || '-'), isAr)}</div>`
+        ? `<div class="pg-opt-ar"><span class="q-marker-num">${escapeHtml(String(item.label || ''))}</span><span class="q-marker-dot">.</span><div class="q-title-text">${renderExamTextWithImageMarkerHtml({ text: String(item.value || '-'), imageItems: item?.images || item?.imageUrl, escapeHtml, renderText: value => renderText(value, isAr), alt: `Gambar opsi ${String(item.label || '')}`, className: 'exam-option-image' })}</div></div>`
+        : `<div><div>${escapeHtml(formatExamMarker(String(item.label || ''), lang))} ${renderExamTextWithImageMarkerHtml({ text: String(item.value || '-'), imageItems: item?.images || item?.imageUrl, escapeHtml, renderText: value => renderText(value, isAr), alt: `Gambar opsi ${String(item.label || '')}`, className: 'exam-option-image' })}</div></div>`
     )).join('')
     return `
       <li>
@@ -271,7 +323,7 @@
         <div class="crossword-clue-group">
           <strong>${escapeHtml(title)}</strong>
           <ol>
-            ${entries.map(entry => `<li value="${Number(entry?.number || 0)}">${renderText(String(entry?.clue || '-'))} <span class="crossword-clue-len">(${escapeHtml(String(entry?.length || 0))})</span></li>`).join('')}
+            ${entries.map(entry => `<li value="${Number(entry?.number || 0)}">${renderText(stripExamImageMarkers(String(entry?.clue || '-')))} <span class="crossword-clue-len">(${escapeHtml(String(entry?.length || 0))})</span></li>`).join('')}
           </ol>
         </div>
       `
@@ -454,6 +506,9 @@
     .pg-grid.pg-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .pg-grid.pg-grid-1 { grid-template-columns: minmax(0, 1fr); }
     .pg-grid > div { font-size: ${contentFontSize}; }
+    .exam-question-image, .exam-option-image { display:block; margin-top: 6px; }
+    .exam-question-image img { display:block; max-width:240px; max-height:180px; width:auto; height:auto; border:1px solid #cbd5e1; border-radius:10px; object-fit:contain; background:#fff; }
+    .exam-option-image img { display:block; max-width:180px; max-height:140px; width:auto; height:auto; border:1px solid #cbd5e1; border-radius:10px; object-fit:contain; background:#fff; }
     .pair-table { border-collapse: collapse; width: 100%; margin-top: 4px; }
     .pair-table th, .pair-table td { border: 1px solid #999; padding: 4px 6px; font-size: ${pairFontSize}; text-align: ${isAr ? 'right' : 'left'}; }
     .pair-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 4px; }
@@ -507,20 +562,28 @@
   function buildExamWordQuestionHtml({ section, q, idx, lang, isAr, markerHtml, escapeHtml }) {
     const renderText = value => renderExamInlineTextHtml(value, escapeHtml, isAr)
     const no = idx + 1
+    const titleContentHtml = renderExamTextWithImageMarkerHtml({
+      text: String(q?.text || '-'),
+      imageItems: q?.images || q?.imageItems || q?.image_items || q?.imageUrl || q?.image_url,
+      escapeHtml,
+      renderText,
+      alt: `Gambar soal ${String(q?.no || '')}`,
+      className: 'exam-question-image'
+    })
     const qText = isAr
-      ? `<div class="q-title q-title-ar"><span class="q-marker-num">${escapeHtml(String(formatExamNumber(no, lang)))}</span><span class="q-marker-dot">.</span><span class="q-title-text">${renderText(String(q?.text || '-'))}</span></div>`
-      : `<div class="q-title">${markerHtml(formatExamNumber(no, lang))} ${renderText(String(q?.text || '-'))}</div>`
+      ? `<div class="q-title q-title-ar"><span class="q-marker-num">${escapeHtml(String(formatExamNumber(no, lang)))}</span><span class="q-marker-dot">.</span><div class="q-title-text">${titleContentHtml}</div></div>`
+      : `<div class="q-title">${markerHtml(formatExamNumber(no, lang))} <span class="q-title-inline">${titleContentHtml}</span></div>`
     if (section.type === 'pilihan-ganda' || section.type === 'benar-salah') {
       const entries = getExamPgOptionEntries(section.type === 'benar-salah' ? { __questionType: 'benar-salah' } : (q?.options || {}), isAr)
       const safeEntries = entries.length ? entries : [
-        { label: isAr ? 'أ' : 'a', value: '-' },
-        { label: isAr ? 'ب' : 'b', value: '-' }
+        { label: isAr ? 'أ' : 'a', value: '-', imageUrl: '' },
+        { label: isAr ? 'ب' : 'b', value: '-', imageUrl: '' }
       ]
       const gridClass = getExamPgGridClass(safeEntries, isAr)
       const optionsHtml = safeEntries.map(item => (
         isAr
-          ? `<div class="pg-opt-ar"><span class="q-marker-num">${escapeHtml(String(item.label || ''))}</span><span class="q-marker-dot">.</span><span class="q-title-text">${renderText(String(item.value || '-'))}</span></div>`
-          : `<div>${markerHtml(String(item.label || ''))} ${renderText(String(item.value || '-'))}</div>`
+          ? `<div class="pg-opt-ar"><span class="q-marker-num">${escapeHtml(String(item.label || ''))}</span><span class="q-marker-dot">.</span><div class="q-title-text">${renderExamTextWithImageMarkerHtml({ text: String(item.value || '-'), imageItems: item?.images || item?.imageUrl, escapeHtml, renderText, alt: `Gambar opsi ${String(item.label || '')}`, className: 'exam-option-image' })}</div></div>`
+          : `<div><div>${markerHtml(String(item.label || ''))} ${renderExamTextWithImageMarkerHtml({ text: String(item.value || '-'), imageItems: item?.images || item?.imageUrl, escapeHtml, renderText, alt: `Gambar opsi ${String(item.label || '')}`, className: 'exam-option-image' })}</div></div>`
       )).join('')
       return `<li>${qText}<div class="pg-grid ${gridClass}">${optionsHtml}</div></li>`
     }
@@ -626,6 +689,9 @@ li { margin: 8px 0; font-size: ${contentFontSize}; }
 .pg-grid.pg-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .pg-grid.pg-grid-1 { grid-template-columns: minmax(0, 1fr); }
 .pg-grid > div { font-size: ${contentFontSize}; }
+.exam-question-image, .exam-option-image { display:block; margin-top: 6px; }
+.exam-question-image img { display:block; max-width:240px; max-height:180px; width:auto; height:auto; border:1px solid #cbd5e1; border-radius:10px; object-fit:contain; background:#fff; }
+.exam-option-image img { display:block; max-width:180px; max-height:140px; width:auto; height:auto; border:1px solid #cbd5e1; border-radius:10px; object-fit:contain; background:#fff; }
 .pair-table { border-collapse: collapse; width: 100%; margin-top: 4px; }
 .pair-table th, .pair-table td { border: 1px solid #999; padding: 4px 6px; font-size: ${pairFontSize}; text-align: ${isAr ? 'right' : 'left'}; }
 .pair-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 4px; }

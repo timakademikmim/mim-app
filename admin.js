@@ -8,6 +8,7 @@ const sb = window.createDesktopAwareSupabaseClient
   : supabase.createClient(supabaseUrl, supabaseKey)
 const externalPageHtmlCache = {}
 const externalPageScriptLoaded = {}
+const externalPageScriptLoadPromises = {}
 const EXTERNAL_PAGE_ASSET_VERSION = '20260304-desktop-wa-print-fix-01'
 const CHAT_MEMBERS_TABLE = 'chat_thread_members'
 const CHAT_MESSAGES_TABLE = 'chat_messages'
@@ -1531,101 +1532,115 @@ async function loadExternalPage(page, params = {}) {
   }
   area.innerHTML = externalPageHtmlCache[page]
 
-  const runPageInit = () => {
-    if (page === 'tahun-ajaran' && typeof initTahunAjaranPage === 'function') {
-      initTahunAjaranPage()
-      return
-    }
-    if (page === 'tugas-harian-admin' && typeof initTugasHarianAdminPage === 'function') {
-      initTugasHarianAdminPage()
-      return
-    }
-    if (page === 'kehadiran-guru-admin' && typeof initKehadiranGuruAdminPage === 'function') {
-      initKehadiranGuruAdminPage()
-      return
-    }
-    if (page === 'perizinan-karyawan-admin' && typeof initPerizinanKaryawanAdminPage === 'function') {
-      initPerizinanKaryawanAdminPage()
-      return
-    }
-    if (page === 'perizinan-santri-admin' && typeof initPerizinanSantriAdminPage === 'function') {
-      initPerizinanSantriAdminPage()
-      return
-    }
-    if (page === 'prestasi-pelanggaran-admin' && typeof initPrestasiPelanggaranAdminPage === 'function') {
-      initPrestasiPelanggaranAdminPage()
-      return
-    }
-    if (page === 'kelas' && typeof initKelasPage === 'function') {
-      initKelasPage(params)
-      return
-    }
-    if (page === 'santri' && typeof initSantriPage === 'function') {
-      initSantriPage()
-      return
-    }
-    if (page === 'alumni' && typeof initAlumniPage === 'function') {
-      initAlumniPage()
-      return
-    }
-    if (page === 'santri-detail' && typeof initSantriDetailPage === 'function') {
-      initSantriDetailPage(params)
-      return
-    }
-    if (page === 'guru-detail' && typeof initGuruDetailPage === 'function') {
-      initGuruDetailPage(params)
-      return
-    }
-    if (page === 'jadwal' && typeof initJadwalPage === 'function') {
-      initJadwalPage()
-      return
-    }
-    if (page === 'ekstrakurikuler-admin' && typeof initEkstrakurikulerAdminPage === 'function') {
-      initEkstrakurikulerAdminPage()
-      return
-    }
-    if (page === 'ujian' && typeof initUjianPage === 'function') {
-      initUjianPage()
-      return
-    }
-    if (page === 'jadwal-ujian' && typeof initJadwalUjianPage === 'function') {
-      initJadwalUjianPage()
-      return
-    }
-    if (page === 'kalender-akademik' && typeof initKalenderAkademikPage === 'function') {
-      initKalenderAkademikPage()
-      return
-    }
-    if (page === 'struktur-sekolah' && typeof initStrukturSekolahPage === 'function') {
-      initStrukturSekolahPage()
-      return
-    }
-    if (page === 'karyawan' && typeof initKaryawanPage === 'function') {
-      initKaryawanPage(params)
-      return
-    }
-    if (page === 'ketahfizan' && typeof initKetahfizanPage === 'function') {
-      initKetahfizanPage(params)
-      return
-    }
-    if (page === 'kesantrian' && typeof initKesantrianPage === 'function') {
-      initKesantrianPage(params)
-    }
+  const pageInitConfig = {
+    'tahun-ajaran': { name: 'initTahunAjaranPage', build: initFn => () => initFn() },
+    'tugas-harian-admin': { name: 'initTugasHarianAdminPage', build: initFn => () => initFn() },
+    'kehadiran-guru-admin': { name: 'initKehadiranGuruAdminPage', build: initFn => () => initFn() },
+    'perizinan-karyawan-admin': { name: 'initPerizinanKaryawanAdminPage', build: initFn => () => initFn() },
+    'perizinan-santri-admin': { name: 'initPerizinanSantriAdminPage', build: initFn => () => initFn() },
+    'prestasi-pelanggaran-admin': { name: 'initPrestasiPelanggaranAdminPage', build: initFn => () => initFn() },
+    kelas: { name: 'initKelasPage', build: initFn => () => initFn(params) },
+    santri: { name: 'initSantriPage', build: initFn => () => initFn() },
+    alumni: { name: 'initAlumniPage', build: initFn => () => initFn() },
+    'santri-detail': { name: 'initSantriDetailPage', build: initFn => () => initFn(params) },
+    'guru-detail': { name: 'initGuruDetailPage', build: initFn => () => initFn(params) },
+    jadwal: { name: 'initJadwalPage', build: initFn => () => initFn() },
+    'ekstrakurikuler-admin': { name: 'initEkstrakurikulerAdminPage', build: initFn => () => initFn() },
+    ujian: { name: 'initUjianPage', build: initFn => () => initFn() },
+    'jadwal-ujian': { name: 'initJadwalUjianPage', build: initFn => () => initFn() },
+    'kalender-akademik': { name: 'initKalenderAkademikPage', build: initFn => () => initFn() },
+    'struktur-sekolah': { name: 'initStrukturSekolahPage', build: initFn => () => initFn() },
+    karyawan: { name: 'initKaryawanPage', build: initFn => () => initFn(params) },
+    ketahfizan: { name: 'initKetahfizanPage', build: initFn => () => initFn(params) },
+    kesantrian: { name: 'initKesantrianPage', build: initFn => () => initFn(params) }
   }
 
-  if (externalPageScriptLoaded[page]) {
-    runPageInit()
+  const getNamedInitFn = name => {
+    const winFn = window?.[name]
+    if (typeof winFn === 'function') return winFn
+    try {
+      const scopedFn = Function(`return (typeof ${name} === "function") ? ${name} : null`)()
+      if (typeof scopedFn === 'function') return scopedFn
+    } catch (_error) {}
+    return null
+  }
+
+  const getPageInitFn = () => {
+    const config = pageInitConfig[page]
+    if (!config) return null
+    const initFn = getNamedInitFn(config.name)
+    if (!initFn) return null
+    return config.build(initFn)
+    return null
+  }
+
+  const runPageInit = async (retryCount = 0) => {
+    const initFn = getPageInitFn()
+    if (!initFn) {
+      if (retryCount < 10) {
+        await new Promise(resolve => setTimeout(resolve, 60))
+        return runPageInit(retryCount + 1)
+      }
+      return
+    }
+    await initFn()
+  }
+
+  const evalExternalPageScriptFallback = async () => {
+    const scriptUrl = `pages/${page}.js?v=${EXTERNAL_PAGE_ASSET_VERSION}`
+    const response = await fetch(scriptUrl)
+    const source = await response.text()
+    window.eval(`${source}\n//# sourceURL=${scriptUrl}`)
+    externalPageScriptLoaded[page] = true
+  }
+
+  const ensureExternalPageScript = async () => {
+    if (externalPageScriptLoaded[page]) return
+    if (!externalPageScriptLoadPromises[page]) {
+      externalPageScriptLoadPromises[page] = new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = `pages/${page}.js?v=${EXTERNAL_PAGE_ASSET_VERSION}`
+        script.async = false
+        script.onload = () => {
+          externalPageScriptLoaded[page] = true
+          resolve()
+        }
+        script.onerror = error => {
+          console.error(`Gagal memuat script halaman ${page}`, error)
+          reject(error)
+        }
+        document.body.appendChild(script)
+      }).catch(async error => {
+        console.warn(`Fallback eval untuk halaman ${page}`, error)
+        await evalExternalPageScriptFallback()
+      }).finally(() => {
+        externalPageScriptLoadPromises[page] = null
+      })
+    }
+    await externalPageScriptLoadPromises[page]
+  }
+
+  await ensureExternalPageScript()
+
+  await new Promise(resolve => {
+    window.requestAnimationFrame(resolve)
+  })
+
+  let initFn = getPageInitFn()
+  if (!initFn) {
+    await evalExternalPageScriptFallback()
+    await new Promise(resolve => {
+      window.requestAnimationFrame(resolve)
+    })
+    initFn = getPageInitFn()
+  }
+
+  if (!initFn) {
+    console.error(`Init function halaman ${page} tidak ditemukan setelah script dimuat`)
     return
   }
 
-  const script = document.createElement('script')
-  script.src = `pages/${page}.js?v=${EXTERNAL_PAGE_ASSET_VERSION}`
-  script.defer = true
-  script.onload = () => {
-    externalPageScriptLoaded[page] = true
-    runPageInit()
-  }
-  document.body.appendChild(script)
+  await runPageInit()
 }
 
 

@@ -2,9 +2,18 @@
   if (window.guruExamDocxUtils) return
 
   const WORD_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+  const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+  const PKG_REL_NS = 'http://schemas.openxmlformats.org/package/2006/relationships'
+  const WP_NS = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'
+  const A_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+  const PIC_NS = 'http://schemas.openxmlformats.org/drawingml/2006/picture'
+  const CT_NS = 'http://schemas.openxmlformats.org/package/2006/content-types'
   const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
   const TEMPLATE_PATH_AR = 'ExamAR.docx'
   const TEMPLATE_PATH_ID = 'ExamIN.docx'
+  const EXAM_IMAGE_MARKER_RE = /\[\[\s*gambar(?:\d+)?\s*\]\]/gi
+  let activeDocxImageManager = null
+  const docxImageAssetCache = new Map()
 
   function getPrintUtils() {
     return window.guruExamPrintUtils || {}
@@ -45,6 +54,34 @@
     return String(value == null ? '' : value).replace(/\d/g, d => map[Number(d)] || d)
   }
 
+  function stripExamImageMarkers(text) {
+    return String(text || '')
+      .replace(EXAM_IMAGE_MARKER_RE, '')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/ *\n */g, '\n')
+  }
+
+  function normalizeExamImageItems(rawValue) {
+    if (Array.isArray(rawValue)) {
+      return rawValue
+        .map((item, index) => {
+          const url = String(item?.url || item?.imageUrl || item?.image_url || '').trim()
+          if (!url) return null
+          const markerRaw = String(item?.marker || item?.key || `gambar${index + 1}`).trim().toLowerCase()
+          const marker = /^gambar\d*$/i.test(markerRaw) ? markerRaw.replace(/^gambar$/i, 'gambar1') : `gambar${index + 1}`
+          return { marker, url }
+        })
+        .filter(Boolean)
+    }
+    const raw = String(rawValue || '').trim()
+    if (!raw) return []
+    try {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed) || (parsed && typeof parsed === 'object')) return normalizeExamImageItems(parsed)
+    } catch (_err) {}
+    return [{ marker: 'gambar1', url: raw }]
+  }
+
   function getPgOptionEntries(question, langCode = 'AR') {
     if (String(question?.type || '').trim().toLowerCase() === 'benar-salah') {
       const isAr = String(langCode || 'AR').toUpperCase() === 'AR'
@@ -63,7 +100,11 @@
     return keys.map((key, index) => ({
       key,
       label: fallbackLetters[index] || String.fromCharCode(1571 + index),
-      value: String(raw[key] || '').trim()
+      value: stripExamImageMarkers(String((raw[key]?.text ?? raw[key]) || '')).trim(),
+      imageUrl: Array.isArray(raw[key]?.images)
+        ? String(raw[key]?.images?.[0]?.url || '').trim()
+        : String(raw[key]?.imageUrl || raw[key]?.image_url || '').trim(),
+      images: raw[key]?.images || raw[key]?.imageItems || raw[key]?.image_items || raw[key]?.imageUrl || raw[key]?.image_url || ''
     }))
   }
 
@@ -96,6 +137,19 @@
 
   function createWordNode(doc, tagName) {
     return doc.createElementNS(WORD_NS, `w:${tagName}`)
+  }
+
+  function createNamespacedNode(doc, ns, tagName) {
+    return doc.createElementNS(ns, tagName)
+  }
+
+  function createXmlDocument(xmlString, mimeType = 'application/xml') {
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(xmlString, mimeType)
+    if (doc.getElementsByTagName('parsererror')[0]) {
+      throw new Error('Template DOCX tidak dapat dibaca.')
+    }
+    return doc
   }
 
   function getBodyNodes(doc) {
@@ -200,6 +254,408 @@
       setParagraphText(paragraph, line)
       cell.appendChild(paragraph)
     })
+  }
+
+  function buildExamImageLines(text, imageItems, appendIfMissing = true) {
+    const items = normalizeExamImageItems(imageItems)
+    const normalizedText = String(text || '')
+    if (!items.length) {
+      const lines = splitPreserveLines(stripExamImageMarkers(normalizedText))
+      return lines.length ? lines.map(line => [{ type: 'text', text: line }]) : [[{ type: 'text', text: '' }]]
+    }
+    const source = normalizedText || '[[gambar1]]'
+    const lines = [[]]
+    const usedMarkers = new Set()
+    const pushText = value => {
+      const chunks = String(stripExamImageMarkers(value || '')).replace(/\r/g, '').split('\n')
+      chunks.forEach((chunk, index) => {
+        if (index > 0) lines.push([])
+        if (chunk) {
+          lines[lines.length - 1].push({ type: 'text', text: chunk })
+        }
+      })
+    }
+    let lastIndex = 0
+    EXAM_IMAGE_MARKER_RE.lastIndex = 0
+    let match
+    while ((match = EXAM_IMAGE_MARKER_RE.exec(source))) {
+      pushText(source.slice(lastIndex, match.index))
+      const markerName = String(match[0] || '')
+        .replace(/[\[\]\s]/g, '')
+        .toLowerCase()
+        .replace(/^gambar$/i, 'gambar1')
+      const item = items.find(entry => String(entry?.marker || '').trim().toLowerCase() === markerName)
+      if (item?.url) {
+        lines[lines.length - 1].push({ type: 'image', url: item.url, marker: markerName })
+        usedMarkers.add(markerName)
+      }
+      lastIndex = match.index + match[0].length
+    }
+    pushText(source.slice(lastIndex))
+    if (appendIfMissing) {
+      items.forEach(item => {
+        const markerName = String(item?.marker || '').trim().toLowerCase()
+        if (!item?.url || usedMarkers.has(markerName)) return
+        if (lines[lines.length - 1].length) lines.push([])
+        lines[lines.length - 1].push({ type: 'image', url: item.url, marker: markerName })
+      })
+    }
+    const normalizedLines = lines
+      .map(line => Array.isArray(line) ? line.filter(Boolean) : [])
+      .filter((line, index) => line.length || index === 0)
+    return normalizedLines.length ? normalizedLines : [[{ type: 'text', text: '' }]]
+  }
+
+  function detectImageMeta(blob, fallbackUrl = '') {
+    const rawType = String(blob?.type || '').trim().toLowerCase()
+    const fromUrl = String(fallbackUrl || '').toLowerCase()
+    if (rawType === 'image/png' || /\.png(?:$|\?)/.test(fromUrl)) return { ext: 'png', contentType: 'image/png' }
+    if (rawType === 'image/gif' || /\.gif(?:$|\?)/.test(fromUrl)) return { ext: 'gif', contentType: 'image/gif' }
+    if (rawType === 'image/webp' || /\.webp(?:$|\?)/.test(fromUrl)) return { ext: 'webp', contentType: 'image/webp' }
+    if (rawType === 'image/svg+xml' || /\.svg(?:$|\?)/.test(fromUrl)) return { ext: 'svg', contentType: 'image/svg+xml' }
+    return { ext: 'jpeg', contentType: 'image/jpeg' }
+  }
+
+  function readImageSize(blob) {
+    return new Promise(resolve => {
+      try {
+        const objectUrl = URL.createObjectURL(blob)
+        const img = new Image()
+        img.onload = () => {
+          const width = Number(img.naturalWidth || img.width || 0)
+          const height = Number(img.naturalHeight || img.height || 0)
+          URL.revokeObjectURL(objectUrl)
+          resolve({
+            width: Number.isFinite(width) && width > 0 ? width : 320,
+            height: Number.isFinite(height) && height > 0 ? height : 180
+          })
+        }
+        img.onerror = () => {
+          URL.revokeObjectURL(objectUrl)
+          resolve({ width: 320, height: 180 })
+        }
+        img.src = objectUrl
+      } catch (_error) {
+        resolve({ width: 320, height: 180 })
+      }
+    })
+  }
+
+  function loadImageElementFromBlob(blob) {
+    return new Promise((resolve, reject) => {
+      try {
+        const objectUrl = URL.createObjectURL(blob)
+        const img = new Image()
+        img.onload = () => {
+          URL.revokeObjectURL(objectUrl)
+          resolve(img)
+        }
+        img.onerror = error => {
+          URL.revokeObjectURL(objectUrl)
+          reject(error || new Error('Gagal membaca gambar.'))
+        }
+        img.src = objectUrl
+      } catch (error) {
+        reject(error)
+      }
+    })
+  }
+
+  async function optimizeDocxImageAsset(blob, fallbackUrl = '') {
+    const imageMeta = detectImageMeta(blob, fallbackUrl)
+    const contentType = String(imageMeta.contentType || '').toLowerCase()
+    if (!/^image\/(png|jpe?g|webp)$/i.test(contentType)) {
+      return {
+        buffer: await blob.arrayBuffer(),
+        imageMeta,
+        size: await readImageSize(blob)
+      }
+    }
+    if (blob.size <= 350 * 1024) {
+      return {
+        buffer: await blob.arrayBuffer(),
+        imageMeta,
+        size: await readImageSize(blob)
+      }
+    }
+    try {
+      const img = await loadImageElementFromBlob(blob)
+      const sourceWidth = Math.max(1, Number(img.naturalWidth || img.width || 1))
+      const sourceHeight = Math.max(1, Number(img.naturalHeight || img.height || 1))
+      const maxDimension = 900
+      const ratio = Math.min(maxDimension / sourceWidth, maxDimension / sourceHeight, 1)
+      const width = Math.max(1, Math.round(sourceWidth * ratio))
+      const height = Math.max(1, Math.round(sourceHeight * ratio))
+      if (ratio >= 0.999 && blob.size <= 500 * 1024) {
+        return {
+          buffer: await blob.arrayBuffer(),
+          imageMeta,
+          size: { width: sourceWidth, height: sourceHeight }
+        }
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d', { alpha: false })
+      if (!ctx) throw new Error('Canvas context tidak tersedia.')
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, width, height)
+      ctx.drawImage(img, 0, 0, width, height)
+      await yieldDocxBuild()
+      const targetType = 'image/jpeg'
+      const optimizedBlob = await new Promise((resolve, reject) => {
+        canvas.toBlob(
+          nextBlob => (nextBlob ? resolve(nextBlob) : reject(new Error('Gagal mengubah gambar untuk DOCX.'))),
+          targetType,
+          0.76
+        )
+      })
+      await yieldDocxBuild()
+      return {
+        buffer: await optimizedBlob.arrayBuffer(),
+        imageMeta: detectImageMeta(optimizedBlob, '.jpg'),
+        size: { width, height }
+      }
+    } catch (_error) {
+      return {
+        buffer: await blob.arrayBuffer(),
+        imageMeta,
+        size: await readImageSize(blob)
+      }
+    }
+  }
+
+  function clampImageEmu(size = {}, maxWidthPx = 240, maxHeightPx = 180) {
+    const width = Math.max(1, Number(size?.width || 320))
+    const height = Math.max(1, Number(size?.height || 180))
+    const ratio = Math.min(maxWidthPx / width, maxHeightPx / height, 1)
+    const finalWidth = Math.max(48, Math.round(width * ratio))
+    const finalHeight = Math.max(36, Math.round(height * ratio))
+    return {
+      cx: finalWidth * 9525,
+      cy: finalHeight * 9525
+    }
+  }
+
+  function yieldDocxBuild() {
+    return new Promise(resolve => {
+      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(() => resolve())
+        return
+      }
+      setTimeout(resolve, 0)
+    })
+  }
+
+  async function createDocxImageManager(zip) {
+    const relsFile = zip.file('word/_rels/document.xml.rels')
+    const contentTypesFile = zip.file('[Content_Types].xml')
+    if (!relsFile || !contentTypesFile) {
+      return {
+        registerSections: async () => {},
+        getByUrl: () => null,
+        flush: () => {}
+      }
+    }
+    const relsDoc = createXmlDocument(await relsFile.async('string'))
+    const contentTypesDoc = createXmlDocument(await contentTypesFile.async('string'))
+    const relRoot = relsDoc.documentElement
+    const contentRoot = contentTypesDoc.documentElement
+    const relationships = Array.from(relRoot.getElementsByTagNameNS(PKG_REL_NS, 'Relationship'))
+    let nextRelId = relationships.reduce((max, node) => {
+      const value = String(node?.getAttribute('Id') || '')
+      const number = Number(value.replace(/^rId/i, ''))
+      return Number.isFinite(number) ? Math.max(max, number) : max
+    }, 0) + 1
+    let nextDocPrId = 1000
+    let nextMediaIndex = Array.from(zip.folder('word/media')?.files ? Object.keys(zip.folder('word/media').files) : [])
+      .reduce((max, key) => {
+        const match = String(key || '').match(/exam-image-(\d+)\./i)
+        const number = Number(match?.[1] || 0)
+        return Number.isFinite(number) ? Math.max(max, number) : max
+      }, 0) + 1
+    const byUrl = new Map()
+
+    const fetchDocxImageAsset = async url => {
+      const safeUrl = String(url || '').trim()
+      if (!safeUrl) return null
+      if (docxImageAssetCache.has(safeUrl)) {
+        return docxImageAssetCache.get(safeUrl)
+      }
+      const promise = (async () => {
+        const response = await fetch(safeUrl, { cache: 'force-cache' })
+        if (!response.ok) throw new Error(`Gagal memuat gambar soal (${response.status}).`)
+        const blob = await response.blob()
+        return optimizeDocxImageAsset(blob, safeUrl)
+      })()
+      docxImageAssetCache.set(safeUrl, promise)
+      try {
+        return await promise
+      } catch (error) {
+        docxImageAssetCache.delete(safeUrl)
+        throw error
+      }
+    }
+
+    const ensureContentType = (ext, contentType) => {
+      const defaults = Array.from(contentRoot.getElementsByTagNameNS(CT_NS, 'Default'))
+      const exists = defaults.some(node => String(node?.getAttribute('Extension') || '').toLowerCase() === String(ext || '').toLowerCase())
+      if (exists) return
+      const def = contentTypesDoc.createElementNS(CT_NS, 'Default')
+      def.setAttribute('Extension', String(ext || '').toLowerCase())
+      def.setAttribute('ContentType', String(contentType || 'application/octet-stream'))
+      contentRoot.appendChild(def)
+    }
+
+    const registerUrl = async url => {
+      const safeUrl = String(url || '').trim()
+      if (!safeUrl) return null
+      if (byUrl.has(safeUrl)) return byUrl.get(safeUrl)
+      const asset = await fetchDocxImageAsset(safeUrl)
+      if (!asset) return null
+      const { buffer, imageMeta, size } = asset
+      const mediaName = `exam-image-${nextMediaIndex}.${imageMeta.ext}`
+      nextMediaIndex += 1
+      zip.file(`word/media/${mediaName}`, buffer)
+      ensureContentType(imageMeta.ext, imageMeta.contentType)
+      const relId = `rId${nextRelId}`
+      nextRelId += 1
+      const relNode = relsDoc.createElementNS(PKG_REL_NS, 'Relationship')
+      relNode.setAttribute('Id', relId)
+      relNode.setAttribute('Type', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image')
+      relNode.setAttribute('Target', `media/${mediaName}`)
+      relRoot.appendChild(relNode)
+      const ref = {
+        url: safeUrl,
+        relId,
+        fileName: mediaName,
+        docPrId: nextDocPrId++,
+        ...clampImageEmu(size)
+      }
+      byUrl.set(safeUrl, ref)
+      return ref
+    }
+
+    return {
+      async registerSections(sections = []) {
+        const urls = new Set()
+        ;(Array.isArray(sections) ? sections : []).forEach(section => {
+          ;(Array.isArray(section?.items) ? section.items : []).forEach(item => {
+            normalizeExamImageItems(item?.images || item?.imageItems || item?.image_items || item?.imageUrl || item?.image_url || '').forEach(entry => {
+              if (entry?.url) urls.add(String(entry.url))
+            })
+            if (section?.type === 'pilihan-ganda') {
+              getPgOptionEntries(item, 'ID').forEach(entry => {
+                normalizeExamImageItems(entry?.images || entry?.imageUrl || '').forEach(image => {
+                  if (image?.url) urls.add(String(image.url))
+                })
+              })
+            }
+          })
+        })
+        for (const url of urls) {
+          await registerUrl(url)
+          await yieldDocxBuild()
+        }
+      },
+      getByUrl(url) {
+        return byUrl.get(String(url || '').trim()) || null
+      },
+      flush() {
+        zip.file('word/_rels/document.xml.rels', serializeXml(relsDoc))
+        zip.file('[Content_Types].xml', serializeXml(contentTypesDoc))
+      }
+    }
+  }
+
+  function buildImageRunNodeFromTemplate(doc, templateRun, imageRef) {
+    if (!imageRef?.relId) return null
+    const run = templateRun ? templateRun.cloneNode(true) : createWordNode(doc, 'r')
+    Array.from(run.childNodes || []).forEach(child => {
+      if (child?.namespaceURI === WORD_NS && child?.localName !== 'rPr') {
+        run.removeChild(child)
+      }
+    })
+    const drawing = createWordNode(doc, 'drawing')
+    const inline = createNamespacedNode(doc, WP_NS, 'wp:inline')
+    inline.setAttribute('distT', '0')
+    inline.setAttribute('distB', '0')
+    inline.setAttribute('distL', '0')
+    inline.setAttribute('distR', '0')
+
+    const extent = createNamespacedNode(doc, WP_NS, 'wp:extent')
+    extent.setAttribute('cx', String(imageRef.cx || 1524000))
+    extent.setAttribute('cy', String(imageRef.cy || 1143000))
+    inline.appendChild(extent)
+
+    const effectExtent = createNamespacedNode(doc, WP_NS, 'wp:effectExtent')
+    effectExtent.setAttribute('l', '0')
+    effectExtent.setAttribute('t', '0')
+    effectExtent.setAttribute('r', '0')
+    effectExtent.setAttribute('b', '0')
+    inline.appendChild(effectExtent)
+
+    const docPr = createNamespacedNode(doc, WP_NS, 'wp:docPr')
+    docPr.setAttribute('id', String(imageRef.docPrId || 1))
+    docPr.setAttribute('name', String(imageRef.fileName || 'Exam Image'))
+    inline.appendChild(docPr)
+
+    const framePr = createNamespacedNode(doc, WP_NS, 'wp:cNvGraphicFramePr')
+    const locks = createNamespacedNode(doc, A_NS, 'a:graphicFrameLocks')
+    locks.setAttribute('noChangeAspect', '1')
+    framePr.appendChild(locks)
+    inline.appendChild(framePr)
+
+    const graphic = createNamespacedNode(doc, A_NS, 'a:graphic')
+    const graphicData = createNamespacedNode(doc, A_NS, 'a:graphicData')
+    graphicData.setAttribute('uri', 'http://schemas.openxmlformats.org/drawingml/2006/picture')
+    const pic = createNamespacedNode(doc, PIC_NS, 'pic:pic')
+
+    const nvPicPr = createNamespacedNode(doc, PIC_NS, 'pic:nvPicPr')
+    const cNvPr = createNamespacedNode(doc, PIC_NS, 'pic:cNvPr')
+    cNvPr.setAttribute('id', '0')
+    cNvPr.setAttribute('name', String(imageRef.fileName || 'Exam Image'))
+    const cNvPicPr = createNamespacedNode(doc, PIC_NS, 'pic:cNvPicPr')
+    nvPicPr.appendChild(cNvPr)
+    nvPicPr.appendChild(cNvPicPr)
+    pic.appendChild(nvPicPr)
+
+    const blipFill = createNamespacedNode(doc, PIC_NS, 'pic:blipFill')
+    const blip = createNamespacedNode(doc, A_NS, 'a:blip')
+    blip.setAttributeNS(REL_NS, 'r:embed', String(imageRef.relId || ''))
+    const stretch = createNamespacedNode(doc, A_NS, 'a:stretch')
+    stretch.appendChild(createNamespacedNode(doc, A_NS, 'a:fillRect'))
+    blipFill.appendChild(blip)
+    blipFill.appendChild(stretch)
+    pic.appendChild(blipFill)
+
+    const spPr = createNamespacedNode(doc, PIC_NS, 'pic:spPr')
+    const xfrm = createNamespacedNode(doc, A_NS, 'a:xfrm')
+    const off = createNamespacedNode(doc, A_NS, 'a:off')
+    off.setAttribute('x', '0')
+    off.setAttribute('y', '0')
+    const ext = createNamespacedNode(doc, A_NS, 'a:ext')
+    ext.setAttribute('cx', String(imageRef.cx || 1524000))
+    ext.setAttribute('cy', String(imageRef.cy || 1143000))
+    xfrm.appendChild(off)
+    xfrm.appendChild(ext)
+    spPr.appendChild(xfrm)
+    const prstGeom = createNamespacedNode(doc, A_NS, 'a:prstGeom')
+    prstGeom.setAttribute('prst', 'rect')
+    prstGeom.appendChild(createNamespacedNode(doc, A_NS, 'a:avLst'))
+    spPr.appendChild(prstGeom)
+    pic.appendChild(spPr)
+
+    graphicData.appendChild(pic)
+    graphic.appendChild(graphicData)
+    inline.appendChild(graphic)
+    drawing.appendChild(inline)
+    run.appendChild(drawing)
+    return run
+  }
+
+  function setCellTextWithImages(cell, text, imageItems) {
+    setCellLines(cell, splitPreserveLines(stripExamImageMarkers(String(text || ''))))
   }
 
   function clearTableRows(table) {
@@ -536,22 +992,22 @@
     if (!target) return
     if (cells[target.labelCell]) setCellText(cells[target.labelCell], String(entry.label || ''))
     if (cells[target.dotCell]) setCellText(cells[target.dotCell], '.')
-    if (cells[target.valueCell]) setCellText(cells[target.valueCell], String(entry.value || ''))
+    if (cells[target.valueCell]) setCellTextWithImages(cells[target.valueCell], String(entry.value || ''), entry?.images || entry?.imageUrl || '')
   }
 
   function fillPgDoubleOptionRow(cells, leftEntry, rightEntry) {
     if (cells[1]) setCellText(cells[1], String(leftEntry?.label || ''))
     if (cells[2]) setCellText(cells[2], leftEntry ? '.' : '')
-    if (cells[3]) setCellText(cells[3], String(leftEntry?.value || ''))
+    if (cells[3]) setCellTextWithImages(cells[3], String(leftEntry?.value || ''), leftEntry?.images || leftEntry?.imageUrl || '')
     if (cells[4]) setCellText(cells[4], String(rightEntry?.label || ''))
     if (cells[5]) setCellText(cells[5], rightEntry ? '.' : '')
-    if (cells[6]) setCellText(cells[6], String(rightEntry?.value || ''))
+    if (cells[6]) setCellTextWithImages(cells[6], String(rightEntry?.value || ''), rightEntry?.images || rightEntry?.imageUrl || '')
   }
 
   function fillPgStackOptionRow(cells, entry) {
     if (cells[1]) setCellText(cells[1], String(entry?.label || ''))
     if (cells[2]) setCellText(cells[2], entry ? '.' : '')
-    if (cells[3]) setCellText(cells[3], String(entry?.value || ''))
+    if (cells[3]) setCellTextWithImages(cells[3], String(entry?.value || ''), entry?.images || entry?.imageUrl || '')
   }
 
   function buildParagraphFromTemplate(templateParagraph, text, opts = {}) {
@@ -698,7 +1154,7 @@
       const qCells = getRowCells(questionRow)
       if (qCells[1]) setCellText(qCells[1], formatDocxNumber(idx + 1, headerMeta.lang || 'AR'))
       if (qCells[2]) setCellText(qCells[2], '.')
-      if (qCells[3]) setCellText(qCells[3], String(item?.text || ''))
+      if (qCells[3]) setCellTextWithImages(qCells[3], String(item?.text || ''), item?.images || item?.imageUrl || item?.image_url || '')
       table.appendChild(questionRow)
 
       const entries = getPgOptionEntries(item, headerMeta.lang || 'AR').slice(0, 4)
@@ -755,7 +1211,7 @@
       const qCells = getRowCells(questionRow)
       if (qCells[1]) setCellText(qCells[1], formatDocxNumber(idx + 1, headerMeta.lang || 'AR'))
       if (qCells[2]) setCellText(qCells[2], '.')
-      if (qCells[3]) setCellText(qCells[3], String(item?.text || ''))
+      if (qCells[3]) setCellTextWithImages(qCells[3], String(item?.text || ''), item?.images || item?.imageUrl || item?.image_url || '')
       table.appendChild(questionRow)
 
       const optionRow = cloneRow(templates.options)
@@ -786,7 +1242,7 @@
       const cells = getRowCells(questionRow)
       if (cells[1]) setCellText(cells[1], formatDocxNumber(idx + 1, headerMeta.lang || 'AR'))
       if (cells[2]) setCellText(cells[2], '.')
-      if (cells[3]) setCellText(cells[3], String(item?.text || ''))
+      if (cells[3]) setCellTextWithImages(cells[3], String(item?.text || ''), item?.images || item?.imageUrl || item?.image_url || '')
       table.appendChild(questionRow)
     })
   }
@@ -794,7 +1250,7 @@
   function buildWordSearchDocxLines(item, langCode = 'AR') {
     const safeLang = String(langCode || 'AR').toUpperCase() === 'AR' ? 'AR' : 'ID'
     const lines = []
-    const intro = String(item?.text || '').trim()
+    const intro = stripExamImageMarkers(String(item?.text || '')).trim()
     if (intro) lines.push(intro)
     const words = Array.isArray(item?.words)
       ? item.words.map(word => String(word || '').trim()).filter(Boolean)
@@ -816,7 +1272,7 @@
   function buildCrosswordDocxLines(item, langCode = 'AR') {
     const safeLang = String(langCode || 'AR').toUpperCase() === 'AR' ? 'AR' : 'ID'
     const lines = []
-    const intro = String(item?.text || '').trim()
+    const intro = stripExamImageMarkers(String(item?.text || '')).trim()
     if (intro) lines.push(intro)
     const mask = Array.isArray(item?.mask) ? item.mask : []
     if (mask.length) {
@@ -834,7 +1290,7 @@
         return
       }
       entries.forEach(entry => {
-        const clue = String(entry?.clue || '-').trim() || '-'
+        const clue = stripExamImageMarkers(String(entry?.clue || '-')).trim() || '-'
         const length = Number(entry?.length || 0) || 0
         lines.push(`${formatDocxNumber(entry?.number || '', safeLang)}. ${clue} (${length})`)
       })
@@ -849,16 +1305,16 @@
     const acrossLabel = safeLang === 'AR' ? 'أفقيًا' : 'Mendatar'
     const downLabel = safeLang === 'AR' ? 'عموديًا' : 'Menurun'
     const across = (Array.isArray(item?.entriesAcross) ? item.entriesAcross : [])
-      .filter(entry => String(entry?.clue || '').trim())
+      .filter(entry => stripExamImageMarkers(String(entry?.clue || '')).trim())
     const down = (Array.isArray(item?.entriesDown) ? item.entriesDown : [])
-      .filter(entry => String(entry?.clue || '').trim())
+      .filter(entry => stripExamImageMarkers(String(entry?.clue || '')).trim())
     const lines = []
     const pushGroup = (title, entries) => {
       if (!entries.length) return
       if (lines.length) lines.push('')
       lines.push(title)
       entries.forEach(entry => {
-        const clueLines = splitPreserveLines(String(entry?.clue || '').trim())
+        const clueLines = splitPreserveLines(stripExamImageMarkers(String(entry?.clue || '')).trim())
         const firstLine = clueLines.shift() || ''
         const length = Number(entry?.length || 0) || 0
         lines.push(`${formatDocxNumber(entry?.number || '', safeLang)}. ${firstLine}${length ? ` (${length})` : ''}`)
@@ -1112,7 +1568,7 @@
       const cells = getRowCells(questionRow)
       if (cells[1]) setCellText(cells[1], formatDocxNumber(idx + 1, headerMeta.lang || 'AR'))
       if (cells[2]) setCellText(cells[2], '.')
-      if (cells[3]) setCellLines(cells[3], splitPreserveLines(String(item?.text || '')))
+      if (cells[3]) setCellTextWithImages(cells[3], String(item?.text || ''), item?.images || item?.imageUrl || item?.image_url || '')
       table.appendChild(questionRow)
 
       if (templates.wordList) {
@@ -1215,7 +1671,7 @@
         if (cells[2]) setCellText(cells[2], '.')
         if (cells[3] || cells[cells.length - 1]) {
           const targetCell = cells[3] || cells[cells.length - 1]
-          setCellLines(targetCell, splitPreserveLines(String(item?.text || '')))
+          setCellTextWithImages(targetCell, String(item?.text || ''), item?.images || item?.imageUrl || item?.image_url || '')
         }
         table.appendChild(questionRow)
       }
@@ -1320,7 +1776,7 @@
       const cells = getRowCells(questionRow)
       if (cells[1]) setCellText(cells[1], formatDocxNumber(idx + 1, headerMeta.lang || 'AR'))
       if (cells[2]) setCellText(cells[2], '.')
-      if (cells[3]) setCellText(cells[3], String(item?.text || ''))
+      if (cells[3]) setCellTextWithImages(cells[3], String(item?.text || ''), item?.images || item?.imageUrl || item?.image_url || '')
       table.appendChild(questionRow)
     })
   }
@@ -1685,7 +2141,7 @@
     setTimeout(() => URL.revokeObjectURL(url), 1500)
   }
 
-  async function exportArabicExamDocx(jadwal, soal, fileName = 'Soal-Arab.docx', headerMeta = {}) {
+  async function buildArabicExamDocxBlob(jadwal, soal, headerMeta = {}) {
     const payload = typeof soal?.questions_json === 'string'
       ? JSON.parse(soal.questions_json || '[]')
       : (Array.isArray(soal?.questions_json) ? soal.questions_json : [])
@@ -1703,26 +2159,23 @@
     const documentXmlFile = zip.file('word/document.xml')
     if (!documentXmlFile) throw new Error('Template DOCX tidak memiliki word/document.xml')
     const xmlString = await documentXmlFile.async('string')
-    const parser = new DOMParser()
-    const doc = parser.parseFromString(xmlString, 'application/xml')
-    const parserError = doc.getElementsByTagName('parsererror')[0]
-    if (parserError) {
-      throw new Error('Template DOCX tidak dapat dibaca.')
-    }
-
+    const doc = createXmlDocument(xmlString)
     rebuildBody(doc, sections, { ...headerMeta, lang: 'AR' })
     zip.file('word/document.xml', serializeXml(doc))
-    const blob = await zip.generateAsync({
+    return zip.generateAsync({
       type: 'blob',
       mimeType: DOCX_MIME,
-      compression: 'DEFLATE',
-      compressionOptions: { level: 6 }
+      compression: 'STORE'
     })
+  }
+
+  async function exportArabicExamDocx(jadwal, soal, fileName = 'Soal-Arab.docx', headerMeta = {}) {
+    const blob = await buildArabicExamDocxBlob(jadwal, soal, headerMeta)
     triggerBlobDownload(blob, fileName)
     return { ok: true, fileName, jadwal }
   }
 
-  async function exportIndonesianExamDocx(jadwal, soal, fileName = 'Soal-Indonesia.docx', headerMeta = {}) {
+  async function buildIndonesianExamDocxBlob(jadwal, soal, headerMeta = {}) {
     const payload = typeof soal?.questions_json === 'string'
       ? JSON.parse(soal.questions_json || '[]')
       : (Array.isArray(soal?.questions_json) ? soal.questions_json : [])
@@ -1740,26 +2193,25 @@
     const documentXmlFile = zip.file('word/document.xml')
     if (!documentXmlFile) throw new Error('Template DOCX tidak memiliki word/document.xml')
     const xmlString = await documentXmlFile.async('string')
-    const parser = new DOMParser()
-    const doc = parser.parseFromString(xmlString, 'application/xml')
-    const parserError = doc.getElementsByTagName('parsererror')[0]
-    if (parserError) {
-      throw new Error('Template DOCX tidak dapat dibaca.')
-    }
-
+    const doc = createXmlDocument(xmlString)
     rebuildBodyIndonesian(doc, sections, { ...headerMeta, lang: 'ID' })
     zip.file('word/document.xml', serializeXml(doc))
-    const blob = await zip.generateAsync({
+    return zip.generateAsync({
       type: 'blob',
       mimeType: DOCX_MIME,
-      compression: 'DEFLATE',
-      compressionOptions: { level: 6 }
+      compression: 'STORE'
     })
+  }
+
+  async function exportIndonesianExamDocx(jadwal, soal, fileName = 'Soal-Indonesia.docx', headerMeta = {}) {
+    const blob = await buildIndonesianExamDocxBlob(jadwal, soal, headerMeta)
     triggerBlobDownload(blob, fileName)
     return { ok: true, fileName, jadwal }
   }
 
   window.guruExamDocxUtils = {
+    buildArabicExamDocxBlob,
+    buildIndonesianExamDocxBlob,
     exportArabicExamDocx,
     exportIndonesianExamDocx
   }

@@ -119,6 +119,10 @@
             <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7 4h10l2 2v14H5V4h2Z" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 10.5h7M8.5 14h7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
             <span>Absensi</span>
           </button>
+          <button class="guru-submenu-btn" data-page="laporan-uts" onclick="loadGuruLaporanFromSidebar('laporan-uts')">
+            <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 4.5h9l3 3v12a2 2 0 0 1-2 2H6v-17Z" stroke="currentColor" stroke-width="1.8"/><path d="M9 10.5h6M9 14h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M15 4.5V8h3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Laporan UTS</span>
+          </button>
           <button class="guru-submenu-btn" data-page="laporan-pekanan" onclick="loadGuruLaporanFromSidebar('laporan-pekanan')">
             <svg class="guru-nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="4" y="5.5" width="16" height="14.5" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M4 10h16M8 3.5v3M16 3.5v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
             <span>Laporan Pekanan</span>
@@ -168,16 +172,18 @@
   <script src="shared/guru-exam-data-utils.js?v=20260305-guru-exam-data-utils-01"></script>
   <script src="shared/guru-exam-print-utils.js?v=20260305-guru-exam-print-utils-01"></script>
   <script src="shared/guru-exam-html-utils.js?v=20260305-guru-exam-html-utils-01"></script>
-  <script src="shared/guru-exam-docx-utils.js?v=20260401-guru-exam-docx-01"></script>
+  <script src="shared/guru-exam-docx-utils.js?v=20260408-docx-converter-01"></script>
+  <script src="shared/guru-laporan-uts-docx-utils.js?v=20260408-docx-converter-01"></script>
   <script src="shared/guru-exam-editor-utils.js?v=20260305-guru-exam-editor-utils-01"></script>
   <script src="shared/guru-ekskul-utils.js?v=20260305-guru-ekskul-utils-01"></script>
   <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@^1/index.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
   <script src="chat-module.js?v=20260312-fcm-02"></script>
-  <script src="role-page.js?v=20260330-web-notif-sw-01"></script>
-  <script src="guru.js?v=20260312-chat-notif-02"></script>
+  <script src="role-page.js?v=20260408-browser-docx-pdf-01"></script>
+  <script src="guru.js?v=20260408-browser-docx-pdf-01"></script>
 
   <div id="app-popup-overlay" class="app-popup-overlay" aria-hidden="true">
     <div class="app-popup-card" role="dialog" aria-modal="true" aria-labelledby="app-popup-message">

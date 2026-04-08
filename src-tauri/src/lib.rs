@@ -1,6 +1,8 @@
 use base64::Engine;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 use tauri_plugin_notification::NotificationExt;
 
@@ -495,6 +497,164 @@ fn sanitize_file_name(name: &str, fallback: &str) -> String {
     cleaned = fallback.to_string();
   }
   cleaned
+}
+
+fn create_temp_work_dir(prefix: &str) -> Result<PathBuf, String> {
+  let stamp = SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .map(|d| d.as_millis())
+    .unwrap_or(0);
+  let dir = std::env::temp_dir()
+    .join("mim-docx-pdf")
+    .join(format!("{prefix}-{}-{stamp}", std::process::id()));
+  std::fs::create_dir_all(&dir).map_err(|e| format!("Gagal membuat folder sementara converter: {e}"))?;
+  Ok(dir)
+}
+
+fn cleanup_temp_work_dir(path: &Path) {
+  let _ = std::fs::remove_dir_all(path);
+}
+
+fn is_executable_candidate_available(candidate: &Path) -> bool {
+  if candidate.components().count() > 1 {
+    return candidate.exists();
+  }
+  Command::new(candidate)
+    .arg("--version")
+    .output()
+    .map(|output| output.status.success())
+    .unwrap_or(false)
+}
+
+fn resolve_soffice_binary() -> Option<PathBuf> {
+  let mut candidates: Vec<PathBuf> = Vec::new();
+
+  for key in ["SOFFICE_PATH", "LIBREOFFICE_PATH", "MIM_SOFFICE_PATH"] {
+    if let Ok(value) = std::env::var(key) {
+      let clean = value.trim();
+      if !clean.is_empty() {
+        candidates.push(PathBuf::from(clean));
+      }
+    }
+  }
+
+  candidates.push(PathBuf::from("soffice"));
+
+  #[cfg(target_os = "windows")]
+  {
+    candidates.push(PathBuf::from(r"C:\Program Files\LibreOffice\program\soffice.exe"));
+    candidates.push(PathBuf::from(r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"));
+    if let Ok(program_files) = std::env::var("PROGRAMFILES") {
+      candidates.push(PathBuf::from(program_files).join("LibreOffice").join("program").join("soffice.exe"));
+    }
+    if let Ok(program_files_x86) = std::env::var("PROGRAMFILES(X86)") {
+      candidates.push(PathBuf::from(program_files_x86).join("LibreOffice").join("program").join("soffice.exe"));
+    }
+  }
+
+  #[cfg(target_os = "macos")]
+  {
+    candidates.push(PathBuf::from("/Applications/LibreOffice.app/Contents/MacOS/soffice"));
+  }
+
+  #[cfg(target_os = "linux")]
+  {
+    candidates.push(PathBuf::from("/usr/bin/soffice"));
+    candidates.push(PathBuf::from("/usr/local/bin/soffice"));
+    candidates.push(PathBuf::from("/snap/bin/libreoffice"));
+  }
+
+  candidates
+    .into_iter()
+    .find(|candidate| is_executable_candidate_available(candidate))
+}
+
+#[tauri::command]
+fn convert_docx_base64_to_pdf(file_name: String, base64_data: String) -> Result<String, String> {
+  #[cfg(target_os = "android")]
+  {
+    let _ = file_name;
+    let _ = base64_data;
+    return Err("Converter DOCX ke PDF belum didukung di Android. Gunakan aplikasi desktop.".to_string());
+  }
+
+  #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+  {
+    let clean_name = sanitize_file_name(file_name.trim(), "Dokumen.pdf");
+    let final_pdf_name = if clean_name.to_lowercase().ends_with(".pdf") {
+      clean_name
+    } else {
+      format!("{clean_name}.pdf")
+    };
+    let file_stem = Path::new(&final_pdf_name)
+      .file_stem()
+      .and_then(|stem| stem.to_str())
+      .filter(|value| !value.trim().is_empty())
+      .unwrap_or("Dokumen")
+      .to_string();
+    let temp_dir = create_temp_work_dir("docx-pdf")?;
+    let input_docx_path = temp_dir.join(format!("{file_stem}.docx"));
+    let converted_pdf_path = temp_dir.join(format!("{file_stem}.pdf"));
+    let result = (|| -> Result<String, String> {
+      let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64_data.trim())
+        .map_err(|e| format!("Gagal decode DOCX base64: {e}"))?;
+      std::fs::write(&input_docx_path, bytes).map_err(|e| format!("Gagal menyimpan file DOCX sementara: {e}"))?;
+
+      let soffice = resolve_soffice_binary().ok_or_else(|| {
+        "Converter PDF belum siap. Install LibreOffice Desktop atau set env SOFFICE_PATH ke lokasi soffice.".to_string()
+      })?;
+
+      let output = Command::new(&soffice)
+        .arg("--headless")
+        .arg("--nologo")
+        .arg("--nolockcheck")
+        .arg("--nodefault")
+        .arg("--nofirststartwizard")
+        .arg("--norestore")
+        .arg("--convert-to")
+        .arg("pdf:writer_pdf_Export")
+        .arg("--outdir")
+        .arg(&temp_dir)
+        .arg(&input_docx_path)
+        .output()
+        .map_err(|e| format!("Gagal menjalankan converter LibreOffice: {e}"))?;
+
+      if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if !stderr.is_empty() {
+          stderr
+        } else if !stdout.is_empty() {
+          stdout
+        } else {
+          format!("Exit code {:?}", output.status.code())
+        };
+        return Err(format!("Converter DOCX ke PDF gagal: {detail}"));
+      }
+
+      let source_pdf = if converted_pdf_path.exists() {
+        converted_pdf_path.clone()
+      } else {
+        std::fs::read_dir(&temp_dir)
+          .map_err(|e| format!("Gagal membaca folder hasil converter: {e}"))?
+          .filter_map(|entry| entry.ok())
+          .map(|entry| entry.path())
+          .find(|path| path.extension().and_then(|ext| ext.to_str()).map(|ext| ext.eq_ignore_ascii_case("pdf")).unwrap_or(false))
+          .ok_or_else(|| "Converter selesai, tetapi file PDF hasil tidak ditemukan.".to_string())?
+      };
+
+      let export_dir = get_desktop_export_dir()?;
+      let final_path = export_dir.join(&final_pdf_name);
+      if final_path.exists() {
+        let _ = std::fs::remove_file(&final_path);
+      }
+      std::fs::copy(&source_pdf, &final_path).map_err(|e| format!("Gagal menyalin PDF hasil converter: {e}"))?;
+      Ok(final_path.to_string_lossy().to_string())
+    })();
+    cleanup_temp_work_dir(&temp_dir);
+    result
+  }
 }
 
 fn resolve_mobile_download_dir(app: &tauri::AppHandle) -> Result<(PathBuf, bool), String> {
@@ -1010,6 +1170,7 @@ pub fn run() {
       download_url_to_app_storage,
       save_base64_to_downloads,
       save_pdf_base64,
+      convert_docx_base64_to_pdf,
       open_file_path,
       get_app_version
     ])

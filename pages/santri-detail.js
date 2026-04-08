@@ -12,6 +12,24 @@ let currentNilaiFilterSemesterId = ''
 let currentNilaiSemesterList = []
 let currentNilaiFilterKelasId = 'all'
 let currentNilaiKelasList = []
+const SANTRI_PARENT_FIELD_GROUPS = [
+  ['ayah', 'nama_ayah'],
+  ['ibu', 'nama_ibu'],
+  ['no_hp_ayah', 'hp_ayah'],
+  ['no_hp_ibu', 'hp_ibu'],
+  ['no_hp_orang_tua', 'hp_orang_tua'],
+  ['no_hp_wali', 'hp_wali']
+]
+
+function getSantriHistoryIdentityCandidates(santri) {
+  const candidates = [
+    { column: 'nisn', value: String(santri?.nisn || '').trim() },
+    { column: 'id_santri', value: String(santri?.id_santri || '').trim() },
+    { column: 'no_induk', value: String(santri?.no_induk || '').trim() },
+    { column: 'nomor_induk', value: String(santri?.nomor_induk || '').trim() }
+  ]
+  return candidates.filter(item => item.value)
+}
 
 function getSantriIdFromParams(params = {}) {
   if (params && params.santriId) return params.santriId
@@ -85,6 +103,28 @@ function escapeHtml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;')
+}
+
+function fillSantriParentFieldsFromHistory(targetRow, historyRows = []) {
+  const target = targetRow || {}
+  SANTRI_PARENT_FIELD_GROUPS.forEach(keys => {
+    const hasCurrentValue = keys.some(key => {
+      const value = target?.[key]
+      return value !== null && value !== undefined && String(value).trim() !== ''
+    })
+    if (hasCurrentValue) return
+    const sourceRow = (historyRows || []).find(row => keys.some(key => {
+      const value = row?.[key]
+      return value !== null && value !== undefined && String(value).trim() !== ''
+    }))
+    if (!sourceRow) return
+    keys.forEach(key => {
+      if (Object.prototype.hasOwnProperty.call(sourceRow || {}, key)) {
+        target[key] = sourceRow[key]
+      }
+    })
+  })
+  return target
 }
 
 function getInsetFieldStyle(extra = '') {
@@ -553,12 +593,12 @@ function renderDetailForm(santri, kelasList) {
 
     <div style="margin-bottom:10px;">
       <label for="detail-no-hp-ayah" style="display:block; margin-bottom:4px;">Nomor HP Ayah</label>
-      <input type="text" id="detail-no-hp-ayah" value="${escapeHtml(pickSantriFieldValue(santri, ['no_hp_ayah', 'hp_ayah']))}" style="${getInsetFieldStyle()}">
+      <input type="text" id="detail-no-hp-ayah" value="${escapeHtml(pickSantriFieldValue(santri, ['no_hp_ayah', 'hp_ayah', 'no_hp_orang_tua', 'hp_orang_tua', 'no_hp_wali', 'hp_wali', 'no_hp', 'hp', 'no_telp', 'nomor_hp', 'telepon']))}" style="${getInsetFieldStyle()}">
     </div>
 
     <div style="margin-bottom:10px;">
       <label for="detail-no-hp-ibu" style="display:block; margin-bottom:4px;">Nomor HP Ibu</label>
-      <input type="text" id="detail-no-hp-ibu" value="${escapeHtml(pickSantriFieldValue(santri, ['no_hp_ibu', 'hp_ibu']))}" style="${getInsetFieldStyle()}">
+      <input type="text" id="detail-no-hp-ibu" value="${escapeHtml(pickSantriFieldValue(santri, ['no_hp_ibu', 'hp_ibu', 'no_hp_orang_tua', 'hp_orang_tua', 'no_hp_wali', 'hp_wali', 'no_hp', 'hp', 'no_telp', 'nomor_hp', 'telepon']))}" style="${getInsetFieldStyle()}">
     </div>
 
     ${renderExtraFields(santri)}
@@ -1566,7 +1606,7 @@ async function initSantriDetailPage(params = {}) {
     return bCreated - aCreated
   })
   const activeRow = historyRows[0]
-  currentSantriDetailData = activeRow
+  currentSantriDetailData = fillSantriParentFieldsFromHistory({ ...activeRow }, historyRows)
   currentSantriDetailHistory = historyRows
   currentSantriDetailId = String(activeRow.id)
   currentSantriDetailIds = historyRows.map(item => String(item.id))
@@ -1592,3 +1632,8 @@ async function initSantriDetailPage(params = {}) {
   renderNilaiSemesterFilter()
   await loadSantriNilaiList()
 }
+
+window.initSantriDetailPage = initSantriDetailPage
+window.setSantriDetailTab = setSantriDetailTab
+window.backToSantriList = backToSantriList
+window.saveSantriDetail = saveSantriDetail
