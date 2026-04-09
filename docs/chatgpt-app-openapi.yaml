@@ -1,0 +1,106 @@
+openapi: 3.1.0
+info:
+  title: MIM Exam AI Draft API
+  version: 1.0.0
+  description: API minimal untuk menyimpan draft soal ujian hasil ChatGPT App ke sistem sekolah.
+servers:
+  - url: https://optucpelkueqmlhwlbej.supabase.co/functions/v1
+paths:
+  /save-exam-ai-draft:
+    post:
+      operationId: save_exam_ai_draft
+      summary: Simpan draft soal ujian hasil AI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - shared_secret
+                - jadwal_id
+                - guru_id
+                - questions
+              properties:
+                shared_secret:
+                  type: string
+                jadwal_id:
+                  type: string
+                kelas_target:
+                  type:
+                    - string
+                    - "null"
+                guru_id:
+                  type: string
+                guru_nama:
+                  type:
+                    - string
+                    - "null"
+                instruksi:
+                  type:
+                    - string
+                    - "null"
+                instruksi_lang:
+                  type:
+                    - string
+                    - "null"
+                  enum: [ID, AR, id, ar]
+                source:
+                  type:
+                    - string
+                    - "null"
+                sections:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                      start:
+                        type: integer
+                      end:
+                        type: integer
+                      count:
+                        type: integer
+                      instruction:
+                        type: string
+                      score:
+                        type:
+                          - number
+                          - "null"
+                questions:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required:
+                      - no
+                      - type
+                      - text
+                    properties:
+                      no:
+                        type: integer
+                      type:
+                        type: string
+                        enum:
+                          - pilihan-ganda
+                          - benar-salah
+                          - esai
+                          - isi-titik
+                      text:
+                        type: string
+                      answer:
+                        type: string
+                      options:
+                        type: object
+                        additionalProperties:
+                          type: string
+      responses:
+        "200":
+          description: Draft berhasil disimpan
+        "400":
+          description: Payload tidak valid
+        "401":
+          description: Shared secret salah
+        "500":
+          description: Gagal menyimpan draft

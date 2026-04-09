@@ -1018,9 +1018,9 @@ function normalizeLaporanUtsBulkKey(value) {
     .replace(/\bsirah nabawi\b/g, 'sirah')
     .replace(/\bsiroh\b/g, 'sirah')
     .replace(/\btarikh\b/g, 'sirah')
-    .replace(/al[\s\-']*qur['’`]?an/g, 'al quran')
-    .replace(/qur['’`]?an/g, 'quran')
-    .replace(/['’`]/g, '')
+    .replace(/al[\s\-']*qur['ï¿½`]?an/g, 'al quran')
+    .replace(/qur['ï¿½`]?an/g, 'quran')
+    .replace(/['ï¿½`]/g, '')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
 }
@@ -16039,21 +16039,22 @@ function buildExamParticipantMissingTableMessage() {
 }
 
 function parseExamQuestionPayload(value) {
-  if (Array.isArray(value)) return { questions: value, sections: [] }
+  if (Array.isArray(value)) return { questions: value, sections: [], meta: null }
   const raw = String(value || '').trim()
-  if (!raw) return { questions: [], sections: [] }
+  if (!raw) return { questions: [], sections: [], meta: null }
   try {
     const parsed = JSON.parse(raw)
-    if (Array.isArray(parsed)) return { questions: parsed, sections: [] }
+    if (Array.isArray(parsed)) return { questions: parsed, sections: [], meta: null }
     if (parsed && typeof parsed === 'object') {
       return {
         questions: Array.isArray(parsed.questions) ? parsed.questions : [],
-        sections: Array.isArray(parsed.sections) ? parsed.sections : []
+        sections: Array.isArray(parsed.sections) ? parsed.sections : [],
+        meta: parsed.meta && typeof parsed.meta === 'object' ? parsed.meta : null
       }
     }
-    return { questions: [], sections: [] }
+    return { questions: [], sections: [], meta: null }
   } catch (_err) {
-    return { questions: [], sections: [] }
+    return { questions: [], sections: [], meta: null }
   }
 }
 
@@ -17726,13 +17727,13 @@ function buildGuruUjianTekaSilangEndpointHtml(no, rows, cols) {
     if (col === anchor.col) continue
     const value = `${anchor.row}:${col}`
     const selected = pendingEnd && pendingEnd.row === anchor.row && pendingEnd.col === col ? ' selected' : ''
-    options.push(`<option value="${value}"${selected}>Mendatar · Kolom ${col + 1}</option>`)
+    options.push(`<option value="${value}"${selected}>Mendatar ï¿½ Kolom ${col + 1}</option>`)
   }
   for (let row = 0; row < rows; row += 1) {
     if (row === anchor.row) continue
     const value = `${row}:${anchor.col}`
     const selected = pendingEnd && pendingEnd.row === row && pendingEnd.col === anchor.col ? ' selected' : ''
-    options.push(`<option value="${value}"${selected}>Menurun · Baris ${row + 1}</option>`)
+    options.push(`<option value="${value}"${selected}>Menurun ï¿½ Baris ${row + 1}</option>`)
   }
   return `
     <div style="margin-top:10px; padding:10px; border:1px dashed #d8b4fe; border-radius:12px; background:#fff;">
@@ -17888,7 +17889,7 @@ function buildGuruUjianTekaSilangGridHtml(no, config) {
     <div style="padding:10px; border:1px solid #e9d5ff; border-radius:14px; background:#faf5ff; max-width:100%; overflow:hidden;">
       <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; margin-bottom:8px;">
         <div style="font-size:12px; color:#6b21a8; font-weight:700;">Grid Teka-Teki Silang</div>
-        <div style="font-size:11px; color:#7e22ce;">${escapeHtml(modeLabel)} • ${escapeHtml(anchorLabel)}</div>
+        <div style="font-size:11px; color:#7e22ce;">${escapeHtml(modeLabel)} ï¿½ ${escapeHtml(anchorLabel)}</div>
       </div>
       <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
         <button type="button" onclick="clearGuruUjianTekaSilangEntries(${no})" class="guru-btn-secondary" style="padding:7px 12px; border-color:#f5c2e7; background:linear-gradient(180deg,#fff1f9 0%,#ffe4f1 100%); color:#9d174d; box-shadow:0 6px 18px rgba(236,72,153,0.12);">Hapus Semua Slot</button>
@@ -21823,7 +21824,8 @@ function buildGuruUjianAutosavePayload(snapshot, ctx) {
     instruksi: buildExamInstruksiWithMeta(safeSnapshot.lang || 'ID', safeSnapshot.instruksi || ''),
     questions_json: JSON.stringify({
       questions: Array.isArray(safeSnapshot.questions) ? safeSnapshot.questions : [],
-      sections: Array.isArray(safeSnapshot.sections) ? safeSnapshot.sections : []
+      sections: Array.isArray(safeSnapshot.sections) ? safeSnapshot.sections : [],
+      ...(getGuruUjianPayloadMeta(ujianGuruState.activeSoal) ? { meta: getGuruUjianPayloadMeta(ujianGuruState.activeSoal) } : {})
     }),
     status: 'draft',
     updated_at: safeSnapshot.savedAt || new Date().toISOString()
@@ -21955,7 +21957,8 @@ function buildGuruUjianAutosaveSoalRecord(baseSoal, snapshot) {
     instruksi: buildExamInstruksiWithMeta(safeSnapshot.lang || 'ID', safeSnapshot.instruksi || ''),
     questions_json: JSON.stringify({
       questions: Array.isArray(safeSnapshot.questions) ? safeSnapshot.questions : [],
-      sections: Array.isArray(safeSnapshot.sections) ? safeSnapshot.sections : []
+      sections: Array.isArray(safeSnapshot.sections) ? safeSnapshot.sections : [],
+      ...(getGuruUjianPayloadMeta(baseSoal) ? { meta: getGuruUjianPayloadMeta(baseSoal) } : {})
     }),
     jumlah_nomor: Number(safeSnapshot.count || 0) || 0,
     status: 'draft',
@@ -21965,6 +21968,10 @@ function buildGuruUjianAutosaveSoalRecord(baseSoal, snapshot) {
 function resolveGuruUjianAutosaveState(baseSoal, rowKey = '') {
   const snapshot = loadGuruUjianAutosaveSnapshot(rowKey)
   if (!snapshot) return { soal: baseSoal, restored: false }
+  if (!hasGuruUjianAutosaveSnapshotContent(snapshot)) {
+    clearGuruUjianAutosaveSnapshot(rowKey)
+    return { soal: baseSoal, restored: false }
+  }
   const localMs = Date.parse(String(snapshot?.savedAt || '')) || 0
   const serverMs = Date.parse(String(baseSoal?.updated_at || '')) || 0
   if (serverMs && localMs && localMs < serverMs) {
@@ -22014,7 +22021,34 @@ function buildGuruUjianSectionDefs(sections) {
   }))
 }
 
-function buildGuruUjianEditorShellHtml({ jadwal, kelasLabel, mapelLabel, countValue, instruksi, instruksiLang }) {
+function getGuruUjianPayloadMeta(baseSoal = null) {
+  const payload = parseExamQuestionPayload(baseSoal?.questions_json)
+  return payload?.meta && typeof payload.meta === 'object' ? payload.meta : null
+}
+
+function buildGuruUjianAiDraftBadgeHtml(meta = null) {
+  const source = String(meta?.source || '').trim().toLowerCase()
+  if (!source) return ''
+  const sourceLabel = source === 'chatgpt-app'
+    ? 'Draft dibuat dengan AI via ChatGPT App'
+    : `Draft dibuat dengan AI (${source})`
+  const createdVia = String(meta?.created_via || '').trim()
+  const createdAt = String(meta?.created_at || '').trim()
+  const suffixParts = [
+    createdVia ? `jalur ${createdVia}` : '',
+    createdAt ? `dibuat ${createdAt}` : ''
+  ].filter(Boolean)
+  const suffix = suffixParts.length ? `<div style="margin-top:4px; font-size:11px; color:#166534;">${escapeHtml(suffixParts.join(' | '))}</div>` : ''
+  return `
+    <div style="margin-bottom:10px; padding:10px 12px; border-radius:12px; border:1px solid #86efac; background:linear-gradient(180deg,#f0fdf4 0%,#ffffff 100%); color:#166534;">
+      <div style="font-weight:700;">${escapeHtml(sourceLabel)}</div>
+      <div style="margin-top:4px; font-size:12px;">Guru tetap perlu review isi soal sebelum menekan Kirim Soal.</div>
+      ${suffix}
+    </div>
+  `
+}
+
+function buildGuruUjianEditorShellHtml({ jadwal, kelasLabel, mapelLabel, countValue, instruksi, instruksiLang, aiMeta = null }) {
   return `
     <div class="placeholder-card" style="border-color:#93c5fd;">
       <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
@@ -22032,6 +22066,8 @@ function buildGuruUjianEditorShellHtml({ jadwal, kelasLabel, mapelLabel, countVa
           <input id="guru-ujian-jumlah" class="guru-field" type="number" min="0" max="200" value="${escapeHtml(String(countValue))}" readonly>
         </div>
       </div>
+      
+      ${buildGuruUjianAiDraftBadgeHtml(aiMeta)}
       <div id="guru-ujian-score-wrap" style="margin-bottom:10px;"></div>
       <div id="guru-ujian-type-info" style="font-size:12px; color:#64748b; margin:-4px 0 8px 0;"></div>
       <div style="margin-bottom:10px;">
@@ -22093,7 +22129,8 @@ function openGuruUjianEditorPage(jadwalId) {
     mapelLabel,
     countValue,
     instruksi,
-    instruksiLang: instruksiMeta.lang
+    instruksiLang: instruksiMeta.lang,
+    aiMeta: payload.meta
   })
   renderGuruUjianSectionRows(ujianGuruState.sectionDefs)
   renderGuruUjianQuestionRows(ujianGuruState.sectionDefs, ujianGuruState.sectionDefs)
@@ -22450,7 +22487,11 @@ async function saveGuruUjian(submitMode) {
     bentuk_soal: 'campuran',
     jumlah_nomor: estimateGuruUjianTotalFromSections(sectionsForStorage, questions.length),
     instruksi: buildExamInstruksiWithMeta(bahasaSoal, instruksi),
-    questions_json: JSON.stringify({ questions, sections: sectionsForStorage }),
+    questions_json: JSON.stringify({
+      questions,
+      sections: sectionsForStorage,
+      ...(getGuruUjianPayloadMeta(ujianGuruState.activeSoal) ? { meta: getGuruUjianPayloadMeta(ujianGuruState.activeSoal) } : {})
+    }),
     status: submitMode ? 'submitted' : 'draft',
     updated_at: new Date().toISOString()
   }
@@ -23547,6 +23588,8 @@ document.addEventListener('DOMContentLoaded', () => {
     closeTopbarNotifMenu()
   })
 })
+
+
 
 
 

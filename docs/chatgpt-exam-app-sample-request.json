@@ -1,0 +1,46 @@
+{
+  "shared_secret": "<EXAM_AI_APP_SHARED_SECRET>",
+  "jadwal_id": "UUID_JADWAL_UJIAN",
+  "kelas_target": "IX B",
+  "guru_id": "UUID_GURU",
+  "guru_nama": "Nama Guru",
+  "instruksi": "Kerjakan soal berikut dengan benar.",
+  "instruksi_lang": "ID",
+  "source": "chatgpt-app",
+  "sections": [
+    {
+      "type": "pilihan-ganda",
+      "start": 1,
+      "end": 5,
+      "count": 5,
+      "instruction": "",
+      "score": null
+    }
+  ],
+  "questions": [
+    {
+      "no": 1,
+      "type": "pilihan-ganda",
+      "text": "Apakah arti kata kitab?",
+      "options": {
+        "a": "Buku",
+        "b": "Rumah",
+        "c": "Meja",
+        "d": "Pintu"
+      },
+      "answer": "A"
+    },
+    {
+      "no": 2,
+      "type": "pilihan-ganda",
+      "text": "Apa lawan kata rajin?",
+      "options": {
+        "a": "Tekun",
+        "b": "Malas",
+        "c": "Cerdas",
+        "d": "Sopan"
+      },
+      "answer": "B"
+    }
+  ]
+}
