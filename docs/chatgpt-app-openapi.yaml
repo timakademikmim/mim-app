@@ -6,6 +6,51 @@ info:
 servers:
   - url: https://optucpelkueqmlhwlbej.supabase.co/functions/v1
 paths:
+  /find-exam-ai-target:
+    post:
+      operationId: find_exam_ai_target
+      summary: Cari target ujian untuk draft AI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - shared_secret
+                - guru_id
+                - kelas
+                - mapel
+                - tanggal
+              properties:
+                shared_secret:
+                  type: string
+                guru_id:
+                  type: string
+                kelas:
+                  type: string
+                mapel:
+                  type: string
+                tanggal:
+                  type: string
+                  format: date
+                nama_ujian:
+                  type:
+                    - string
+                    - "null"
+                jenis:
+                  type:
+                    - string
+                    - "null"
+      responses:
+        "200":
+          description: Target ditemukan atau kandidat tersedia untuk disambiguasi
+        "400":
+          description: Payload tidak valid
+        "401":
+          description: Shared secret salah
+        "500":
+          description: Gagal mencari target
   /save-exam-ai-draft:
     post:
       operationId: save_exam_ai_draft
@@ -104,3 +149,37 @@ paths:
           description: Shared secret salah
         "500":
           description: Gagal menyimpan draft
+  /get-existing-exam-draft:
+    post:
+      operationId: get_existing_exam_draft
+      summary: Ambil draft ujian yang sudah tersimpan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - shared_secret
+                - jadwal_id
+                - guru_id
+              properties:
+                shared_secret:
+                  type: string
+                jadwal_id:
+                  type: string
+                guru_id:
+                  type: string
+                kelas_target:
+                  type:
+                    - string
+                    - "null"
+      responses:
+        "200":
+          description: Draft ditemukan atau belum ada
+        "400":
+          description: Payload tidak valid
+        "401":
+          description: Shared secret salah
+        "500":
+          description: Gagal membaca draft

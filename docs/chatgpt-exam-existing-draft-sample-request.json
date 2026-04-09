@@ -1,0 +1,6 @@
+{
+  "shared_secret": "ISI_SECRET_APP",
+  "jadwal_id": "uuid-jadwal",
+  "guru_id": "uuid-guru",
+  "kelas_target": "X"
+}

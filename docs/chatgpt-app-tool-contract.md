@@ -10,6 +10,66 @@ ChatGPT App mengumpulkan kebutuhan guru lalu menyimpan hasilnya sebagai draft ke
 
 ## Tool Minimal
 
+### `find_exam_ai_target`
+
+Fungsi:
+
+- mencari target ujian yang tepat dari `guru + kelas + mapel + tanggal`
+- mengembalikan `jadwal_id` dan `kelas_target` untuk dipakai tool simpan draft
+
+Input:
+
+```json
+{
+  "guru_id": "uuid-guru",
+  "kelas": "X",
+  "mapel": "Sharf",
+  "tanggal": "2026-04-10",
+  "nama_ujian": "UTS Semester Genap Tahun Ajaran 2025/2026",
+  "jenis": "UTS"
+}
+```
+
+Output jika ketemu satu target:
+
+```json
+{
+  "ok": true,
+  "status": "found",
+  "target": {
+    "jadwal_id": "uuid-jadwal",
+    "kelas_target": "X",
+    "guru_id": "uuid-guru",
+    "mapel_label": "Sharf",
+    "nama_ujian": "UTS Semester Genap Tahun Ajaran 2025/2026",
+    "jenis_ujian": "UTS",
+    "tanggal": "2026-04-10",
+    "jam_mulai": "09:00:00",
+    "jam_selesai": "10:00:00"
+  }
+}
+```
+
+Output jika ada lebih dari satu kandidat:
+
+```json
+{
+  "ok": true,
+  "status": "ambiguous",
+  "target": null,
+  "candidates": [
+    {
+      "jadwal_id": "uuid-jadwal-1",
+      "kelas_target": "X A"
+    },
+    {
+      "jadwal_id": "uuid-jadwal-2",
+      "kelas_target": "X B"
+    }
+  ]
+}
+```
+
 ### `save_exam_ai_draft`
 
 Fungsi:
@@ -105,16 +165,53 @@ ChatGPT App sebaiknya:
 
 Sebelum memanggil tool, ChatGPT App harus memastikan:
 
-1. `jadwal_id` ada
-2. `guru_id` ada
-3. `questions` minimal 1
-4. nomor soal berurutan
-5. untuk `pilihan-ganda`, opsi minimal 2
+1. panggil `find_exam_ai_target` lebih dulu jika `jadwal_id` belum diketahui
+2. `jadwal_id` ada
+3. `guru_id` ada
+4. `questions` minimal 1
+5. nomor soal berurutan
+6. untuk `pilihan-ganda`, opsi minimal 2
 
 ## Langkah Berikutnya
 
 Setelah tool minimal ini stabil, tool tambahan yang masuk akal:
 
-1. `list_exam_targets`
-2. `get_existing_exam_draft`
-3. `revise_exam_draft`
+1. `get_existing_exam_draft`
+2. `revise_exam_draft`
+
+### `get_existing_exam_draft`
+
+Fungsi:
+
+- membaca draft ujian yang sudah tersimpan untuk `jadwal_id + guru_id + kelas_target`
+- berguna untuk mengecek apakah ChatGPT App perlu membuat draft baru atau merevisi draft yang ada
+
+Input:
+
+```json
+{
+  "jadwal_id": "uuid-jadwal",
+  "guru_id": "uuid-guru",
+  "kelas_target": "X"
+}
+```
+
+Output jika draft ada:
+
+```json
+{
+  "ok": true,
+  "status": "found",
+  "draft": {
+    "id": "uuid-row-soal",
+    "status": "draft",
+    "parsed_questions_json": {
+      "questions": [],
+      "sections": [],
+      "meta": {
+        "source": "chatgpt-app"
+      }
+    }
+  }
+}
+```

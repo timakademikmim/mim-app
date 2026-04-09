@@ -1,0 +1,9 @@
+{
+  "shared_secret": "ISI_SECRET_APP",
+  "guru_id": "uuid-guru",
+  "kelas": "X",
+  "mapel": "Sharf",
+  "tanggal": "2026-04-10",
+  "nama_ujian": "UTS Semester Genap Tahun Ajaran 2025/2026",
+  "jenis": "UTS"
+}
