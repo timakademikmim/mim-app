@@ -22,15 +22,38 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;')
 }
 
+function parseKalenderDateValue(value) {
+  const text = String(value || '').trim()
+  if (!text) return null
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(text)
+    ? new Date(`${text}T00:00:00`)
+    : new Date(text)
+  if (Number.isNaN(date.getTime())) return null
+  return date
+}
+
+function buildKalenderDateInputValue(value) {
+  return getLocalDateKey(value)
+}
+
+function buildKalenderStoredIso(dateText) {
+  const text = String(dateText || '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null
+  const date = new Date(`${text}T12:00:00`)
+  if (Number.isNaN(date.getTime())) return null
+  return date.toISOString()
+}
+
 function getTodayMonthKey() {
-  return new Date().toISOString().slice(0, 7)
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 }
 
 function formatDateLocal(value) {
   const text = String(value || '').trim()
   if (!text) return '-'
-  const date = new Date(text)
-  if (Number.isNaN(date.getTime())) return text
+  const date = parseKalenderDateValue(text)
+  if (!date) return text
   const dd = String(date.getDate()).padStart(2, '0')
   const mm = String(date.getMonth() + 1).padStart(2, '0')
   const yyyy = date.getFullYear()
@@ -38,8 +61,8 @@ function formatDateLocal(value) {
 }
 
 function getLocalDateKey(value) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
+  const date = parseKalenderDateValue(value)
+  if (!date) return ''
   const yyyy = date.getFullYear()
   const mm = String(date.getMonth() + 1).padStart(2, '0')
   const dd = String(date.getDate()).padStart(2, '0')
@@ -155,8 +178,8 @@ function openKalenderAkademikModal(id = '') {
   if (judulEl) judulEl.value = row?.judul || ''
   if (jenisKegiatanEl) jenisKegiatanEl.value = normalizeKalenderActivityType(row?.jenis_kegiatan)
   if (warnaEl) warnaEl.value = normalizeKalenderColor(row?.warna)
-  if (mulaiEl) mulaiEl.value = String(row?.mulai || '').slice(0, 10)
-  if (selesaiEl) selesaiEl.value = String(row?.selesai || '').slice(0, 10)
+  if (mulaiEl) mulaiEl.value = buildKalenderDateInputValue(row?.mulai)
+  if (selesaiEl) selesaiEl.value = buildKalenderDateInputValue(row?.selesai)
   if (detailEl) detailEl.value = row?.detail || ''
 
   const modal = document.getElementById('kalender-akademik-modal')
@@ -180,22 +203,27 @@ function parseKalenderAkademikForm() {
 
   if (!judul || !mulai) return { error: 'Judul kegiatan dan waktu mulai wajib diisi.' }
 
-  const mulaiDate = new Date(`${mulai}T00:00:00`)
-  if (Number.isNaN(mulaiDate.getTime())) return { error: 'Format waktu mulai tidak valid.' }
+  const mulaiDate = parseKalenderDateValue(mulai)
+  if (!mulaiDate) return { error: 'Format waktu mulai tidak valid.' }
 
   if (selesai) {
-    const selesaiDate = new Date(`${selesai}T00:00:00`)
-    if (Number.isNaN(selesaiDate.getTime())) return { error: 'Format waktu selesai tidak valid.' }
+    const selesaiDate = parseKalenderDateValue(selesai)
+    if (!selesaiDate) return { error: 'Format waktu selesai tidak valid.' }
     if (selesaiDate.getTime() < mulaiDate.getTime()) return { error: 'Waktu selesai tidak boleh lebih kecil dari waktu mulai.' }
   }
+
+  const mulaiIso = buildKalenderStoredIso(mulai)
+  if (!mulaiIso) return { error: 'Format waktu mulai tidak valid.' }
+  const selesaiIso = selesai ? buildKalenderStoredIso(selesai) : null
+  if (selesai && !selesaiIso) return { error: 'Format waktu selesai tidak valid.' }
 
   return {
     payload: {
       judul,
       jenis_kegiatan: jenisKegiatan || null,
       warna,
-      mulai: mulaiDate.toISOString(),
-      selesai: selesai ? new Date(`${selesai}T00:00:00`).toISOString() : null,
+      mulai: mulaiIso,
+      selesai: selesaiIso,
       detail: detail || null
     }
   }

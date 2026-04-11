@@ -6,6 +6,81 @@ info:
 servers:
   - url: https://optucpelkueqmlhwlbej.supabase.co/functions/v1
 paths:
+  /resolve-chatgpt-app-guru:
+    post:
+      operationId: resolve_chatgpt_app_guru
+      summary: Cek apakah user ChatGPT sudah tertaut ke guru
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - shared_secret
+                - external_subject
+              properties:
+                shared_secret:
+                  type: string
+                provider:
+                  type: string
+                  default: chatgpt
+                external_subject:
+                  type: string
+      responses:
+        "200":
+          description: Status tautan ditemukan atau belum ada
+        "400":
+          description: Payload tidak valid
+        "401":
+          description: Shared secret salah
+        "500":
+          description: Gagal memeriksa tautan guru
+  /exchange-chatgpt-app-link-code:
+    post:
+      operationId: exchange_chatgpt_app_link_code
+      summary: Tukar kode tautan sekali pakai menjadi link permanen guru
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - shared_secret
+                - code
+                - external_subject
+              properties:
+                shared_secret:
+                  type: string
+                provider:
+                  type: string
+                  default: chatgpt
+                code:
+                  type: string
+                external_subject:
+                  type: string
+                display_name:
+                  type:
+                    - string
+                    - "null"
+                email:
+                  type:
+                    - string
+                    - "null"
+      responses:
+        "200":
+          description: Kode berhasil ditukar dan link guru tersimpan
+        "400":
+          description: Payload tidak valid
+        "401":
+          description: Shared secret salah
+        "404":
+          description: Kode tidak ditemukan
+        "409":
+          description: Kode tidak aktif, sudah dipakai, atau kedaluwarsa
+        "500":
+          description: Gagal menukar kode tautan
   /find-exam-ai-target:
     post:
       operationId: find_exam_ai_target

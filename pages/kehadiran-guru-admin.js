@@ -239,6 +239,21 @@ function getKgDatesByHariInRange(range, hari) {
   return rows
 }
 
+async function fetchKgAllRows(buildQuery, pageSize = 1000) {
+  const allRows = []
+  let from = 0
+  while (true) {
+    const to = from + pageSize - 1
+    const res = await buildQuery().range(from, to)
+    if (res.error) throw res.error
+    const rows = Array.isArray(res.data) ? res.data : []
+    allRows.push(...rows)
+    if (rows.length < pageSize) break
+    from += pageSize
+  }
+  return allRows
+}
+
 function getKgJamKey(jamMulai, jamSelesai) {
   const start = String(jamMulai || '').slice(0, 5)
   const end = String(jamSelesai || '').slice(0, 5)
@@ -568,6 +583,42 @@ function buildKgSessionAggMaps(absensiRows, jamMap, distribusiMap = new Map()) {
   }
 }
 
+function buildKgObservedSessions(absensiRows, jamMap, distribusiMap = new Map()) {
+  const sessionMap = new Map()
+
+  ;(absensiRows || []).forEach(row => {
+    const tanggal = String(row?.tanggal || '').slice(0, 10)
+    const distribusi = distribusiMap.get(String(row?.distribusi_id || '')) || null
+    const guruId = String(row?.guru_id || distribusi?.guru_id || '').trim()
+    const kelasId = String(row?.kelas_id || distribusi?.kelas_id || '').trim()
+    const mapelId = String(row?.mapel_id || distribusi?.mapel_id || '').trim()
+    const semesterId = String(row?.semester_id || distribusi?.semester_id || '').trim()
+    if (!tanggal || !guruId || !kelasId || !mapelId) return
+
+    const jamData = row?.jam_pelajaran_id ? jamMap.get(String(row.jam_pelajaran_id || '')) : null
+    const jamMulai = jamData?.jam_mulai || ''
+    const jamSelesai = jamData?.jam_selesai || ''
+    const jamKey = getKgJamMatchKey(jamMulai, jamSelesai, row?.jam_pelajaran_id)
+    const sessionKey = `${tanggal}|${guruId}|${kelasId}|${mapelId}|${jamKey}`
+    if (sessionMap.has(sessionKey)) return
+
+    sessionMap.set(sessionKey, {
+      tanggal,
+      hari: getKgHariLabel(getKgHariFromDate(tanggal)),
+      guru_id: guruId,
+      kelas_id: kelasId,
+      mapel_id: mapelId,
+      semester_id: semesterId,
+      distribusi_id: String(row?.distribusi_id || distribusi?.id || '').trim(),
+      jam_key: jamKey,
+      jam_label: getKgJamLabel(jamMulai, jamSelesai),
+      source: 'observed'
+    })
+  })
+
+  return Array.from(sessionMap.values())
+}
+
 async function loadKehadiranGuruAdminData(periode) {
   const range = getKgMonthRange(periode)
   if (!range) throw new Error('Periode tidak valid.')
@@ -596,21 +647,23 @@ async function loadKehadiranGuruAdminData(periode) {
     }
   }
 
-  const [distribusiRes, jadwalRes, absensiRes, kelasRes, mapelRes, karyawanRes, jamRes] = await Promise.all([
+  const [distribusiRes, jadwalRes, absensiData, kelasRes, mapelRes, karyawanRes, jamRes] = await Promise.all([
     sb.from('distribusi_mapel')
       .select('id, kelas_id, mapel_id, guru_id, semester_id'),
     getKgJadwalRows(),
-    sb.from('absensi_santri')
+    fetchKgAllRows(() => sb.from('absensi_santri')
       .select('id, tanggal, kelas_id, mapel_id, guru_id, jam_pelajaran_id, distribusi_id, semester_id, santri_id, status, guru_pengganti_id, keterangan_pengganti')
       .gte('tanggal', range.start)
-      .lte('tanggal', range.end),
+      .lte('tanggal', range.end)
+      .order('tanggal', { ascending: true })
+      .order('id', { ascending: true })),
     sb.from('kelas').select('id, nama_kelas'),
     sb.from('mapel').select('id, nama'),
     sb.from('karyawan').select('id, nama, aktif, role'),
     sb.from('jam_pelajaran').select('id, jam_mulai, jam_selesai')
   ])
 
-  const firstError = distribusiRes.error || jadwalRes.error || absensiRes.error || kelasRes.error || mapelRes.error || karyawanRes.error || jamRes.error
+  const firstError = distribusiRes.error || jadwalRes.error || kelasRes.error || mapelRes.error || karyawanRes.error || jamRes.error
   if (firstError) {
     if (isKgMissingPenggantiColumnError(firstError)) {
       throw new Error(buildKgMissingPenggantiColumnsMessage())
@@ -620,7 +673,7 @@ async function loadKehadiranGuruAdminData(periode) {
 
   const distribusiAll = distribusiRes.data || []
   const distribusiAllMap = new Map(distribusiAll.map(item => [String(item?.id || ''), item]))
-  const absensiRows = (absensiRes.data || []).filter(item => !academicHolidayDates.has(normalizeKgDateText(item?.tanggal)))
+  const absensiRows = (absensiData || []).filter(item => !academicHolidayDates.has(normalizeKgDateText(item?.tanggal)))
   const inferredSemesterIds = [...new Set(
     absensiRows
       .map(item => String(item?.semester_id || '').trim())
@@ -671,6 +724,7 @@ async function loadKehadiranGuruAdminData(periode) {
   const jadwalList = (jadwalRes.data || []).filter(item => distribusiMap.has(String(item.distribusi_id || '')))
 
   const expectedSessions = []
+  const expectedSessionKeys = new Set()
   jadwalList.forEach(jadwal => {
     const distribusi = distribusiMap.get(String(jadwal.distribusi_id || ''))
     if (!distribusi) return
@@ -683,7 +737,7 @@ async function loadKehadiranGuruAdminData(periode) {
     const dates = getKgDatesByHariInRange(range, jadwal.hari)
     dates.forEach(tanggal => {
       if (academicHolidayDates.has(tanggal)) return
-      expectedSessions.push({
+      const session = {
         tanggal,
         hari: getKgHariLabel(jadwal.hari),
         guru_id: String(distribusi.guru_id || ''),
@@ -692,8 +746,13 @@ async function loadKehadiranGuruAdminData(periode) {
         semester_id: String(distribusi.semester_id || ''),
         distribusi_id: String(distribusi.id || ''),
         jam_key: jamKey,
-        jam_label: getKgJamLabel(jamMulai, jamSelesai)
-      })
+        jam_label: getKgJamLabel(jamMulai, jamSelesai),
+        source: 'schedule'
+      }
+      const sessionKey = `${session.tanggal}|${session.guru_id}|${session.kelas_id}|${session.mapel_id}|${session.jam_key}`
+      if (expectedSessionKeys.has(sessionKey)) return
+      expectedSessionKeys.add(sessionKey)
+      expectedSessions.push(session)
     })
   })
 
@@ -775,7 +834,7 @@ async function loadKehadiranGuruAdminData(periode) {
   const sessionsByGeneric = new Map()
   const expectedCountByGuruDay = new Map()
   const expectedGenericGroupSetByGuruDay = new Map()
-  expectedSessions.forEach(session => {
+  const trackExpectedSession = session => {
     const keyGeneric = `${session.tanggal}|${session.kelas_id}|${session.mapel_id}|${session.guru_id}`
     if (!sessionsByGeneric.has(keyGeneric)) sessionsByGeneric.set(keyGeneric, [])
     sessionsByGeneric.get(keyGeneric).push(session)
@@ -785,6 +844,17 @@ async function loadKehadiranGuruAdminData(periode) {
       expectedGenericGroupSetByGuruDay.set(keyGuruDay, new Set())
     }
     expectedGenericGroupSetByGuruDay.get(keyGuruDay).add(keyGeneric)
+  }
+
+  expectedSessions.forEach(trackExpectedSession)
+
+  const observedSessions = buildKgObservedSessions(absensiRows, jamMap, distribusiAllMap)
+  observedSessions.forEach(session => {
+    const sessionKey = `${session.tanggal}|${session.guru_id}|${session.kelas_id}|${session.mapel_id}|${session.jam_key}`
+    if (expectedSessionKeys.has(sessionKey)) return
+    expectedSessionKeys.add(sessionKey)
+    expectedSessions.push(session)
+    trackExpectedSession(session)
   })
 
   sessionsByGeneric.forEach((sessionList, keyGeneric) => {
@@ -951,6 +1021,7 @@ async function loadKehadiranGuruAdminData(periode) {
         debug: {
           match_source: matchSource,
           expected: {
+            source: session.source || 'schedule',
             guru_id: session.guru_id || '-',
             kelas_id: session.kelas_id || '-',
             mapel_id: session.mapel_id || '-',
@@ -1166,7 +1237,7 @@ function renderKehadiranGuruDetail() {
           ${escapeHtml(
             [
               `source: ${item?.debug?.match_source || 'none'}`,
-              `expected guru=${item?.debug?.expected?.guru_id || '-'} kelas=${item?.debug?.expected?.kelas_id || '-'} mapel=${item?.debug?.expected?.mapel_id || '-'} distribusi=${item?.debug?.expected?.distribusi_id || '-'} sem=${item?.debug?.expected?.semester_id || '-'} jam=${item?.debug?.expected?.jam_key || '-'}`,
+              `expected source=${item?.debug?.expected?.source || 'schedule'} guru=${item?.debug?.expected?.guru_id || '-'} kelas=${item?.debug?.expected?.kelas_id || '-'} mapel=${item?.debug?.expected?.mapel_id || '-'} distribusi=${item?.debug?.expected?.distribusi_id || '-'} sem=${item?.debug?.expected?.semester_id || '-'} jam=${item?.debug?.expected?.jam_key || '-'}`,
               item?.debug?.matched
                 ? `matched guru=${(item.debug.matched.guru_ids || []).join(',') || '-'} kelas=${(item.debug.matched.kelas_ids || []).join(',') || '-'} mapel=${(item.debug.matched.mapel_ids || []).join(',') || '-'} distribusi=${(item.debug.matched.distribusi_ids || []).join(',') || '-'} sem=${(item.debug.matched.semester_ids || []).join(',') || '-'} jam=${(item.debug.matched.jam_ids || []).join(',') || '-'}`
                 : 'matched: -',

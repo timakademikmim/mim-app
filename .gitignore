@@ -1,4 +1,5 @@
 node_modules/
+chatgpt-app/mcp-server/.env
 dist-tauri-web/
 src-tauri/target/
 src-tauri/gen/android/.gradle/

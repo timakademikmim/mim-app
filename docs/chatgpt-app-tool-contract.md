@@ -6,9 +6,85 @@ Dokumen ini mendefinisikan kontrak minimal untuk ChatGPT App yang terhubung ke g
 
 ChatGPT App mengumpulkan kebutuhan guru lalu menyimpan hasilnya sebagai draft ke sistem sekolah lewat function:
 
+- `resolve-chatgpt-app-guru`
+- `exchange-chatgpt-app-link-code`
+- `find-exam-ai-target`
 - `save-exam-ai-draft`
 
 ## Tool Minimal
+
+### `resolve_chatgpt_app_guru`
+
+Fungsi:
+
+- mencari apakah user ChatGPT yang sedang aktif sudah tertaut ke guru
+
+Input:
+
+```json
+{
+  "provider": "chatgpt",
+  "external_subject": "chatgpt-user-khaerurrahmat"
+}
+```
+
+Output jika sudah tertaut:
+
+```json
+{
+  "ok": true,
+  "status": "linked",
+  "guru": {
+    "guru_id": "uuid-guru",
+    "guru_nama": "Nama Guru"
+  }
+}
+```
+
+Output jika belum tertaut:
+
+```json
+{
+  "ok": true,
+  "status": "not_linked",
+  "guru": null
+}
+```
+
+### `exchange_chatgpt_app_link_code`
+
+Fungsi:
+
+- menukar kode tautan sekali pakai menjadi link permanen antara user ChatGPT dan guru
+
+Input:
+
+```json
+{
+  "provider": "chatgpt",
+  "code": "CGPT-ABCD2345",
+  "external_subject": "chatgpt-user-khaerurrahmat",
+  "display_name": "Khaerurrahmat",
+  "email": "guru@example.com"
+}
+```
+
+Output sukses:
+
+```json
+{
+  "ok": true,
+  "status": "linked",
+  "guru": {
+    "guru_id": "uuid-guru",
+    "guru_nama": "Nama Guru"
+  },
+  "link_code": {
+    "code": "CGPT-ABCD2345",
+    "used_by_subject": "chatgpt-user-khaerurrahmat"
+  }
+}
+```
 
 ### `find_exam_ai_target`
 
@@ -165,12 +241,14 @@ ChatGPT App sebaiknya:
 
 Sebelum memanggil tool, ChatGPT App harus memastikan:
 
-1. panggil `find_exam_ai_target` lebih dulu jika `jadwal_id` belum diketahui
-2. `jadwal_id` ada
-3. `guru_id` ada
-4. `questions` minimal 1
-5. nomor soal berurutan
-6. untuk `pilihan-ganda`, opsi minimal 2
+1. panggil `resolve_chatgpt_app_guru` lebih dulu
+2. jika `status = not_linked`, minta user memasukkan kode lalu panggil `exchange_chatgpt_app_link_code`
+3. panggil `find_exam_ai_target` jika `jadwal_id` belum diketahui
+4. `jadwal_id` ada
+5. `guru_id` ada
+6. `questions` minimal 1
+7. nomor soal berurutan
+8. untuk `pilihan-ganda`, opsi minimal 2
 
 ## Langkah Berikutnya
 

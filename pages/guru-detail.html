@@ -62,6 +62,7 @@
   <div class="guru-detail-tabs">
     <button type="button" class="guru-detail-tab-btn active" data-guru-detail-tab="biodata" onclick="setGuruDetailTab('biodata')">Biodata</button>
     <button type="button" class="guru-detail-tab-btn" data-guru-detail-tab="jadwal" onclick="setGuruDetailTab('jadwal')">Jadwal Pelajaran</button>
+    <button type="button" class="guru-detail-tab-btn" data-guru-detail-tab="chatgpt" onclick="setGuruDetailTab('chatgpt')">ChatGPT</button>
   </div>
 
   <div id="guru-detail-pane-biodata" class="guru-detail-pane active">
@@ -70,6 +71,10 @@
 
   <div id="guru-detail-pane-jadwal" class="guru-detail-pane">
     <div id="guru-detail-jadwal-container">Loading...</div>
+  </div>
+
+  <div id="guru-detail-pane-chatgpt" class="guru-detail-pane">
+    <div id="guru-detail-chatgpt-container">Loading...</div>
   </div>
 </div>
 

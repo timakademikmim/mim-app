@@ -1,0 +1,5 @@
+{
+  "shared_secret": "ISI_SECRET_APP",
+  "provider": "chatgpt",
+  "external_subject": "subject-user-dari-chatgpt"
+}

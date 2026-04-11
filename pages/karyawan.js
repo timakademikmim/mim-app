@@ -296,6 +296,23 @@ function ensureKaryawanActionStyle() {
       box-shadow: 0 0 18px 2px #16a34acc, 0 0 0 2px #fff;
       transform: scale(0.96);
     }
+    .btn-chatgpt {
+      background: #0f766e;
+      color: #fff;
+      border: none;
+      padding: 7px 16px;
+      border-radius: 5px;
+      margin-right: 6px;
+      cursor: pointer;
+      box-shadow: 0 0 8px 0 #0f766e55;
+      transition: box-shadow 0.2s, transform 0.1s;
+      font-weight: bold;
+      outline: none;
+    }
+    .btn-chatgpt:active {
+      box-shadow: 0 0 18px 2px #0f766ecc, 0 0 0 2px #fff;
+      transform: scale(0.96);
+    }
   `
   document.head.appendChild(style)
 }
@@ -303,6 +320,11 @@ function ensureKaryawanActionStyle() {
 function openGuruDetail(id) {
   if (typeof loadPage !== 'function') return
   loadPage('guru-detail', { guruId: id, tab: 'biodata' })
+}
+
+function openGuruDetailChatGpt(id) {
+  if (typeof loadPage !== 'function') return
+  loadPage('guru-detail', { guruId: id, tab: 'chatgpt' })
 }
 
 async function isIdKaryawanUsed(idKaryawan, excludeId = null) {
@@ -782,7 +804,7 @@ function renderKaryawanSearchTable() {
             <th style="padding:8px; border:1px solid #ddd; text-align:center; width:150px;">No HP</th>
             <th style="padding:8px; border:1px solid #ddd; text-align:center; min-width:230px;">Alamat</th>
             <th style="padding:8px; border:1px solid #ddd; text-align:center; width:100px;">Status</th>
-            <th style="padding:8px; border:1px solid #ddd; text-align:center; width:${karyawanPageMode === 'guru-only' ? '280px' : '200px'};">Aksi</th>
+            <th style="padding:8px; border:1px solid #ddd; text-align:center; width:${karyawanPageMode === 'guru-only' ? '380px' : '200px'};">Aksi</th>
           </tr>
         </thead>
         <tbody>
@@ -804,6 +826,7 @@ function renderKaryawanSearchTable() {
       <td style="padding:8px; border:1px solid #ddd;">${k.aktif ? 'Aktif' : 'Tidak Aktif'}</td>
       <td style="padding:8px; border:1px solid #ddd; text-align:center; white-space:nowrap;">
         ${karyawanPageMode === 'guru-only' ? `<button class="btn-detail" onclick="openGuruDetail('${k.id}')">Detail</button>` : ''}
+        ${karyawanPageMode === 'guru-only' ? `<button class="btn-chatgpt" onclick="openGuruDetailChatGpt('${k.id}')">ChatGPT</button>` : ''}
         <button class="btn-edit" onclick="showEditKaryawanForm('${k.id}')">Edit</button>
         <button class="btn-hapus" onclick="hapusKaryawan('${k.id}')">Hapus</button>
       </td>

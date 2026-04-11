@@ -9,7 +9,7 @@ const sb = window.createDesktopAwareSupabaseClient
 const externalPageHtmlCache = {}
 const externalPageScriptLoaded = {}
 const externalPageScriptLoadPromises = {}
-const EXTERNAL_PAGE_ASSET_VERSION = '20260304-desktop-wa-print-fix-01'
+const EXTERNAL_PAGE_ASSET_VERSION = '20260411-kalender-date-edit-fix-01'
 const CHAT_MEMBERS_TABLE = 'chat_thread_members'
 const CHAT_MESSAGES_TABLE = 'chat_messages'
 const ADMIN_HISTORY_STATE_PAGE_KEY = 'admin_page'
@@ -39,6 +39,7 @@ function buildAdminSidebarIconSvg(pageKey = '') {
     ketahfizan: '<path d="M5 5.5h14v13H5z"/><path d="M9 5.5v13M12 9h5M12 13h5"/>',
     kesantrian: '<circle cx="12" cy="8" r="3.2"/><path d="M5.5 19a6.5 6.5 0 0 1 13 0"/>',
     karyawan: '<path d="M4 6h16v12H4z"/><path d="M8 10h8M8 14h5"/>',
+    guru: '<circle cx="12" cy="8" r="3.2"/><path d="M5.5 19a6.5 6.5 0 0 1 13 0"/>',
     'set-tugas': '<rect x="4" y="3.5" width="16" height="18" rx="2.5"/><path d="M8 8h8M8 12h8M8 16h5"/>',
     kelas: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
     santri: '<circle cx="12" cy="8" r="3.2"/><path d="M5.5 19a6.5 6.5 0 0 1 13 0"/>',
@@ -483,7 +484,7 @@ function setActiveSidebarTab(page) {
   submenuButtons.forEach(button => {
     const btnPage = button.getAttribute('data-page')
     const isSantriDetail = page === 'santri-detail' && btnPage === 'santri'
-    const isGuruDetail = page === 'guru-detail' && btnPage === 'karyawan'
+    const isGuruDetail = page === 'guru-detail' && btnPage === 'guru'
     const isLegacyDistribusi = page === 'kelas-distribusi-mapel' && btnPage === 'kelas-guru-mapel'
     button.classList.toggle('active', btnPage === page || isSantriDetail || isGuruDetail || isLegacyDistribusi)
   })
