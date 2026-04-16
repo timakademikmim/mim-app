@@ -10,6 +10,11 @@
     participants: []
   }
   var createFolderDraftModalResolver = null
+  var createFolderDraftModalMode = 'create'
+  var createFolderDraftGroupsCache = []
+  var editFolderDraftState = null
+  var openFolderSet = new Set()
+  var openFolderMenuKey = null
 
   function escapeHtml(value) {
     return String(value == null ? '' : value)
@@ -78,11 +83,27 @@
     if (!raw) return 'UJ'
     if (raw.includes('UTS') || raw.includes('PTS')) return 'UT'
     if (raw.includes('UAS') || raw.includes('PAS')) return 'UA'
-    if (raw === 'UN' || raw.includes('UJIAN NASIONAL')) return 'UN'
+    if (raw === 'UN' || raw.includes('UJIAN NASIONAL') || raw.includes('KEPONDOKAN')) return 'UN'
     if (raw.includes('TRY')) return 'TO'
     if (raw.includes('PRAK')) return 'PR'
     if (raw.includes('TUGAS')) return 'TG'
     return raw.replace(/[^A-Z0-9]/g, '').slice(0, 2) || 'UJ'
+  }
+
+  function formatExamJenisLabel(jenis) {
+    var raw = String(jenis || '').trim()
+    if (!raw) return '-'
+    var upper = raw.toUpperCase()
+    if (upper === 'UN' || upper.includes('KEPONDOKAN')) return 'Ujian Akhir Kepondokan'
+    return raw
+  }
+
+  function normalizeJenisOptionValue(value) {
+    var raw = String(value || '').trim()
+    if (!raw) return ''
+    var upper = raw.toUpperCase()
+    if (upper === 'UN' || upper.includes('KEPONDOKAN')) return 'Ujian Akhir Kepondokan'
+    return raw
   }
 
   function getExamYearCode(tahunNama) {
@@ -237,6 +258,22 @@
     })
   }
 
+  function filterSemestersByYear(semesters, tahunId, fallbackSemester) {
+    var list = Array.isArray(semesters) ? semesters.slice() : []
+    var tid = String(tahunId || '').trim()
+    if (!tid) return list
+    var filtered = list.filter(function (item) {
+      return String(item && item.tahun_ajaran_id || '').trim() === tid
+    })
+    if (!filtered.length) filtered = []
+    var fallbackId = String(fallbackSemester && fallbackSemester.id || '').trim()
+    var fallbackNama = String(fallbackSemester && fallbackSemester.nama || '').trim()
+    if (fallbackId && fallbackNama && !filtered.some(function (item) { return String(item && item.id || '') === fallbackId })) {
+      filtered.unshift({ id: fallbackId, nama: fallbackNama, aktif: true, tahun_ajaran_id: tid })
+    }
+    return filtered
+  }
+
   function populateReferenceSelect(selectEl, rows, selectedId, selectedNama) {
     if (!selectEl) return
     var list = Array.isArray(rows) ? rows : []
@@ -267,7 +304,7 @@
 
     var semesterRes = await sb
       .from('semester')
-      .select('id, nama, aktif')
+      .select('id, nama, aktif, tahun_ajaran_id')
       .order('aktif', { ascending: false })
       .order('nama', { ascending: false })
     if (semesterRes.error) {
@@ -297,7 +334,7 @@
     }
   }
 
-  function renderCreateFolderMapelSelector(groups, selectedKeySet) {
+  function renderCreateFolderMapelSelector(groups, selectedKeySet, selectedClassMap) {
     var bodyEl = getInput('ju-create-folder-mapel-select')
     if (!bodyEl) return
     var list = Array.isArray(groups) ? groups : []
@@ -306,14 +343,28 @@
       return
     }
     var selected = selectedKeySet instanceof Set ? selectedKeySet : new Set()
+    var selectedClasses = selectedClassMap instanceof Map ? selectedClassMap : new Map()
     bodyEl.innerHTML = list.map(function (group, idx) {
       var key = getMapelGroupKey(group)
       var checked = selected.has(key)
+      var classRows = Array.isArray(group && group.class_rows) ? group.class_rows : []
+      var selectedIds = selectedClasses.get(key) || []
+      var selectedIdSet = new Set(selectedIds.map(function (item) { return String(item || '') }))
+      var classChecks = classRows.map(function (cls) {
+        var classId = String(cls && cls.kelas_id || cls && cls.id || '').trim()
+        var className = String(cls && (cls.nama_kelas || cls.kelas_nama || cls.nama) || '').trim()
+        var classChecked = selectedIds.length ? selectedIdSet.has(classId) : checked
+        return '<label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#0f172a; padding:4px 0;">' +
+          '<input type="checkbox" data-mapel-key="' + escapeHtml(key) + '" data-class-id="' + escapeHtml(classId) + '"' + (classChecked ? ' checked' : '') + ' onchange="updateCreateFolderMapelSummary(); syncCreateFolderMapelGroup(\'' + escapeHtml(key) + '\')">' +
+          '<span>' + escapeHtml(className || '-') + '</span>' +
+        '</label>'
+      }).join('')
       return '<label style="display:flex; align-items:flex-start; gap:8px; padding:7px 4px; border-bottom:1px dashed #e2e8f0; cursor:pointer;">' +
-        '<input type="checkbox" data-mapel-key="' + escapeHtml(key) + '"' + (checked ? ' checked' : '') + ' onchange="updateCreateFolderMapelSummary()">' +
+        '<input type="checkbox" data-mapel-group="1" data-mapel-key="' + escapeHtml(key) + '"' + (checked ? ' checked' : '') + ' onchange="toggleCreateFolderMapelGroup(\'' + escapeHtml(key) + '\', this.checked); updateCreateFolderMapelSummary()">' +
         '<span style="display:block; flex:1; font-size:13px; color:#0f172a;">' +
           '<span style="display:inline-block; min-width:26px; color:#64748b;">' + (idx + 1) + '.</span> ' + escapeHtml(String(group && group.mapel_label || '-')) +
           '<span style="display:block; font-size:11px; color:#64748b; margin-left:26px;">Target kelas: ' + escapeHtml(String((group && group.class_rows && group.class_rows.length) || 0)) + '</span>' +
+          (classRows.length ? '<span style="display:block; margin-left:26px; margin-top:6px; padding:6px 10px; background:#f1f5f9; border-radius:8px;">' + classChecks + '</span>' : '') +
         '</span>' +
       '</label>'
     }).join('')
@@ -322,17 +373,52 @@
   function getSelectedCreateFolderMapelKeys() {
     var bodyEl = getInput('ju-create-folder-mapel-select')
     if (!bodyEl) return []
-    return Array.from(bodyEl.querySelectorAll('input[type="checkbox"][data-mapel-key]:checked'))
+    return Array.from(bodyEl.querySelectorAll('input[type="checkbox"][data-mapel-group=\"1\"]:checked'))
       .map(function (inputEl) { return String(inputEl.getAttribute('data-mapel-key') || '').trim() })
       .filter(Boolean)
   }
 
-  async function openCreateExamFolderDraftModal(draft, groups, references) {
+  function getSelectedCreateFolderClassMap() {
+    var bodyEl = getInput('ju-create-folder-mapel-select')
+    var map = new Map()
+    if (!bodyEl) return map
+    Array.from(bodyEl.querySelectorAll('input[type="checkbox"][data-class-id]:checked')).forEach(function (inputEl) {
+      var key = String(inputEl.getAttribute('data-mapel-key') || '').trim()
+      var classId = String(inputEl.getAttribute('data-class-id') || '').trim()
+      if (!key || !classId) return
+      if (!map.has(key)) map.set(key, [])
+      map.get(key).push(classId)
+    })
+    return map
+  }
+
+  window.toggleCreateFolderMapelGroup = function toggleCreateFolderMapelGroup(mapelKey, checked) {
+    var bodyEl = getInput('ju-create-folder-mapel-select')
+    if (!bodyEl) return
+    bodyEl.querySelectorAll('input[type="checkbox"][data-class-id][data-mapel-key="' + mapelKey + '"]').forEach(function (inputEl) {
+      inputEl.checked = Boolean(checked)
+    })
+    window.updateCreateFolderMapelSummary()
+  }
+
+  window.syncCreateFolderMapelGroup = function syncCreateFolderMapelGroup(mapelKey) {
+    var bodyEl = getInput('ju-create-folder-mapel-select')
+    if (!bodyEl) return
+    var groupEl = bodyEl.querySelector('input[type="checkbox"][data-mapel-group="1"][data-mapel-key="' + mapelKey + '"]')
+    if (!groupEl) return
+    var classChecks = bodyEl.querySelectorAll('input[type="checkbox"][data-class-id][data-mapel-key="' + mapelKey + '"]')
+    var anyChecked = Array.from(classChecks).some(function (inputEl) { return inputEl.checked })
+    groupEl.checked = anyChecked
+  }
+
+  async function openCreateExamFolderDraftModal(draft, groups, references, options) {
     var modalEl = getInput('ju-create-folder-modal')
     var jenisEl = getInput('ju-create-folder-jenis')
     var semesterEl = getInput('ju-create-folder-semester')
     var tahunEl = getInput('ju-create-folder-tahun')
     var nameEl = getInput('ju-create-folder-name')
+    var titleEl = getInput('ju-create-folder-title')
+    var submitEl = getInput('ju-create-folder-submit')
     if (!modalEl || !jenisEl || !semesterEl || !tahunEl || !nameEl) {
       var fallbackName = String(draft && draft.folderName || '').trim()
       var fallbackOk = true
@@ -343,14 +429,46 @@
       }) : null
     }
 
-    jenisEl.value = String(draft && draft.jenis || '').trim().toUpperCase()
-    populateReferenceSelect(semesterEl, references && references.semesters, draft && draft.semesterId, draft && draft.semesterNama)
+    createFolderDraftModalMode = options && options.mode ? options.mode : 'create'
+    createFolderDraftGroupsCache = Array.isArray(groups) ? groups : []
+    if (titleEl) titleEl.textContent = String(options && options.title || 'Detail Folder Ujian')
+    if (submitEl) submitEl.textContent = String(options && options.submitLabel || (createFolderDraftModalMode === 'edit' ? 'Simpan Perubahan' : 'Buat Folder'))
+
+    var jenisValue = normalizeJenisOptionValue(draft && draft.jenis)
+    if (jenisEl) {
+      var normalizedJenis = jenisValue || ''
+      if (normalizedJenis && !Array.from(jenisEl.options || []).some(function (opt) { return String(opt.value || '') === normalizedJenis })) {
+        var opt = document.createElement('option')
+        opt.value = normalizedJenis
+        opt.textContent = normalizedJenis
+        jenisEl.appendChild(opt)
+      }
+      jenisEl.value = normalizedJenis
+    }
     populateReferenceSelect(tahunEl, references && references.years, draft && draft.tahunId, draft && draft.tahunNama)
+    var applySemesterOptions = function () {
+      var tahunId = String(tahunEl && tahunEl.value || '').trim()
+      var fallbackSemester = {
+        id: String(draft && draft.semesterId || ''),
+        nama: String(draft && draft.semesterNama || ''),
+        tahun_ajaran_id: tahunId
+      }
+      var semesterOptions = filterSemestersByYear(references && references.semesters, tahunId, fallbackSemester)
+      populateReferenceSelect(semesterEl, semesterOptions, draft && draft.semesterId, draft && draft.semesterNama)
+    }
+    applySemesterOptions()
     nameEl.value = String(draft && draft.folderName || '').trim()
     var defaultSelectedKeys = Array.isArray(draft && draft.selectedMapelKeys) && draft.selectedMapelKeys.length
       ? draft.selectedMapelKeys
       : (Array.isArray(groups) ? groups.map(getMapelGroupKey) : [])
-    renderCreateFolderMapelSelector(groups, new Set(defaultSelectedKeys))
+    var selectedClassMap = new Map()
+    if (draft && draft.selectedMapelClasses && typeof draft.selectedMapelClasses === 'object') {
+      Object.keys(draft.selectedMapelClasses).forEach(function (key) {
+        var ids = draft.selectedMapelClasses[key]
+        if (Array.isArray(ids) && ids.length) selectedClassMap.set(key, ids)
+      })
+    }
+    renderCreateFolderMapelSelector(groups, new Set(defaultSelectedKeys), selectedClassMap)
     window.updateCreateFolderMapelSummary()
 
     var syncName = function () {
@@ -358,14 +476,17 @@
       var raw = String(nameEl.value || '').trim()
       if (!raw || String(nameEl.dataset.manualName || '') !== '1') nameEl.value = auto
     }
-    nameEl.dataset.manualName = '0'
+    nameEl.dataset.manualName = (options && options.forceManualName) ? '1' : '0'
     nameEl.oninput = function () {
       if (String(nameEl.value || '').trim()) nameEl.dataset.manualName = '1'
       else nameEl.dataset.manualName = '0'
     }
-    jenisEl.oninput = syncName
+    jenisEl.onchange = syncName
     semesterEl.onchange = syncName
-    tahunEl.onchange = syncName
+    tahunEl.onchange = function () {
+      applySemesterOptions()
+      syncName()
+    }
     syncName()
 
     modalEl.style.display = 'flex'
@@ -378,12 +499,307 @@
     })
   }
 
-  function resolveCreateExamFolderDraftModal(payload) {
+  function resolveCreateExamFolderDraftModal(payload, options) {
+    var keepOpen = options && options.keepOpen
     var modalEl = getInput('ju-create-folder-modal')
-    if (modalEl) modalEl.style.display = 'none'
+    if (modalEl && !keepOpen) modalEl.style.display = 'none'
     var resolve = createFolderDraftModalResolver
     createFolderDraftModalResolver = null
+    createFolderDraftModalMode = 'create'
     if (typeof resolve === 'function') resolve(payload || null)
+  }
+
+  function setJadwalUjianModalSaving(isSaving) {
+    var submitEl = getInput('ju-create-folder-submit')
+    if (!submitEl) return
+    if (isSaving) {
+      if (!submitEl.dataset.originalText) submitEl.dataset.originalText = submitEl.textContent
+      submitEl.disabled = true
+      submitEl.textContent = 'Menyimpan...'
+      submitEl.classList.add('is-loading')
+      return
+    }
+    submitEl.disabled = false
+    submitEl.classList.remove('is-loading')
+    if (submitEl.dataset.originalText) {
+      submitEl.textContent = submitEl.dataset.originalText
+      delete submitEl.dataset.originalText
+    }
+  }
+
+  function buildFolderRowKeyFromRow(row) {
+    return String(row && row.mapel || '').toLowerCase() + '|' + String(row && row.kelas || '').toLowerCase()
+  }
+
+  function buildFolderRowKeyFromGroup(group) {
+    return String(group && group.mapel_label || '').toLowerCase() + '|' + String(group && group.perangkatan || '').toLowerCase()
+  }
+
+  function closeFolderMenu() {
+    if (!openFolderMenuKey) return
+    openFolderMenuKey = null
+    renderFolders(folderRowsCache || [])
+  }
+
+  window.closeFolderMenu = closeFolderMenu
+
+  window.toggleExamFolderMenu = function toggleExamFolderMenu(folderKey, event) {
+    if (event && typeof event.stopPropagation === 'function') event.stopPropagation()
+    var key = String(folderKey || '')
+    openFolderMenuKey = openFolderMenuKey === key ? null : key
+    renderFolders(folderRowsCache || [])
+  }
+
+  function buildMinimalGroupFromRow(row) {
+    var meta = parseMeta(row)
+    return {
+      mapel_nama: String((meta && meta.mapel_nama) || (row && row.mapel) || '-'),
+      perangkatan: String(row && row.kelas || ''),
+      mapel_label: String(row && row.mapel || ''),
+      class_rows: Array.isArray(meta && meta.class_rows) ? meta.class_rows : []
+    }
+  }
+
+  function setEditFolderModalLoading(isLoading, message) {
+    var modalEl = getInput('ju-create-folder-modal')
+    if (!modalEl) return
+    var titleEl = getInput('ju-create-folder-title')
+    var submitEl = getInput('ju-create-folder-submit')
+    var mapelEl = getInput('ju-create-folder-mapel-select')
+    var summaryEl = getInput('ju-create-folder-mapel-summary')
+    if (isLoading) {
+      if (titleEl) titleEl.textContent = 'Edit Folder Ujian'
+      if (mapelEl) mapelEl.innerHTML = '<div style="font-size:12px; color:#64748b;">Memuat detail folder...</div>'
+      if (summaryEl) summaryEl.textContent = 'Memuat data...'
+      if (submitEl) {
+        if (!submitEl.dataset.originalText) submitEl.dataset.originalText = submitEl.textContent
+        submitEl.disabled = true
+        submitEl.textContent = message || 'Menyiapkan...'
+        submitEl.classList.add('is-loading')
+      }
+      return
+    }
+    if (submitEl) {
+      submitEl.disabled = false
+      submitEl.classList.remove('is-loading')
+      if (submitEl.dataset.originalText) {
+        submitEl.textContent = submitEl.dataset.originalText
+        delete submitEl.dataset.originalText
+      }
+    }
+  }
+
+  window.openEditExamFolder = async function openEditExamFolder(folderName) {
+    var name = String(folderName || '').trim()
+    if (!name) return
+    var modalEl = getInput('ju-create-folder-modal')
+    if (modalEl) modalEl.style.display = 'flex'
+    setEditFolderModalLoading(true)
+    var items = (folderRowsCache || []).filter(function (row) { return String(row && row.nama || '') === name })
+    if (!items.length) {
+      alert('Folder ujian tidak ditemukan.')
+      if (modalEl) modalEl.style.display = 'none'
+      setEditFolderModalLoading(false)
+      return
+    }
+
+    var jenis = String(items[0] && items[0].jenis || '').trim()
+    var meta = parseMeta(items[0] || {})
+    var semesterId = String(meta && meta.semester_id || '').trim()
+    var semesterNama = String(meta && meta.semester_nama || '').trim()
+    var tahunId = String(meta && meta.tahun_ajaran_id || '').trim()
+    var tahunNama = String(meta && meta.tahun_ajaran_nama || '').trim()
+
+    var distribusi
+    try {
+      distribusi = await loadDistribusiMapelAktif()
+    } catch (error) {
+      distribusi = null
+    }
+
+    var groups = distribusi
+      ? groupMapelPerangkatan(distribusi.rows, distribusi.kelasMap, distribusi.mapelMap)
+      : []
+    if (!groups.length) {
+      groups = items.map(buildMinimalGroupFromRow)
+    }
+
+    var selectedMapelKeys = items.map(function (row) { return buildFolderRowKeyFromRow(row) })
+    var selectedMapelClasses = {}
+    items.forEach(function (row) {
+      var key = buildFolderRowKeyFromRow(row)
+      var metaRow = parseMeta(row || {})
+      var classRows = Array.isArray(metaRow && metaRow.class_rows) ? metaRow.class_rows : []
+      var classIds = classRows.map(function (cls) { return String(cls && cls.kelas_id || cls && cls.id || '').trim() }).filter(Boolean)
+      if (classIds.length) selectedMapelClasses[key] = classIds
+    })
+    var referenceOptions
+    try {
+      referenceOptions = await loadCreateFolderReferenceOptions(distribusi && distribusi.active)
+    } catch (error) {
+      referenceOptions = { semesters: [], years: [] }
+    }
+    setEditFolderModalLoading(false)
+
+    var editedDraft = await openCreateExamFolderDraftModal({
+      jenis: jenis,
+      semesterId: semesterId,
+      semesterNama: semesterNama,
+      tahunId: tahunId,
+      tahunNama: tahunNama,
+      folderName: name,
+      selectedMapelKeys: selectedMapelKeys,
+      selectedMapelClasses: selectedMapelClasses
+    }, groups, referenceOptions, {
+      mode: 'edit',
+      title: 'Edit Folder Ujian',
+      submitLabel: 'Simpan Perubahan',
+      forceManualName: true
+    })
+
+    if (!editedDraft) {
+      return
+    }
+    var modalEl = getInput('ju-create-folder-modal')
+    if (modalEl) modalEl.style.display = 'flex'
+
+    var newJenis = String(editedDraft.jenis || '').trim()
+    var newFolderName = String(editedDraft.folderName || '').trim()
+    var newSemesterId = String(editedDraft.semesterId || '').trim()
+    var newSemesterNama = String(editedDraft.semesterNama || '').trim()
+    var newTahunId = String(editedDraft.tahunId || '').trim()
+    var newTahunNama = String(editedDraft.tahunNama || '').trim()
+    var selectedSet = new Set(Array.isArray(editedDraft.selectedMapelKeys) ? editedDraft.selectedMapelKeys : [])
+    var selectedGroups = groups.filter(function (group) { return selectedSet.has(getMapelGroupKey(group)) || selectedSet.has(buildFolderRowKeyFromGroup(group)) })
+    var selectedClassesByKey = editedDraft && editedDraft.selectedMapelClasses ? editedDraft.selectedMapelClasses : {}
+
+    if (!newJenis) {
+      alert('Jenis ujian wajib diisi.')
+      setJadwalUjianModalSaving(false)
+      if (modalEl) modalEl.style.display = 'flex'
+      return
+    }
+    if (!newFolderName) {
+      alert('Nama folder ujian wajib diisi.')
+      setJadwalUjianModalSaving(false)
+      if (modalEl) modalEl.style.display = 'flex'
+      return
+    }
+    if (!selectedGroups.length) {
+      alert('Pilih minimal 1 mapel untuk tetap ada di folder ini.')
+      setJadwalUjianModalSaving(false)
+      if (modalEl) modalEl.style.display = 'flex'
+      return
+    }
+
+    var existingMap = new Map()
+    items.forEach(function (row) {
+      existingMap.set(buildFolderRowKeyFromRow(row), row)
+    })
+
+    var now = new Date().toISOString()
+    var updates = []
+    var inserts = []
+    var keepKeys = new Set()
+
+    selectedGroups.forEach(function (group) {
+      var key = buildFolderRowKeyFromGroup(group)
+      keepKeys.add(key)
+      var existing = existingMap.get(key)
+      var selectedClassIds = Array.isArray(selectedClassesByKey[key]) ? selectedClassesByKey[key] : []
+      var classRows = Array.isArray(group.class_rows) ? group.class_rows : []
+      var filteredClasses = selectedClassIds.length
+        ? classRows.filter(function (cls) {
+          var cid = String(cls && cls.kelas_id || cls && cls.id || '').trim()
+          return selectedClassIds.indexOf(cid) !== -1
+        })
+        : classRows
+      var metaPayload = Object.assign({}, parseMeta(existing || {}), {
+        folder_name: newFolderName,
+        semester_id: newSemesterId || null,
+        semester_nama: newSemesterNama || '',
+        tahun_ajaran_id: newTahunId || null,
+        tahun_ajaran_nama: newTahunNama || '',
+        mapel_nama: group.mapel_nama,
+        perangkatan: group.perangkatan,
+        class_rows: filteredClasses
+      })
+      if (existing && existing.id) {
+        updates.push({
+          id: existing.id,
+          jenis: newJenis,
+          nama: newFolderName,
+          kelas: group.perangkatan,
+          mapel: group.mapel_label,
+          keterangan: JSON.stringify(metaPayload),
+          updated_at: now
+        })
+      } else {
+        inserts.push({
+          jenis: newJenis,
+          nama: newFolderName,
+          kelas: group.perangkatan,
+          mapel: group.mapel_label,
+          tanggal: todayDate(),
+          jam_mulai: null,
+          jam_selesai: null,
+          lokasi: null,
+          keterangan: JSON.stringify(metaPayload),
+          updated_at: now
+        })
+      }
+    })
+
+    var deleteIds = []
+    items.forEach(function (row) {
+      var key = buildFolderRowKeyFromRow(row)
+      if (!keepKeys.has(key) && row && row.id) deleteIds.push(row.id)
+    })
+
+    if (deleteIds.length) {
+      var deleteRes = await sb.from(EXAM_SCHEDULE_TABLE).delete().in('id', deleteIds)
+      if (deleteRes.error) {
+        alert('Gagal menghapus mapel dari folder: ' + String(deleteRes.error.message || 'Unknown error'))
+        setJadwalUjianModalSaving(false)
+        if (modalEl) modalEl.style.display = 'flex'
+        return
+      }
+      var deleteParticipantRes = await sb.from(EXAM_PARTICIPANT_TABLE).delete().in('jadwal_id', deleteIds)
+      if (deleteParticipantRes.error) {
+        alert('Gagal membersihkan peserta ujian yang dihapus: ' + String(deleteParticipantRes.error.message || 'Unknown error'))
+        setJadwalUjianModalSaving(false)
+        if (modalEl) modalEl.style.display = 'flex'
+        return
+      }
+    }
+
+    if (updates.length) {
+      for (var i = 0; i < updates.length; i += 1) {
+        var rowPayload = updates[i]
+        var updateRes = await sb.from(EXAM_SCHEDULE_TABLE).update(rowPayload).eq('id', rowPayload.id)
+        if (updateRes.error) {
+          alert('Gagal memperbarui folder ujian: ' + String(updateRes.error.message || 'Unknown error'))
+          setJadwalUjianModalSaving(false)
+          if (modalEl) modalEl.style.display = 'flex'
+          return
+        }
+      }
+    }
+
+    if (inserts.length) {
+      var insertRes = await sb.from(EXAM_SCHEDULE_TABLE).insert(inserts)
+      if (insertRes.error) {
+        alert('Gagal menambahkan mapel ke folder: ' + String(insertRes.error.message || 'Unknown error'))
+        setJadwalUjianModalSaving(false)
+        if (modalEl) modalEl.style.display = 'flex'
+        return
+      }
+    }
+
+    alert('Folder ujian berhasil diperbarui.')
+    setJadwalUjianModalSaving(false)
+    await window.reloadJadwalUjianFolders()
+    resolveCreateExamFolderDraftModal(null)
   }
 
   async function getActiveSemesterAndYear() {
@@ -582,38 +998,53 @@
     Array.from(grouped.entries()).forEach(function (entry) {
       var folderName = entry[0]
       var items = entry[1]
-      var jenis = String(items[0] && items[0].jenis || '-')
-      html += '<div class="ju-folder">'
-      html += '<div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-bottom:8px;">'
+      var jenis = formatExamJenisLabel(items[0] && items[0].jenis || '-')
+      var folderKey = String(folderName || '')
+      var isOpen = openFolderSet.has(folderKey)
+      var isMenuOpen = openFolderMenuKey === folderKey
+      var meta = parseMeta(items[0] || {})
+      var semesterLabel = String(meta && meta.semester_nama || '').trim()
+      var tahunLabel = String(meta && meta.tahun_ajaran_nama || '').trim()
+      var suffixLabel = [semesterLabel, tahunLabel].filter(Boolean).join(' ')
+      var folderTitle = String(folderName || '')
+      html += '<div class="ju-folder" style="position:relative; z-index:' + (isMenuOpen ? 12 : 1) + ';">'
+      html += '<div class="ju-folder-header" role="button" data-folder="' + escapeHtml(folderKey) + '" onclick="toggleExamFolder(this.dataset.folder)">'
       html += '<div>'
-      html += '<div style="font-weight:700; color:#0f172a;">' + escapeHtml(folderName) + '</div>'
-      html += '<div style="font-size:12px; color:#64748b;">Jenis: ' + escapeHtml(jenis) + ' | Total mapel perangkatan: ' + items.length + '</div>'
+      html += '<div class="ju-folder-title">' + escapeHtml(folderTitle || folderName) + '</div>'
+      if (suffixLabel) html += '<div class="ju-folder-meta">' + escapeHtml(suffixLabel) + '</div>'
+      html += '<div class="ju-folder-meta">Jenis: ' + escapeHtml(jenis) + ' | Total mapel perangkatan: ' + items.length + '</div>'
       html += '</div>'
-      html += '<button type="button" class="ju-btn secondary" onclick="deleteExamFolder(\'' + escapeHtml(folderName) + '\')">Hapus Folder</button>'
+      html += '<div class="ju-folder-actions">'
+      html += '<button type="button" class="ju-btn secondary ju-folder-menu-btn" data-folder="' + escapeHtml(folderKey) + '" onclick="toggleExamFolderMenu(this.dataset.folder, event)">⋯</button>'
+      html += '</div>'
+      html += '</div>'
+      html += '<div class="ju-folder-menu" style="display:' + (isMenuOpen ? 'block' : 'none') + ';">'
+      html += '<button type="button" class="ju-btn secondary" data-folder-name="' + escapeHtml(folderName) + '" style="width:100%; justify-content:flex-start;" onclick="openEditExamFolder(this.dataset.folderName); closeFolderMenu();">Edit Folder</button>'
+      html += '<button type="button" class="ju-btn secondary" data-folder-name="' + escapeHtml(folderName) + '" style="width:100%; justify-content:flex-start; margin-top:6px; color:#b91c1c; border-color:#fecaca; background:#fff5f5;" onclick="deleteExamFolder(this.dataset.folderName); closeFolderMenu();">Hapus Folder</button>'
       html += '</div>'
 
-      html += '<div style="overflow:auto; border:1px solid #e2e8f0; border-radius:10px;">'
-      html += '<table style="width:100%; border-collapse:collapse; font-size:13px; min-width:760px;">'
-      html += '<thead><tr style="background:#f8fafc;">'
-      html += '<th style="padding:8px; border:1px solid #e2e8f0; width:44px;">No</th>'
-      html += '<th style="padding:8px; border:1px solid #e2e8f0;">Mapel Perangkatan</th>'
-      html += '<th style="padding:8px; border:1px solid #e2e8f0; width:130px;">Tanggal</th>'
-      html += '<th style="padding:8px; border:1px solid #e2e8f0; width:130px;">Waktu</th>'
-      html += '<th style="padding:8px; border:1px solid #e2e8f0;">Lokasi</th>'
-      html += '<th style="padding:8px; border:1px solid #e2e8f0; width:140px;">Peserta</th>'
-      html += '<th style="padding:8px; border:1px solid #e2e8f0; width:250px;">Aksi</th>'
+      html += '<div class="ju-folder-body" style="overflow:auto; ' + (isOpen ? '' : 'display:none;') + '">'
+      html += '<table class="ju-table">'
+      html += '<thead><tr>'
+      html += '<th style="width:44px;">No</th>'
+      html += '<th>Mapel Perangkatan</th>'
+      html += '<th style="width:130px;">Tanggal</th>'
+      html += '<th style="width:130px;">Waktu</th>'
+      html += '<th>Lokasi</th>'
+      html += '<th style="width:140px;">Peserta</th>'
+      html += '<th style="width:250px;">Aksi</th>'
       html += '</tr></thead><tbody>'
 
       items.forEach(function (item, idx) {
         var waktu = [item.jam_mulai || '-', item.jam_selesai || '-'].join(' - ')
         html += '<tr>'
-        html += '<td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">' + (idx + 1) + '</td>'
-        html += '<td style="padding:8px; border:1px solid #e2e8f0;">' + escapeHtml(item.mapel || '-') + '</td>'
-        html += '<td style="padding:8px; border:1px solid #e2e8f0;">' + escapeHtml(item.tanggal || '-') + '</td>'
-        html += '<td style="padding:8px; border:1px solid #e2e8f0;">' + escapeHtml(waktu) + '</td>'
-        html += '<td style="padding:8px; border:1px solid #e2e8f0;">' + escapeHtml(item.lokasi || '-') + '</td>'
-        html += '<td style="padding:8px; border:1px solid #e2e8f0;">' + escapeHtml(getParticipantStatText(item.id)) + '</td>'
-        html += '<td style="padding:8px; border:1px solid #e2e8f0; white-space:nowrap;">'
+        html += '<td style="text-align:center;">' + (idx + 1) + '</td>'
+        html += '<td>' + escapeHtml(item.mapel || '-') + '</td>'
+        html += '<td>' + escapeHtml(formatDateLabel(item.tanggal)) + '</td>'
+        html += '<td>' + escapeHtml(waktu) + '</td>'
+        html += '<td>' + escapeHtml(item.lokasi || '-') + '</td>'
+        html += '<td><span class="ju-pill">' + escapeHtml(getParticipantStatText(item.id)) + '</span></td>'
+        html += '<td class="ju-actions-cell">'
         html += '<button type="button" class="ju-btn" onclick="openJadwalMapelDetail(\'' + escapeHtml(String(item.id || '')) + '\')">Atur Detail</button>'
         html += '<button type="button" class="ju-btn secondary" style="margin-left:6px;" onclick="releaseExamParticipants(\'' + escapeHtml(String(item.id || '')) + '\')">Rilis Peserta</button>'
         html += '<button type="button" class="ju-btn secondary" style="margin-left:6px;" onclick="openExamParticipantsModal(\'' + escapeHtml(String(item.id || '')) + '\')">Peserta</button>'
@@ -626,6 +1057,15 @@
     })
 
     listEl.innerHTML = html
+  }
+
+  window.toggleExamFolder = function toggleExamFolder(folderName) {
+    var key = String(folderName || '')
+    if (!key) return
+    if (openFolderSet.has(key)) openFolderSet.delete(key)
+    else openFolderSet.add(key)
+    if (openFolderMenuKey === key) openFolderMenuKey = null
+    renderFolders(folderRowsCache || [])
   }
 
   function ensureClassRows(meta, row) {
@@ -1281,9 +1721,10 @@
     var bodyEl = getInput('ju-create-folder-mapel-select')
     var summaryEl = getInput('ju-create-folder-mapel-summary')
     if (!summaryEl || !bodyEl) return
-    var total = bodyEl.querySelectorAll('input[type="checkbox"][data-mapel-key]').length
-    var picked = bodyEl.querySelectorAll('input[type="checkbox"][data-mapel-key]:checked').length
-    summaryEl.textContent = picked + ' dari ' + total + ' mapel dipilih'
+    var total = bodyEl.querySelectorAll('input[type="checkbox"][data-mapel-group=\"1\"]').length
+    var picked = bodyEl.querySelectorAll('input[type="checkbox"][data-mapel-group=\"1\"]:checked').length
+    var classPicked = bodyEl.querySelectorAll('input[type="checkbox"][data-class-id]:checked').length
+    summaryEl.textContent = picked + ' dari ' + total + ' mapel dipilih • ' + classPicked + ' kelas dipilih'
   }
 
   window.selectAllCreateFolderMapel = function selectAllCreateFolderMapel(allChecked) {
@@ -1325,6 +1766,24 @@
       alert('Pilih minimal 1 mapel untuk dibuatkan folder ujian.')
       return
     }
+    var selectedClassMap = getSelectedCreateFolderClassMap()
+    if (createFolderDraftGroupsCache.length) {
+      for (var i = 0; i < selectedMapelKeys.length; i += 1) {
+        var key = selectedMapelKeys[i]
+        var group = createFolderDraftGroupsCache.find(function (item) { return getMapelGroupKey(item) === key })
+      var classRows = group && Array.isArray(group.class_rows) ? group.class_rows : []
+      var availableIds = classRows.map(function (cls) { return String(cls && cls.kelas_id || cls && cls.id || '').trim() }).filter(Boolean)
+      if (availableIds.length && (!selectedClassMap.has(key) || !selectedClassMap.get(key).length)) {
+        alert('Pilih minimal 1 kelas untuk mapel ' + String(group && group.mapel_label || '-') + '.')
+        return
+      }
+      }
+    }
+    setJadwalUjianModalSaving(true)
+    var selectedMapelClasses = {}
+    selectedClassMap.forEach(function (ids, key) {
+      selectedMapelClasses[key] = ids
+    })
     resolveCreateExamFolderDraftModal({
       jenis: jenis,
       semesterId: semesterId,
@@ -1332,8 +1791,9 @@
       tahunId: tahunId,
       tahunNama: tahunNama,
       folderName: folderName,
-      selectedMapelKeys: selectedMapelKeys
-    })
+      selectedMapelKeys: selectedMapelKeys,
+      selectedMapelClasses: selectedMapelClasses
+    }, { keepOpen: createFolderDraftModalMode === 'edit' })
   }
 
   function buildExamAttendancePrintHtml(row, participants) {
@@ -1431,12 +1891,6 @@
   }
 
   window.createExamFolderFromJenis = async function createExamFolderFromJenis() {
-    var jenis = String(getInput('ju-jenis-folder') && getInput('ju-jenis-folder').value || '').trim().toUpperCase()
-    if (!jenis) {
-      alert('Jenis ujian wajib dipilih.')
-      return
-    }
-
     var distribusi
     try {
       distribusi = await loadDistribusiMapelAktif()
@@ -1449,7 +1903,7 @@
     var tahunId = String(distribusi.active && distribusi.active.tahun && distribusi.active.tahun.id || '').trim()
     var semesterNama = String(distribusi.active && distribusi.active.semester && distribusi.active.semester.nama || '-').trim()
     var tahunNama = String(distribusi.active && distribusi.active.tahun && distribusi.active.tahun.nama || '-').trim()
-    var folderName = buildFolderNameByParts(jenis, semesterNama, tahunNama)
+    var folderName = buildFolderNameByParts('', semesterNama, tahunNama)
 
     var groups = groupMapelPerangkatan(distribusi.rows, distribusi.kelasMap, distribusi.mapelMap)
     if (!groups.length) {
@@ -1465,7 +1919,7 @@
       return
     }
     var editedDraft = await openCreateExamFolderDraftModal({
-      jenis: jenis,
+      jenis: '',
       semesterId: semesterId,
       semesterNama: semesterNama,
       tahunId: tahunId,
@@ -1475,7 +1929,7 @@
     }, groups, referenceOptions)
     if (!editedDraft) return
 
-    jenis = String(editedDraft.jenis || '').trim().toUpperCase()
+    var jenis = String(editedDraft.jenis || '').trim().toUpperCase()
     semesterId = String(editedDraft.semesterId || '').trim()
     semesterNama = String(editedDraft.semesterNama || '').trim()
     tahunId = String(editedDraft.tahunId || '').trim()
@@ -1483,6 +1937,7 @@
     folderName = String(editedDraft.folderName || '').trim()
     var selectedMapelKeySet = new Set(Array.isArray(editedDraft.selectedMapelKeys) ? editedDraft.selectedMapelKeys : [])
     var selectedGroups = groups.filter(function (group) { return selectedMapelKeySet.has(getMapelGroupKey(group)) })
+    var selectedClassesByKey = editedDraft && editedDraft.selectedMapelClasses ? editedDraft.selectedMapelClasses : {}
 
     if (!jenis) {
       alert('Jenis ujian wajib diisi.')
@@ -1528,6 +1983,14 @@
     selectedGroups.forEach(function (group) {
       var key = getMapelGroupKey(group)
       if (existingKey.has(key)) return
+      var selectedClassIds = Array.isArray(selectedClassesByKey[key]) ? selectedClassesByKey[key] : []
+      var classRows = Array.isArray(group.class_rows) ? group.class_rows : []
+      var filteredClasses = selectedClassIds.length
+        ? classRows.filter(function (cls) {
+          var cid = String(cls && cls.kelas_id || cls && cls.id || '').trim()
+          return selectedClassIds.indexOf(cid) !== -1
+        })
+        : classRows
       payload.push({
         jenis: jenis,
         nama: folderName,
@@ -1545,7 +2008,7 @@
           tahun_ajaran_nama: tahunNama,
           mapel_nama: group.mapel_nama,
           perangkatan: group.perangkatan,
-          class_rows: group.class_rows
+          class_rows: filteredClasses
         }),
         updated_at: now
       })
@@ -1577,6 +2040,9 @@
   }
 
   window.initJadwalUjianPage = async function initJadwalUjianPage() {
+    document.addEventListener('click', function () {
+      closeFolderMenu()
+    })
     await window.reloadJadwalUjianFolders()
   }
 })()

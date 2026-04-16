@@ -11,11 +11,15 @@ const KG_KALENDER_TABLE = 'kalender_akademik'
 const KG_PERIZINAN_TABLE = 'izin_karyawan'
 const KG_LIBUR_SEMUA = 'libur_semua_kegiatan'
 const KG_LIBUR_AKADEMIK = 'libur_akademik'
+const KG_KALENDER_UJIAN = 'ujian'
+const KG_KALENDER_LIBUR_KELAS = 'libur_kelas'
 
 function normalizeKgKalenderType(value) {
   const raw = String(value || '').trim().toLowerCase()
   if (raw === KG_LIBUR_SEMUA) return KG_LIBUR_SEMUA
   if (raw === KG_LIBUR_AKADEMIK) return KG_LIBUR_AKADEMIK
+  if (raw === KG_KALENDER_UJIAN) return KG_KALENDER_UJIAN
+  if (raw === KG_KALENDER_LIBUR_KELAS) return KG_KALENDER_LIBUR_KELAS
   return ''
 }
 
@@ -25,6 +29,8 @@ function inferKgKalenderType(row) {
   const text = `${String(row?.judul || '')} ${String(row?.detail || '')}`.toLowerCase()
   if (text.includes('libur semua')) return KG_LIBUR_SEMUA
   if (text.includes('libur akademik')) return KG_LIBUR_AKADEMIK
+  if (text.includes('libur kelas')) return KG_KALENDER_LIBUR_KELAS
+  if (text.includes('ujian')) return KG_KALENDER_UJIAN
   return ''
 }
 
@@ -47,6 +53,115 @@ function getKgDateRangeKeys(startValue, endValue) {
     cursor.setDate(cursor.getDate() + 1)
   }
   return result
+}
+
+function parseKgKalenderDetailPayload(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return { text: '', kelas_ids: [], kelas_nama: [] }
+  try {
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object') {
+      const kelasIds = Array.isArray(parsed.kelas_ids) ? parsed.kelas_ids.map(id => String(id || '').trim()).filter(Boolean) : []
+      const kelasNama = Array.isArray(parsed.kelas_nama) ? parsed.kelas_nama.map(name => String(name || '').trim()).filter(Boolean) : []
+      const text = String(parsed.text || parsed.detail || '').trim()
+      return { text, kelas_ids: kelasIds, kelas_nama: kelasNama }
+    }
+  } catch (_err) {
+    // ignore
+  }
+  return { text: raw, kelas_ids: [], kelas_nama: [] }
+}
+
+async function fetchKgKalenderRows() {
+  const withType = await sb
+    .from(KG_KALENDER_TABLE)
+    .select('id, judul, detail, jenis_kegiatan, mulai, selesai')
+  if (!withType.error) return withType.data || []
+  if (isKgMissingKalenderTypeColumnError(withType.error)) {
+    const fallback = await sb
+      .from(KG_KALENDER_TABLE)
+      .select('id, judul, detail, mulai, selesai')
+    if (fallback.error) throw fallback.error
+    return fallback.data || []
+  }
+  const msg = String(withType.error?.message || '').toLowerCase()
+  if (msg.includes(KG_KALENDER_TABLE) && (msg.includes('does not exist') || msg.includes('schema cache'))) return []
+  throw withType.error
+}
+
+function buildKgAcademicHolidayDateSetFromRows(rows, range) {
+  const dateSet = new Set()
+  ;(rows || []).forEach(item => {
+    const type = inferKgKalenderType(item)
+    if (type !== KG_LIBUR_SEMUA && type !== KG_LIBUR_AKADEMIK) return
+    const keys = getKgDateRangeKeys(item?.mulai, item?.selesai || item?.mulai)
+    keys.forEach(key => {
+      if (key >= range.start && key <= range.end) dateSet.add(key)
+    })
+  })
+  return dateSet
+}
+
+function buildKgKalenderClassIndex(rows, kelasNameToId, range) {
+  const index = new Map()
+  const ensureEntry = dateKey => {
+    if (!index.has(dateKey)) {
+      index.set(dateKey, {
+        ujianAll: false,
+        ujianClasses: new Set(),
+        ujianNote: '',
+        liburAll: false,
+        liburClasses: new Set(),
+        liburNote: ''
+      })
+    }
+    return index.get(dateKey)
+  }
+
+  ;(rows || []).forEach(item => {
+    const type = inferKgKalenderType(item)
+    if (type !== KG_KALENDER_UJIAN && type !== KG_KALENDER_LIBUR_KELAS) return
+    const detail = parseKgKalenderDetailPayload(item?.detail || '')
+    const kelasIds = new Set((detail.kelas_ids || []).map(id => String(id || '').trim()).filter(Boolean))
+    ;(detail.kelas_nama || []).forEach(name => {
+      const norm = normalizeKgLookupLabel(name)
+      if (norm && kelasNameToId.has(norm)) kelasIds.add(kelasNameToId.get(norm))
+    })
+
+    const isAll = kelasIds.size === 0
+    const baseLabel = type === KG_KALENDER_UJIAN ? 'Waktu pelaksanaan ujian' : 'Libur kelas'
+    const extraText = detail.text || String(item?.judul || '').trim()
+    const note = extraText ? `${baseLabel} - ${extraText}` : baseLabel
+    const keys = getKgDateRangeKeys(item?.mulai, item?.selesai || item?.mulai)
+    keys.forEach(key => {
+      if (key < range.start || key > range.end) return
+      const entry = ensureEntry(key)
+      if (type === KG_KALENDER_UJIAN) {
+        if (isAll) entry.ujianAll = true
+        kelasIds.forEach(id => entry.ujianClasses.add(id))
+        if (!entry.ujianNote) entry.ujianNote = note
+      } else {
+        if (isAll) entry.liburAll = true
+        kelasIds.forEach(id => entry.liburClasses.add(id))
+        if (!entry.liburNote) entry.liburNote = note
+      }
+    })
+  })
+
+  return index
+}
+
+function getKgKalenderMatch(index, dateKey, kelasId) {
+  const entry = index.get(String(dateKey || ''))
+  if (!entry) return null
+  const classId = String(kelasId || '')
+  if (entry.ujianAll || entry.ujianClasses.has(classId)) {
+    return { type: KG_KALENDER_UJIAN, note: entry.ujianNote || 'Waktu pelaksanaan ujian' }
+  }
+  if (entry.liburAll || entry.liburClasses.has(classId)) {
+    return { type: KG_KALENDER_LIBUR_KELAS, note: entry.liburNote || 'Libur kelas' }
+  }
+  return null
 }
 
 async function getKgAcademicHolidayDateSet(startDate, endDate) {
@@ -218,6 +333,51 @@ function normalizeKgDateText(value) {
   return String(value || '').slice(0, 10)
 }
 
+function parseKgExamMeta(row) {
+  const raw = String(row?.keterangan || '').trim()
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch (_err) {
+    return {}
+  }
+}
+
+function buildKgExamTimeLabel(row) {
+  const start = String(row?.jam_mulai || '').trim()
+  const end = String(row?.jam_selesai || '').trim()
+  if (!start && !end) return ''
+  if (start && end) return `${start}-${end}`
+  return start || end
+}
+
+function isKgNonaktifBelajarClass(kelasName) {
+  const text = String(kelasName || '').toUpperCase()
+  if (!text) return false
+  if (/\b(IX|9)\b/.test(text)) return true
+  if (/\b(XII|12)\b/.test(text)) return true
+  return false
+}
+
+function getKgPerangkatanFromKelasName(kelasName) {
+  const text = String(kelasName || '').toUpperCase()
+  if (!text) return ''
+  if (text.includes('SMP')) return 'SMP'
+  if (text.includes('SMA')) return 'SMA'
+  if (/\b(7|8|9|VII|VIII|IX)\b/.test(text)) return 'SMP'
+  if (/\b(10|11|12|X|XI|XII)\b/.test(text)) return 'SMA'
+  return ''
+}
+
+function isKgUtsGenapExam(row, meta) {
+  const jenis = String(row?.jenis || row?.nama || '').toUpperCase()
+  const semesterName = String(meta?.semester_nama || '').toLowerCase()
+  const isUts = jenis.includes('UTS') || jenis.includes('PTS')
+  const isGenap = semesterName.includes('genap')
+  return isUts && isGenap
+}
+
 function formatKgLocalDate(date) {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
@@ -281,6 +441,23 @@ function normalizeKgLookupLabel(value) {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, ' ')
+}
+
+function normalizeKgMapelBase(value) {
+  let text = String(value || '').toLowerCase()
+  text = text.replace(/\b(smp|sma|umum|ma)\b/g, ' ')
+  text = text.replace(/[^\p{L}\p{N}\s]/gu, ' ')
+  text = text.replace(/\s+/g, ' ').trim()
+  if (!text) return ''
+  const normalizeLang = (base, patterns) => {
+    if (patterns.some(p => text.includes(p))) return base
+    return ''
+  }
+  const langHit = normalizeLang('bahasa inggris', ['bahasa inggris', 'b inggris', 'bhs inggris', 'inggris', 'english'])
+    || normalizeLang('bahasa indonesia', ['bahasa indonesia', 'b indonesia', 'bhs indonesia', 'indonesia'])
+    || normalizeLang('bahasa arab', ['bahasa arab', 'b arab', 'bhs arab', 'arab'])
+  if (langHit) return langHit
+  return text
 }
 
 function summarizeKgDebugRows(rows = []) {
@@ -623,8 +800,10 @@ async function loadKehadiranGuruAdminData(periode) {
   const range = getKgMonthRange(periode)
   if (!range) throw new Error('Periode tidak valid.')
   let academicHolidayDates = new Set()
+  let kalenderRows = []
   try {
-    academicHolidayDates = await getKgAcademicHolidayDateSet(range.start, range.end)
+    kalenderRows = await fetchKgKalenderRows()
+    academicHolidayDates = buildKgAcademicHolidayDateSetFromRows(kalenderRows, range)
   } catch (error) {
     console.warn('Gagal memuat libur akademik untuk kehadiran guru admin.', error)
   }
@@ -720,6 +899,14 @@ async function loadKehadiranGuruAdminData(periode) {
   const mapelMap = new Map((mapelRes.data || []).map(item => [String(item.id), item]))
   const karyawanMap = new Map((karyawanRes.data || []).map(item => [String(item.id), item]))
   const jamMap = new Map((jamRes.data || []).map(item => [String(item.id), item]))
+
+  const kelasNameToId = new Map()
+  kelasMap.forEach(item => {
+    const name = normalizeKgLookupLabel(item?.nama_kelas || '')
+    if (name) kelasNameToId.set(name, String(item.id))
+  })
+
+  const kalenderIndex = buildKgKalenderClassIndex(kalenderRows || [], kelasNameToId, range)
 
   const jadwalList = (jadwalRes.data || []).filter(item => distribusiMap.has(String(item.distribusi_id || '')))
 
@@ -979,9 +1166,12 @@ async function loadKehadiranGuruAdminData(periode) {
       const notes = agg ? Array.from(agg.notes) : []
       const hasPenggantiSignal = penggantiIds.length > 0 || notes.length > 0
       const izinInfo = approvedIzinLookup.get(`${guruId}|${session.tanggal}`) || null
+      const kelasNamaRaw = String(kelasMap.get(session.kelas_id)?.nama_kelas || '')
+      const kalenderMatch = getKgKalenderMatch(kalenderIndex, session.tanggal, session.kelas_id)
+      const kalenderNote = kalenderMatch?.note || ''
       const status = izinInfo
         ? 'Izin'
-        : (!agg ? 'Tidak Masuk' : (hasPenggantiSignal ? 'Diganti' : 'Masuk'))
+        : (!agg ? (kalenderMatch ? 'Masuk' : 'Tidak Masuk') : (hasPenggantiSignal ? 'Diganti' : 'Masuk'))
 
       if (!summaryByGuru.has(guruId)) {
         summaryByGuru.set(guruId, {
@@ -1015,9 +1205,11 @@ async function loadKehadiranGuruAdminData(periode) {
         jam: session.jam_label || '-',
         status,
         pengganti: penggantiNamaList.join(', ') || '-',
-        keterangan: status === 'Izin'
-          ? String(izinInfo?.reason || 'Izin disetujui wakasek')
-          : (notes.join(' | ') || '-'),
+        keterangan: kalenderNote
+          ? kalenderNote
+          : (status === 'Izin'
+            ? String(izinInfo?.reason || 'Izin disetujui wakasek')
+            : (notes.join(' | ') || '-')),
         debug: {
           match_source: matchSource,
           expected: {
@@ -1028,6 +1220,12 @@ async function loadKehadiranGuruAdminData(periode) {
             distribusi_id: session.distribusi_id || '-',
             semester_id: session.semester_id || '-',
             jam_key: session.jam_key || '-'
+          },
+          calendar: {
+            type: kalenderMatch?.type || '-',
+            class_name: kelasNamaRaw || '-',
+            matched: Boolean(kalenderMatch),
+            note: kalenderNote || '-'
           },
           matched: agg ? {
             row_ids: Array.from(agg.rowIds || []),
@@ -1241,6 +1439,7 @@ function renderKehadiranGuruDetail() {
               item?.debug?.matched
                 ? `matched guru=${(item.debug.matched.guru_ids || []).join(',') || '-'} kelas=${(item.debug.matched.kelas_ids || []).join(',') || '-'} mapel=${(item.debug.matched.mapel_ids || []).join(',') || '-'} distribusi=${(item.debug.matched.distribusi_ids || []).join(',') || '-'} sem=${(item.debug.matched.semester_ids || []).join(',') || '-'} jam=${(item.debug.matched.jam_ids || []).join(',') || '-'}`
                 : 'matched: -',
+              `calendar matched=${item?.debug?.calendar?.matched ? 'yes' : 'no'} type=${item?.debug?.calendar?.type || '-'} class=${item?.debug?.calendar?.class_name || '-'} note=${item?.debug?.calendar?.note || '-'}`,
               `candidate date-all rows=${item?.debug?.candidates?.date_all?.rowCount || 0} santri=${item?.debug?.candidates?.date_all?.santriCount || 0} guru=${(item?.debug?.candidates?.date_all?.guruIds || []).join(',') || '-'} kelas=${(item?.debug?.candidates?.date_all?.kelasIds || []).join(',') || '-'} mapel=${(item?.debug?.candidates?.date_all?.mapelIds || []).join(',') || '-'} distribusi=${(item?.debug?.candidates?.date_all?.distribusiIds || []).join(',') || '-'} jam=${(item?.debug?.candidates?.date_all?.jamIds || []).join(',') || '-'} status=${(item?.debug?.candidates?.date_all?.statuses || []).join(',') || '-'}`,
               `candidate guru-day rows=${item?.debug?.candidates?.guru_day?.rowCount || 0} santri=${item?.debug?.candidates?.guru_day?.santriCount || 0} kelas=${(item?.debug?.candidates?.guru_day?.kelasIds || []).join(',') || '-'} mapel=${(item?.debug?.candidates?.guru_day?.mapelIds || []).join(',') || '-'} distribusi=${(item?.debug?.candidates?.guru_day?.distribusiIds || []).join(',') || '-'} jam=${(item?.debug?.candidates?.guru_day?.jamIds || []).join(',') || '-'} status=${(item?.debug?.candidates?.guru_day?.statuses || []).join(',') || '-'}`,
               `candidate kelas-mapel-day rows=${item?.debug?.candidates?.class_mapel_day?.rowCount || 0} santri=${item?.debug?.candidates?.class_mapel_day?.santriCount || 0} guru=${(item?.debug?.candidates?.class_mapel_day?.guruIds || []).join(',') || '-'} distribusi=${(item?.debug?.candidates?.class_mapel_day?.distribusiIds || []).join(',') || '-'} jam=${(item?.debug?.candidates?.class_mapel_day?.jamIds || []).join(',') || '-'} status=${(item?.debug?.candidates?.class_mapel_day?.statuses || []).join(',') || '-'}`,

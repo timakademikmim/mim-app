@@ -1,10 +1,11 @@
 ﻿<style>
   .ju-card {
     border: 1px solid #e2e8f0;
-    border-radius: 12px;
-    background: #fff;
-    padding: 14px;
-    margin-bottom: 14px;
+    border-radius: 16px;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
   }
   .ju-label {
     display: block;
@@ -31,18 +32,124 @@
     cursor: pointer;
     background: #2563eb;
     color: #fff;
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+    box-shadow: 0 8px 16px rgba(37, 99, 235, 0.18);
+  }
+  .ju-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 18px rgba(37, 99, 235, 0.22);
   }
   .ju-btn.secondary {
     background: #fff;
     color: #334155;
     border: 1px solid #cbd5e1;
+    box-shadow: none;
   }
   .ju-folder {
     border: 1px solid #e2e8f0;
-    border-radius: 10px;
-    padding: 10px;
+    border-radius: 14px;
+    padding: 12px;
     background: #fff;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+    position: relative;
+    overflow: visible;
+    z-index: 0;
+  }
+  .ju-folder:hover {
+    border-color: #c7d2fe;
+    box-shadow: 0 10px 22px rgba(59, 130, 246, 0.12);
+    transform: translateY(-2px);
+    z-index: 3;
+  }
+  .ju-folder:active {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 24px rgba(59, 130, 246, 0.18);
+  }
+  @media (hover: none) {
+    .ju-folder:active {
+      transform: translateY(-1px) scale(0.995);
+    }
+  }
+  .ju-folder-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+    cursor: pointer;
+    padding: 4px 2px;
+  }
+  .ju-folder-title {
+    font-weight: 700;
+    color: #0f172a;
+  }
+  .ju-folder-meta {
+    font-size: 12px;
+    color: #64748b;
+  }
+  .ju-folder-actions {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .ju-folder-menu-btn {
+    border-radius: 999px;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .ju-folder-menu {
+    position: absolute;
+    right: 8px;
+    top: 50px;
+    min-width: 140px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    box-shadow: 0 12px 24px rgba(15, 23, 42, 0.16);
+    padding: 6px;
+    z-index: 20;
+  }
+  .ju-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    min-width: 760px;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .ju-table thead tr {
+    background: #f1f5f9;
+  }
+  .ju-table th,
+  .ju-table td {
+    padding: 10px 12px;
+    border: 1px solid #e2e8f0;
+    text-align: left;
+    vertical-align: middle;
+  }
+  .ju-table tbody tr:nth-child(even) {
+    background: #f8fafc;
+  }
+  .ju-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #eef2ff;
+    color: #3730a3;
+    font-weight: 600;
+    font-size: 11px;
+  }
+  .ju-actions-cell {
+    white-space: nowrap;
   }
   .ju-modal-overlay {
     position: fixed;
@@ -72,19 +179,8 @@
     <div style="font-size:12px; color:#64748b;">Pilih jenis ujian untuk auto-generate folder dan daftar mapel perangkatan.</div>
   </div>
 
-  <div style="display:flex; gap:10px; align-items:end; flex-wrap:wrap;">
-    <div style="min-width:220px;">
-      <label class="ju-label">Jenis Ujian</label>
-      <select id="ju-jenis-folder" class="ju-field">
-        <option>UTS</option>
-        <option>UAS</option>
-        <option>UN</option>
-        <option>Try Out</option>
-      </select>
-    </div>
-    <div>
-      <button type="button" class="ju-btn" onclick="createExamFolderFromJenis()">Buat Folder Ujian</button>
-    </div>
+  <div>
+    <button type="button" class="ju-btn" onclick="createExamFolderFromJenis()">Buat Folder Ujian</button>
   </div>
 </div>
 
@@ -124,14 +220,19 @@
 <div id="ju-create-folder-modal" class="ju-modal-overlay" onclick="closeCreateExamFolderDraftModal(event)">
   <div class="ju-modal-card" onclick="event.stopPropagation()">
     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
-      <strong style="font-size:15px; color:#0f172a;">Detail Folder Ujian</strong>
+      <strong id="ju-create-folder-title" style="font-size:15px; color:#0f172a;">Detail Folder Ujian</strong>
       <button type="button" class="ju-btn secondary" onclick="closeCreateExamFolderDraftModal()">Tutup</button>
     </div>
 
     <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; margin-bottom:12px;">
       <div>
         <label class="ju-label">Jenis Ujian</label>
-        <input id="ju-create-folder-jenis" class="ju-field" type="text" placeholder="Contoh: UTS">
+        <select id="ju-create-folder-jenis" class="ju-field">
+          <option>UTS</option>
+          <option>UAS</option>
+          <option>Ujian Akhir Kepondokan</option>
+          <option>Try Out</option>
+        </select>
       </div>
       <div>
         <label class="ju-label">Semester</label>
@@ -159,7 +260,7 @@
 
     <div style="display:flex; justify-content:flex-end; gap:8px;">
       <button type="button" class="ju-btn secondary" onclick="closeCreateExamFolderDraftModal()">Batal</button>
-      <button type="button" class="ju-btn" onclick="confirmCreateExamFolderDraftModal()">Buat Folder</button>
+      <button id="ju-create-folder-submit" type="button" class="ju-btn" onclick="confirmCreateExamFolderDraftModal()">Buat Folder</button>
     </div>
   </div>
 </div>

@@ -184,6 +184,21 @@ body.platform-android .topbar-notif-menu {
   box-shadow: 0 16px 34px rgba(15, 23, 42, 0.16);
 }
 
+body.platform-android .topbar-user-menu {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-6px) scale(0.98);
+  transition: opacity 160ms ease, transform 160ms ease, visibility 160ms ease;
+}
+
+body.platform-android .topbar-user-menu.open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
+
 body.platform-android .topbar-notif-menu.open {
   position: fixed !important;
   left: 50% !important;

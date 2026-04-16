@@ -2,12 +2,14 @@ const KALENDER_AKADEMIK_TABLE = 'kalender_akademik'
 const KALENDER_AKADEMIK_CACHE_KEY = 'kalender_akademik:list'
 const KALENDER_AKADEMIK_CACHE_TTL_MS = 2 * 60 * 1000
 const DEFAULT_KALENDER_COLOR = '#2563eb'
-const KALENDER_ACTIVITY_TYPES = ['', 'libur_semua_kegiatan', 'libur_akademik', 'libur_ketahfizan']
+const KALENDER_ACTIVITY_TYPES = ['', 'libur_semua_kegiatan', 'libur_akademik', 'libur_ketahfizan', 'ujian', 'libur_kelas']
 let currentEditKalenderAkademikId = null
 let currentKalenderAkademikList = []
 let currentKalenderAkademikMonth = ''
 let currentKalenderAkademikDateKey = ''
 let currentKalenderAkademikPopupVisible = false
+let kalenderKelasList = []
+let kalenderKelasMap = new Map()
 
 function getKalenderAkademikInsetFieldStyle(extra = '') {
   return `width:100%; padding:10px 12px; box-sizing:border-box; border:1px solid #cbd5e1; border-radius:999px; background:#f8fafc; box-shadow:none; outline:none; transition:border-color 0.2s, box-shadow 0.2s; ${extra}`
@@ -85,7 +87,94 @@ function getKalenderActivityLabel(value) {
   if (kind === 'libur_semua_kegiatan') return 'Libur Semua Kegiatan'
   if (kind === 'libur_akademik') return 'Libur Akademik'
   if (kind === 'libur_ketahfizan') return 'Libur Ketahfizan'
+  if (kind === 'ujian') return 'Ujian'
+  if (kind === 'libur_kelas') return 'Libur Kelas'
   return '-'
+}
+
+function parseKalenderDetailPayload(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return { text: '', kelas_ids: [], kelas_nama: [] }
+  try {
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object') {
+      const kelasIds = Array.isArray(parsed.kelas_ids) ? parsed.kelas_ids.map(id => String(id || '').trim()).filter(Boolean) : []
+      const kelasNama = Array.isArray(parsed.kelas_nama) ? parsed.kelas_nama.map(name => String(name || '').trim()).filter(Boolean) : []
+      const text = String(parsed.text || parsed.detail || '').trim()
+      return { text, kelas_ids: kelasIds, kelas_nama: kelasNama }
+    }
+  } catch (_err) {
+    // ignore
+  }
+  return { text: raw, kelas_ids: [], kelas_nama: [] }
+}
+
+function getKalenderDetailTextForDisplay(item) {
+  const detail = parseKalenderDetailPayload(item?.detail || '')
+  const text = detail.text || ''
+  const kelasNames = detail.kelas_nama || []
+  if (!kelasNames.length) return text || '-'
+  const kelasLabel = `Kelas: ${kelasNames.join(', ')}`
+  return text ? `${text}\n${kelasLabel}` : kelasLabel
+}
+
+async function loadKalenderKelasList() {
+  if (kalenderKelasList.length) return kalenderKelasList
+  const { data, error } = await sb.from('kelas').select('id, nama_kelas').order('nama_kelas')
+  if (error) {
+    console.error(error)
+    return []
+  }
+  kalenderKelasList = data || []
+  kalenderKelasMap = new Map((kalenderKelasList || []).map(item => [String(item.id || ''), item]))
+  return kalenderKelasList
+}
+
+function renderKalenderKelasOptions(selectedIds = []) {
+  const listEl = document.getElementById('ka-kelas-list')
+  const infoEl = document.getElementById('ka-kelas-info')
+  if (!listEl) return
+
+  const selectedSet = new Set((selectedIds || []).map(id => String(id || '').trim()).filter(Boolean))
+  if (!kalenderKelasList.length) {
+    listEl.innerHTML = '<div style="font-size:12px; color:#64748b;">Kelas belum tersedia.</div>'
+    if (infoEl) infoEl.textContent = ''
+    return
+  }
+
+  listEl.innerHTML = kalenderKelasList.map(item => {
+    const id = String(item.id || '')
+    const checked = selectedSet.has(id) ? 'checked' : ''
+    return `
+      <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:#0f172a; padding:4px 0;">
+        <input type="checkbox" class="ka-kelas-checkbox" value="${escapeHtml(id)}" ${checked}>
+        <span>${escapeHtml(item.nama_kelas || '-')}</span>
+      </label>
+    `
+  }).join('')
+
+  if (infoEl) infoEl.textContent = 'Kosongkan jika berlaku untuk semua kelas.'
+}
+
+function getKalenderSelectedKelasIds() {
+  return Array.from(document.querySelectorAll('.ka-kelas-checkbox'))
+    .filter(input => input.checked)
+    .map(input => String(input.value || '').trim())
+    .filter(Boolean)
+}
+
+function setKalenderSelectedKelasIds(ids = []) {
+  const selectedSet = new Set((ids || []).map(id => String(id || '').trim()).filter(Boolean))
+  document.querySelectorAll('.ka-kelas-checkbox').forEach(input => {
+    input.checked = selectedSet.has(String(input.value || '').trim())
+  })
+}
+
+function toggleKalenderKelasSection(jenis = '') {
+  const wrap = document.getElementById('ka-kelas-wrap')
+  if (!wrap) return
+  const show = jenis === 'ujian' || jenis === 'libur_kelas'
+  wrap.style.display = show ? 'block' : 'none'
 }
 
 function getKalenderAkademikMissingTableMessage() {
@@ -137,6 +226,8 @@ function createKalenderAkademikModal() {
       <label for="ka-jenis-kegiatan" style="display:block; margin:0 4px 4px; font-size:12px; color:#475569;">Jenis Kegiatan (opsional)</label>
       <select class="ka-field" id="ka-jenis-kegiatan" style="${getKalenderAkademikInsetFieldStyle('margin-bottom:8px;')}">
         <option value="">-- Kegiatan Umum --</option>
+        <option value="ujian">Ujian</option>
+        <option value="libur_kelas">Libur Kelas</option>
         <option value="libur_semua_kegiatan">Libur Semua Kegiatan</option>
         <option value="libur_akademik">Libur Akademik</option>
         <option value="libur_ketahfizan">Libur Ketahfizan</option>
@@ -147,6 +238,11 @@ function createKalenderAkademikModal() {
       <input class="ka-field" type="date" id="ka-mulai" style="${getKalenderAkademikInsetFieldStyle('margin-bottom:8px;')}">
       <label for="ka-selesai" style="display:block; margin:0 4px 4px; font-size:12px; color:#475569;">Selesai (Tanggal, opsional)</label>
       <input class="ka-field" type="date" id="ka-selesai" style="${getKalenderAkademikInsetFieldStyle('margin-bottom:8px;')}">
+      <div id="ka-kelas-wrap" style="display:none; margin-bottom:8px;">
+        <label style="display:block; margin:0 4px 4px; font-size:12px; color:#475569;">Target Kelas (opsional)</label>
+        <div id="ka-kelas-list" style="max-height:160px; overflow:auto; border:1px solid #e2e8f0; border-radius:12px; padding:8px 12px; background:#f8fafc;"></div>
+        <div id="ka-kelas-info" style="font-size:11px; color:#64748b; margin-top:4px;"></div>
+      </div>
       <textarea id="ka-detail" placeholder="Detail kegiatan" style="width:100%; min-height:110px; padding:10px 12px; box-sizing:border-box; border:1px solid #cbd5e1; border-radius:12px; background:#f8fafc; outline:none; font-size:13px; resize:vertical;"></textarea>
       <div style="margin-top:12px;">
         <button class="modal-btn modal-btn-primary" type="button" onclick="saveKalenderAkademik()">Simpan</button>
@@ -156,9 +252,18 @@ function createKalenderAkademikModal() {
     </div>
   `
   document.body.appendChild(modal)
+
+  const jenisEl = document.getElementById('ka-jenis-kegiatan')
+  if (jenisEl && !jenisEl.dataset.bound) {
+    jenisEl.addEventListener('change', () => {
+      const jenis = normalizeKalenderActivityType(jenisEl.value || '')
+      toggleKalenderKelasSection(jenis)
+    })
+    jenisEl.dataset.bound = 'true'
+  }
 }
 
-function openKalenderAkademikModal(id = '') {
+async function openKalenderAkademikModal(id = '') {
   if (!document.getElementById('kalender-akademik-modal')) createKalenderAkademikModal()
 
   currentEditKalenderAkademikId = id ? String(id) : null
@@ -180,7 +285,14 @@ function openKalenderAkademikModal(id = '') {
   if (warnaEl) warnaEl.value = normalizeKalenderColor(row?.warna)
   if (mulaiEl) mulaiEl.value = buildKalenderDateInputValue(row?.mulai)
   if (selesaiEl) selesaiEl.value = buildKalenderDateInputValue(row?.selesai)
-  if (detailEl) detailEl.value = row?.detail || ''
+  const detailPayload = parseKalenderDetailPayload(row?.detail || '')
+  if (detailEl) detailEl.value = detailPayload.text || ''
+
+  const jenis = normalizeKalenderActivityType(row?.jenis_kegiatan)
+  toggleKalenderKelasSection(jenis)
+  await loadKalenderKelasList()
+  renderKalenderKelasOptions(detailPayload.kelas_ids || [])
+  setKalenderSelectedKelasIds(detailPayload.kelas_ids || [])
 
   const modal = document.getElementById('kalender-akademik-modal')
   if (modal) modal.style.display = 'block'
@@ -200,6 +312,10 @@ function parseKalenderAkademikForm() {
   const mulai = String(document.getElementById('ka-mulai')?.value || '').trim()
   const selesai = String(document.getElementById('ka-selesai')?.value || '').trim()
   const detail = String(document.getElementById('ka-detail')?.value || '').trim()
+  const selectedKelasIds = getKalenderSelectedKelasIds()
+  const selectedKelasNames = selectedKelasIds
+    .map(id => kalenderKelasMap.get(String(id))?.nama_kelas || '')
+    .filter(Boolean)
 
   if (!judul || !mulai) return { error: 'Judul kegiatan dan waktu mulai wajib diisi.' }
 
@@ -217,6 +333,15 @@ function parseKalenderAkademikForm() {
   const selesaiIso = selesai ? buildKalenderStoredIso(selesai) : null
   if (selesai && !selesaiIso) return { error: 'Format waktu selesai tidak valid.' }
 
+  const shouldStoreClassInfo = (jenisKegiatan === 'ujian' || jenisKegiatan === 'libur_kelas')
+  const detailPayload = shouldStoreClassInfo
+    ? JSON.stringify({
+        text: detail || '',
+        kelas_ids: selectedKelasIds,
+        kelas_nama: selectedKelasNames
+      })
+    : (detail || null)
+
   return {
     payload: {
       judul,
@@ -224,7 +349,7 @@ function parseKalenderAkademikForm() {
       warna,
       mulai: mulaiIso,
       selesai: selesaiIso,
-      detail: detail || null
+      detail: detailPayload
     }
   }
 }
@@ -314,6 +439,7 @@ function renderKalenderAkademikTable(container, rows) {
 
   html += rows.map((item, index) => {
     const warna = normalizeKalenderColor(item.warna)
+    const detailText = getKalenderDetailTextForDisplay(item)
     return `
       <tr>
         <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">${index + 1}</td>
@@ -324,7 +450,7 @@ function renderKalenderAkademikTable(container, rows) {
         <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(getKalenderActivityLabel(item.jenis_kegiatan))}</td>
         <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(formatDateLocal(item.mulai))}</td>
         <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(formatDateLocal(item.selesai))}</td>
-        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.detail || '-')}</td>
+        <td style="padding:8px; border:1px solid #e2e8f0;"><div style="white-space:pre-wrap;">${escapeHtml(detailText || '-')}</div></td>
         <td style="padding:8px; border:1px solid #e2e8f0; white-space:nowrap;">
           <button type="button" class="ka-btn" onclick="openKalenderAkademikModal('${escapeHtml(String(item.id))}')">Edit</button>
           <button type="button" class="ka-btn" style="background:#dc2626; margin-left:6px;" onclick="deleteKalenderAkademik('${escapeHtml(String(item.id))}')">Hapus</button>
@@ -464,6 +590,7 @@ function renderKalenderAkademikDateDetail() {
 
   const cards = allEvents.map(item => {
     const warna = normalizeKalenderColor(item.warna)
+    const detailText = getKalenderDetailTextForDisplay(item)
     return `
       <div style="border:1px solid #e2e8f0; border-left:4px solid ${escapeHtml(warna)}; border-radius:8px; padding:10px; margin-bottom:8px; background:#fff;">
         <div style="display:flex; align-items:center; gap:8px;">
@@ -472,7 +599,7 @@ function renderKalenderAkademikDateDetail() {
         </div>
         <div style="margin-top:6px; font-size:12px; color:#334155;">Jenis: ${escapeHtml(getKalenderActivityLabel(item.jenis_kegiatan))}</div>
         <div style="margin-top:6px; font-size:12px; color:#475569;">${escapeHtml(formatDateLocal(item.mulai))}${item.selesai ? ` - ${escapeHtml(formatDateLocal(item.selesai))}` : ''}</div>
-        <div style="margin-top:6px; font-size:12px; color:#334155;">${escapeHtml(item.detail || '-')}</div>
+        <div style="margin-top:6px; font-size:12px; color:#334155; white-space:pre-wrap;">${escapeHtml(detailText || '-')}</div>
       </div>
     `
   }).join('')

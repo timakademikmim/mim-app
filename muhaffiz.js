@@ -2419,41 +2419,48 @@ async function renderMuhaffizProfil() {
   }
 
   content.innerHTML = `
-    <div style="max-width:580px;">
-      <div style="margin-bottom:12px;">
-        <label class="guru-label">Foto Profil</label>
-        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+    <div class="profile-page">
+      <div class="profile-card profile-card--soft">
+        <div class="profile-section-title">Foto Profil</div>
+        <div class="profile-photo-wrap">
           <div id="muhaffiz-profil-foto-preview"></div>
           <input id="muhaffiz-profil-foto-url" type="hidden" value="${escapeHtml(String(profile.foto_url || '').trim())}">
           <input id="muhaffiz-profil-foto-file" type="file" accept="image/*" style="display:none;" onchange="uploadMuhaffizProfilePhoto(event)">
           <button type="button" class="modal-btn" onclick="document.getElementById('muhaffiz-profil-foto-file')?.click()">Upload Foto</button>
         </div>
-        <div style="font-size:12px; color:#64748b; margin-top:6px;">Maksimal 300 KB.</div>
+        <div class="profile-note">Maksimal 300 KB.</div>
       </div>
-      <div style="margin-bottom:10px;">
-        <label class="guru-label">ID Karyawan</label>
-        <input id="muhaffiz-profil-id-karyawan" type="text" value="${escapeHtml(profile.id_karyawan || '')}" disabled class="guru-field" autocomplete="off" style="background:#f8fafc; color:#64748b;">
-      </div>
-      <div style="margin-bottom:10px;">
-        <label class="guru-label">Nama</label>
-        <input id="muhaffiz-profil-nama" type="text" value="${escapeHtml(profile.nama || '')}" class="guru-field" autocomplete="off">
-      </div>
-      <div style="margin-bottom:10px;">
-        <label class="guru-label">No HP</label>
-        <input id="muhaffiz-profil-no-hp" type="text" value="${escapeHtml(profile.no_hp || '')}" class="guru-field" autocomplete="off">
-      </div>
-      <div style="margin-bottom:10px;">
-        <label class="guru-label">Alamat</label>
-        <input id="muhaffiz-profil-alamat" type="text" value="${escapeHtml(profile.alamat || '')}" class="guru-field" autocomplete="off">
-      </div>
-      <div style="margin-bottom:12px;">
-        <label class="guru-label">Password</label>
-        <div style="position:relative;">
-          <input id="muhaffiz-profil-password" type="password" value="${escapeHtml(profile.password || '')}" placeholder="Password" class="guru-field" autocomplete="off" style="padding-right:46px;">
-          <button id="muhaffiz-profil-password-toggle" type="button" onclick="toggleMuhaffizProfilePassword()" aria-label="Tampilkan password" title="Tampilkan/Sembunyikan password" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); border:none; background:transparent; cursor:pointer; font-size:16px; line-height:1;">👁</button>
+      <div class="profile-card">
+        <div class="profile-section-title">Informasi Profil</div>
+        <div class="profile-grid">
+          <div>
+            <label class="guru-label">ID Karyawan</label>
+            <input id="muhaffiz-profil-id-karyawan" type="text" value="${escapeHtml(profile.id_karyawan || '')}" disabled class="guru-field" autocomplete="off" style="background:#f8fafc; color:#64748b;">
+          </div>
+          <div>
+            <label class="guru-label">Nama</label>
+            <input id="muhaffiz-profil-nama" type="text" value="${escapeHtml(profile.nama || '')}" class="guru-field" autocomplete="off">
+          </div>
+          <div>
+            <label class="guru-label">No HP</label>
+            <input id="muhaffiz-profil-no-hp" type="text" value="${escapeHtml(profile.no_hp || '')}" class="guru-field" autocomplete="off">
+          </div>
+          <div>
+            <label class="guru-label">Alamat</label>
+            <input id="muhaffiz-profil-alamat" type="text" value="${escapeHtml(profile.alamat || '')}" class="guru-field" autocomplete="off">
+          </div>
+        </div>
+        <div style="margin-top:12px;">
+          <label class="guru-label">Password</label>
+          <div style="position:relative;">
+            <input id="muhaffiz-profil-password" type="password" value="${escapeHtml(profile.password || '')}" placeholder="Password" class="guru-field" autocomplete="off" style="padding-right:70px;">
+            <button id="muhaffiz-profil-password-toggle" type="button" onclick="toggleMuhaffizProfilePassword()" aria-label="Tampilkan password" title="Tampilkan/Sembunyikan password" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); border:none; background:transparent; cursor:pointer; font-size:13px; font-weight:600; color:#2563eb;">Lihat</button>
+          </div>
+        </div>
+        <div class="profile-actions">
+          <button type="button" class="modal-btn modal-btn-primary" onclick="saveMuhaffizProfil('${escapeHtml(profile.id)}')">Simpan Profil</button>
         </div>
       </div>
-      <button type="button" class="modal-btn modal-btn-primary" onclick="saveMuhaffizProfil('${escapeHtml(profile.id)}')">Simpan Profil</button>
     </div>
   `
   renderMuhaffizProfilFotoPreview(String(profile.foto_url || '').trim(), String(profile.nama || '').trim())
@@ -2472,7 +2479,7 @@ function toggleMuhaffizProfilePassword() {
   if (!input || !btn) return
   const willShow = input.type === 'password'
   input.type = willShow ? 'text' : 'password'
-  btn.textContent = willShow ? '👁̶' : '👁'
+  btn.textContent = willShow ? 'Sembunyi' : 'Lihat'
   btn.setAttribute('aria-label', willShow ? 'Sembunyikan password' : 'Tampilkan password')
 }
 
@@ -3938,3 +3945,4 @@ document.addEventListener('DOMContentLoaded', async () => {
     closeTopbarNotifMenu()
   })
 })
+

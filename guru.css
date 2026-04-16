@@ -972,37 +972,59 @@ body {
 }
 
 .topbar-user-menu {
-  display: none;
+  display: block;
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  min-width: 140px;
-  background: #ffffff;
+  min-width: 190px;
+  background: linear-gradient(180deg, #ffffff, #f8fafc);
   border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
-  padding: 6px;
+  border-radius: 14px;
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.14);
+  padding: 10px;
   z-index: 30;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-6px) scale(0.98);
+  transition: opacity 160ms ease, transform 160ms ease, visibility 160ms ease;
 }
 
 .topbar-user-menu.open {
-  display: block;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
 }
 
 .topbar-user-menu button {
   width: 100%;
   border: none;
   background: transparent;
-  padding: 8px 10px;
-  border-radius: 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
   text-align: left;
   cursor: pointer;
   color: #0f172a;
   margin: 0;
+  font-weight: 600;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .topbar-user-menu button:hover {
-  background: #f1f5f9;
+  background: #eef2ff;
+  color: #1d4ed8;
+}
+
+.topbar-user-menu button + button {
+  margin-top: 6px;
+}
+
+.topbar-user-menu button:active {
+  transform: translateY(1px);
 }
 
 .content-area {
@@ -1022,6 +1044,56 @@ body {
 
 .content-area.chat-full-bleed {
   padding: 0 !important;
+}
+
+.profile-page {
+  display: grid;
+  gap: 16px;
+  max-width: 720px;
+}
+
+.profile-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 16px;
+  background: #ffffff;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
+}
+
+.profile-card--soft {
+  background: linear-gradient(180deg, #ffffff, #f8fafc);
+}
+
+.profile-section-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 10px;
+}
+
+.profile-photo-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.profile-note {
+  font-size: 12px;
+  color: #64748b;
+  margin-top: 6px;
+}
+
+.profile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.profile-actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
 }
 
 .mapel-detail-shell {
@@ -1055,6 +1127,149 @@ body {
   font-size: 13px;
   color: #334155;
 }
+
+.guru-ujian-folder-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 14px;
+  background: #ffffff;
+  margin-bottom: 12px;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+  position: relative;
+}
+
+.guru-ujian-folder-card:hover {
+  border-color: #bfdbfe;
+  box-shadow: 0 12px 26px rgba(37, 99, 235, 0.16);
+  transform: translateY(-2px);
+}
+
+.guru-ujian-folder-card:active {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 28px rgba(37, 99, 235, 0.18);
+}
+
+.guru-ujian-folder-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.guru-ujian-folder-title {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.guru-ujian-folder-sub {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.guru-ujian-folder-chevron {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid #e2e8f0;
+  color: #0f172a;
+  transition: transform 0.18s ease;
+}
+
+.guru-ujian-folder-card.is-open .guru-ujian-folder-chevron {
+  transform: rotate(180deg);
+}
+
+.guru-ujian-folder-body {
+  margin-top: 10px;
+}
+
+.guru-ujian-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  position: relative;
+}
+
+.guru-ujian-row-menu {
+  position: absolute;
+  right: 0;
+  top: 32px;
+  min-width: 120px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.16);
+  padding: 6px;
+  z-index: 5;
+}
+
+.guru-ujian-row-menu-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.guru-ujian-folder-card-list {
+  padding: 10px;
+}
+
+.guru-ujian-row-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 12px;
+  background: #fff;
+  margin-bottom: 10px;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+  position: relative;
+}
+
+.guru-ujian-row-card:hover {
+  border-color: #bfdbfe;
+  box-shadow: 0 12px 26px rgba(37, 99, 235, 0.16);
+  transform: translateY(-2px);
+}
+
+.guru-ujian-row-card:active {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 28px rgba(37, 99, 235, 0.18);
+}
+
+.guru-ujian-row-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.guru-ujian-row-card-title {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.guru-ujian-row-card-sub {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.guru-ujian-row-card-meta {
+  font-size: 12px;
+  color: #475569;
+  margin-top: 6px;
+}
+
+.guru-ujian-row-card-actions {
+  margin-top: 10px;
+}
+
 
 .guru-label {
   display: block;
@@ -1261,6 +1476,33 @@ body {
   color: #64748b;
 }
 
+#absensi-existing-note[data-state="exists"] {
+  color: #047857;
+}
+
+#absensi-existing-note[data-state="empty"] {
+  color: #b45309;
+}
+
+.absensi-suggested-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid #c7d2fe;
+  background: #eef2ff;
+  color: #4338ca;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.absensi-suggested-chip:hover {
+  background: #e0e7ff;
+}
+
 .absensi-form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -1391,12 +1633,30 @@ body {
   background: linear-gradient(180deg, #ffffff, #f8fbff);
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
   padding: 12px;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+  cursor: pointer;
+}
+
+.absensi-student-card:hover,
+.absensi-student-card:focus-within {
+  transform: translateY(-2px);
+  border-color: #bfdbfe;
+  box-shadow: 0 12px 22px rgba(15, 23, 42, 0.1);
+}
+
+.absensi-student-card:active {
+  transform: translateY(1px) scale(0.99);
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
 }
 
 .absensi-student-card__head {
   display: flex;
   align-items: flex-start;
   gap: 10px;
+}
+
+.absensi-student-card__head--inline {
+  align-items: center;
 }
 
 .absensi-student-card__number {
@@ -1417,30 +1677,20 @@ body {
   flex: 1 1 auto;
 }
 
+.absensi-student-card__status {
+  flex: 0 0 auto;
+  min-width: 120px;
+  margin-left: auto;
+  display: flex;
+  justify-content: flex-end;
+}
+
 .absensi-student-card__name {
   font-size: 14px;
   font-weight: 800;
   line-height: 1.35;
   color: #0f172a;
   word-break: break-word;
-}
-
-.absensi-student-card__hint {
-  margin-top: 3px;
-  font-size: 12px;
-  color: #64748b;
-}
-
-.absensi-student-card__field {
-  display: grid;
-  gap: 6px;
-  margin-top: 10px;
-}
-
-.absensi-student-card__label {
-  font-size: 12px;
-  font-weight: 700;
-  color: #475569;
 }
 
 .absensi-save-wrap {
@@ -1509,7 +1759,6 @@ body {
 
   .absensi-panel__subtitle,
   .absensi-panel__note,
-  .absensi-student-card__hint,
   .absensi-student-card__label {
     font-size: 11px;
   }
@@ -1526,6 +1775,10 @@ body {
 
   .absensi-student-card__name {
     font-size: 13px;
+  }
+
+  .absensi-student-card__status {
+    min-width: 110px;
   }
 
   .mapel-absensi-th-nama {
