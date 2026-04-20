@@ -82,6 +82,29 @@
     return [{ marker: 'gambar1', url: raw }]
   }
 
+  function getArabicOptionLetterByIndex(index) {
+    const letters = ['أ', 'ب', 'ج', 'د', 'هـ', 'و', 'ز', 'ح', 'ط', 'ي', 'ك', 'ل', 'م', 'ن', 'س', 'ع', 'ف', 'ص', 'ق', 'ر', 'ش', 'ت', 'ث', 'خ', 'ذ', 'ض']
+    return letters[Number(index || 0) % letters.length]
+  }
+
+  function getOptionKeyByIndex(index) {
+    let n = Math.max(0, Number(index || 0))
+    let out = ''
+    do {
+      out = String.fromCharCode(97 + (n % 26)) + out
+      n = Math.floor(n / 26) - 1
+    } while (n >= 0)
+    return out
+  }
+
+  function getOptionOrderValue(key) {
+    const normalized = String(key || '').trim().toLowerCase()
+    if (!/^[a-z]+$/.test(normalized)) return Number.POSITIVE_INFINITY
+    let value = 0
+    for (const ch of normalized) value = (value * 26) + (ch.charCodeAt(0) - 96)
+    return value
+  }
+
   function getPgOptionEntries(question, langCode = 'AR') {
     if (String(question?.type || '').trim().toLowerCase() === 'benar-salah') {
       const isAr = String(langCode || 'AR').toUpperCase() === 'AR'
@@ -94,18 +117,38 @@
     if (typeof window.guruExamHtmlUtils?.getExamPgOptionEntries === 'function') {
       return window.guruExamHtmlUtils.getExamPgOptionEntries(question?.options || {}, String(langCode || 'AR').toUpperCase() === 'AR')
     }
-    const fallbackLetters = String(langCode || 'AR').toUpperCase() === 'AR' ? ['أ', 'ب', 'ج', 'د'] : ['a', 'b', 'c', 'd']
+    const isAr = String(langCode || 'AR').toUpperCase() === 'AR'
     const raw = question?.options || {}
-    const keys = Object.keys(raw).sort()
-    return keys.map((key, index) => ({
-      key,
-      label: fallbackLetters[index] || String.fromCharCode(1571 + index),
-      value: stripExamImageMarkers(String((raw[key]?.text ?? raw[key]) || '')).trim(),
-      imageUrl: Array.isArray(raw[key]?.images)
-        ? String(raw[key]?.images?.[0]?.url || '').trim()
-        : String(raw[key]?.imageUrl || raw[key]?.image_url || '').trim(),
-      images: raw[key]?.images || raw[key]?.imageItems || raw[key]?.image_items || raw[key]?.imageUrl || raw[key]?.image_url || ''
-    }))
+    return Object.entries(raw)
+      .map(([rawKey, rawVal], index) => {
+        const normalizedKey = /^[a-z]+$/i.test(String(rawKey || '').trim())
+          ? String(rawKey || '').trim().toLowerCase()
+          : getOptionKeyByIndex(index)
+        const order = getOptionOrderValue(normalizedKey)
+        return {
+          key: normalizedKey,
+          label: isAr ? getArabicOptionLetterByIndex(Number.isFinite(order) ? Math.max(0, order - 1) : index) : normalizedKey,
+          value: stripExamImageMarkers(String((rawVal?.text ?? rawVal) || '')).trim(),
+          imageUrl: Array.isArray(rawVal?.images)
+            ? String(rawVal?.images?.[0]?.url || '').trim()
+            : String(rawVal?.imageUrl || rawVal?.image_url || '').trim(),
+          images: rawVal?.images || rawVal?.imageItems || rawVal?.image_items || rawVal?.imageUrl || rawVal?.image_url || '',
+          order,
+          idx: index
+        }
+      })
+      .filter(item => item.value)
+      .sort((a, b) => {
+        if (a.order !== b.order) return a.order - b.order
+        return a.idx - b.idx
+      })
+      .map(item => ({
+        key: item.key,
+        label: item.label,
+        value: item.value,
+        imageUrl: item.imageUrl,
+        images: item.images
+      }))
   }
 
   function uniqueWordBank(items) {
@@ -1157,7 +1200,7 @@
       if (qCells[3]) setCellTextWithImages(qCells[3], String(item?.text || ''), item?.images || item?.imageUrl || item?.image_url || '')
       table.appendChild(questionRow)
 
-      const entries = getPgOptionEntries(item, headerMeta.lang || 'AR').slice(0, 4)
+      const entries = getPgOptionEntries(item, headerMeta.lang || 'AR')
       const layoutMode = resolvePgLayoutMode(entries)
       if (layoutMode === 'stack') {
         entries.forEach(entry => {
@@ -1168,23 +1211,22 @@
           table.appendChild(optionRow)
         })
       } else if (layoutMode === 'double') {
-        const pairRows = [
-          [entries[0], entries[1]],
-          [entries[2], entries[3]]
-        ]
-        pairRows.forEach(pair => {
+        for (let index = 0; index < entries.length; index += 2) {
+          const pair = [entries[index], entries[index + 1]]
           const optionRow = cloneRow(templates.optionsDouble || templates.options || templates.optionsSingle)
           const oCells = getRowCells(optionRow)
           clearPgOptionRow(oCells)
           fillPgDoubleOptionRow(oCells, pair[0], pair[1])
           table.appendChild(optionRow)
-        })
+        }
       } else {
-        const optionRow = cloneRow(templates.optionsSingle || templates.options)
-        const oCells = getRowCells(optionRow)
-        clearPgOptionRow(oCells)
-        entries.forEach((entry, idx) => fillPgOptionSlot(oCells, idx, entry))
-        table.appendChild(optionRow)
+        for (let index = 0; index < entries.length; index += 4) {
+          const optionRow = cloneRow(templates.optionsSingle || templates.options)
+          const oCells = getRowCells(optionRow)
+          clearPgOptionRow(oCells)
+          entries.slice(index, index + 4).forEach((entry, slotIndex) => fillPgOptionSlot(oCells, slotIndex, entry))
+          table.appendChild(optionRow)
+        }
       }
     })
   }
