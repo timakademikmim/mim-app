@@ -10,3 +10,14 @@ src-tauri/gen/android/.idea/
 src-tauri/gen/schemas/*.json
 src-tauri/gen/android/app/keystore.properties
 *.keystore
+
+mimappandroid/.gradle/
+mimappandroid/build/
+mimappandroid/**/build/
+mimappandroid/local.properties
+mimappandroid/.idea/
+releases/*.apk
+releases/**/*.apk
+releases/**/*.idsig
+releases/*.log
+releases/**/*.log

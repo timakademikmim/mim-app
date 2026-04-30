@@ -1,0 +1,145 @@
+name: Native Android Release
+
+on:
+  push:
+    tags:
+      - "native-android-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version name, for example 0.2.0"
+        required: true
+        default: "0.2.0"
+      mandatory:
+        description: "Force update for users"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    env:
+      APP_DIR: mimappandroid
+      OUTPUT_DIR: release-assets/native-android
+      UPDATE_MANIFEST_URL: https://raw.githubusercontent.com/${{ github.repository }}/main/releases/mim-app-update.json
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="sdkmanager"
+          fi
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;35.0.0"
+
+      - name: Prepare release version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION_CLEAN="${{ inputs.version }}"
+            TAG_NAME="native-android-v${VERSION_CLEAN}"
+          else
+            TAG_NAME="${GITHUB_REF_NAME}"
+            VERSION_CLEAN="${TAG_NAME#native-android-v}"
+          fi
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_CLEAN"
+          MAJOR="${MAJOR:-0}"
+          MINOR="${MINOR:-0}"
+          PATCH="${PATCH:-0}"
+          VERSION_CODE=$((MAJOR * 1000000 + MINOR * 1000 + PATCH))
+
+          {
+            echo "TAG_NAME=$TAG_NAME"
+            echo "MIM_VERSION_NAME=$VERSION_CLEAN"
+            echo "MIM_VERSION_CODE=$VERSION_CODE"
+          } >> "$GITHUB_ENV"
+
+      - name: Prepare Android release signing
+        shell: bash
+        run: |
+          if [ -z "${{ secrets.MIM_ANDROID_KEYSTORE_BASE64 }}" ] || [ -z "${{ secrets.MIM_ANDROID_KEYSTORE_PASSWORD }}" ] || [ -z "${{ secrets.MIM_ANDROID_KEY_ALIAS }}" ] || [ -z "${{ secrets.MIM_ANDROID_KEY_PASSWORD }}" ]; then
+            echo "Release signing secret belum lengkap."
+            echo "Tambahkan secrets: MIM_ANDROID_KEYSTORE_BASE64, MIM_ANDROID_KEYSTORE_PASSWORD, MIM_ANDROID_KEY_ALIAS, MIM_ANDROID_KEY_PASSWORD."
+            exit 1
+          fi
+
+          echo "${{ secrets.MIM_ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > "$APP_DIR/mim-release.keystore"
+          {
+            echo "MIM_ANDROID_KEYSTORE=$GITHUB_WORKSPACE/$APP_DIR/mim-release.keystore"
+            echo "MIM_ANDROID_KEYSTORE_PASSWORD=${{ secrets.MIM_ANDROID_KEYSTORE_PASSWORD }}"
+            echo "MIM_ANDROID_KEY_ALIAS=${{ secrets.MIM_ANDROID_KEY_ALIAS }}"
+            echo "MIM_ANDROID_KEY_PASSWORD=${{ secrets.MIM_ANDROID_KEY_PASSWORD }}"
+          } >> "$GITHUB_ENV"
+
+      - name: Build signed APK
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:assembleRelease \
+            -PMIM_VERSION_CODE="${MIM_VERSION_CODE}" \
+            -PMIM_VERSION_NAME="${MIM_VERSION_NAME}" \
+            -PMIM_UPDATE_MANIFEST_URL="${UPDATE_MANIFEST_URL}"
+
+      - name: Collect release assets
+        shell: bash
+        run: |
+          mkdir -p "$OUTPUT_DIR"
+          cp "$APP_DIR/app/build/outputs/apk/release/MIM APP.apk" "$OUTPUT_DIR/MIM APP.apk"
+
+          APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG_NAME}/MIM%20APP.apk"
+          MANDATORY="${{ inputs.mandatory || false }}"
+          cat > "$OUTPUT_DIR/mim-app-update.json" <<EOF
+          {
+            "versionCode": ${MIM_VERSION_CODE},
+            "versionName": "${MIM_VERSION_NAME}",
+            "apkUrl": "${APK_URL}",
+            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Pembaruan aplikasi dan perbaikan stabilitas.",
+            "mandatory": ${MANDATORY}
+          }
+          EOF
+          cp "$OUTPUT_DIR/mim-app-update.json" /tmp/mim-app-update.json
+
+      - name: Upload APK and manifest to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          name: MIM App Android ${{ env.MIM_VERSION_NAME }}
+          prerelease: false
+          make_latest: true
+          files: |
+            release-assets/native-android/MIM APP.apk
+            release-assets/native-android/mim-app-update.json
+
+      - name: Publish update manifest to main
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout main
+          mkdir -p releases
+          cp /tmp/mim-app-update.json releases/mim-app-update.json
+          git add releases/mim-app-update.json
+          git commit -m "Update native Android manifest ${TAG_NAME}" || exit 0
+          git push origin main
