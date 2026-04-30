@@ -105,9 +105,9 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$OUTPUT_DIR"
-          cp "$APP_DIR/app/build/outputs/apk/release/MIM APP.apk" "$OUTPUT_DIR/MIM APP.apk"
+          cp "$APP_DIR/app/build/outputs/apk/release/MIM APP.apk" "$OUTPUT_DIR/MIM.APP.apk"
 
-          APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG_NAME}/MIM%20APP.apk"
+          APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG_NAME}/MIM.APP.apk"
           MANDATORY="${{ inputs.mandatory || false }}"
           cat > "$OUTPUT_DIR/mim-app-update.json" <<EOF
           {
@@ -128,7 +128,7 @@ jobs:
           prerelease: false
           make_latest: true
           files: |
-            release-assets/native-android/MIM APP.apk
+            release-assets/native-android/MIM.APP.apk
             release-assets/native-android/mim-app-update.json
 
       - name: Publish update manifest to main

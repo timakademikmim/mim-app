@@ -158,12 +158,15 @@ class MainActivity : ComponentActivity() {
     lifecycleScope.launch {
       isDownloadingUpdate = true
       updateStatusMessage = "Mengunduh MIM APP.apk..."
-      val apkFile = withContext(Dispatchers.IO) {
+      val downloadResult = withContext(Dispatchers.IO) {
         downloadApk(updateInfo.apkUrl)
       }
       isDownloadingUpdate = false
+      val apkFile = downloadResult.file
       if (apkFile == null) {
-        updateStatusMessage = "Gagal mengunduh APK. Periksa koneksi atau link rilis."
+        updateStatusMessage = downloadResult.message.ifBlank {
+          "Gagal mengunduh APK. Periksa koneksi atau link rilis."
+        }
       } else {
         updateStatusMessage = "Download selesai. Membuka installer..."
         installApk(apkFile)
@@ -171,29 +174,67 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  private fun downloadApk(apkUrl: String): File? {
+  private fun downloadApk(apkUrl: String): ApkDownloadResult {
     return runCatching {
       val outputDir = File(cacheDir, "apk_updates").apply {
         if (!exists()) mkdirs()
       }
       val outputFile = File(outputDir, "MIM APP.apk")
-      val connection = (URL(apkUrl).openConnection() as HttpURLConnection).apply {
-        requestMethod = "GET"
-        connectTimeout = 15000
-        readTimeout = 30000
-      }
+      if (outputFile.exists()) outputFile.delete()
+      val connection = openApkConnection(apkUrl)
       try {
-        if (connection.responseCode !in 200..299) return@runCatching null
+        val responseCode = connection.responseCode
+        if (responseCode !in 200..299) {
+          return@runCatching ApkDownloadResult(
+            message = "Gagal mengunduh APK. Server membalas kode $responseCode."
+          )
+        }
         connection.inputStream.use { input ->
           outputFile.outputStream().use { output ->
             input.copyTo(output)
           }
         }
-        outputFile.takeIf { it.exists() && it.length() > 0L }
+        outputFile
+          .takeIf { it.exists() && it.length() > 0L }
+          ?.let { ApkDownloadResult(file = it) }
+          ?: ApkDownloadResult(message = "File APK kosong setelah diunduh.")
       } finally {
         connection.disconnect()
       }
-    }.getOrNull()
+    }.getOrElse { error ->
+      ApkDownloadResult(
+        message = error.message
+          ?.takeIf { it.isNotBlank() }
+          ?.let { "Gagal mengunduh APK: $it" }
+          ?: "Gagal mengunduh APK. Periksa koneksi atau link rilis."
+      )
+    }
+  }
+
+  private fun openApkConnection(
+    apkUrl: String,
+    redirectCount: Int = 0
+  ): HttpURLConnection {
+    require(redirectCount <= 8) { "Terlalu banyak redirect saat mengunduh APK." }
+    val connection = (URL(apkUrl).openConnection() as HttpURLConnection).apply {
+      requestMethod = "GET"
+      instanceFollowRedirects = false
+      connectTimeout = 15000
+      readTimeout = 45000
+      setRequestProperty("User-Agent", "MIM-Guru-App/${BuildConfig.VERSION_NAME} Android")
+      setRequestProperty("Accept", "application/vnd.android.package-archive,application/octet-stream,*/*")
+      setRequestProperty("Connection", "close")
+    }
+    val responseCode = connection.responseCode
+    if (responseCode in 300..399) {
+      val location = connection.getHeaderField("Location")
+        ?.takeIf { it.isNotBlank() }
+        ?: return connection
+      connection.disconnect()
+      val nextUrl = URL(URL(apkUrl), location).toString()
+      return openApkConnection(nextUrl, redirectCount + 1)
+    }
+    return connection
   }
 
   private fun installApk(apkFile: File) {
@@ -210,6 +251,11 @@ class MainActivity : ComponentActivity() {
     startActivity(installIntent)
   }
 }
+
+private data class ApkDownloadResult(
+  val file: File? = null,
+  val message: String = ""
+)
 
 @Composable
 private fun AppUpdateDialog(

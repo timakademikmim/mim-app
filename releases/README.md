@@ -33,7 +33,7 @@ Cara rilis:
    - `MIM_ANDROID_KEY_ALIAS`
    - `MIM_ANDROID_KEY_PASSWORD`
 2. Buat tag rilis, misalnya `native-android-v0.2.0`, lalu push tag itu ke GitHub.
-3. Workflow akan membuat signed APK bernama `MIM APP.apk`.
+3. Workflow akan membuat signed APK dan mengupload asset GitHub bernama `MIM.APP.apk`.
 4. Workflow akan upload APK ke GitHub Releases.
 5. Workflow akan update `releases/mim-app-update.json` di branch `main`.
 
