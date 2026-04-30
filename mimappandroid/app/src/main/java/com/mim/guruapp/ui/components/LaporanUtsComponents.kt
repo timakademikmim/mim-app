@@ -1,6 +1,12 @@
 package com.mim.guruapp.ui.components
 
+import android.content.Context
+import android.database.Cursor
+import android.net.Uri
+import android.provider.ContactsContract
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -40,6 +46,7 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.Phone
 import androidx.compose.material.icons.outlined.Print
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.UploadFile
@@ -276,6 +283,8 @@ private fun LaporanUtsListContent(
 ) {
   var showImportDialog by rememberSaveable { mutableStateOf(false) }
   var isBulkResetting by rememberSaveable { mutableStateOf(false) }
+  var sharePayload by remember { mutableStateOf<UtsReportPayload?>(null) }
+  var shareTargetNumber by rememberSaveable { mutableStateOf("") }
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
   val studentIds = remember(students) { students.map { it.id }.toSet() }
@@ -392,7 +401,6 @@ private fun LaporanUtsListContent(
       val payload = payloads[selectedQuickActionSantriId]
       if (payload != null) {
         LaporanUtsQuickActionBar(
-          payload = payload,
           modifier = Modifier.align(Alignment.BottomCenter),
           onPrint = {
             scope.launch {
@@ -403,17 +411,35 @@ private fun LaporanUtsListContent(
             }
           },
           onShare = {
-            scope.launch {
-              runCatching {
-                val pdf = UtsReportExporter.createPdfFile(context, payload)
-                val message = UtsReportExporter.buildWhatsappAttachmentMessage(payload)
-                val phone = payload.findWhatsappTarget(students, profile)
-                UtsReportExporter.sharePdfToWhatsApp(context, pdf, phone, message)
-              }.onFailure { showMessage("Gagal menyiapkan lampiran WhatsApp.") }
-            }
+            shareTargetNumber = payload.findWhatsappTarget(students, profile)
+            sharePayload = payload
           }
         )
       }
+    }
+
+    sharePayload?.let { payload ->
+      UtsWhatsAppTargetDialog(
+        targetOptions = payload.whatsappTargets(students, profile),
+        targetNumber = shareTargetNumber,
+        onTargetNumberChange = { shareTargetNumber = it },
+        onDismiss = { sharePayload = null },
+        showMessage = showMessage,
+        onSend = {
+          scope.launch {
+            runCatching {
+              val pdf = UtsReportExporter.createPdfFile(context, payload)
+              val message = UtsReportExporter.buildWhatsappAttachmentMessage(payload)
+              val opened = UtsReportExporter.sharePdfToWhatsApp(context, pdf, shareTargetNumber, message)
+              if (!opened) error("Tidak bisa membuka WhatsApp dengan lampiran PDF.")
+              sharePayload = null
+              showMessage("WhatsApp dibuka. Jika caption belum muncul, teks sudah disalin dan bisa ditempel.")
+            }.onFailure { error ->
+              showMessage("Gagal kirim WhatsApp: ${error.message ?: "Unknown error"}")
+            }
+          }
+        }
+      )
     }
 
     SavingOverlay(
@@ -429,7 +455,6 @@ private fun LaporanUtsListContent(
       payloads = payloads,
       snapshot = snapshot,
       selectedSemester = selectedSemester,
-      profile = profile,
       onDismiss = { showImportDialog = false },
       showMessage = showMessage,
       onSaveOverride = onSaveOverride
@@ -455,6 +480,8 @@ private fun LaporanUtsDetailContent(
   var midScore by rememberSaveable(payload.studentId, payload.semesterId) { mutableStateOf(payload.midTahfizScore) }
   var halaqahSakit by rememberSaveable(payload.studentId, payload.semesterId) { mutableStateOf(payload.halaqahSakitText) }
   var halaqahIzin by rememberSaveable(payload.studentId, payload.semesterId) { mutableStateOf(payload.halaqahIzinText) }
+  var showShareDialog by rememberSaveable(payload.studentId, payload.semesterId) { mutableStateOf(false) }
+  var shareTargetNumber by rememberSaveable(payload.studentId, payload.semesterId) { mutableStateOf("") }
   val subjectScores = remember(payload.studentId, payload.semesterId) {
     mutableStateMapOf<String, String>().apply {
       payload.subjects.forEach { put(it.key, it.scoreText.takeIf { value -> value != "-" }.orEmpty()) }
@@ -602,7 +629,6 @@ private fun LaporanUtsDetailContent(
     }
 
     LaporanUtsQuickActionBar(
-      payload = draftPayload,
       modifier = Modifier.align(Alignment.BottomCenter),
       onPrint = {
         scope.launch {
@@ -613,16 +639,34 @@ private fun LaporanUtsDetailContent(
         }
       },
       onShare = {
-        scope.launch {
-          runCatching {
-            val pdf = UtsReportExporter.createPdfFile(context, draftPayload)
-            val message = UtsReportExporter.buildWhatsappAttachmentMessage(draftPayload)
-            val phone = santri.guardianPhone.ifBlank { santri.fatherPhone.ifBlank { santri.motherPhone } }
-            UtsReportExporter.sharePdfToWhatsApp(context, pdf, phone, message)
-          }.onFailure { showMessage("Gagal menyiapkan lampiran WhatsApp.") }
-        }
+        shareTargetNumber = santri.defaultWhatsappPhone()
+        showShareDialog = true
       }
     )
+
+    if (showShareDialog) {
+      UtsWhatsAppTargetDialog(
+        targetOptions = santri.whatsappTargets(),
+        targetNumber = shareTargetNumber,
+        onTargetNumberChange = { shareTargetNumber = it },
+        onDismiss = { showShareDialog = false },
+        showMessage = showMessage,
+        onSend = {
+          scope.launch {
+            runCatching {
+              val pdf = UtsReportExporter.createPdfFile(context, draftPayload)
+              val message = UtsReportExporter.buildWhatsappAttachmentMessage(draftPayload)
+              val opened = UtsReportExporter.sharePdfToWhatsApp(context, pdf, shareTargetNumber, message)
+              if (!opened) error("Tidak bisa membuka WhatsApp dengan lampiran PDF.")
+              showShareDialog = false
+              showMessage("WhatsApp dibuka. Jika caption belum muncul, teks sudah disalin dan bisa ditempel.")
+            }.onFailure { error ->
+              showMessage("Gagal kirim WhatsApp: ${error.message ?: "Unknown error"}")
+            }
+          }
+        }
+      )
+    }
 
     SavingOverlay(
       visible = isSaving,
@@ -1125,7 +1169,6 @@ private fun LaporanUtsReadOnlyInfoRow(label: String, value: String) {
 
 @Composable
 private fun LaporanUtsQuickActionBar(
-  payload: UtsReportPayload,
   modifier: Modifier = Modifier,
   onPrint: () -> Unit,
   onShare: () -> Unit
@@ -1175,6 +1218,143 @@ private fun LaporanUtsBottomAction(
 }
 
 @Composable
+private fun UtsWhatsAppTargetDialog(
+  targetOptions: List<UtsWhatsappTarget>,
+  targetNumber: String,
+  onTargetNumberChange: (String) -> Unit,
+  onDismiss: () -> Unit,
+  showMessage: (String) -> Unit,
+  onSend: () -> Unit
+) {
+  val context = LocalContext.current
+  val contactPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickContact()) { uri ->
+    if (uri != null) {
+      val pickedContact = readPickedContactPhone(context, uri)
+      val pickedPhone = pickedContact?.phone.orEmpty()
+      if (pickedPhone.isBlank()) {
+        showMessage("Kontak yang dipilih belum punya nomor telepon.")
+      } else {
+        onTargetNumberChange(pickedPhone)
+        showMessage("Nomor ${pickedContact?.label.orEmpty().ifBlank { "kontak" }} dipilih.")
+      }
+    }
+  }
+
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = {
+      Text(
+        text = "Kirim Laporan PTS",
+        style = MaterialTheme.typography.titleMedium,
+        color = PrimaryBlueDark,
+        fontWeight = FontWeight.ExtraBold
+      )
+    },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+          text = "Pilih nomor keluarga, isi manual, atau ambil dari kontak HP. PDF akan dibuka sebagai lampiran WhatsApp dan caption disalin sebagai cadangan.",
+          style = MaterialTheme.typography.bodySmall,
+          color = SubtleInk
+        )
+
+        targetOptions.forEach { target ->
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(14.dp))
+              .background(Color.White.copy(alpha = 0.82f))
+              .border(1.dp, CardBorder, RoundedCornerShape(14.dp))
+              .clickable { onTargetNumberChange(target.phone) }
+              .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Column(modifier = Modifier.weight(1f)) {
+              Text(
+                text = target.label,
+                style = MaterialTheme.typography.labelLarge,
+                color = PrimaryBlueDark,
+                fontWeight = FontWeight.Bold
+              )
+              Text(
+                text = target.phone,
+                style = MaterialTheme.typography.bodySmall,
+                color = SubtleInk,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+              )
+            }
+            if (target.phone == targetNumber) {
+              Icon(
+                imageVector = Icons.Outlined.Check,
+                contentDescription = "Terpilih",
+                tint = PrimaryBlue,
+                modifier = Modifier
+                  .padding(start = 8.dp)
+                  .size(18.dp)
+              )
+            }
+          }
+        }
+
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(PrimaryBlue.copy(alpha = 0.10f))
+            .clickable {
+              runCatching { contactPicker.launch(null) }
+                .onFailure { showMessage("Tidak bisa membuka kontak HP.") }
+            }
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+          horizontalArrangement = Arrangement.spacedBy(10.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Icon(Icons.Outlined.Phone, contentDescription = "Pilih kontak", tint = PrimaryBlue)
+          Column {
+            Text(
+              text = "Pilih dari kontak HP",
+              style = MaterialTheme.typography.labelLarge,
+              color = PrimaryBlueDark,
+              fontWeight = FontWeight.Bold
+            )
+            Text(
+              text = "Gunakan nomor dari kontak yang tersimpan di perangkat.",
+              style = MaterialTheme.typography.bodySmall,
+              color = SubtleInk
+            )
+          }
+        }
+
+        OutlinedTextField(
+          value = targetNumber,
+          onValueChange = onTargetNumberChange,
+          label = { Text("Nomor WhatsApp") },
+          modifier = Modifier.fillMaxWidth(),
+          singleLine = true,
+          colors = laporanUtsTextFieldColors()
+        )
+      }
+    },
+    confirmButton = {
+      Button(
+        onClick = onSend,
+        enabled = targetNumber.trim().isNotBlank()
+      ) {
+        Text("Kirim")
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("Batal")
+      }
+    },
+    containerColor = CardBackground
+  )
+}
+
+@Composable
 private fun LaporanUtsInfoCard(icon: ImageVector, title: String, body: String) {
   Row(
     modifier = Modifier
@@ -1200,7 +1380,6 @@ private fun LaporanUtsBulkImportDialog(
   payloads: Map<String, UtsReportPayload>,
   snapshot: UtsReportSnapshot,
   selectedSemester: UtsSemesterInfo,
-  profile: GuruProfile,
   onDismiss: () -> Unit,
   showMessage: (String) -> Unit,
   onSaveOverride: suspend (UtsReportOverride) -> UtsReportSaveOutcome
@@ -1533,6 +1712,114 @@ private fun UtsReportPayload.findWhatsappTarget(
   val student = students.firstOrNull { it.id == studentId }
   return student?.guardianPhone?.ifBlank { student.fatherPhone.ifBlank { student.motherPhone } }.orEmpty()
     .ifBlank { profile.phoneNumber }
+}
+
+private fun UtsReportPayload.whatsappTargets(
+  students: List<WaliSantriProfile>,
+  profile: GuruProfile
+): List<UtsWhatsappTarget> {
+  val student = students.firstOrNull { it.id == studentId }
+  val targets = mutableListOf<UtsWhatsappTarget>()
+  if (student != null) targets += student.whatsappTargets()
+  if (profile.phoneNumber.isNotBlank()) targets += UtsWhatsappTarget("Nomor guru", profile.phoneNumber)
+  return targets.distinctBy { it.phone.onlyDigitsForCompare() }
+}
+
+private fun WaliSantriProfile.defaultWhatsappPhone(): String {
+  return guardianPhone.ifBlank { fatherPhone.ifBlank { motherPhone.ifBlank { studentPhone } } }
+}
+
+private fun WaliSantriProfile.whatsappTargets(): List<UtsWhatsappTarget> {
+  return listOf(
+    UtsWhatsappTarget("Wali${guardianName.takeIf { it.isNotBlank() }?.let { " - $it" }.orEmpty()}", guardianPhone),
+    UtsWhatsappTarget("Ayah${fatherName.takeIf { it.isNotBlank() }?.let { " - $it" }.orEmpty()}", fatherPhone),
+    UtsWhatsappTarget("Ibu${motherName.takeIf { it.isNotBlank() }?.let { " - $it" }.orEmpty()}", motherPhone),
+    UtsWhatsappTarget("Santri", studentPhone)
+  ).filter { it.phone.isNotBlank() }
+    .distinctBy { it.phone.onlyDigitsForCompare() }
+}
+
+private fun String.onlyDigitsForCompare(): String = filter { it.isDigit() }
+
+private data class UtsWhatsappTarget(
+  val label: String,
+  val phone: String
+)
+
+private data class UtsPickedContact(
+  val label: String,
+  val phone: String
+)
+
+private fun readPickedContactPhone(context: Context, uri: Uri): UtsPickedContact? {
+  val directPhone = readPhoneDirectlyFromUri(context, uri)
+  if (directPhone != null) return directPhone
+
+  val contactInfo = readContactInfo(context, uri) ?: return null
+  val phone = context.contentResolver.query(
+    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+    arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+    "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
+    arrayOf(contactInfo.first),
+    null
+  )?.use { cursor ->
+    if (cursor.moveToFirst()) {
+      cursor.getStringOrBlank(ContactsContract.CommonDataKinds.Phone.NUMBER)
+    } else {
+      ""
+    }
+  }.orEmpty()
+
+  return if (phone.isBlank()) null else UtsPickedContact(contactInfo.second, phone)
+}
+
+private fun readPhoneDirectlyFromUri(context: Context, uri: Uri): UtsPickedContact? {
+  return runCatching {
+    context.contentResolver.query(
+      uri,
+      arrayOf(
+        ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+        ContactsContract.CommonDataKinds.Phone.NUMBER
+      ),
+      null,
+      null,
+      null
+    )?.use { cursor ->
+      if (cursor.moveToFirst()) {
+        val phone = cursor.getStringOrBlank(ContactsContract.CommonDataKinds.Phone.NUMBER)
+        val name = cursor.getStringOrBlank(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+        if (phone.isBlank()) null else UtsPickedContact(name, phone)
+      } else {
+        null
+      }
+    }
+  }.getOrNull()
+}
+
+private fun readContactInfo(context: Context, uri: Uri): Pair<String, String>? {
+  return context.contentResolver.query(
+    uri,
+    arrayOf(
+      ContactsContract.Contacts._ID,
+      ContactsContract.Contacts.DISPLAY_NAME_PRIMARY
+    ),
+    null,
+    null,
+    null
+  )?.use { cursor ->
+    if (cursor.moveToFirst()) {
+      val id = cursor.getStringOrBlank(ContactsContract.Contacts._ID)
+      val name = cursor.getStringOrBlank(ContactsContract.Contacts.DISPLAY_NAME_PRIMARY)
+      if (id.isBlank()) null else id to name
+    } else {
+      null
+    }
+  }
+}
+
+private fun Cursor.getStringOrBlank(columnName: String): String {
+  val index = getColumnIndex(columnName)
+  return if (index >= 0) getString(index).orEmpty() else ""
 }
 
 private data class UtsBulkPreviewRow(
