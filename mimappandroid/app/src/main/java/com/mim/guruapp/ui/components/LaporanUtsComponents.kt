@@ -1,6 +1,8 @@
 package com.mim.guruapp.ui.components
 
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.database.Cursor
 import android.net.Uri
 import android.provider.ContactsContract
@@ -420,7 +422,7 @@ private fun LaporanUtsListContent(
 
     sharePayload?.let { payload ->
       UtsWhatsAppTargetDialog(
-        targetOptions = payload.whatsappTargets(students, profile),
+        targetOptions = payload.whatsappTargets(students),
         targetNumber = shareTargetNumber,
         onTargetNumberChange = { shareTargetNumber = it },
         onDismiss = { sharePayload = null },
@@ -1227,16 +1229,17 @@ private fun UtsWhatsAppTargetDialog(
   onSend: () -> Unit
 ) {
   val context = LocalContext.current
-  val contactPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickContact()) { uri ->
-    if (uri != null) {
-      val pickedContact = readPickedContactPhone(context, uri)
+  val contactPicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+    if (result.resultCode == Activity.RESULT_OK) {
+      val pickedContact = result.data?.data?.let { uri -> readPhoneDirectlyFromUri(context, uri) }
       val pickedPhone = pickedContact?.phone.orEmpty()
       if (pickedPhone.isBlank()) {
         showMessage("Kontak yang dipilih belum punya nomor telepon.")
-      } else {
-        onTargetNumberChange(pickedPhone)
-        showMessage("Nomor ${pickedContact?.label.orEmpty().ifBlank { "kontak" }} dipilih.")
+        return@rememberLauncherForActivityResult
       }
+
+      onTargetNumberChange(pickedPhone)
+      showMessage("Nomor ${pickedContact?.label.orEmpty().ifBlank { "kontak" }} dipilih.")
     }
   }
 
@@ -1298,35 +1301,6 @@ private fun UtsWhatsAppTargetDialog(
           }
         }
 
-        Row(
-          modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(PrimaryBlue.copy(alpha = 0.10f))
-            .clickable {
-              runCatching { contactPicker.launch(null) }
-                .onFailure { showMessage("Tidak bisa membuka kontak HP.") }
-            }
-            .padding(horizontal = 12.dp, vertical = 11.dp),
-          horizontalArrangement = Arrangement.spacedBy(10.dp),
-          verticalAlignment = Alignment.CenterVertically
-        ) {
-          Icon(Icons.Outlined.Phone, contentDescription = "Pilih kontak", tint = PrimaryBlue)
-          Column {
-            Text(
-              text = "Pilih dari kontak HP",
-              style = MaterialTheme.typography.labelLarge,
-              color = PrimaryBlueDark,
-              fontWeight = FontWeight.Bold
-            )
-            Text(
-              text = "Gunakan nomor dari kontak yang tersimpan di perangkat.",
-              style = MaterialTheme.typography.bodySmall,
-              color = SubtleInk
-            )
-          }
-        }
-
         OutlinedTextField(
           value = targetNumber,
           onValueChange = onTargetNumberChange,
@@ -1335,6 +1309,46 @@ private fun UtsWhatsAppTargetDialog(
           singleLine = true,
           colors = laporanUtsTextFieldColors()
         )
+
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .shadow(10.dp, RoundedCornerShape(16.dp), ambientColor = Color(0x1F1D4ED8), spotColor = Color(0x241D4ED8))
+            .clip(RoundedCornerShape(16.dp))
+            .background(PrimaryBlue.copy(alpha = 0.13f))
+            .border(1.dp, PrimaryBlue.copy(alpha = 0.22f), RoundedCornerShape(16.dp))
+            .clickable {
+              val intent = Intent(Intent.ACTION_PICK, ContactsContract.CommonDataKinds.Phone.CONTENT_URI)
+              runCatching { contactPicker.launch(intent) }
+                .onFailure { showMessage("Tidak bisa membuka kontak HP.") }
+            }
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+          horizontalArrangement = Arrangement.spacedBy(10.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Box(
+            modifier = Modifier
+              .size(34.dp)
+              .clip(CircleShape)
+              .background(Color.White.copy(alpha = 0.92f)),
+            contentAlignment = Alignment.Center
+          ) {
+            Icon(Icons.Outlined.Phone, contentDescription = "Pilih kontak", tint = PrimaryBlue, modifier = Modifier.size(18.dp))
+          }
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = "Pilih dari kontak HP",
+              style = MaterialTheme.typography.labelLarge,
+              color = PrimaryBlueDark,
+              fontWeight = FontWeight.Bold
+            )
+            Text(
+              text = "Ambil nomor dari kontak yang tersimpan di perangkat.",
+              style = MaterialTheme.typography.bodySmall,
+              color = SubtleInk
+            )
+          }
+        }
       }
     },
     confirmButton = {
@@ -1700,6 +1714,7 @@ private fun normalizeUtsSubjectKey(value: String): String {
     .replace("aqidah", "akidah")
     .replace("hadis", "hadits")
     .replace("fiqih", "fikih")
+    .replace("mtka", "matematika")
     .replace(Regex("[^a-z0-9]+"), " ")
     .trim()
     .replace(Regex("\\s+"), " ")
@@ -1715,13 +1730,11 @@ private fun UtsReportPayload.findWhatsappTarget(
 }
 
 private fun UtsReportPayload.whatsappTargets(
-  students: List<WaliSantriProfile>,
-  profile: GuruProfile
+  students: List<WaliSantriProfile>
 ): List<UtsWhatsappTarget> {
   val student = students.firstOrNull { it.id == studentId }
   val targets = mutableListOf<UtsWhatsappTarget>()
   if (student != null) targets += student.whatsappTargets()
-  if (profile.phoneNumber.isNotBlank()) targets += UtsWhatsappTarget("Nomor guru", profile.phoneNumber)
   return targets.distinctBy { it.phone.onlyDigitsForCompare() }
 }
 
@@ -1751,28 +1764,6 @@ private data class UtsPickedContact(
   val phone: String
 )
 
-private fun readPickedContactPhone(context: Context, uri: Uri): UtsPickedContact? {
-  val directPhone = readPhoneDirectlyFromUri(context, uri)
-  if (directPhone != null) return directPhone
-
-  val contactInfo = readContactInfo(context, uri) ?: return null
-  val phone = context.contentResolver.query(
-    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-    arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
-    "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
-    arrayOf(contactInfo.first),
-    null
-  )?.use { cursor ->
-    if (cursor.moveToFirst()) {
-      cursor.getStringOrBlank(ContactsContract.CommonDataKinds.Phone.NUMBER)
-    } else {
-      ""
-    }
-  }.orEmpty()
-
-  return if (phone.isBlank()) null else UtsPickedContact(contactInfo.second, phone)
-}
-
 private fun readPhoneDirectlyFromUri(context: Context, uri: Uri): UtsPickedContact? {
   return runCatching {
     context.contentResolver.query(
@@ -1794,27 +1785,6 @@ private fun readPhoneDirectlyFromUri(context: Context, uri: Uri): UtsPickedConta
       }
     }
   }.getOrNull()
-}
-
-private fun readContactInfo(context: Context, uri: Uri): Pair<String, String>? {
-  return context.contentResolver.query(
-    uri,
-    arrayOf(
-      ContactsContract.Contacts._ID,
-      ContactsContract.Contacts.DISPLAY_NAME_PRIMARY
-    ),
-    null,
-    null,
-    null
-  )?.use { cursor ->
-    if (cursor.moveToFirst()) {
-      val id = cursor.getStringOrBlank(ContactsContract.Contacts._ID)
-      val name = cursor.getStringOrBlank(ContactsContract.Contacts.DISPLAY_NAME_PRIMARY)
-      if (id.isBlank()) null else id to name
-    } else {
-      null
-    }
-  }
 }
 
 private fun Cursor.getStringOrBlank(columnName: String): String {

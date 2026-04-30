@@ -181,269 +181,286 @@ object UtsReportExporter {
     data: UtsReportPayload
   ) {
     val mm = 2.8346457f
-    val margin = 25.4f * mm
-    val baseTextSize = 10f
-    val bodyLineGap = 4.8f * mm
     val topStartY = 42.6f * mm
     val pageBottom = PageHeight - (10f * mm)
-    val black = Color.BLACK
-    var pageNumber = 0
-    var page: PdfDocument.Page? = null
-    var canvas: Canvas? = null
-    var y = topStartY
     val background = runCatching {
       context.assets.open("background_rapor.png").use(BitmapFactory::decodeStream)
     }.getOrNull()
 
-    fun textPaint(
-      size: Float = baseTextSize,
-      style: Int = Typeface.NORMAL,
-      align: Paint.Align = Paint.Align.LEFT
-    ): Paint {
-      return Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    fun renderReport(scale: Float, measureOnly: Boolean, allowPageBreaks: Boolean): Float {
+      val margin = 25.4f * mm
+      val baseTextSize = 10f * scale
+      val bodyLineGap = 4.8f * mm * scale
+      val black = Color.BLACK
+      var pageNumber = 0
+      var page: PdfDocument.Page? = null
+      var canvas: Canvas? = null
+      var y = topStartY
+
+      fun textPaint(
+        size: Float = baseTextSize,
+        style: Int = Typeface.NORMAL,
+        align: Paint.Align = Paint.Align.LEFT
+      ): Paint {
+        return Paint(Paint.ANTI_ALIAS_FLAG).apply {
+          color = black
+          textSize = size
+          textAlign = align
+          typeface = Typeface.create(Typeface.SERIF, style)
+        }
+      }
+
+      val titlePaint = textPaint(baseTextSize, Typeface.BOLD, Paint.Align.CENTER)
+      val bodyPaint = textPaint(baseTextSize)
+      val bodyBoldPaint = textPaint(baseTextSize, Typeface.BOLD)
+      val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = black
-        textSize = size
-        textAlign = align
-        typeface = Typeface.create(Typeface.SERIF, style)
+        style = Paint.Style.STROKE
+        strokeWidth = 0.18f * mm * scale
       }
-    }
-
-    val titlePaint = textPaint(baseTextSize, Typeface.BOLD, Paint.Align.CENTER)
-    val bodyPaint = textPaint(baseTextSize)
-    val bodyBoldPaint = textPaint(baseTextSize, Typeface.BOLD)
-    val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-      color = black
-      style = Paint.Style.STROKE
-      strokeWidth = 0.18f * mm
-    }
-    val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-      color = Color.WHITE
-      style = Paint.Style.FILL
-    }
-
-    fun startPage() {
-      pageNumber += 1
-      page = document.startPage(PdfDocument.PageInfo.Builder(PageWidth, PageHeight, pageNumber).create())
-      canvas = page?.canvas
-      y = topStartY
-      background?.let { bitmap ->
-        canvas?.drawBitmap(bitmap, null, RectF(0f, 0f, PageWidth.toFloat(), PageHeight.toFloat()), null)
+      val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.FILL
       }
-    }
 
-    fun finishPage() {
-      page?.let(document::finishPage)
-      page = null
-      canvas = null
-    }
-
-    fun ensureSpace(required: Float) {
-      if (page == null) startPage()
-      if (y + required > pageBottom) {
-        finishPage()
-        startPage()
-      }
-    }
-
-    fun wrapText(text: String, paint: Paint, width: Float): List<String> {
-      val words = text.ifBlank { "-" }.split(Regex("\\s+")).filter { it.isNotBlank() }
-      if (words.isEmpty()) return listOf("-")
-      val lines = mutableListOf<String>()
-      var line = ""
-      words.forEach { word ->
-        val candidate = if (line.isBlank()) word else "$line $word"
-        if (paint.measureText(candidate) <= width || line.isBlank()) {
-          line = candidate
-        } else {
-          lines += line
-          line = word
+      fun startPage() {
+        if (measureOnly) return
+        pageNumber += 1
+        page = document.startPage(PdfDocument.PageInfo.Builder(PageWidth, PageHeight, pageNumber).create())
+        canvas = page?.canvas
+        y = topStartY
+        background?.let { bitmap ->
+          canvas?.drawBitmap(bitmap, null, RectF(0f, 0f, PageWidth.toFloat(), PageHeight.toFloat()), null)
         }
       }
-      if (line.isNotBlank()) lines += line
-      return lines
-    }
 
-    fun lineHeight(paint: Paint): Float {
-      val metrics = paint.fontMetrics
-      return (metrics.descent - metrics.ascent) * 1.12f
-    }
-
-    fun cellHeight(text: String, paint: Paint, width: Float, padding: Float): Float {
-      return wrapText(text, paint, width - (padding * 2f)).size * lineHeight(paint) + (padding * 2f)
-    }
-
-    fun drawCell(
-      x: Float,
-      top: Float,
-      width: Float,
-      height: Float,
-      text: String,
-      paint: Paint,
-      align: Paint.Align = Paint.Align.LEFT,
-      padding: Float = 1.8f * mm
-    ) {
-      canvas?.drawRect(x, top, x + width, top + height, fillPaint)
-      canvas?.drawRect(x, top, x + width, top + height, linePaint)
-      val drawPaint = Paint(paint).apply { textAlign = align }
-      val lines = wrapText(text.ifBlank { "-" }, drawPaint, width - (padding * 2f))
-      val textHeight = lines.size * lineHeight(drawPaint)
-      var baseline = top + ((height - textHeight) / 2f) - drawPaint.fontMetrics.ascent
-      val textX = when (align) {
-        Paint.Align.CENTER -> x + width / 2f
-        Paint.Align.RIGHT -> x + width - padding
-        else -> x + padding
+      fun finishPage() {
+        if (measureOnly) return
+        page?.let(document::finishPage)
+        page = null
+        canvas = null
       }
-      lines.forEach { line ->
-        canvas?.drawText(line, textX, baseline, drawPaint)
-        baseline += lineHeight(drawPaint)
-      }
-    }
 
-    fun drawFieldRow(label: String, value: String) {
-      val fieldLabelX = margin
-      val fieldColonX = margin + (29f * mm)
-      val fieldValueX = margin + (33f * mm)
-      val fieldValueWidth = PageWidth - margin - fieldValueX
-      val lines = wrapText(value.ifBlank { "-" }, bodyPaint, fieldValueWidth)
-      canvas?.drawText(label, fieldLabelX, y, bodyPaint)
-      canvas?.drawText(":", fieldColonX, y, bodyPaint)
-      lines.forEachIndexed { index, line ->
-        canvas?.drawText(line, fieldValueX, y + (index * bodyLineGap), bodyPaint)
-      }
-      y += maxOf(bodyLineGap, lines.size * bodyLineGap)
-    }
-
-    fun drawTable(
-      x: Float,
-      columns: FloatArray,
-      headers: List<String>,
-      rows: List<List<String>>,
-      centerColumns: Set<Int> = emptySet()
-    ) {
-      val padding = 1.8f * mm
-      val headerHeight = headers.mapIndexed { index, text ->
-        cellHeight(text, bodyBoldPaint, columns[index], padding)
-      }.maxOrNull() ?: (7f * mm)
-      ensureSpace(headerHeight)
-      var cx = x
-      headers.forEachIndexed { index, text ->
-        drawCell(cx, y, columns[index], headerHeight, text, bodyBoldPaint, Paint.Align.CENTER, padding)
-        cx += columns[index]
-      }
-      y += headerHeight
-      rows.forEach { row ->
-        if (row.firstOrNull() in listOf("Jumlah", "Rata-Rata") && columns.size >= 4) {
-          val labelWidth = columns.take(3).sum()
-          val valueWidth = columns[3]
-          val rowHeight = maxOf(
-            cellHeight(row.first(), bodyBoldPaint, labelWidth, padding),
-            cellHeight(row.getOrNull(3).orEmpty(), bodyBoldPaint, valueWidth, padding)
-          )
-          ensureSpace(rowHeight)
-          drawCell(x, y, labelWidth, rowHeight, row.first(), bodyBoldPaint, Paint.Align.CENTER, padding)
-          drawCell(x + labelWidth, y, valueWidth, rowHeight, row.getOrNull(3).orEmpty(), bodyBoldPaint, Paint.Align.CENTER, padding)
-          y += rowHeight
-          return@forEach
+      fun ensureSpace(required: Float) {
+        if (!measureOnly && page == null) startPage()
+        if (allowPageBreaks && y + required > pageBottom) {
+          finishPage()
+          startPage()
         }
-        val rowHeight = row.mapIndexed { index, text ->
-          cellHeight(text, bodyPaint, columns[index], padding)
-        }.maxOrNull() ?: (7f * mm)
-        ensureSpace(rowHeight)
-        cx = x
-        row.forEachIndexed { index, text ->
-          drawCell(
-            cx,
-            y,
-            columns[index],
-            rowHeight,
-            text,
-            if (row.firstOrNull() in listOf("Jumlah", "Rata-Rata")) bodyBoldPaint else bodyPaint,
-            if (index in centerColumns || row.firstOrNull() in listOf("Jumlah", "Rata-Rata")) Paint.Align.CENTER else Paint.Align.LEFT,
-            padding
-          )
+      }
+
+      fun wrapText(text: String, paint: Paint, width: Float): List<String> {
+        val words = text.ifBlank { "-" }.split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (words.isEmpty()) return listOf("-")
+        val lines = mutableListOf<String>()
+        var line = ""
+        words.forEach { word ->
+          val candidate = if (line.isBlank()) word else "$line $word"
+          if (paint.measureText(candidate) <= width || line.isBlank()) {
+            line = candidate
+          } else {
+            lines += line
+            line = word
+          }
+        }
+        if (line.isNotBlank()) lines += line
+        return lines
+      }
+
+      fun lineHeight(paint: Paint): Float {
+        val metrics = paint.fontMetrics
+        return (metrics.descent - metrics.ascent) * 1.12f
+      }
+
+      fun cellHeight(text: String, paint: Paint, width: Float, padding: Float): Float {
+        return wrapText(text, paint, width - (padding * 2f)).size * lineHeight(paint) + (padding * 2f)
+      }
+
+      fun drawCell(
+        x: Float,
+        top: Float,
+        width: Float,
+        height: Float,
+        text: String,
+        paint: Paint,
+        align: Paint.Align = Paint.Align.LEFT,
+        padding: Float = 1.8f * mm * scale
+      ) {
+        canvas?.drawRect(x, top, x + width, top + height, fillPaint)
+        canvas?.drawRect(x, top, x + width, top + height, linePaint)
+        val drawPaint = Paint(paint).apply { textAlign = align }
+        val lines = wrapText(text.ifBlank { "-" }, drawPaint, width - (padding * 2f))
+        val textHeight = lines.size * lineHeight(drawPaint)
+        var baseline = top + ((height - textHeight) / 2f) - drawPaint.fontMetrics.ascent
+        val textX = when (align) {
+          Paint.Align.CENTER -> x + width / 2f
+          Paint.Align.RIGHT -> x + width - padding
+          else -> x + padding
+        }
+        lines.forEach { line ->
+          canvas?.drawText(line, textX, baseline, drawPaint)
+          baseline += lineHeight(drawPaint)
+        }
+      }
+
+      fun drawFieldRow(label: String, value: String) {
+        val fieldLabelX = margin
+        val fieldColonX = margin + (29f * mm * scale)
+        val fieldValueX = margin + (33f * mm * scale)
+        val fieldValueWidth = PageWidth - margin - fieldValueX
+        val lines = wrapText(value.ifBlank { "-" }, bodyPaint, fieldValueWidth)
+        canvas?.drawText(label, fieldLabelX, y, bodyPaint)
+        canvas?.drawText(":", fieldColonX, y, bodyPaint)
+        lines.forEachIndexed { index, line ->
+          canvas?.drawText(line, fieldValueX, y + (index * bodyLineGap), bodyPaint)
+        }
+        y += maxOf(bodyLineGap, lines.size * bodyLineGap)
+      }
+
+      fun drawTable(
+        x: Float,
+        columns: FloatArray,
+        headers: List<String>,
+        rows: List<List<String>>,
+        centerColumns: Set<Int> = emptySet()
+      ) {
+        val padding = 1.8f * mm * scale
+        val headerHeight = headers.mapIndexed { index, text ->
+          cellHeight(text, bodyBoldPaint, columns[index], padding)
+        }.maxOrNull() ?: (7f * mm * scale)
+        ensureSpace(headerHeight)
+        var cx = x
+        headers.forEachIndexed { index, text ->
+          drawCell(cx, y, columns[index], headerHeight, text, bodyBoldPaint, Paint.Align.CENTER, padding)
           cx += columns[index]
         }
-        y += rowHeight
+        y += headerHeight
+        rows.forEach { row ->
+          if (row.firstOrNull() in listOf("Jumlah", "Rata-Rata") && columns.size >= 4) {
+            val labelWidth = columns.take(3).sum()
+            val valueWidth = columns[3]
+            val rowHeight = maxOf(
+              cellHeight(row.first(), bodyBoldPaint, labelWidth, padding),
+              cellHeight(row.getOrNull(3).orEmpty(), bodyBoldPaint, valueWidth, padding)
+            )
+            ensureSpace(rowHeight)
+            drawCell(x, y, labelWidth, rowHeight, row.first(), bodyBoldPaint, Paint.Align.CENTER, padding)
+            drawCell(x + labelWidth, y, valueWidth, rowHeight, row.getOrNull(3).orEmpty(), bodyBoldPaint, Paint.Align.CENTER, padding)
+            y += rowHeight
+            return@forEach
+          }
+          val rowHeight = row.mapIndexed { index, text ->
+            cellHeight(text, bodyPaint, columns[index], padding)
+          }.maxOrNull() ?: (7f * mm * scale)
+          ensureSpace(rowHeight)
+          cx = x
+          row.forEachIndexed { index, text ->
+            drawCell(
+              cx,
+              y,
+              columns[index],
+              rowHeight,
+              text,
+              if (row.firstOrNull() in listOf("Jumlah", "Rata-Rata")) bodyBoldPaint else bodyPaint,
+              if (index in centerColumns || row.firstOrNull() in listOf("Jumlah", "Rata-Rata")) Paint.Align.CENTER else Paint.Align.LEFT,
+              padding
+            )
+            cx += columns[index]
+          }
+          y += rowHeight
+        }
       }
+
+      val semesterSuffix = when {
+        data.semesterLabel.contains("genap", ignoreCase = true) -> "GENAP"
+        data.semesterLabel.contains("ganjil", ignoreCase = true) -> "GANJIL"
+        else -> data.semesterLabel.uppercase(Locale.ROOT).ifBlank { "GANJIL" }
+      }
+      val schoolName = "PESANTREN QUR`AN PUTRA MARKAZ IMAM MALIK"
+      val subjectTableWidth = 142.4f * mm * scale
+      val subjectTableX = (PageWidth - subjectTableWidth) / 2f
+      val subjectColumns = floatArrayOf(9.9f * mm * scale, 62.5f * mm * scale, 32.5f * mm * scale, 37.5f * mm * scale)
+      val midTableWidth = 142.5f * mm * scale
+      val midTableX = (PageWidth - midTableWidth) / 2f
+      val midColumns = floatArrayOf(78.7f * mm * scale, 63.8f * mm * scale)
+      val attendanceTableX = subjectTableX
+      val attendanceColumns = floatArrayOf(9.5f * mm * scale, 37.0f * mm * scale, 27.5f * mm * scale, 25.0f * mm * scale)
+
+      startPage()
+      canvas?.drawText("LAPORAN HASIL UJIAN SUMATIF TENGAH SEMESTER (USTS) $semesterSuffix", PageWidth / 2f, y, titlePaint)
+      y += bodyLineGap
+      canvas?.drawText(schoolName, PageWidth / 2f, y, titlePaint)
+      y += 9f * mm * scale
+
+      drawFieldRow("NAMA SANTRI", data.studentName)
+      drawFieldRow("NISN", data.studentNisn)
+      drawFieldRow("KELAS", data.className)
+      canvas?.drawLine(margin, y, PageWidth - margin, y, linePaint)
+      y += 7f * mm * scale
+
+      canvas?.drawText("A. MATA PELAJARAN", margin, y, bodyBoldPaint)
+      y += 4.5f * mm * scale
+      val subjectRows = data.subjects.mapIndexed { index, subject: UtsReportSubject ->
+        listOf((index + 1).toString(), subject.name, subject.kkmText.ifBlank { "17" }, subject.scoreText.ifBlank { "-" })
+      } + listOf(
+        listOf("Jumlah", "", "", data.totalScoreText.ifBlank { "-" }),
+        listOf("Rata-Rata", "", "", data.averageScoreText.ifBlank { "-" })
+      )
+      drawTable(
+        x = subjectTableX,
+        columns = subjectColumns,
+        headers = listOf("No", "Mata Pelajaran", "KKM", "Nilai"),
+        rows = subjectRows,
+        centerColumns = setOf(0, 2, 3)
+      )
+      y += 7f * mm * scale
+
+      canvas?.drawText("B. UJIAN MID SEMESTER KETAHFIZAN", margin, y, bodyBoldPaint)
+      y += 4.5f * mm * scale
+      drawTable(
+        x = midTableX,
+        columns = midColumns,
+        headers = listOf("CAPAIAN HAFALAN", "NILAI"),
+        rows = listOf(listOf(data.midTahfizCapaian.ifBlank { "-" }, data.midTahfizScore.ifBlank { "-" })),
+        centerColumns = setOf(0, 1)
+      )
+      y += 7f * mm * scale
+
+      canvas?.drawText("C. KEHADIRAN", margin, y, bodyBoldPaint)
+      y += 4.5f * mm * scale
+      drawTable(
+        x = attendanceTableX,
+        columns = attendanceColumns,
+        headers = listOf("No", "Kehadiran", "Izin", "Sakit"),
+        rows = listOf(
+          listOf("1", "Kelas", data.kelasIzinText.ifBlank { "0" }, data.kelasSakitText.ifBlank { "0" }),
+          listOf("2", "Halaqah Tahfizh", data.halaqahIzinText.ifBlank { "0" }, data.halaqahSakitText.ifBlank { "0" })
+        ),
+        centerColumns = setOf(0, 2, 3)
+      )
+      y += 11f * mm * scale
+
+      ensureSpace(26f * mm * scale)
+      val signCenterX = (127.8f * mm) + ((56.6f * mm) / 2f)
+      canvas?.drawText("Mengetahui,", signCenterX, y, Paint(bodyPaint).apply { textAlign = Paint.Align.CENTER })
+      y += 5f * mm * scale
+      canvas?.drawText("Wali Kelas", signCenterX, y, Paint(bodyPaint).apply { textAlign = Paint.Align.CENTER })
+      y += 18f * mm * scale
+      canvas?.drawText(data.waliKelasName.ifBlank { "-" }, signCenterX, y, Paint(bodyBoldPaint).apply { textAlign = Paint.Align.CENTER })
+      finishPage()
+      return y
     }
 
-    val semesterSuffix = when {
-      data.semesterLabel.contains("genap", ignoreCase = true) -> "GENAP"
-      data.semesterLabel.contains("ganjil", ignoreCase = true) -> "GANJIL"
-      else -> data.semesterLabel.uppercase(Locale.ROOT).ifBlank { "GANJIL" }
+    val requiredHeight = (renderReport(scale = 1f, measureOnly = true, allowPageBreaks = false) - topStartY)
+      .coerceAtLeast(1f)
+    val availableHeight = pageBottom - topStartY
+    val fitScale = (availableHeight / requiredHeight).coerceAtMost(1f)
+    val minReadableScale = 0.82f
+    if (fitScale >= minReadableScale) {
+      renderReport(scale = fitScale, measureOnly = false, allowPageBreaks = false)
+    } else {
+      renderReport(scale = 1f, measureOnly = false, allowPageBreaks = true)
     }
-    val schoolName = "PESANTREN QUR`AN PUTRA MARKAZ IMAM MALIK"
-    val subjectTableWidth = 142.4f * mm
-    val subjectTableX = (PageWidth - subjectTableWidth) / 2f
-    val subjectColumns = floatArrayOf(9.9f * mm, 62.5f * mm, 32.5f * mm, 37.5f * mm)
-    val midTableWidth = 142.5f * mm
-    val midTableX = (PageWidth - midTableWidth) / 2f
-    val midColumns = floatArrayOf(78.7f * mm, 63.8f * mm)
-    val attendanceTableX = subjectTableX
-    val attendanceColumns = floatArrayOf(9.5f * mm, 37.0f * mm, 27.5f * mm, 25.0f * mm)
-
-    startPage()
-    canvas?.drawText("LAPORAN HASIL UJIAN SUMATIF TENGAH SEMESTER (USTS) $semesterSuffix", PageWidth / 2f, y, titlePaint)
-    y += bodyLineGap
-    canvas?.drawText(schoolName, PageWidth / 2f, y, titlePaint)
-    y += 9f * mm
-
-    drawFieldRow("NAMA SANTRI", data.studentName)
-    drawFieldRow("NISN", data.studentNisn)
-    drawFieldRow("KELAS", data.className)
-    canvas?.drawLine(margin, y, PageWidth - margin, y, linePaint)
-    y += 7f * mm
-
-    canvas?.drawText("A. MATA PELAJARAN", margin, y, bodyBoldPaint)
-    y += 4.5f * mm
-    val subjectRows = data.subjects.mapIndexed { index, subject: UtsReportSubject ->
-      listOf((index + 1).toString(), subject.name, subject.kkmText.ifBlank { "17" }, subject.scoreText.ifBlank { "-" })
-    } + listOf(
-      listOf("Jumlah", "", "", data.totalScoreText.ifBlank { "-" }),
-      listOf("Rata-Rata", "", "", data.averageScoreText.ifBlank { "-" })
-    )
-    drawTable(
-      x = subjectTableX,
-      columns = subjectColumns,
-      headers = listOf("No", "Mata Pelajaran", "KKM", "Nilai"),
-      rows = subjectRows,
-      centerColumns = setOf(0, 2, 3)
-    )
-    y += 7f * mm
-
-    canvas?.drawText("B. UJIAN MID SEMESTER KETAHFIZAN", margin, y, bodyBoldPaint)
-    y += 4.5f * mm
-    drawTable(
-      x = midTableX,
-      columns = midColumns,
-      headers = listOf("CAPAIAN HAFALAN", "NILAI"),
-      rows = listOf(listOf(data.midTahfizCapaian.ifBlank { "-" }, data.midTahfizScore.ifBlank { "-" })),
-      centerColumns = setOf(0, 1)
-    )
-    y += 7f * mm
-
-    canvas?.drawText("C. KEHADIRAN", margin, y, bodyBoldPaint)
-    y += 4.5f * mm
-    drawTable(
-      x = attendanceTableX,
-      columns = attendanceColumns,
-      headers = listOf("No", "Kehadiran", "Izin", "Sakit"),
-      rows = listOf(
-        listOf("1", "Kelas", data.kelasIzinText.ifBlank { "0" }, data.kelasSakitText.ifBlank { "0" }),
-        listOf("2", "Halaqah Tahfizh", data.halaqahIzinText.ifBlank { "0" }, data.halaqahSakitText.ifBlank { "0" })
-      ),
-      centerColumns = setOf(0, 2, 3)
-    )
-    y += 11f * mm
-
-    ensureSpace(26f * mm)
-    val signCenterX = (127.8f * mm) + ((56.6f * mm) / 2f)
-    canvas?.drawText("Mengetahui,", signCenterX, y, Paint(bodyPaint).apply { textAlign = Paint.Align.CENTER })
-    y += 5f * mm
-    canvas?.drawText("Wali Kelas", signCenterX, y, Paint(bodyPaint).apply { textAlign = Paint.Align.CENTER })
-    y += 18f * mm
-    canvas?.drawText(data.waliKelasName.ifBlank { "-" }, signCenterX, y, Paint(bodyBoldPaint).apply { textAlign = Paint.Align.CENTER })
-    finishPage()
   }
 
   private fun copyTextToClipboard(context: Context, label: String, text: String) {

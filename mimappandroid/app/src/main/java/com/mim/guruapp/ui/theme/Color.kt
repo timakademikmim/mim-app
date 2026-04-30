@@ -1,6 +1,5 @@
 package com.mim.guruapp.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
@@ -20,78 +19,62 @@ internal val LightSubtleInk = Color(0xFF475569)
 internal val LightLoginButtonYellow = Color(0xFFD4D456)
 internal val LightLoginFieldFill = Color(0xFFDBE7F8)
 
-internal val DarkPrimaryBlue = Color(0xFF7AA2FF)
-internal val DarkPrimaryBlueDark = Color(0xFFF8FAFC)
-internal val DarkHighlightCard = Color(0xFF38BDF8)
-internal val DarkSuccessTint = Color(0xFF34D399)
-internal val DarkWarmAccent = Color(0xFFFBBF24)
-internal val DarkAppBackground = Color(0xFF07111F)
-internal val DarkLoginBackground = Color(0xFF0C1728)
-internal val DarkCardBackground = Color(0xFF0F1C2E)
-internal val DarkCardBorder = Color(0xFF253752)
-internal val DarkCardGradientStart = Color(0xFF162236)
-internal val DarkCardGradientEnd = Color(0xFF0E1A2A)
-internal val DarkSoftPanel = Color(0xFF132238)
-internal val DarkSubtleInk = Color(0xFF9AA9C0)
-internal val DarkLoginButtonYellow = Color(0xFFE4DD63)
-internal val DarkLoginFieldFill = Color(0xFF1B2A42)
-
 val AppBackground: Color
   @Composable
-  get() = if (isSystemInDarkTheme()) DarkAppBackground else LightAppBackground
+  get() = LightAppBackground
 
 val LoginBackground: Color
   @Composable
-  get() = if (isSystemInDarkTheme()) DarkLoginBackground else LightLoginBackground
+  get() = LightLoginBackground
 
 val PrimaryBlue: Color
   @Composable
-  get() = if (isSystemInDarkTheme()) DarkPrimaryBlue else LightPrimaryBlue
+  get() = LightPrimaryBlue
 
 val PrimaryBlueDark: Color
   @Composable
-  get() = if (isSystemInDarkTheme()) DarkPrimaryBlueDark else LightPrimaryBlueDark
+  get() = LightPrimaryBlueDark
 
 val HighlightCard: Color
   @Composable
-  get() = if (isSystemInDarkTheme()) DarkHighlightCard else LightHighlightCard
+  get() = LightHighlightCard
 
 val SuccessTint: Color
   @Composable
-  get() = if (isSystemInDarkTheme()) DarkSuccessTint else LightSuccessTint
+  get() = LightSuccessTint
 
 val CardBackground: Color
   @Composable
-  get() = if (isSystemInDarkTheme()) DarkCardBackground else LightCardBackground
+  get() = LightCardBackground
 
 val CardBorder: Color
   @Composable
-  get() = if (isSystemInDarkTheme()) DarkCardBorder else LightCardBorder
+  get() = LightCardBorder
 
 val WarmAccent: Color
   @Composable
-  get() = if (isSystemInDarkTheme()) DarkWarmAccent else LightWarmAccent
+  get() = LightWarmAccent
 
 val CardGradientStart: Color
   @Composable
-  get() = if (isSystemInDarkTheme()) DarkCardGradientStart else LightCardGradientStart
+  get() = LightCardGradientStart
 
 val CardGradientEnd: Color
   @Composable
-  get() = if (isSystemInDarkTheme()) DarkCardGradientEnd else LightCardGradientEnd
+  get() = LightCardGradientEnd
 
 val SoftPanel: Color
   @Composable
-  get() = if (isSystemInDarkTheme()) DarkSoftPanel else LightSoftPanel
+  get() = LightSoftPanel
 
 val SubtleInk: Color
   @Composable
-  get() = if (isSystemInDarkTheme()) DarkSubtleInk else LightSubtleInk
+  get() = LightSubtleInk
 
 val LoginButtonYellow: Color
   @Composable
-  get() = if (isSystemInDarkTheme()) DarkLoginButtonYellow else LightLoginButtonYellow
+  get() = LightLoginButtonYellow
 
 val LoginFieldFill: Color
   @Composable
-  get() = if (isSystemInDarkTheme()) DarkLoginFieldFill else LightLoginFieldFill
+  get() = LightLoginFieldFill
