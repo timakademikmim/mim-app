@@ -10,15 +10,21 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -47,6 +53,15 @@ fun WelcomeScreen(
     ),
     label = "welcome-pulse"
   )
+  val haloPulse = transition.animateFloat(
+    initialValue = 0.78f,
+    targetValue = 1.08f,
+    animationSpec = infiniteRepeatable(
+      animation = tween(1400),
+      repeatMode = RepeatMode.Reverse
+    ),
+    label = "welcome-halo"
+  )
 
   Box(
     modifier = Modifier
@@ -73,13 +88,34 @@ fun WelcomeScreen(
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.Center
     ) {
-      Image(
-        painter = painterResource(id = R.drawable.logo_mim_android),
-        contentDescription = "Logo MIM",
-        modifier = Modifier
-          .size(116.dp)
-          .alpha(pulse.value)
-      )
+      Box(contentAlignment = Alignment.Center) {
+        Box(
+          modifier = Modifier
+            .size(154.dp)
+            .scale(haloPulse.value)
+            .clip(CircleShape)
+            .background(
+              Brush.radialGradient(
+                colors = listOf(Color(0x332B8CFF), Color.Transparent),
+                radius = 130f
+              )
+            )
+        )
+        CircularProgressIndicator(
+          color = PrimaryBlueDark,
+          strokeWidth = 3.dp,
+          modifier = Modifier
+            .size(146.dp)
+            .alpha(0.58f)
+        )
+        Image(
+          painter = painterResource(id = R.drawable.logo_mim_android),
+          contentDescription = "Logo MIM",
+          modifier = Modifier
+            .size(116.dp)
+            .alpha(pulse.value)
+        )
+      }
       Text(
         text = title,
         style = MaterialTheme.typography.headlineSmall,
@@ -92,6 +128,46 @@ fun WelcomeScreen(
         color = SubtleInk,
         modifier = Modifier.padding(top = 10.dp, start = 32.dp, end = 32.dp)
       )
+      WelcomeLoadingDots(
+        modifier = Modifier.padding(top = 22.dp)
+      )
+    }
+  }
+}
+
+@Composable
+private fun WelcomeLoadingDots(modifier: Modifier = Modifier) {
+  val transition = rememberInfiniteTransition(label = "welcome-dots")
+  val dotPulse = transition.animateFloat(
+    initialValue = 0f,
+    targetValue = 1f,
+    animationSpec = infiniteRepeatable(
+      animation = tween(900),
+      repeatMode = RepeatMode.Restart
+    ),
+    label = "welcome-dot-pulse"
+  )
+
+  Row(
+    modifier = modifier,
+    horizontalArrangement = Arrangement.Center,
+    verticalAlignment = Alignment.CenterVertically
+  ) {
+    repeat(3) { index ->
+      val phase = ((dotPulse.value + (index * 0.22f)) % 1f)
+      val scale = if (phase < 0.5f) 0.72f + (phase * 0.56f) else 1.28f - ((phase - 0.5f) * 0.56f)
+      val alpha = if (phase < 0.5f) 0.35f + phase else 0.85f - ((phase - 0.5f) * 0.5f)
+      Box(
+        modifier = Modifier
+          .size(9.dp)
+          .scale(scale)
+          .alpha(alpha)
+          .clip(CircleShape)
+          .background(PrimaryBlueDark)
+      )
+      if (index < 2) {
+        Box(modifier = Modifier.width(9.dp))
+      }
     }
   }
 }
