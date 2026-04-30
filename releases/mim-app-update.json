@@ -1,7 +1,7 @@
 {
-  "versionCode": 1,
+  "versionCode": 1000,
   "versionName": "0.1.0",
-  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/v0.1.0/MIM%20APP.apk",
-  "releaseNotes": "Rilis awal MIM App Android.",
+  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.0/MIM%20APP.apk",
+  "releaseNotes": "MIM App Android 0.1.0. Pembaruan aplikasi dan perbaikan stabilitas.",
   "mandatory": false
 }
