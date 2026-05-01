@@ -1,5 +1,6 @@
 package com.mim.guruapp.ui.components
 
+import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedContent
@@ -52,19 +53,25 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AutoStories
 import androidx.compose.material.icons.outlined.Calculate
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.Print
+import androidx.compose.material.icons.outlined.Quiz
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.TaskAlt
 import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -92,6 +99,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -113,6 +121,8 @@ import com.mim.guruapp.data.model.ScoreDetailRow
 import com.mim.guruapp.data.model.ScoreStudent
 import com.mim.guruapp.data.model.SubjectOverview
 import com.mim.guruapp.data.model.SyncBannerState
+import com.mim.guruapp.export.MapelQuestionExportData
+import com.mim.guruapp.export.MapelQuestionExporter
 import com.mim.guruapp.ui.theme.AppBackground
 import com.mim.guruapp.ui.theme.CardBorder
 import com.mim.guruapp.ui.theme.HighlightCard
@@ -128,6 +138,8 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 
 private data class MapelCardVisual(
   val background: Color,
@@ -483,6 +495,12 @@ private fun MapelDetailScreen(
   var scoreSnapshot by remember(subject.id) { mutableStateOf<MapelScoreSnapshot?>(null) }
   var patronMateriSnapshot by remember(subject.id) { mutableStateOf<MapelPatronMateriSnapshot?>(null) }
   var patronMateriItems by remember(subject.id) { mutableStateOf<List<PatronMateriItem>>(emptyList()) }
+  var questionItems by remember(subject.id) { mutableStateOf<List<MapelQuestionDraft>>(emptyList()) }
+  var isCreatingQuestion by remember(subject.id) { mutableStateOf(false) }
+  var isAddingQuestionModel by remember(subject.id) { mutableStateOf(false) }
+  var activeQuestionId by rememberSaveable(subject.id) { mutableStateOf<String?>(null) }
+  var questionUndoStack by remember(subject.id) { mutableStateOf<List<MapelQuestionDraft>>(emptyList()) }
+  var isPrintingQuestion by remember(subject.id) { mutableStateOf(false) }
   var isLoadingAttendance by remember(subject.id) { mutableStateOf(true) }
   var isLoadingScores by remember(subject.id) { mutableStateOf(true) }
   var isLoadingPatronMateri by remember(subject.id) { mutableStateOf(true) }
@@ -501,6 +519,51 @@ private fun MapelDetailScreen(
       .getOrDefault(ScoreSortMode.ByStudent)
   }
   val detailScope = rememberCoroutineScope()
+  val context = LocalContext.current
+  val activeQuestion = remember(questionItems, activeQuestionId) {
+    questionItems.firstOrNull { it.id == activeQuestionId }
+  }
+  val isQuestionEditorOpen = selectedSection == MapelDetailSection.Soal && activeQuestion != null
+
+  fun updateQuestionDraft(updated: MapelQuestionDraft) {
+    val nextItems = questionItems.map { current ->
+      if (current.id == updated.id) updated.copy(updatedAt = System.currentTimeMillis()) else current
+    }.sortedByDescending { it.updatedAt }
+    questionItems = nextItems
+    saveMapelQuestions(context, subject.id, nextItems)
+  }
+
+  fun addQuestionModel(question: MapelQuestionDraft, typeKey: String) {
+    val selectedType = SoalTypeOptions.firstOrNull { it.key == typeKey } ?: SoalTypeOptions.first()
+    val newSection = MapelQuestionSection(
+      id = "model-${System.currentTimeMillis()}",
+      typeKey = selectedType.key,
+      typeLabel = selectedType.label,
+      count = 0,
+      choiceQuestions = emptyList<MapelChoiceQuestion>().withTrailingBlankQuestion()
+    )
+    val nextSections = question.sections + newSection
+    updateQuestionDraft(
+      question.copy(
+        form = nextSections.map { it.typeLabel }.distinct().joinToString(", "),
+        sections = nextSections
+      )
+    )
+  }
+
+  fun printQuestion(question: MapelQuestionDraft) {
+    if (!isPrintingQuestion) {
+      detailScope.launch {
+        isPrintingQuestion = true
+        runCatching {
+          val exportData = question.toExportData()
+          val pdf = MapelQuestionExporter.createPdfFile(context, subject, exportData)
+          MapelQuestionExporter.printPdf(context, pdf, exportData)
+        }
+        isPrintingQuestion = false
+      }
+    }
+  }
 
   suspend fun saveStudentAttendanceChanges(
     studentId: String,
@@ -558,6 +621,7 @@ private fun MapelDetailScreen(
     isLoadingAttendance = true
     isLoadingScores = true
     isLoadingPatronMateri = true
+    questionItems = loadMapelQuestions(context, subject.id)
     attendanceSnapshot = onLoadAttendance(subject.id, subject)
     scoreSnapshot = onLoadScores(subject.id, subject)
     patronMateriSnapshot = onLoadPatronMateri(subject.id, subject)
@@ -565,6 +629,20 @@ private fun MapelDetailScreen(
     isLoadingAttendance = false
     isLoadingScores = false
     isLoadingPatronMateri = false
+  }
+
+  LaunchedEffect(selectedSection, activeQuestionId, activeQuestion) {
+    if (selectedSection != MapelDetailSection.Soal || (activeQuestionId != null && activeQuestion == null)) {
+      activeQuestionId = null
+    }
+  }
+
+  LaunchedEffect(activeQuestionId) {
+    questionUndoStack = emptyList()
+  }
+
+  BackHandler(enabled = selectedSection == MapelDetailSection.Soal && activeQuestionId != null) {
+    activeQuestionId = null
   }
 
   Scaffold(
@@ -576,7 +654,21 @@ private fun MapelDetailScreen(
     topBar = {
       MapelDetailTopBar(
         title = selectedSection.label,
-        onBackClick = onBackClick
+        showUndo = isQuestionEditorOpen && questionUndoStack.isNotEmpty(),
+        onUndoClick = {
+          val restored = questionUndoStack.lastOrNull()
+          if (restored != null) {
+            questionUndoStack = questionUndoStack.dropLast(1)
+            updateQuestionDraft(restored)
+          }
+        },
+        onBackClick = {
+          if (isQuestionEditorOpen) {
+            activeQuestionId = null
+          } else {
+            onBackClick()
+          }
+        }
       )
     }
   ) { innerPadding ->
@@ -592,7 +684,7 @@ private fun MapelDetailScreen(
           modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp)
-            .padding(bottom = 96.dp)
+            .padding(bottom = if (isQuestionEditorOpen) 18.dp else 96.dp)
         ) {
           AbsensiMapelHeaderCard(
             subject = subject,
@@ -627,6 +719,30 @@ private fun MapelDetailScreen(
                 },
                 modifier = Modifier.padding(bottom = 14.dp)
               )
+            }
+
+            MapelDetailSection.Soal -> {
+              if (activeQuestion == null) {
+                SoalToolbar(
+                  totalSoal = questionItems.size,
+                  isPrinting = isPrintingQuestion,
+                  onAddSoal = { isCreatingQuestion = true },
+                  onPrintAll = {
+                    if (questionItems.isNotEmpty() && !isPrintingQuestion) {
+                      detailScope.launch {
+                        isPrintingQuestion = true
+                        runCatching {
+                          val combined = questionItems.toCombinedExportData(subject)
+                          val pdf = MapelQuestionExporter.createPdfFile(context, subject, combined)
+                          MapelQuestionExporter.printPdf(context, pdf, combined)
+                        }
+                        isPrintingQuestion = false
+                      }
+                    }
+                  },
+                  modifier = Modifier.padding(bottom = 14.dp)
+                )
+              }
             }
           }
 
@@ -774,7 +890,7 @@ private fun MapelDetailScreen(
                   }
                 }
               }
-            } else {
+            } else if (selectedSection == MapelDetailSection.PatronMateri) {
               when {
                 isLoadingPatronMateri -> {
                   items(3) { index ->
@@ -826,21 +942,1001 @@ private fun MapelDetailScreen(
                   }
                 }
               }
+            } else {
+              val openedQuestion = activeQuestion
+              if (openedQuestion != null) {
+                item {
+                  SoalWorkspaceScreen(
+                    question = openedQuestion,
+                    onQuestionChange = ::updateQuestionDraft,
+                    onBeforeDelete = { snapshot ->
+                      questionUndoStack = (questionUndoStack + snapshot).takeLast(20)
+                    }
+                  )
+                }
+              } else if (questionItems.isEmpty()) {
+                item {
+                  EmptyPlaceholderCard("Belum ada soal. Tekan Buat Soal untuk menyusun soal bebas tanpa jadwal ujian.")
+                }
+              } else {
+                items(
+                  items = questionItems,
+                  key = { it.id }
+                ) { question ->
+                  SoalCard(
+                    question = question,
+                    onEdit = { activeQuestionId = question.id },
+                    onPrint = {
+                      if (!isPrintingQuestion) {
+                        detailScope.launch {
+                          isPrintingQuestion = true
+                          runCatching {
+                            val exportData = question.toExportData()
+                            val pdf = MapelQuestionExporter.createPdfFile(context, subject, exportData)
+                            MapelQuestionExporter.printPdf(context, pdf, exportData)
+                          }
+                          isPrintingQuestion = false
+                        }
+                      }
+                    },
+                    onDelete = {
+                      val nextItems = questionItems.filterNot { it.id == question.id }
+                      questionItems = nextItems
+                      saveMapelQuestions(context, subject.id, nextItems)
+                    }
+                  )
+                }
+              }
             }
           }
         }
 
-        MapelDetailBottomNav(
-          selectedSection = selectedSection,
-          onSelectSection = onSectionChange,
+        if (!isQuestionEditorOpen) {
+          MapelDetailBottomNav(
+            selectedSection = selectedSection,
+            onSelectSection = onSectionChange,
+            modifier = Modifier
+              .align(Alignment.BottomCenter)
+              .navigationBarsPadding()
+              .padding(horizontal = 18.dp, vertical = 10.dp)
+          )
+        } else {
+          SoalEditorFabMenu(
+            isPrinting = isPrintingQuestion,
+            onAddModel = { isAddingQuestionModel = true },
+            onPrint = { activeQuestion?.let(::printQuestion) },
+            modifier = Modifier
+              .align(Alignment.BottomEnd)
+              .navigationBarsPadding()
+              .padding(end = 20.dp, bottom = 20.dp)
+          )
+        }
+
+        if (isCreatingQuestion) {
+          SoalCreateDialog(
+            subject = subject,
+            onDismiss = { isCreatingQuestion = false },
+            onSave = { created ->
+              val nextItems = (questionItems + created)
+                .sortedByDescending { it.updatedAt }
+              questionItems = nextItems
+              saveMapelQuestions(context, subject.id, nextItems)
+              isCreatingQuestion = false
+              activeQuestionId = created.id
+            }
+          )
+        }
+
+        val questionForAddModel = activeQuestion
+        if (isAddingQuestionModel && questionForAddModel != null) {
+          SoalAddModelDialog(
+            onDismiss = { isAddingQuestionModel = false },
+            onAdd = { typeKey ->
+              addQuestionModel(questionForAddModel, typeKey)
+              isAddingQuestionModel = false
+            }
+          )
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun SoalToolbar(
+  totalSoal: Int,
+  isPrinting: Boolean,
+  onAddSoal: () -> Unit,
+  onPrintAll: () -> Unit,
+  modifier: Modifier = Modifier
+) {
+  Row(
+    modifier = modifier.fillMaxWidth(),
+    horizontalArrangement = Arrangement.SpaceBetween,
+    verticalAlignment = Alignment.CenterVertically
+  ) {
+    Text(
+      text = "$totalSoal dokumen soal",
+      style = MaterialTheme.typography.labelLarge,
+      color = SubtleInk,
+      fontWeight = FontWeight.SemiBold
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      SoalPillButton(
+        label = if (isPrinting) "Menyiapkan..." else "Cetak Semua",
+        icon = Icons.Outlined.Print,
+        enabled = totalSoal > 0 && !isPrinting,
+        onClick = onPrintAll
+      )
+      SoalPillButton(
+        label = "Buat Soal",
+        icon = Icons.Outlined.Add,
+        onClick = onAddSoal
+      )
+    }
+  }
+}
+
+@Composable
+private fun SoalPillButton(
+  label: String,
+  icon: ImageVector,
+  enabled: Boolean = true,
+  onClick: () -> Unit
+) {
+  Row(
+    modifier = Modifier
+      .clip(RoundedCornerShape(999.dp))
+      .background(if (enabled) Color.White.copy(alpha = 0.92f) else Color.White.copy(alpha = 0.58f))
+      .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(999.dp))
+      .clickable(enabled = enabled, onClick = onClick)
+      .padding(horizontal = 14.dp, vertical = 10.dp),
+    horizontalArrangement = Arrangement.spacedBy(7.dp),
+    verticalAlignment = Alignment.CenterVertically
+  ) {
+    Icon(
+      imageVector = icon,
+      contentDescription = label,
+      tint = if (enabled) PrimaryBlue else SubtleInk.copy(alpha = 0.58f),
+      modifier = Modifier.size(18.dp)
+    )
+    Text(
+      text = label,
+      style = MaterialTheme.typography.labelLarge,
+      color = if (enabled) PrimaryBlueDark else SubtleInk.copy(alpha = 0.68f),
+      fontWeight = FontWeight.SemiBold
+    )
+  }
+}
+
+@Composable
+private fun SoalCard(
+  question: MapelQuestionDraft,
+  onEdit: () -> Unit,
+  onPrint: () -> Unit,
+  onDelete: () -> Unit
+) {
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .shadow(12.dp, RoundedCornerShape(22.dp), ambientColor = Color(0x100F172A), spotColor = Color(0x100F172A))
+      .clip(RoundedCornerShape(22.dp))
+      .background(Color.White.copy(alpha = 0.94f))
+      .border(1.dp, CardBorder.copy(alpha = 0.86f), RoundedCornerShape(22.dp))
+      .clickable(onClick = onEdit)
+      .padding(16.dp),
+    verticalArrangement = Arrangement.spacedBy(12.dp)
+  ) {
+    Row(
+      horizontalArrangement = Arrangement.spacedBy(12.dp),
+      verticalAlignment = Alignment.Top
+    ) {
+      Box(
+        modifier = Modifier
+          .size(46.dp)
+          .clip(RoundedCornerShape(16.dp))
+          .background(PrimaryBlue.copy(alpha = 0.12f))
+          .border(1.dp, PrimaryBlue.copy(alpha = 0.18f), RoundedCornerShape(16.dp)),
+        contentAlignment = Alignment.Center
+      ) {
+        Icon(Icons.Outlined.Quiz, contentDescription = null, tint = PrimaryBlue)
+      }
+      Column(
+        modifier = Modifier.weight(1f),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+      ) {
+        Text(
+          text = question.title.ifBlank { "Soal tanpa judul" },
+          style = MaterialTheme.typography.titleMedium,
+          color = PrimaryBlueDark,
+          fontWeight = FontWeight.ExtraBold,
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis
+        )
+        Text(
+          text = listOf(question.category, question.form, question.dateIso).filter { it.isNotBlank() }.joinToString(" | "),
+          style = MaterialTheme.typography.bodySmall,
+          color = SubtleInk,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis
+        )
+      }
+    }
+
+    Text(
+      text = question.previewText(),
+      style = MaterialTheme.typography.bodySmall,
+      color = SubtleInk,
+      maxLines = 2,
+      overflow = TextOverflow.Ellipsis
+    )
+
+    Row(
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      SoalMiniChip("${question.questionCount()} nomor")
+      SoalMiniChip("${question.sections.size} model")
+      SoalMiniChip(question.statusLabel)
+      Spacer(modifier = Modifier.weight(1f))
+      SoalIconAction(Icons.Outlined.Print, "Cetak", onPrint)
+      SoalIconAction(Icons.Outlined.Delete, "Hapus", onDelete, tint = Color(0xFFDC2626))
+    }
+  }
+}
+
+@Composable
+private fun SoalMiniChip(label: String) {
+  Box(
+    modifier = Modifier
+      .clip(RoundedCornerShape(999.dp))
+      .background(PrimaryBlue.copy(alpha = 0.08f))
+      .border(1.dp, PrimaryBlue.copy(alpha = 0.16f), RoundedCornerShape(999.dp))
+      .padding(horizontal = 10.dp, vertical = 6.dp),
+    contentAlignment = Alignment.Center
+  ) {
+    Text(
+      text = label,
+      style = MaterialTheme.typography.labelSmall,
+      color = PrimaryBlueDark,
+      fontWeight = FontWeight.SemiBold
+    )
+  }
+}
+
+@Composable
+private fun SoalIconAction(
+  icon: ImageVector,
+  label: String,
+  onClick: () -> Unit,
+  tint: Color = PrimaryBlue
+) {
+  Box(
+    modifier = Modifier
+      .size(38.dp)
+      .clip(CircleShape)
+      .background(tint.copy(alpha = 0.10f))
+      .clickable(onClick = onClick),
+    contentAlignment = Alignment.Center
+  ) {
+    Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(19.dp))
+  }
+}
+
+@Composable
+private fun SoalCreateDialog(
+  subject: SubjectOverview,
+  onDismiss: () -> Unit,
+  onSave: (MapelQuestionDraft) -> Unit
+) {
+  var title by remember { mutableStateOf("") }
+  var selectedCategory by remember { mutableStateOf(SoalCategoryOptions.first()) }
+  var dateIso by remember { mutableStateOf(LocalDate.now().toString()) }
+  val canSave = title.trim().isNotBlank()
+
+  Dialog(onDismissRequest = onDismiss) {
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(26.dp))
+        .background(Color.White.copy(alpha = 0.98f))
+        .border(1.dp, CardBorder.copy(alpha = 0.9f), RoundedCornerShape(26.dp))
+        .padding(18.dp),
+      verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+      Row(
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth()
+      ) {
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+          Text(
+            text = "Buat Soal",
+            style = MaterialTheme.typography.titleMedium,
+            color = PrimaryBlueDark,
+            fontWeight = FontWeight.ExtraBold
+          )
+          Text(
+            text = "Isi data awal dulu, detailnya diedit setelah file dibuat.",
+            style = MaterialTheme.typography.bodySmall,
+            color = SubtleInk
+          )
+        }
+        Box(
           modifier = Modifier
-            .align(Alignment.BottomCenter)
-            .navigationBarsPadding()
-            .padding(horizontal = 18.dp, vertical = 10.dp)
+            .size(38.dp)
+            .clip(CircleShape)
+            .background(Color(0xFFF8FAFC))
+            .clickable(onClick = onDismiss),
+          contentAlignment = Alignment.Center
+        ) {
+          Icon(Icons.Outlined.Close, contentDescription = "Tutup", tint = PrimaryBlueDark)
+        }
+      }
+
+      SoalTextField(title, { title = it }, "Judul soal")
+      SoalDropdownField(
+        label = "Jenis soal",
+        selectedLabel = selectedCategory,
+        options = SoalCategoryOptions,
+        onSelect = { selectedCategory = it }
+      )
+      SoalTextField(
+        value = dateIso,
+        onValueChange = { dateIso = it },
+        label = "Tanggal",
+        keyboardType = KeyboardType.Number
+      )
+
+      Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Box(
+          modifier = Modifier
+            .weight(1f)
+            .clip(RoundedCornerShape(999.dp))
+            .background(Color(0xFFF8FAFC))
+            .border(1.dp, CardBorder.copy(alpha = 0.9f), RoundedCornerShape(999.dp))
+            .clickable(onClick = onDismiss)
+            .padding(vertical = 12.dp),
+          contentAlignment = Alignment.Center
+        ) {
+          Text("Batal", color = SubtleInk, fontWeight = FontWeight.SemiBold)
+        }
+        Box(
+          modifier = Modifier
+            .weight(1f)
+            .clip(RoundedCornerShape(999.dp))
+            .background(if (canSave) PrimaryBlue else PrimaryBlue.copy(alpha = 0.36f))
+            .clickable(enabled = canSave) {
+              onSave(
+                MapelQuestionDraft(
+                  id = "soal-${System.currentTimeMillis()}",
+                  title = title.trim().ifBlank { "Soal ${subject.title}" },
+                  category = selectedCategory,
+                  form = "",
+                  dateIso = dateIso.trim().ifBlank { LocalDate.now().toString() },
+                  updatedAt = System.currentTimeMillis()
+                )
+              )
+            }
+            .padding(vertical = 12.dp),
+          contentAlignment = Alignment.Center
+        ) {
+          Text("Simpan", color = Color.White, fontWeight = FontWeight.Bold)
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun SoalWorkspaceScreen(
+  question: MapelQuestionDraft,
+  onQuestionChange: (MapelQuestionDraft) -> Unit,
+  onBeforeDelete: (MapelQuestionDraft) -> Unit
+) {
+  Column(
+    modifier = Modifier.fillMaxWidth(),
+    verticalArrangement = Arrangement.spacedBy(14.dp)
+  ) {
+    if (question.sections.isEmpty()) {
+      EmptyPlaceholderCard("Belum ada model soal. Tekan tombol + di kanan bawah untuk menambahkan model.")
+    } else {
+      question.sections.forEachIndexed { index, section ->
+        SoalSectionEditorCard(
+          section = section,
+          index = index,
+          onChange = { updated ->
+            val nextSections = question.sections.map { current ->
+              if (current.id == updated.id) updated else current
+            }
+            onQuestionChange(
+              question.copy(
+                form = nextSections.map { it.typeLabel }.distinct().joinToString(", "),
+                sections = nextSections
+              )
+            )
+          },
+          onDelete = {
+            onBeforeDelete(question)
+            val nextSections = question.sections.filterNot { it.id == section.id }
+            onQuestionChange(
+              question.copy(
+                form = nextSections.map { it.typeLabel }.distinct().joinToString(", "),
+                sections = nextSections
+              )
+            )
+          },
+          onDeleteQuestion = { questionIndex ->
+            onBeforeDelete(question)
+            val nextSections = question.sections.map { currentSection ->
+              if (currentSection.id == section.id) {
+                val nextQuestions = currentSection.choiceQuestions
+                  .withTrailingBlankQuestion()
+                  .filterIndexed { index, _ -> index != questionIndex }
+                  .withTrailingBlankQuestion()
+                currentSection.copy(
+                  count = nextQuestions.filledQuestionCount(),
+                  choiceQuestions = nextQuestions
+                )
+              } else {
+                currentSection
+              }
+            }
+            onQuestionChange(
+              question.copy(
+                form = nextSections.map { it.typeLabel }.distinct().joinToString(", "),
+                sections = nextSections
+              )
+            )
+          }
+        )
+      }
+    }
+
+    Spacer(modifier = Modifier.height(78.dp))
+  }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SoalSectionEditorCard(
+  section: MapelQuestionSection,
+  index: Int,
+  onChange: (MapelQuestionSection) -> Unit,
+  onDelete: () -> Unit,
+  onDeleteQuestion: (Int) -> Unit
+) {
+  val palette = section.modelPalette()
+  var showDeleteAction by rememberSaveable(section.id) { mutableStateOf(false) }
+  val activeQuestionCount = section.effectiveQuestionCount()
+
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .shadow(14.dp, RoundedCornerShape(24.dp), ambientColor = palette.accent.copy(alpha = 0.10f), spotColor = palette.accent.copy(alpha = 0.18f))
+      .clip(RoundedCornerShape(24.dp))
+      .background(palette.background)
+      .border(1.dp, palette.border, RoundedCornerShape(24.dp))
+      .combinedClickable(
+        onClick = { if (showDeleteAction) showDeleteAction = false },
+        onLongClick = { showDeleteAction = true }
+      )
+      .padding(15.dp),
+    verticalArrangement = Arrangement.spacedBy(13.dp)
+  ) {
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.SpaceBetween,
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Row(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        Box(
+          modifier = Modifier
+            .size(44.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(palette.accent.copy(alpha = 0.16f))
+            .border(1.dp, palette.accent.copy(alpha = 0.28f), RoundedCornerShape(16.dp)),
+          contentAlignment = Alignment.Center
+        ) {
+          Text(
+            text = modelOrdinalLabel(index),
+            style = MaterialTheme.typography.titleMedium,
+            color = palette.accent,
+            fontWeight = FontWeight.ExtraBold
+          )
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+          Text(
+            text = section.typeLabel,
+            style = MaterialTheme.typography.titleMedium,
+            color = palette.text,
+            fontWeight = FontWeight.ExtraBold
+          )
+          Text(
+            text = if (activeQuestionCount > 0) "$activeQuestionCount nomor" else "Belum ada soal",
+            style = MaterialTheme.typography.labelLarge,
+            color = palette.text.copy(alpha = 0.72f),
+            fontWeight = FontWeight.SemiBold
+          )
+        }
+      }
+      AnimatedVisibility(visible = showDeleteAction) {
+        SoalIconAction(Icons.Outlined.Delete, "Hapus model", onDelete, tint = Color(0xFFDC2626))
+      }
+    }
+
+    SoalTypeDropdown(
+      selectedTypeKey = section.typeKey,
+      onSelect = { option ->
+        val normalizedChoiceQuestions = if (option.key.usesQuestionPromptEditor()) {
+          section.choiceQuestions.withTrailingBlankQuestion()
+        } else {
+          section.choiceQuestions
+        }
+        onChange(
+          section.copy(
+            typeKey = option.key,
+            typeLabel = option.label,
+            choiceQuestions = normalizedChoiceQuestions
+          )
+        )
+      }
+    )
+
+    SoalTextField(
+      value = section.instruction,
+      onValueChange = { onChange(section.copy(instruction = it)) },
+      label = "Instruksi model",
+      minLines = 2
+    )
+    if (section.typeKey.usesQuestionPromptEditor()) {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        section.choiceQuestions.withTrailingBlankQuestion().forEachIndexed { questionIndex, choiceQuestion ->
+          SoalChoiceQuestionEditor(
+            question = choiceQuestion,
+            questionIndex = questionIndex,
+            modelLabel = section.typeLabel,
+            typeKey = section.typeKey,
+            palette = palette,
+            showOptions = section.typeKey == "pilihan-ganda",
+            canDelete = choiceQuestion.hasQuestionContent(),
+            onDelete = { onDeleteQuestion(questionIndex) },
+            onChange = { updated ->
+              val nextQuestions = section.choiceQuestions
+                .withTrailingBlankQuestion()
+                .mapIndexed { index, current -> if (index == questionIndex) updated else current }
+                .withTrailingBlankQuestion()
+              onChange(section.copy(count = nextQuestions.filledQuestionCount(), choiceQuestions = nextQuestions))
+            }
+          )
+        }
+      }
+    } else {
+      SoalTextField(
+        value = section.content,
+        onValueChange = { onChange(section.copy(content = it)) },
+        label = "Isi soal / catatan editor",
+        minLines = 5
+      )
+    }
+  }
+}
+
+@Composable
+private fun SoalEditorFabMenu(
+  isPrinting: Boolean,
+  onAddModel: () -> Unit,
+  onPrint: () -> Unit,
+  modifier: Modifier = Modifier
+) {
+  var expanded by remember { mutableStateOf(false) }
+  Box(modifier = modifier) {
+    Box(
+      modifier = Modifier
+        .size(58.dp)
+        .shadow(18.dp, CircleShape, ambientColor = PrimaryBlue.copy(alpha = 0.22f), spotColor = PrimaryBlue.copy(alpha = 0.28f))
+        .clip(CircleShape)
+        .background(PrimaryBlue)
+        .clickable { expanded = true },
+      contentAlignment = Alignment.Center
+    ) {
+      Icon(
+        imageVector = Icons.Outlined.Add,
+        contentDescription = "Aksi soal",
+        tint = Color.White,
+        modifier = Modifier.size(28.dp)
+      )
+    }
+    DropdownMenu(
+      expanded = expanded,
+      onDismissRequest = { expanded = false }
+    ) {
+      DropdownMenuItem(
+        text = {
+          Text(
+            text = "Tambah model soal",
+            color = PrimaryBlueDark,
+            fontWeight = FontWeight.SemiBold
+          )
+        },
+        leadingIcon = {
+          Icon(Icons.Outlined.Add, contentDescription = null, tint = PrimaryBlue)
+        },
+        onClick = {
+          expanded = false
+          onAddModel()
+        }
+      )
+      DropdownMenuItem(
+        text = {
+          Text(
+            text = if (isPrinting) "Menyiapkan cetak..." else "Cetak",
+            color = PrimaryBlueDark,
+            fontWeight = FontWeight.SemiBold
+          )
+        },
+        leadingIcon = {
+          Icon(Icons.Outlined.Print, contentDescription = null, tint = PrimaryBlue)
+        },
+        enabled = !isPrinting,
+        onClick = {
+          expanded = false
+          onPrint()
+        }
+      )
+    }
+  }
+}
+
+@Composable
+private fun SoalAddModelDialog(
+  onDismiss: () -> Unit,
+  onAdd: (String) -> Unit
+) {
+  var selectedTypeKey by rememberSaveable { mutableStateOf(SoalTypeOptions.first().key) }
+
+  Dialog(onDismissRequest = onDismiss) {
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(26.dp))
+        .background(Color.White.copy(alpha = 0.98f))
+        .border(1.dp, CardBorder.copy(alpha = 0.9f), RoundedCornerShape(26.dp))
+        .padding(18.dp),
+      verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+          Text(
+            text = "Tambah Model Soal",
+            style = MaterialTheme.typography.titleMedium,
+            color = PrimaryBlueDark,
+            fontWeight = FontWeight.ExtraBold
+          )
+          Text(
+            text = "Pilih model, lalu isi soal satu per satu.",
+            style = MaterialTheme.typography.bodySmall,
+            color = SubtleInk
+          )
+        }
+        Box(
+          modifier = Modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .background(Color(0xFFF8FAFC))
+            .clickable(onClick = onDismiss),
+          contentAlignment = Alignment.Center
+        ) {
+          Icon(Icons.Outlined.Close, contentDescription = "Tutup", tint = PrimaryBlueDark)
+        }
+      }
+
+      SoalAddModelCard(
+        selectedTypeKey = selectedTypeKey,
+        onTypeChange = { selectedTypeKey = it },
+        onAdd = { onAdd(selectedTypeKey) }
+      )
+    }
+  }
+}
+
+@Composable
+private fun SoalAddModelCard(
+  selectedTypeKey: String,
+  onTypeChange: (String) -> Unit,
+  onAdd: () -> Unit
+) {
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(22.dp))
+      .background(HighlightCard.copy(alpha = 0.72f))
+      .border(1.dp, PrimaryBlue.copy(alpha = 0.12f), RoundedCornerShape(22.dp))
+      .padding(14.dp),
+    verticalArrangement = Arrangement.spacedBy(12.dp)
+  ) {
+    Text(
+      text = "Tambah Model Soal",
+      style = MaterialTheme.typography.titleSmall,
+      color = PrimaryBlueDark,
+      fontWeight = FontWeight.ExtraBold
+    )
+    SoalTypeDropdown(
+      selectedTypeKey = selectedTypeKey,
+      onSelect = { onTypeChange(it.key) }
+    )
+    Box(
+      modifier = Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(999.dp))
+        .background(PrimaryBlue)
+        .clickable(onClick = onAdd)
+        .padding(horizontal = 16.dp, vertical = 14.dp),
+      contentAlignment = Alignment.Center
+    ) {
+      Text("Tambah Model", color = Color.White, fontWeight = FontWeight.Bold)
+    }
+  }
+}
+
+@Composable
+private fun SoalTypeDropdown(
+  selectedTypeKey: String,
+  onSelect: (SoalTypeOption) -> Unit,
+  modifier: Modifier = Modifier
+) {
+  val selectedType = SoalTypeOptions.firstOrNull { it.key == selectedTypeKey } ?: SoalTypeOptions.first()
+  SoalDropdownField(
+    label = "Model soal",
+    selectedLabel = selectedType.label,
+    options = SoalTypeOptions.map { it.label },
+    onSelect = { label ->
+      SoalTypeOptions.firstOrNull { it.label == label }?.let(onSelect)
+    },
+    modifier = modifier
+  )
+}
+
+@Composable
+private fun SoalDropdownField(
+  label: String,
+  selectedLabel: String,
+  options: List<String>,
+  onSelect: (String) -> Unit,
+  modifier: Modifier = Modifier
+) {
+  var expanded by remember { mutableStateOf(false) }
+  Box(modifier = modifier.fillMaxWidth()) {
+    OutlinedTextField(
+      value = selectedLabel,
+      onValueChange = {},
+      readOnly = true,
+      label = { Text(label) },
+      trailingIcon = {
+        Text(
+          text = "v",
+          style = MaterialTheme.typography.labelLarge,
+          color = SubtleInk,
+          fontWeight = FontWeight.Bold
+        )
+      },
+      modifier = Modifier
+        .fillMaxWidth(),
+      shape = RoundedCornerShape(16.dp)
+    )
+    Box(
+      modifier = Modifier
+        .matchParentSize()
+        .clip(RoundedCornerShape(16.dp))
+        .clickable { expanded = true }
+    )
+    DropdownMenu(
+      expanded = expanded,
+      onDismissRequest = { expanded = false },
+      modifier = Modifier.fillMaxWidth(0.86f)
+    ) {
+      options.forEach { option ->
+        DropdownMenuItem(
+          text = {
+            Text(
+              text = option,
+              style = MaterialTheme.typography.bodyMedium,
+              color = PrimaryBlueDark,
+              fontWeight = if (option == selectedLabel) FontWeight.Bold else FontWeight.Normal
+            )
+          },
+          onClick = {
+            onSelect(option)
+            expanded = false
+          }
         )
       }
     }
   }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SoalChoiceQuestionEditor(
+  question: MapelChoiceQuestion,
+  questionIndex: Int,
+  modelLabel: String,
+  typeKey: String,
+  palette: SoalModelPalette,
+  showOptions: Boolean,
+  canDelete: Boolean,
+  onDelete: () -> Unit,
+  onChange: (MapelChoiceQuestion) -> Unit
+) {
+  var showDeleteAction by rememberSaveable(question.id, questionIndex) { mutableStateOf(false) }
+  val hasPrompt = question.prompt.isNotBlank()
+  val hasFilledOptions = question.options.any { it.isNotBlank() }
+  val shouldShowOptions = showOptions && (hasPrompt || hasFilledOptions)
+  val questionTitle = when (typeKey) {
+    "benar-salah" -> "Pernyataan"
+    "isi-titik" -> "Isian"
+    else -> "Pertanyaan"
+  }
+  val promptLabel = when (typeKey) {
+    "esai" -> "Teks pertanyaan esai"
+    "isi-titik" -> "Teks soal isian"
+    "benar-salah" -> "Teks pernyataan"
+    else -> "Teks pertanyaan"
+  }
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(18.dp))
+      .background(Color.White.copy(alpha = 0.78f))
+      .border(1.dp, palette.border.copy(alpha = 0.78f), RoundedCornerShape(18.dp))
+      .combinedClickable(
+        onClick = { if (showDeleteAction) showDeleteAction = false },
+        onLongClick = { if (canDelete) showDeleteAction = true }
+      )
+      .padding(12.dp),
+    verticalArrangement = Arrangement.spacedBy(10.dp)
+  ) {
+    Row(
+      horizontalArrangement = Arrangement.spacedBy(10.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Box(
+        modifier = Modifier
+          .size(34.dp)
+          .clip(CircleShape)
+          .background(palette.accent)
+          .shadow(8.dp, CircleShape, ambientColor = palette.accent.copy(alpha = 0.16f), spotColor = palette.accent.copy(alpha = 0.2f)),
+        contentAlignment = Alignment.Center
+      ) {
+        Text(
+          text = "${questionIndex + 1}",
+          style = MaterialTheme.typography.labelLarge,
+          color = Color.White,
+          fontWeight = FontWeight.ExtraBold
+        )
+      }
+      Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        Text(
+          text = questionTitle,
+          style = MaterialTheme.typography.labelLarge,
+          color = palette.text,
+          fontWeight = FontWeight.ExtraBold
+        )
+        Text(
+          text = modelLabel,
+          style = MaterialTheme.typography.labelSmall,
+          color = palette.text.copy(alpha = 0.68f),
+          fontWeight = FontWeight.SemiBold
+        )
+      }
+      Spacer(modifier = Modifier.weight(1f))
+      AnimatedVisibility(visible = showDeleteAction) {
+        SoalIconAction(Icons.Outlined.Delete, "Hapus soal", onDelete, tint = Color(0xFFDC2626))
+      }
+    }
+    SoalTextField(
+      value = question.prompt,
+      onValueChange = { onChange(question.copy(prompt = it)) },
+      label = promptLabel,
+      minLines = 2
+    )
+    AnimatedVisibility(visible = shouldShowOptions) {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        question.options.normalizedChoiceOptions().forEachIndexed { optionIndex, optionText ->
+          Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Box(
+              modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(palette.accent.copy(alpha = 0.10f))
+                .border(1.dp, palette.accent.copy(alpha = 0.18f), CircleShape),
+              contentAlignment = Alignment.Center
+            ) {
+              Text(
+                text = "${('A'.code + optionIndex).toChar()}",
+                style = MaterialTheme.typography.labelLarge,
+                color = palette.text,
+                fontWeight = FontWeight.ExtraBold
+              )
+            }
+            OutlinedTextField(
+              value = optionText,
+              onValueChange = { value ->
+                val nextOptions = question.options
+                  .normalizedChoiceOptions()
+                  .toMutableList()
+                  .also { options ->
+                    options[optionIndex] = value
+                  }
+                  .normalizedChoiceOptions()
+                onChange(question.copy(options = nextOptions))
+              },
+              label = { Text("Pilihan jawaban") },
+              modifier = Modifier.weight(1f),
+              shape = RoundedCornerShape(16.dp)
+            )
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun SoalSelectableChip(
+  label: String,
+  selected: Boolean,
+  onClick: () -> Unit
+) {
+  Box(
+    modifier = Modifier
+      .clip(RoundedCornerShape(999.dp))
+      .background(if (selected) PrimaryBlue else Color.White.copy(alpha = 0.86f))
+      .border(
+        1.dp,
+        if (selected) PrimaryBlue else CardBorder.copy(alpha = 0.9f),
+        RoundedCornerShape(999.dp)
+      )
+      .clickable(onClick = onClick)
+      .padding(horizontal = 12.dp, vertical = 8.dp),
+    contentAlignment = Alignment.Center
+  ) {
+    Text(
+      text = label,
+      style = MaterialTheme.typography.labelMedium,
+      color = if (selected) Color.White else PrimaryBlueDark,
+      fontWeight = FontWeight.SemiBold
+    )
+  }
+}
+
+@Composable
+private fun SoalTextField(
+  value: String,
+  onValueChange: (String) -> Unit,
+  label: String,
+  modifier: Modifier = Modifier,
+  minLines: Int = 1,
+  keyboardType: KeyboardType = KeyboardType.Text
+) {
+  OutlinedTextField(
+    value = value,
+    onValueChange = onValueChange,
+    label = { Text(label) },
+    modifier = modifier.fillMaxWidth(),
+    minLines = minLines,
+    keyboardOptions = KeyboardOptions(keyboardType = keyboardType)
+  )
 }
 
 @Composable
@@ -3126,7 +4222,421 @@ private enum class MapelDetailSection(
 ) {
   Absensi("Absensi", Icons.Outlined.TaskAlt),
   Nilai("Nilai", Icons.Outlined.EditNote),
-  PatronMateri("Patron Materi", Icons.Outlined.AutoStories)
+  PatronMateri("Patron Materi", Icons.Outlined.AutoStories),
+  Soal("Soal", Icons.Outlined.Quiz)
+}
+
+private data class MapelQuestionDraft(
+  val id: String,
+  val title: String = "",
+  val category: String = "Ujian",
+  val form: String = "Pilihan Ganda",
+  val dateIso: String = LocalDate.now().toString(),
+  val instruction: String = "",
+  val questionsText: String = "",
+  val sections: List<MapelQuestionSection> = emptyList(),
+  val statusLabel: String = "Draft",
+  val updatedAt: Long = System.currentTimeMillis()
+) {
+  fun questionCount(): Int {
+    if (sections.isNotEmpty()) return sections.sumOf { it.effectiveQuestionCount() }
+    val numbered = Regex("""(?m)^\s*\d+[\).]\s+""").findAll(questionsText).count()
+    return numbered.takeIf { it > 0 } ?: questionsText.lines().count { it.trim().isNotBlank() }
+  }
+
+  fun previewText(): String {
+    return when {
+      sections.isNotEmpty() -> sections.joinToString(", ") {
+        val count = it.effectiveQuestionCount()
+        if (count > 0) "${it.typeLabel} $count nomor" else "${it.typeLabel} belum diisi"
+      }
+      instruction.isNotBlank() -> instruction
+      questionsText.isNotBlank() -> questionsText.lines().firstOrNull { it.isNotBlank() }.orEmpty()
+      else -> "Ketuk card untuk membuka editor soal."
+    }
+  }
+
+  fun toExportData(): MapelQuestionExportData {
+    return MapelQuestionExportData(
+      id = id,
+      title = title,
+      category = category,
+      form = form,
+      dateLabel = dateIso,
+      instruction = exportInstructionText(),
+      questionsText = exportQuestionText()
+    )
+  }
+
+  private fun exportInstructionText(): String {
+    if (instruction.isNotBlank()) return instruction
+    return sections
+      .filter { it.instruction.isNotBlank() }
+      .joinToString("\n") { "${it.typeLabel}: ${it.instruction}" }
+  }
+
+  private fun exportQuestionText(): String {
+    if (sections.isEmpty()) return questionsText
+    return sections.mapIndexed { index, section ->
+      buildString {
+        val sectionCount = section.effectiveQuestionCount()
+        appendLine("MODEL ${modelOrdinalLabel(index)}: ${section.typeLabel} (${sectionCount} nomor)")
+        if (section.instruction.isNotBlank()) appendLine("Instruksi: ${section.instruction}")
+        appendLine()
+        if (section.typeKey == "pilihan-ganda") {
+          val questions = section.choiceQuestions.filledQuestions()
+          if (questions.isEmpty() && section.content.isNotBlank()) {
+            appendLine(section.content)
+          } else {
+            val printableQuestions = questions.ifEmpty { listOf(MapelChoiceQuestion(id = "placeholder")) }
+            printableQuestions.forEachIndexed { questionIndex, question ->
+              appendLine("${questionIndex + 1}. ${question.prompt.ifBlank { "........................................................" }}")
+              val filledOptions = question.options.normalizedChoiceOptions().filter { it.isNotBlank() }
+              if (filledOptions.isEmpty()) {
+                appendLine("   A. ........................................................")
+                appendLine("   B. ........................................................")
+              } else {
+                filledOptions.forEachIndexed { optionIndex, option ->
+                  appendLine("   ${('A'.code + optionIndex).toChar()}. $option")
+                }
+              }
+              if (questionIndex < printableQuestions.lastIndex) appendLine()
+            }
+          }
+        } else if (section.typeKey.usesQuestionPromptEditor()) {
+          val questions = section.choiceQuestions.filledQuestions()
+          if (questions.isNotEmpty() || section.content.isBlank()) {
+            val printableQuestions = questions.ifEmpty { listOf(MapelChoiceQuestion(id = "placeholder")) }
+            printableQuestions.forEachIndexed { questionIndex, question ->
+              appendLine("${questionIndex + 1}. ${question.prompt.ifBlank { "........................................................" }}")
+              if (questionIndex < printableQuestions.lastIndex) appendLine()
+            }
+          } else {
+            appendLine(section.content)
+          }
+        } else if (section.content.isNotBlank()) {
+          appendLine(section.content)
+        } else {
+          repeat(section.count.coerceAtLeast(1)) { number ->
+            appendLine("${number + 1}. ........................................................")
+          }
+        }
+      }.trim()
+    }.joinToString("\n\n")
+  }
+}
+
+private data class MapelQuestionSection(
+  val id: String,
+  val typeKey: String,
+  val typeLabel: String,
+  val count: Int,
+  val instruction: String = "",
+  val content: String = "",
+  val scoreText: String = "",
+  val choiceQuestions: List<MapelChoiceQuestion> = emptyList()
+)
+
+private data class SoalModelPalette(
+  val background: Color,
+  val border: Color,
+  val accent: Color,
+  val text: Color
+)
+
+private fun MapelQuestionSection.modelPalette(): SoalModelPalette {
+  return when (typeKey) {
+    "pilihan-ganda" -> SoalModelPalette(Color(0xFFEFF6FF), Color(0xFFBFDBFE), Color(0xFF2563EB), Color(0xFF1E3A8A))
+    "benar-salah" -> SoalModelPalette(Color(0xFFECFDF5), Color(0xFFA7F3D0), Color(0xFF059669), Color(0xFF065F46))
+    "cari-kata" -> SoalModelPalette(Color(0xFFFFFBEB), Color(0xFFFDE68A), Color(0xFFD97706), Color(0xFF92400E))
+    "teka-silang" -> SoalModelPalette(Color(0xFFF5F3FF), Color(0xFFDDD6FE), Color(0xFF7C3AED), Color(0xFF4C1D95))
+    "esai" -> SoalModelPalette(Color(0xFFFFF7ED), Color(0xFFFED7AA), Color(0xFFEA580C), Color(0xFF9A3412))
+    "pasangkan-kata" -> SoalModelPalette(Color(0xFFFDF2F8), Color(0xFFFBCFE8), Color(0xFFDB2777), Color(0xFF9D174D))
+    "isi-titik" -> SoalModelPalette(Color(0xFFF0FDFA), Color(0xFF99F6E4), Color(0xFF0D9488), Color(0xFF115E59))
+    else -> SoalModelPalette(Color(0xFFFFFFFF), Color(0xFFE2E8F0), Color(0xFF2563EB), Color(0xFF1E3A8A))
+  }
+}
+
+private data class MapelChoiceQuestion(
+  val id: String,
+  val prompt: String = "",
+  val options: List<String> = listOf("", "")
+)
+
+private data class SoalTypeOption(
+  val key: String,
+  val label: String
+)
+
+private val SoalCategoryOptions = listOf(
+  "Tugas",
+  "Kuis",
+  "Ulangan Harian",
+  "UTS",
+  "UAS",
+  "Remedial",
+  "Latihan"
+)
+
+private val SoalTypeOptions = listOf(
+  SoalTypeOption("pilihan-ganda", "Pilihan Ganda"),
+  SoalTypeOption("esai", "Esai"),
+  SoalTypeOption("isi-titik", "Isian"),
+  SoalTypeOption("benar-salah", "Benar / Salah"),
+  SoalTypeOption("pasangkan-kata", "Pasangkan Kata"),
+  SoalTypeOption("cari-kata", "Cari Kata"),
+  SoalTypeOption("teka-silang", "Teka-Teki Silang")
+)
+
+private fun String.usesQuestionPromptEditor(): Boolean {
+  return this in SoalTypeOptions.map { it.key }
+}
+
+private fun modelOrdinalLabel(index: Int): String {
+  var current = index.coerceAtLeast(0)
+  val label = StringBuilder()
+  do {
+    label.insert(0, ('A'.code + (current % 26)).toChar())
+    current = (current / 26) - 1
+  } while (current >= 0)
+  return label.toString()
+}
+
+private fun List<MapelChoiceQuestion>.normalizedForCount(count: Int): List<MapelChoiceQuestion> {
+  val safeCount = count.coerceIn(1, 200)
+  return (0 until safeCount).map { index ->
+    val current = getOrNull(index)
+    current?.copy(options = current.options.normalizedChoiceOptions())
+      ?: MapelChoiceQuestion(id = "q-${index + 1}", options = listOf("", ""))
+  }
+}
+
+private fun List<MapelChoiceQuestion>.withChoiceQuestionCapacity(count: Int): List<MapelChoiceQuestion> {
+  val safeCount = count.coerceIn(1, 200)
+  val questions = mapIndexed { index, current ->
+    current.copy(
+      id = current.id.ifBlank { "q-${index + 1}" },
+      options = current.options.normalizedChoiceOptions()
+    )
+  }.toMutableList()
+  while (questions.size < safeCount) {
+    questions.add(MapelChoiceQuestion(id = "q-${questions.size + 1}", options = listOf("", "")))
+  }
+  return questions
+}
+
+private fun List<MapelChoiceQuestion>.visibleForCount(count: Int): List<MapelChoiceQuestion> {
+  return withChoiceQuestionCapacity(count).take(count.coerceIn(1, 200))
+}
+
+private fun List<MapelChoiceQuestion>.withTrailingBlankQuestion(): List<MapelChoiceQuestion> {
+  val cleanQuestions = mapIndexed { index, current ->
+    current.copy(
+      id = current.id.ifBlank { "q-${index + 1}" },
+      options = current.options.normalizedChoiceOptions()
+    )
+  }.toMutableList()
+  while (cleanQuestions.isNotEmpty() && !cleanQuestions.last().hasQuestionContent()) {
+    cleanQuestions.removeAt(cleanQuestions.lastIndex)
+  }
+  cleanQuestions.add(MapelChoiceQuestion(id = "q-${cleanQuestions.size + 1}", options = listOf("", "")))
+  return cleanQuestions
+}
+
+private fun List<MapelChoiceQuestion>.filledQuestions(): List<MapelChoiceQuestion> {
+  return map { it.copy(options = it.options.normalizedChoiceOptions()) }
+    .filter { it.hasQuestionContent() }
+}
+
+private fun List<MapelChoiceQuestion>.filledQuestionCount(): Int {
+  return filledQuestions().size
+}
+
+private fun MapelChoiceQuestion.hasQuestionContent(): Boolean {
+  return prompt.isNotBlank() || options.any { it.isNotBlank() }
+}
+
+private fun MapelQuestionSection.effectiveQuestionCount(): Int {
+  return when {
+    typeKey.usesQuestionPromptEditor() -> choiceQuestions.filledQuestionCount()
+    content.isNotBlank() -> count.coerceAtLeast(1)
+    else -> count.coerceAtLeast(0)
+  }
+}
+
+private fun List<String>.normalizedChoiceOptions(): List<String> {
+  val withoutExtraTrailingBlank = dropLastWhile { it.isBlank() }.toMutableList()
+  withoutExtraTrailingBlank.add("")
+  while (withoutExtraTrailingBlank.size < 2) {
+    withoutExtraTrailingBlank.add("")
+  }
+  return withoutExtraTrailingBlank
+}
+
+private fun List<MapelQuestionDraft>.toCombinedExportData(subject: SubjectOverview): MapelQuestionExportData {
+  val sorted = sortedBy { it.updatedAt }
+  return MapelQuestionExportData(
+    id = "combined-${subject.id}-${System.currentTimeMillis()}",
+    title = "Kumpulan Soal ${subject.title}",
+    category = "Kumpulan Soal",
+    form = sorted.map { it.form }.filter { it.isNotBlank() }.distinct().joinToString(", "),
+    dateLabel = LocalDate.now().toString(),
+    instruction = "Dokumen ini berisi ${sorted.size} paket soal yang dibuat guru.",
+    questionsText = sorted.joinToString("\n\n") { draft ->
+      buildString {
+        appendLine(draft.title.ifBlank { "Soal" })
+        appendLine("Kategori: ${draft.category.ifBlank { "-" }}")
+        appendLine("Bentuk: ${draft.form.ifBlank { "-" }}")
+        val instructionText = draft.toExportData().instruction
+        if (instructionText.isNotBlank()) {
+          appendLine("Instruksi: $instructionText")
+        }
+        appendLine()
+        append(draft.toExportData().questionsText.ifBlank { "Belum ada isi soal." })
+      }
+    }
+  )
+}
+
+private fun loadChoiceQuestions(array: JSONArray?): List<MapelChoiceQuestion> {
+  if (array == null) return emptyList()
+  return buildList {
+    for (index in 0 until array.length()) {
+      val row = array.optJSONObject(index) ?: continue
+      val optionsArray = row.optJSONArray("options")
+      val options = buildList {
+        if (optionsArray != null) {
+          for (optionIndex in 0 until optionsArray.length()) {
+            add(optionsArray.optString(optionIndex))
+          }
+        }
+      }.normalizedChoiceOptions()
+      add(
+        MapelChoiceQuestion(
+          id = row.optString("id").ifBlank { "q-${index + 1}" },
+          prompt = row.optString("prompt"),
+          options = options
+        )
+      )
+    }
+  }
+}
+
+private fun loadMapelQuestions(context: Context, subjectId: String): List<MapelQuestionDraft> {
+  val rawJson = context.getSharedPreferences("mapel_questions", Context.MODE_PRIVATE)
+    .getString(subjectId, "[]")
+    .orEmpty()
+  return runCatching {
+    val array = JSONArray(rawJson.ifBlank { "[]" })
+    buildList {
+      for (index in 0 until array.length()) {
+        val row = array.optJSONObject(index) ?: continue
+        val sectionArray = row.optJSONArray("sections")
+        val sections = buildList {
+          if (sectionArray != null) {
+            for (sectionIndex in 0 until sectionArray.length()) {
+              val sectionRow = sectionArray.optJSONObject(sectionIndex) ?: continue
+              val rawKey = sectionRow.optString("typeKey")
+              val rawLabel = sectionRow.optString("typeLabel")
+              val option = SoalTypeOptions.firstOrNull { option ->
+                option.key == rawKey || option.label.equals(rawLabel, ignoreCase = true)
+              }
+              add(
+                MapelQuestionSection(
+                  id = sectionRow.optString("id").ifBlank { "model-${System.currentTimeMillis()}-$sectionIndex" },
+                  typeKey = option?.key ?: rawKey.ifBlank { SoalTypeOptions.first().key },
+                  typeLabel = option?.label ?: rawLabel.ifBlank { SoalTypeOptions.first().label },
+                  count = sectionRow.optInt("count", 1).coerceIn(1, 200),
+                  instruction = sectionRow.optString("instruction"),
+                  content = sectionRow.optString("content"),
+                  scoreText = sectionRow.optString("scoreText"),
+                  choiceQuestions = loadChoiceQuestions(sectionRow.optJSONArray("choiceQuestions"))
+                )
+              )
+            }
+          }
+        }
+        add(
+          MapelQuestionDraft(
+            id = row.optString("id").ifBlank { "soal-${System.currentTimeMillis()}-$index" },
+            title = row.optString("title"),
+            category = row.optString("category").ifBlank { "Ujian" },
+            form = row.optString("form").ifBlank { sections.map { it.typeLabel }.distinct().joinToString(", ") },
+            dateIso = row.optString("dateIso").ifBlank { LocalDate.now().toString() },
+            instruction = row.optString("instruction"),
+            questionsText = row.optString("questionsText"),
+            sections = sections,
+            statusLabel = row.optString("statusLabel").ifBlank { "Draft" },
+            updatedAt = row.optLong("updatedAt", System.currentTimeMillis())
+          )
+        )
+      }
+    }.sortedByDescending { it.updatedAt }
+  }.getOrDefault(emptyList())
+}
+
+private fun saveMapelQuestions(
+  context: Context,
+  subjectId: String,
+  questions: List<MapelQuestionDraft>
+) {
+  val array = JSONArray()
+  questions.forEach { item ->
+    array.put(
+      JSONObject().apply {
+        put("id", item.id)
+        put("title", item.title)
+        put("category", item.category)
+        put("form", item.form)
+        put("dateIso", item.dateIso)
+        put("instruction", item.instruction)
+        put("questionsText", item.questionsText)
+        put(
+          "sections",
+          JSONArray().apply {
+            item.sections.forEach { section ->
+              put(
+                JSONObject().apply {
+                  put("id", section.id)
+                  put("typeKey", section.typeKey)
+                  put("typeLabel", section.typeLabel)
+                  put("count", section.count)
+                  put("instruction", section.instruction)
+                  put("content", section.content)
+                  put("scoreText", section.scoreText)
+                  put(
+                    "choiceQuestions",
+                    JSONArray().apply {
+                      section.choiceQuestions.forEach { question ->
+                        put(
+                          JSONObject().apply {
+                            put("id", question.id)
+                            put("prompt", question.prompt)
+                            put(
+                              "options",
+                              JSONArray().apply {
+                                question.options.forEach { option -> put(option) }
+                              }
+                            )
+                          }
+                        )
+                      }
+                    }
+                  )
+                }
+              )
+            }
+          }
+        )
+        put("statusLabel", item.statusLabel)
+        put("updatedAt", item.updatedAt)
+      }
+    )
+  }
+  context.getSharedPreferences("mapel_questions", Context.MODE_PRIVATE)
+    .edit()
+    .putString(subjectId, array.toString())
+    .apply()
 }
 
 private data class AttendanceDateOverview(
@@ -3614,7 +5124,9 @@ private fun MapelTopBar(
 @Composable
 private fun MapelDetailTopBar(
   title: String,
-  onBackClick: () -> Unit
+  onBackClick: () -> Unit,
+  showUndo: Boolean = false,
+  onUndoClick: () -> Unit = {}
 ) {
   Row(
     modifier = Modifier
@@ -3640,7 +5152,15 @@ private fun MapelDetailTopBar(
         .padding(horizontal = 12.dp),
       textAlign = TextAlign.Center
     )
-    Spacer(modifier = Modifier.size(42.dp))
+    if (showUndo) {
+      MapelTopButton(
+        icon = Icons.AutoMirrored.Outlined.Undo,
+        contentDescription = "Batalkan hapus",
+        onClick = onUndoClick
+      )
+    } else {
+      Spacer(modifier = Modifier.size(42.dp))
+    }
   }
 }
 
