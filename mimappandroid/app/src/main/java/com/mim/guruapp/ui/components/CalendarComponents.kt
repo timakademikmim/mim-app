@@ -180,7 +180,7 @@ fun CalendarScreen(
           .fillMaxWidth()
           .weight(1f),
         verticalArrangement = Arrangement.spacedBy(18.dp),
-        contentPadding = PaddingValues(bottom = 110.dp)
+        contentPadding = PaddingValues(bottom = 124.dp)
       ) {
         item {
           CalendarViewToggle(
@@ -424,7 +424,7 @@ fun TeachingScheduleScreen(
           .fillMaxWidth()
           .weight(1f),
         verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 18.dp)
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 124.dp)
       ) {
         item {
           EventTimeline(

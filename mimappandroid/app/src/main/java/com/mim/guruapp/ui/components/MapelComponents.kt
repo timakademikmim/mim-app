@@ -249,7 +249,7 @@ fun MapelScreen(
             modifier = Modifier
               .fillMaxSize()
               .padding(horizontal = 16.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 124.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
           ) {
@@ -684,7 +684,7 @@ private fun MapelDetailScreen(
           modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp)
-            .padding(bottom = if (isQuestionEditorOpen) 18.dp else 96.dp)
+            .padding(bottom = if (isQuestionEditorOpen) 18.dp else 0.dp)
         ) {
           AbsensiMapelHeaderCard(
             subject = subject,
@@ -751,7 +751,7 @@ private fun MapelDetailScreen(
               .fillMaxWidth()
               .weight(1f),
             verticalArrangement = Arrangement.spacedBy(14.dp),
-            contentPadding = PaddingValues(bottom = 24.dp)
+            contentPadding = PaddingValues(bottom = if (isQuestionEditorOpen) 24.dp else 124.dp)
           ) {
             if (selectedSection == MapelDetailSection.Absensi) {
               when {
@@ -4034,16 +4034,16 @@ private fun MapelDetailBottomNav(
         .clip(RoundedCornerShape(32.dp))
         .background(Color.White.copy(alpha = 0.96f))
         .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(32.dp))
-        .padding(horizontal = 10.dp, vertical = 10.dp),
+        .padding(horizontal = 10.dp, vertical = 8.dp),
       horizontalArrangement = Arrangement.spacedBy(4.dp),
       verticalAlignment = Alignment.CenterVertically
     ) {
       MapelDetailSection.entries.forEach { section ->
         val selected = section.name == animatedSelectedSectionKey
-        Row(
+        Column(
           modifier = Modifier
-            .weight(if (selected) 1.7f else 0.825f)
-            .height(52.dp)
+            .weight(1f)
+            .height(58.dp)
             .clip(RoundedCornerShape(24.dp))
             .background(if (selected) PrimaryBlue.copy(alpha = 0.12f) else Color.Transparent)
             .clickable {
@@ -4056,32 +4056,26 @@ private fun MapelDetailBottomNav(
                 onSelectSection(section)
               }
             }
-            .padding(horizontal = 12.dp, vertical = 12.dp),
-          horizontalArrangement = Arrangement.Center,
-          verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 4.dp, vertical = 7.dp),
+          verticalArrangement = Arrangement.Center,
+          horizontalAlignment = Alignment.CenterHorizontally
         ) {
           Icon(
             imageVector = section.icon,
             contentDescription = section.label,
             tint = if (selected) PrimaryBlue else SubtleInk.copy(alpha = 0.82f),
-            modifier = Modifier.size(20.dp)
+            modifier = Modifier.size(21.dp)
           )
-          AnimatedVisibility(
-            visible = selected,
-            enter = fadeIn(animationSpec = tween(180)) + expandHorizontally(animationSpec = tween(220)),
-            exit = fadeOut(animationSpec = tween(120)) + shrinkHorizontally(animationSpec = tween(180))
-          ) {
-            Text(
-              text = section.label,
-              style = MaterialTheme.typography.labelLarge,
-              color = if (selected) PrimaryBlueDark else SubtleInk,
-              fontWeight = FontWeight.SemiBold,
-              maxLines = 1,
-              softWrap = false,
-              overflow = TextOverflow.Ellipsis,
-              modifier = Modifier.padding(start = 8.dp)
-            )
-          }
+          Text(
+            text = section.label,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (selected) PrimaryBlueDark else SubtleInk.copy(alpha = 0.82f),
+            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center
+          )
         }
       }
     }

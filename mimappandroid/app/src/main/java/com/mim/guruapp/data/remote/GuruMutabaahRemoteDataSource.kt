@@ -22,6 +22,11 @@ sealed interface GuruMutabaahSaveResult {
   data class Error(val message: String) : GuruMutabaahSaveResult
 }
 
+sealed interface GuruMutabaahBatchSaveResult {
+  data class Success(val submissions: List<MutabaahSubmission>) : GuruMutabaahBatchSaveResult
+  data class Error(val message: String) : GuruMutabaahBatchSaveResult
+}
+
 class GuruMutabaahRemoteDataSource {
   suspend fun fetchMutabaahSnapshot(
     teacherRowId: String,
@@ -167,6 +172,69 @@ class GuruMutabaahRemoteDataSource {
     }
   }
 
+  suspend fun saveMutabaahStatuses(
+    guruId: String,
+    templateIds: List<String>,
+    dateIso: String,
+    status: String,
+    note: String = ""
+  ): GuruMutabaahBatchSaveResult = withContext(Dispatchers.IO) {
+    val normalizedGuruId = guruId.trim()
+    val normalizedTemplateIds = templateIds.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+    val normalizedDate = dateIso.trim().take(10)
+    val normalizedStatus = normalizeStatus(status)
+    if (normalizedGuruId.isBlank() || normalizedTemplateIds.isEmpty() || normalizedDate.isBlank()) {
+      return@withContext GuruMutabaahBatchSaveResult.Error("Data mutabaah belum lengkap.")
+    }
+
+    runCatching {
+      val nowIso = Instant.now().toString()
+      val payload = JSONArray().apply {
+        normalizedTemplateIds.forEach { templateId ->
+          put(
+            JSONObject().apply {
+              put("template_id", templateId)
+              put("guru_id", normalizedGuruId)
+              put("tanggal", normalizedDate)
+              put("status", normalizedStatus)
+              put("catatan", note.trim().ifBlank { JSONObject.NULL })
+              put("submitted_at", nowIso)
+              put("updated_at", nowIso)
+            }
+          )
+        }
+      }
+      val requestUrl = buildString {
+        append(BuildConfig.SUPABASE_URL)
+        append("/rest/v1/tugas_harian_submit?on_conflict=template_id,guru_id,tanggal&select=id,template_id,guru_id,tanggal,status,catatan,submitted_at,updated_at")
+      }
+      val connection = createConnection(requestUrl, method = "POST").apply {
+        doOutput = true
+        setRequestProperty("Content-Type", "application/json")
+        setRequestProperty("Prefer", "resolution=merge-duplicates,return=representation")
+      }
+      connection.outputStream.use { stream ->
+        stream.write(payload.toString().toByteArray(Charsets.UTF_8))
+        stream.flush()
+      }
+      connection.useJsonArrayResponse { rows ->
+        val savedRows = List(rows.length()) { index -> rows.optJSONObject(index) }.filterNotNull()
+        GuruMutabaahBatchSaveResult.Success(
+          normalizedTemplateIds.map { templateId ->
+            val row = savedRows.firstOrNull { it.cleanString("template_id") == templateId }
+            row.toMutabaahSubmission(
+              fallbackTemplateId = templateId,
+              fallbackDateIso = normalizedDate,
+              fallbackStatus = normalizedStatus
+            )
+          }
+        )
+      }
+    }.getOrElse { error ->
+      GuruMutabaahBatchSaveResult.Error(error.message.orEmpty().ifBlank { "Gagal menyinkronkan mutabaah." })
+    }
+  }
+
   private fun resolveTeacherRowId(teacherKaryawanId: String): String {
     if (teacherKaryawanId.isBlank()) return ""
     return runCatching {
@@ -242,7 +310,11 @@ class GuruMutabaahRemoteDataSource {
   }
 
   private fun normalizeStatus(value: String): String {
-    return if (value.trim().lowercase() == "selesai") "selesai" else "belum"
+    return when (value.trim().lowercase()) {
+      "selesai", "done", "hadir" -> "selesai"
+      "izin", "ijin", "leave" -> "izin"
+      else -> "belum"
+    }
   }
 
   private fun isSunday(dateIso: String): Boolean {
@@ -252,6 +324,27 @@ class GuruMutabaahRemoteDataSource {
   private fun parseDate(value: String): LocalDate? {
     return runCatching { LocalDate.parse(value.trim().take(10)) }.getOrNull()
   }
+}
+
+private fun JSONObject?.toMutabaahSubmission(
+  fallbackTemplateId: String,
+  fallbackDateIso: String,
+  fallbackStatus: String
+): MutabaahSubmission {
+  return MutabaahSubmission(
+    id = this?.cleanString("id").orEmpty(),
+    templateId = this?.cleanString("template_id").orEmpty().ifBlank { fallbackTemplateId },
+    dateIso = this?.cleanString("tanggal").orEmpty().take(10).ifBlank { fallbackDateIso },
+    status = when (this?.cleanString("status").orEmpty().trim().lowercase().ifBlank { fallbackStatus }) {
+      "selesai", "done", "hadir" -> "selesai"
+      "izin", "ijin", "leave" -> "izin"
+      else -> "belum"
+    },
+    note = this?.cleanString("catatan").orEmpty(),
+    submittedAt = this?.cleanString("submitted_at").orEmpty(),
+    updatedAt = this?.cleanString("updated_at").orEmpty(),
+    syncState = "synced"
+  )
 }
 
 private inline fun <T> HttpURLConnection.useJsonArrayResponse(block: (JSONArray) -> T): T {

@@ -101,6 +101,7 @@ class MainActivity : ComponentActivity() {
           onSaveUtsReportOverride = viewModel::saveUtsReportOverride,
           onLoadMutabaah = viewModel::loadMutabaahSnapshot,
           onSaveMutabaahStatus = viewModel::saveMutabaahStatus,
+          onSaveMutabaahStatuses = viewModel::saveMutabaahStatuses,
           onLoadLeaveRequests = viewModel::loadLeaveRequestSnapshot,
           onSubmitLeaveRequest = viewModel::submitLeaveRequest,
           onDeleteLeaveRequest = viewModel::deleteLeaveRequest,

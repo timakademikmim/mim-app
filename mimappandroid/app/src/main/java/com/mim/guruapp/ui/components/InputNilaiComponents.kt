@@ -223,7 +223,7 @@ fun InputNilaiScreen(
           .fillMaxSize()
           .padding(horizontal = 18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
-        contentPadding = PaddingValues(top = 10.dp, bottom = 22.dp)
+        contentPadding = PaddingValues(top = 10.dp, bottom = 124.dp)
       ) {
         item {
           InputNilaiFormCard(

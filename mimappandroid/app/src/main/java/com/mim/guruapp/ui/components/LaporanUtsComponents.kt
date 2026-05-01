@@ -310,7 +310,7 @@ private fun LaporanUtsListContent(
 
       LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 26.dp),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 124.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
       ) {
         item {
@@ -558,7 +558,7 @@ private fun LaporanUtsDetailContent(
 
       LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 118.dp),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 124.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
       ) {
         item {
@@ -1183,7 +1183,7 @@ private fun LaporanUtsQuickActionBar(
       .clip(RoundedCornerShape(32.dp))
       .background(Color.White.copy(alpha = 0.96f))
       .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(32.dp))
-      .padding(horizontal = 10.dp, vertical = 10.dp),
+      .padding(horizontal = 10.dp, vertical = 8.dp),
     horizontalArrangement = Arrangement.spacedBy(8.dp),
     verticalAlignment = Alignment.CenterVertically
   ) {
@@ -1198,23 +1198,26 @@ private fun LaporanUtsBottomAction(
   label: String,
   onClick: () -> Unit
 ) {
-  Row(
+  Column(
     modifier = Modifier
-      .height(52.dp)
+      .height(58.dp)
       .clip(RoundedCornerShape(24.dp))
       .background(PrimaryBlue.copy(alpha = 0.12f))
       .clickable(onClick = onClick)
-      .padding(horizontal = 18.dp, vertical = 12.dp),
-    horizontalArrangement = Arrangement.Center,
-    verticalAlignment = Alignment.CenterVertically
+      .padding(horizontal = 18.dp, vertical = 7.dp),
+    verticalArrangement = Arrangement.Center,
+    horizontalAlignment = Alignment.CenterHorizontally
   ) {
-    Icon(icon, contentDescription = label, tint = PrimaryBlue, modifier = Modifier.size(20.dp))
+    Icon(icon, contentDescription = label, tint = PrimaryBlue, modifier = Modifier.size(21.dp))
     Text(
       text = label,
-      style = MaterialTheme.typography.labelLarge,
+      style = MaterialTheme.typography.labelSmall,
       color = PrimaryBlueDark,
-      fontWeight = FontWeight.SemiBold,
-      modifier = Modifier.padding(start = 8.dp)
+      fontWeight = FontWeight.ExtraBold,
+      maxLines = 1,
+      softWrap = false,
+      overflow = TextOverflow.Ellipsis,
+      textAlign = TextAlign.Center
     )
   }
 }

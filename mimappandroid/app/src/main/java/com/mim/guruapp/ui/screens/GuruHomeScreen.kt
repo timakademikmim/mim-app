@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -136,7 +137,6 @@ import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
-private val HomeBottomNavContentPadding = 96.dp
 private val SidebarWidth = 304.dp
 
 private data class GuruHomeContentTarget(
@@ -214,6 +214,7 @@ fun GuruHomeScreen(
   onSaveUtsReportOverride: suspend (UtsReportOverride) -> UtsReportSaveOutcome,
   onLoadMutabaah: suspend (LocalDate) -> MutabaahSnapshot?,
   onSaveMutabaahStatus: suspend (String, String, Boolean) -> MutabaahSaveOutcome,
+  onSaveMutabaahStatuses: suspend (List<String>, String, String) -> MutabaahSaveOutcome,
   onLoadLeaveRequests: suspend () -> LeaveRequestSnapshot?,
   onSubmitLeaveRequest: suspend (String, String, String) -> LeaveRequestSaveOutcome,
   onDeleteLeaveRequest: suspend (String) -> LeaveRequestSaveOutcome,
@@ -450,12 +451,13 @@ fun GuruHomeScreen(
         onReminderSettingsChange = onUpdateTeachingReminderSettings,
         modifier = Modifier
           .fillMaxSize()
-          .padding(bottom = HomeBottomNavContentPadding)
       )
     } else if (targetDestination == GuruSidebarDestination.Tugas) {
       MutabaahScreen(
         selectedDate = selectedCalendarDate,
         snapshot = dashboard.mutabaahSnapshot,
+        teachingScheduleEvents = dashboard.teachingScheduleEvents,
+        leaveRequests = dashboard.leaveRequestSnapshot.requests,
         isRefreshing = syncBanner.isSyncing,
         onSelectDate = { onSelectCalendarDate(it.toString()) },
         onJumpToToday = { onSelectCalendarDate(LocalDate.now().toString()) },
@@ -463,6 +465,7 @@ fun GuruHomeScreen(
         onMenuClick = onToggleSidebar,
         onLoadSnapshot = onLoadMutabaah,
         onToggleTask = onSaveMutabaahStatus,
+        onToggleTasks = onSaveMutabaahStatuses,
         modifier = Modifier.fillMaxSize()
       )
     } else if (targetDestination == GuruSidebarDestination.Perizinan) {
@@ -476,7 +479,6 @@ fun GuruHomeScreen(
         onDeleteRequest = onDeleteLeaveRequest,
         modifier = Modifier
           .fillMaxSize()
-          .padding(bottom = HomeBottomNavContentPadding)
       )
     } else if (targetDestination == GuruSidebarDestination.Profil) {
       EditProfileScreen(
@@ -487,7 +489,6 @@ fun GuruHomeScreen(
         onSaveClick = onSaveProfile,
         modifier = Modifier
           .fillMaxSize()
-          .padding(bottom = HomeBottomNavContentPadding)
       )
     } else if (targetDestination == GuruSidebarDestination.Santri) {
       SantriScreen(
@@ -498,7 +499,6 @@ fun GuruHomeScreen(
         onSaveSantri = onSaveSantri,
         modifier = Modifier
           .fillMaxSize()
-          .padding(bottom = HomeBottomNavContentPadding)
       )
     } else if (targetDestination == GuruSidebarDestination.LaporanBulanan) {
       LaporanBulananScreen(
@@ -513,10 +513,6 @@ fun GuruHomeScreen(
         onDetailModeChange = { isLaporanBulananDetailMode = it },
         modifier = Modifier
           .fillMaxSize()
-          .then(
-            if (isLaporanBulananDetailMode) Modifier
-            else Modifier.padding(bottom = HomeBottomNavContentPadding)
-          )
       )
     } else if (targetDestination == GuruSidebarDestination.LaporanUTS) {
       LaporanUtsScreen(
@@ -530,10 +526,6 @@ fun GuruHomeScreen(
         onDetailModeChange = { isLaporanUtsDetailMode = it },
         modifier = Modifier
           .fillMaxSize()
-          .then(
-            if (isLaporanUtsDetailMode) Modifier
-            else Modifier.padding(bottom = HomeBottomNavContentPadding)
-          )
       )
     } else if (targetDestination == GuruSidebarDestination.InputAbsensi) {
       InputSwipePager(
@@ -565,7 +557,6 @@ fun GuruHomeScreen(
         onInputAbsensiLaunchTargetConsumed = onConsumePendingInputAbsensiTarget,
         modifier = Modifier
           .fillMaxSize()
-          .padding(bottom = HomeBottomNavContentPadding)
       )
     } else if (targetDestination == GuruSidebarDestination.Mapel) {
       MapelScreen(
@@ -592,18 +583,14 @@ fun GuruHomeScreen(
         onMenuClick = onToggleSidebar,
         modifier = Modifier
           .fillMaxSize()
-          .then(
-            if (isMapelDetailMode) Modifier
-            else Modifier.padding(bottom = HomeBottomNavContentPadding)
-          )
       )
     } else {
       LazyColumn(
         modifier = Modifier
           .fillMaxSize()
-          .padding(horizontal = 18.dp)
-          .padding(bottom = HomeBottomNavContentPadding),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+          .padding(horizontal = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(bottom = 124.dp)
       ) {
         item {
           GuruHomeTopBar(
@@ -1130,6 +1117,7 @@ private fun GuruHomeScreenPreview() {
       onSaveUtsReportOverride = { UtsReportSaveOutcome(true, "OK") },
       onLoadMutabaah = { null },
       onSaveMutabaahStatus = { _, _, _ -> MutabaahSaveOutcome(true, "OK") },
+      onSaveMutabaahStatuses = { _, _, _ -> MutabaahSaveOutcome(true, "OK") },
       onLoadLeaveRequests = { null },
       onSubmitLeaveRequest = { _, _, _ -> LeaveRequestSaveOutcome(true, "OK") },
       onDeleteLeaveRequest = { _ -> LeaveRequestSaveOutcome(true, "OK") },

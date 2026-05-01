@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -234,7 +235,8 @@ private fun SantriListContent(
       modifier = Modifier
         .fillMaxWidth()
         .weight(1f),
-      verticalArrangement = Arrangement.spacedBy(12.dp)
+      verticalArrangement = Arrangement.spacedBy(12.dp),
+      contentPadding = PaddingValues(bottom = 124.dp)
     ) {
       when {
         showSkeleton -> {
@@ -349,7 +351,8 @@ private fun SantriDetailContent(
       modifier = Modifier
         .fillMaxWidth()
         .weight(1f),
-      verticalArrangement = Arrangement.spacedBy(16.dp)
+      verticalArrangement = Arrangement.spacedBy(16.dp),
+      contentPadding = PaddingValues(bottom = 124.dp)
     ) {
       item {
         SantriProfileHeader(

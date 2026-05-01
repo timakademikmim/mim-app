@@ -367,7 +367,7 @@ private fun LaporanBulananListContent(
         .fillMaxWidth()
         .weight(1f),
       verticalArrangement = Arrangement.spacedBy(12.dp),
-      contentPadding = PaddingValues(bottom = if (quickActionExportData == null) 82.dp else 96.dp)
+      contentPadding = PaddingValues(bottom = 124.dp)
     ) {
       item {
         MonthlyTemplateCard(
@@ -741,7 +741,7 @@ private fun LaporanBulananDetailContent(
         .fillMaxWidth()
         .weight(1f),
       verticalArrangement = Arrangement.spacedBy(12.dp),
-      contentPadding = PaddingValues(bottom = 96.dp)
+      contentPadding = PaddingValues(bottom = 124.dp)
     ) {
       item {
         DetailHeaderCard(
@@ -1124,7 +1124,7 @@ private fun MonthlyReportActionBar(
         .clip(RoundedCornerShape(32.dp))
         .background(Color.White.copy(alpha = 0.96f))
         .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(32.dp))
-        .padding(horizontal = 10.dp, vertical = 10.dp),
+        .padding(horizontal = 10.dp, vertical = 8.dp),
       horizontalArrangement = Arrangement.spacedBy(8.dp),
       verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1154,31 +1154,31 @@ private fun ReportActionItem(
   onClick: () -> Unit,
   modifier: Modifier = Modifier
 ) {
-  Row(
+  Column(
     modifier = modifier
-      .height(52.dp)
+      .height(58.dp)
       .clip(RoundedCornerShape(24.dp))
       .background(PrimaryBlue.copy(alpha = if (enabled) 0.12f else 0.05f))
       .clickable(enabled = enabled, onClick = onClick)
-      .padding(horizontal = 12.dp, vertical = 12.dp),
-    horizontalArrangement = Arrangement.Center,
-    verticalAlignment = Alignment.CenterVertically
+      .padding(horizontal = 6.dp, vertical = 7.dp),
+    verticalArrangement = Arrangement.Center,
+    horizontalAlignment = Alignment.CenterHorizontally
   ) {
     Icon(
       imageVector = icon,
       contentDescription = label,
       tint = if (enabled) PrimaryBlue else SubtleInk.copy(alpha = 0.5f),
-      modifier = Modifier.size(20.dp)
+      modifier = Modifier.size(21.dp)
     )
     Text(
       text = label,
-      style = MaterialTheme.typography.labelLarge,
+      style = MaterialTheme.typography.labelSmall,
       color = if (enabled) PrimaryBlueDark else SubtleInk.copy(alpha = 0.5f),
-      fontWeight = FontWeight.SemiBold,
+      fontWeight = FontWeight.ExtraBold,
       maxLines = 1,
       softWrap = false,
       overflow = TextOverflow.Ellipsis,
-      modifier = Modifier.padding(start = 8.dp)
+      textAlign = TextAlign.Center
     )
   }
 }

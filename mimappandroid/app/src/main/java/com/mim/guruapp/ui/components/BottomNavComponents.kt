@@ -1,16 +1,11 @@
 package com.mim.guruapp.ui.components
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -40,6 +35,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mim.guruapp.GuruSidebarDestination
@@ -81,7 +77,7 @@ fun BottomNavBar(
       .clip(RoundedCornerShape(32.dp))
       .background(Color.White.copy(alpha = 0.96f))
       .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(32.dp))
-      .padding(horizontal = 10.dp, vertical = 10.dp),
+      .padding(horizontal = 10.dp, vertical = 8.dp),
     horizontalArrangement = Arrangement.spacedBy(4.dp),
     verticalAlignment = Alignment.CenterVertically
   ) {
@@ -100,7 +96,7 @@ fun BottomNavBar(
             onSelect(item.destination)
           }
         },
-        modifier = Modifier.weight(if (isSelected) 1.7f else 0.825f)
+        modifier = Modifier.weight(1f)
       )
     }
   }
@@ -116,43 +112,37 @@ fun BottomNavItem(
   val containerColor = if (selected) PrimaryBlue.copy(alpha = 0.12f) else Color.Transparent
   val contentColor = if (selected) PrimaryBlue else SubtleInk.copy(alpha = 0.82f)
 
-  Row(
+  Column(
     modifier = modifier
-      .height(52.dp)
+      .height(58.dp)
       .clip(RoundedCornerShape(24.dp))
       .background(containerColor)
       .clickable(onClick = onClick)
-      .padding(horizontal = 12.dp, vertical = 12.dp),
-    horizontalArrangement = Arrangement.Center,
-    verticalAlignment = Alignment.CenterVertically
+      .padding(horizontal = 4.dp, vertical = 7.dp),
+    verticalArrangement = Arrangement.Center,
+    horizontalAlignment = Alignment.CenterHorizontally
   ) {
     Box(
       contentAlignment = Alignment.Center,
-      modifier = Modifier.size(20.dp)
+      modifier = Modifier.size(22.dp)
     ) {
       Icon(
         imageVector = item.icon,
         contentDescription = item.label,
         tint = contentColor,
-        modifier = Modifier.size(20.dp)
+        modifier = Modifier.size(21.dp)
       )
     }
-    AnimatedVisibility(
-      visible = selected,
-      enter = fadeIn(animationSpec = tween(180)) + expandHorizontally(animationSpec = tween(220)),
-      exit = fadeOut(animationSpec = tween(120)) + shrinkHorizontally(animationSpec = tween(180))
-    ) {
-      Text(
-        text = item.label,
-        style = MaterialTheme.typography.labelLarge,
-        color = if (selected) PrimaryBlueDark else contentColor,
-        fontWeight = FontWeight.SemiBold,
-        maxLines = 1,
-        softWrap = false,
-        overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.padding(start = 8.dp)
-      )
-    }
+    Text(
+      text = item.label,
+      style = MaterialTheme.typography.labelSmall,
+      color = if (selected) PrimaryBlueDark else contentColor,
+      fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+      maxLines = 1,
+      softWrap = false,
+      overflow = TextOverflow.Ellipsis,
+      textAlign = TextAlign.Center
+    )
   }
 }
 

@@ -20,6 +20,7 @@ import com.mim.guruapp.data.remote.GuruMapelPatronMateriRemoteDataSource
 import com.mim.guruapp.data.remote.GuruMapelPatronMateriSaveResult
 import com.mim.guruapp.data.remote.GuruMapelScoreRemoteDataSource
 import com.mim.guruapp.data.remote.GuruMapelScoreSaveResult
+import com.mim.guruapp.data.remote.GuruMutabaahBatchSaveResult
 import com.mim.guruapp.data.remote.GuruMutabaahRemoteDataSource
 import com.mim.guruapp.data.remote.GuruMutabaahSaveResult
 import com.mim.guruapp.data.remote.GuruMonthlyReportRemoteDataSource
@@ -874,11 +875,70 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     }
   }
 
+  suspend fun saveMutabaahStatuses(
+    templateIds: List<String>,
+    dateIso: String,
+    status: String
+  ): MutabaahSaveOutcome {
+    val dashboard = uiState.dashboard ?: return MutabaahSaveOutcome(false, "Data mutabaah belum siap.")
+    val snapshot = dashboard.mutabaahSnapshot
+    val guruId = snapshot.guruId.ifBlank { uiState.session.teacherRowId.ifBlank { uiState.session.teacherId } }
+    if (guruId.isBlank()) return MutabaahSaveOutcome(false, "ID guru belum tersedia.")
+
+    val cleanTemplateIds = templateIds.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+    if (cleanTemplateIds.isEmpty()) return MutabaahSaveOutcome(false, "Belum ada task mutabaah yang bisa disimpan.")
+    val normalizedStatus = normalizeMutabaahStatus(status)
+
+    val localSubmissions = cleanTemplateIds.map { templateId ->
+      MutabaahSubmission(
+        templateId = templateId,
+        dateIso = dateIso,
+        status = normalizedStatus,
+        updatedAt = System.currentTimeMillis().toString(),
+        syncState = "syncing"
+      )
+    }
+    updateMutabaahSubmissions(localSubmissions)
+
+    return when (
+      val result = mutabaahRemoteDataSource.saveMutabaahStatuses(
+        guruId = guruId,
+        templateIds = cleanTemplateIds,
+        dateIso = dateIso,
+        status = normalizedStatus
+      )
+    ) {
+      is GuruMutabaahBatchSaveResult.Success -> {
+        updateMutabaahSubmissions(result.submissions)
+        MutabaahSaveOutcome(true, "Mutabaah tersimpan otomatis.")
+      }
+
+      is GuruMutabaahBatchSaveResult.Error -> {
+        updateMutabaahSubmissions(localSubmissions.map { it.copy(syncState = "pending") })
+        MutabaahSaveOutcome(false, "Disimpan lokal. Sinkronisasi mutabaah menunggu koneksi.")
+      }
+    }
+  }
+
+  private fun normalizeMutabaahStatus(status: String): String {
+    return when (status.trim().lowercase(Locale.getDefault())) {
+      "selesai", "done", "hadir" -> "selesai"
+      "izin", "ijin", "leave" -> "izin"
+      else -> "belum"
+    }
+  }
+
   private suspend fun updateMutabaahSubmission(submission: MutabaahSubmission) {
+    updateMutabaahSubmissions(listOf(submission))
+  }
+
+  private suspend fun updateMutabaahSubmissions(submissions: List<MutabaahSubmission>) {
     val dashboard = uiState.dashboard ?: return
     val snapshot = dashboard.mutabaahSnapshot
+    if (submissions.isEmpty()) return
+    val updatedKeys = submissions.map { "${it.templateId}|${it.dateIso}" }.toSet()
     val nextSubmissions = snapshot.submissions
-      .filterNot { it.templateId == submission.templateId && it.dateIso == submission.dateIso } + submission
+      .filterNot { "${it.templateId}|${it.dateIso}" in updatedKeys } + submissions
     val nextDashboard = dashboard.withMutabaahSnapshot(
       snapshot.copy(
         submissions = nextSubmissions,

@@ -62,6 +62,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mim.guruapp.MutabaahSaveOutcome
 import com.mim.guruapp.data.model.CalendarEvent
+import com.mim.guruapp.data.model.LeaveRequestItem
 import com.mim.guruapp.data.model.MutabaahSnapshot
 import com.mim.guruapp.data.model.MutabaahSubmission
 import com.mim.guruapp.data.model.MutabaahTask
@@ -87,6 +88,8 @@ import java.util.Locale
 fun MutabaahScreen(
   selectedDate: LocalDate,
   snapshot: MutabaahSnapshot,
+  teachingScheduleEvents: List<CalendarEvent>,
+  leaveRequests: List<LeaveRequestItem>,
   isRefreshing: Boolean,
   onSelectDate: (LocalDate) -> Unit,
   onJumpToToday: () -> Unit,
@@ -94,6 +97,7 @@ fun MutabaahScreen(
   onMenuClick: () -> Unit,
   onLoadSnapshot: suspend (LocalDate) -> MutabaahSnapshot?,
   onToggleTask: suspend (String, String, Boolean) -> MutabaahSaveOutcome,
+  onToggleTasks: suspend (List<String>, String, String) -> MutabaahSaveOutcome,
   modifier: Modifier = Modifier
 ) {
   val snackbarHostState = remember { SnackbarHostState() }
@@ -121,12 +125,44 @@ fun MutabaahScreen(
   val submissions = remember(snapshot.submissions) {
     snapshot.submissions.associateBy { "${it.templateId}|${it.dateIso}" }
   }
-  val doneCount = dayTasks.count { task ->
-    submissions["${task.id}|${selectedDate}"]?.status == "selesai"
+  val selectedDateIso = selectedDate.toString()
+  val hasTeachingSchedule = remember(teachingScheduleEvents, selectedDate) {
+    teachingScheduleEvents.any { event -> event.coversDate(selectedDate) }
   }
+  val approvedLeave = remember(leaveRequests, selectedDate) {
+    leaveRequests.firstOrNull { it.isApprovedOn(selectedDate) }
+  }
+  val isApprovedLeaveDay = approvedLeave != null
+  val isOfficeOnlyDay = !isApprovedLeaveDay && !hasTeachingSchedule && dayTasks.isNotEmpty()
+  val visibleDayTasks = remember(dayTasks, isOfficeOnlyDay) {
+    if (isOfficeOnlyDay) dayTasks.officeOnlyVisibleTasks() else dayTasks
+  }
+  val visibleTaskIds = remember(visibleDayTasks) { visibleDayTasks.map { it.id }.toSet() }
+  val hiddenDayTaskIds = remember(dayTasks, visibleTaskIds) {
+    dayTasks.mapNotNull { task -> task.id.takeIf { it !in visibleTaskIds } }
+  }
+  val allDayTasksIzin = dayTasks.isNotEmpty() && dayTasks.all { task ->
+    submissions["${task.id}|$selectedDateIso"]?.status == "izin"
+  }
+  val doneCount = when {
+    isApprovedLeaveDay -> 0
+    else -> visibleDayTasks.count { task ->
+      submissions["${task.id}|$selectedDateIso"]?.status == "selesai"
+    }
+  }
+  val summaryTotal = if (isApprovedLeaveDay && dayTasks.isNotEmpty()) dayTasks.size else visibleDayTasks.size
   val isHoliday = holidayDates.contains(selectedDate.toString())
   val isSunday = selectedDate.dayOfWeek == DayOfWeek.SUNDAY
   val timelineEvents = remember(snapshot.tasks) { snapshot.tasks.toCalendarEvents() }
+  var autoSyncedLeaveDates by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+  LaunchedEffect(isApprovedLeaveDay, selectedDateIso, dayTasks, allDayTasksIzin) {
+    if (isApprovedLeaveDay && dayTasks.isNotEmpty() && !allDayTasksIzin && selectedDateIso !in autoSyncedLeaveDates) {
+      autoSyncedLeaveDates = autoSyncedLeaveDates + selectedDateIso
+      val result = onToggleTasks(dayTasks.map { it.id }, selectedDateIso, "izin")
+      if (!result.success) snackbarHostState.showSnackbar(result.message)
+    }
+  }
 
   androidx.compose.material3.Scaffold(
     modifier = modifier
@@ -171,10 +207,12 @@ fun MutabaahScreen(
         )
 
         MutabaahSummaryCard(
-          total = dayTasks.size,
+          total = summaryTotal,
           done = doneCount,
           isSunday = isSunday,
-          isHoliday = isHoliday
+          isHoliday = isHoliday,
+          isApprovedLeave = isApprovedLeaveDay,
+          isOfficeOnlyDay = isOfficeOnlyDay
         )
 
         Text(
@@ -200,6 +238,12 @@ fun MutabaahScreen(
               MutabaahEmptyCard("Tanggal ini libur akademik. Mutabaah tidak dihitung.")
             }
 
+            isApprovedLeaveDay -> item {
+              MutabaahEmptyCard(
+                "Perizinan disetujui untuk tanggal ini. Hari ini tidak dihitung sebagai progress mutabaah dan akan ditandai izin di laporan admin."
+              )
+            }
+
             isLoadingPeriod -> items(4) {
               SkeletonContentCard(
                 leadingSize = 44.dp,
@@ -209,24 +253,45 @@ fun MutabaahScreen(
               )
             }
 
-            dayTasks.isEmpty() -> item {
+            visibleDayTasks.isEmpty() -> item {
               MutabaahEmptyCard("Belum ada tugas mutabaah untuk tanggal ini.")
             }
 
-            else -> dayTasks.forEachIndexed { index, task ->
+            else -> visibleDayTasks.forEachIndexed { index, task ->
               item(key = task.id) {
-                val submission = submissions["${task.id}|${selectedDate}"]
+                val submission = submissions["${task.id}|$selectedDateIso"]
                 val checked = submission?.status == "selesai"
                 MutabaahTimelineRow(
                   task = task,
                   checked = checked,
                   submission = submission,
-                  isSaving = savingTaskId == task.id || submission?.syncState == "syncing",
-                  isLast = index == dayTasks.lastIndex,
+                  isSaving = savingTaskId == task.id || savingTaskId == selectedDateIso || submission?.syncState == "syncing",
+                  isLast = index == visibleDayTasks.lastIndex,
                   onCheckedChange = { nextChecked ->
                     scope.launch {
-                      savingTaskId = task.id
-                      val result = onToggleTask(task.id, selectedDate.toString(), nextChecked)
+                      savingTaskId = if (isOfficeOnlyDay && hiddenDayTaskIds.isNotEmpty()) selectedDateIso else task.id
+                      val result = if (isOfficeOnlyDay) {
+                        val visibleResult = onToggleTask(task.id, selectedDateIso, nextChecked)
+                        if (!visibleResult.success) {
+                          visibleResult
+                        } else if (hiddenDayTaskIds.isEmpty()) {
+                          visibleResult
+                        } else {
+                          val anotherVisibleDone = visibleDayTasks.any { visibleTask ->
+                            visibleTask.id != task.id &&
+                              submissions["${visibleTask.id}|$selectedDateIso"]?.status == "selesai"
+                          }
+                          val hiddenStatus = if (nextChecked || anotherVisibleDone) "selesai" else "belum"
+                          val hiddenResult = onToggleTasks(hiddenDayTaskIds, selectedDateIso, hiddenStatus)
+                          if (hiddenResult.success) {
+                            visibleResult
+                          } else {
+                            hiddenResult
+                          }
+                        }
+                      } else {
+                        onToggleTask(task.id, selectedDateIso, nextChecked)
+                      }
                       savingTaskId = null
                       if (!result.success) {
                         snackbarHostState.showSnackbar(result.message)
@@ -358,15 +423,20 @@ private fun MutabaahSummaryCard(
   total: Int,
   done: Int,
   isSunday: Boolean,
-  isHoliday: Boolean
+  isHoliday: Boolean,
+  isApprovedLeave: Boolean,
+  isOfficeOnlyDay: Boolean
 ) {
   val label = when {
     isSunday -> "Ahad libur"
     isHoliday -> "Libur akademik"
+    isApprovedLeave -> "Izin disetujui - tidak dihitung progress"
+    isOfficeOnlyDay -> "$done dari $total opsi kantor selesai"
     total == 0 -> "Belum ada tugas"
     else -> "$done dari $total selesai"
   }
   val percent = if (total <= 0) 0 else ((done.toFloat() / total.toFloat()) * 100).toInt()
+  val scoreText = if (isApprovedLeave) "Izin" else "$percent%"
   Column(
     modifier = Modifier
       .fillMaxWidth()
@@ -397,9 +467,9 @@ private fun MutabaahSummaryCard(
         )
       }
       Text(
-        text = "$percent%",
+        text = scoreText,
         style = MaterialTheme.typography.titleLarge,
-        color = HighlightCard,
+        color = if (isApprovedLeave) WarmAccent else HighlightCard,
         fontWeight = FontWeight.ExtraBold
       )
     }
@@ -653,6 +723,60 @@ private fun List<MutabaahTask>.toCalendarEvents(): List<CalendarEvent> {
       categoryKey = "mutabaah"
     )
   }
+}
+
+private fun List<MutabaahTask>.officeOnlyVisibleTasks(): List<MutabaahTask> {
+  val hadirTask = firstOrNull { it.title.isArrivalTaskTitle() }
+  val pulangTask = firstOrNull { it.title.isDepartureTaskTitle() && it.id != hadirTask?.id }
+  val matched = listOfNotNull(
+    hadirTask?.copy(
+      title = "Hadir tepat waktu",
+      description = hadirTask.description.ifBlank { "Tandai jika guru hadir berkantor tepat waktu." }
+    ),
+    pulangTask?.copy(
+      title = "Pulang tepat waktu",
+      description = pulangTask.description.ifBlank { "Tandai jika guru pulang sesuai ketentuan waktu." }
+    )
+  )
+  if (matched.isNotEmpty()) return matched
+  return take(2).mapIndexed { index, task ->
+    task.copy(
+      title = if (index == 0) "Hadir tepat waktu" else "Pulang tepat waktu",
+      description = if (index == 0) {
+        "Tandai jika guru hadir berkantor tepat waktu."
+      } else {
+        "Tandai jika guru pulang sesuai ketentuan waktu."
+      }
+    )
+  }
+}
+
+private fun String.isArrivalTaskTitle(): Boolean {
+  val value = lowercase(Locale.getDefault())
+  return ("hadir" in value || "masuk" in value || "datang" in value) &&
+    ("pulang" !in value)
+}
+
+private fun String.isDepartureTaskTitle(): Boolean {
+  val value = lowercase(Locale.getDefault())
+  return "pulang" in value || "keluar" in value
+}
+
+private fun CalendarEvent.coversDate(date: LocalDate): Boolean {
+  val start = parseMutabaahDate(startDateIso) ?: date
+  val end = parseMutabaahDate(endDateIso.ifBlank { startDateIso }) ?: start
+  return !date.isBefore(start) && !date.isAfter(end)
+}
+
+private fun LeaveRequestItem.isApprovedOn(date: LocalDate): Boolean {
+  if (status.trim().lowercase(Locale.getDefault()) != "diterima") return false
+  val start = parseMutabaahDate(startDateIso) ?: return false
+  val end = parseMutabaahDate(endDateIso.ifBlank { startDateIso }) ?: start
+  return !date.isBefore(start) && !date.isAfter(end)
+}
+
+private fun parseMutabaahDate(value: String): LocalDate? {
+  return runCatching { LocalDate.parse(value.trim().take(10)) }.getOrNull()
 }
 
 @Composable
