@@ -1,5 +1,6 @@
 const DAILY_TASK_TEMPLATE_TABLE = 'tugas_harian_template'
 const DAILY_TASK_SUBMIT_TABLE = 'tugas_harian_submit'
+const ADMIN_DAILY_TASK_IZIN_TABLE = 'izin_karyawan'
 
 const adminDailyTaskState = {
   periode: '',
@@ -8,12 +9,16 @@ const adminDailyTaskState = {
   templateGroups: [],
   draftTasks: [],
   submissions: [],
+  approvedIzinLookup: new Map(),
   guruList: [],
-  selectedGuruId: ''
+  selectedGuruId: '',
+  detailViewMode: 'tanggal'
 }
 const ADMIN_TASK_KALENDER_TABLE = 'kalender_akademik'
 const ADMIN_TASK_LIBUR_SEMUA = 'libur_semua_kegiatan'
 const ADMIN_TASK_LIBUR_AKADEMIK = 'libur_akademik'
+const ADMIN_DAILY_TASK_PAGE_SIZE = 1000
+const ADMIN_DAILY_TASK_IZIN_ACCEPTED = new Set(['diterima', 'approve', 'approved'])
 
 function normalizeAdminTaskKalenderType(value) {
   const raw = String(value || '').trim().toLowerCase()
@@ -46,10 +51,19 @@ function getAdminTaskDateRangeKeys(startValue, endValue) {
   const result = []
   const cursor = new Date(start)
   while (cursor.getTime() <= end.getTime()) {
-    result.push(cursor.toISOString().slice(0, 10))
+    result.push(formatAdminTaskLocalDate(cursor))
     cursor.setDate(cursor.getDate() + 1)
   }
   return result
+}
+
+function formatAdminTaskLocalDate(value) {
+  const date = value instanceof Date ? value : new Date(value)
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return ''
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 async function getAdminTaskAcademicHolidayDates(startDate, endDate) {
@@ -128,7 +142,7 @@ function shiftToNonAhad(dateText) {
   const date = new Date(`${text}T00:00:00`)
   if (Number.isNaN(date.getTime())) return ''
   while (date.getDay() === 0) date.setDate(date.getDate() + 1)
-  return date.toISOString().slice(0, 10)
+  return formatAdminTaskLocalDate(date)
 }
 
 function getDateListByPeriode(periode) {
@@ -138,7 +152,7 @@ function getDateListByPeriode(periode) {
   let cursor = new Date(`${range.start}T00:00:00`)
   const end = new Date(`${range.end}T00:00:00`)
   while (cursor <= end) {
-    const text = cursor.toISOString().slice(0, 10)
+    const text = formatAdminTaskLocalDate(cursor)
     if (!isAhadDate(text)) dates.push(text)
     cursor.setDate(cursor.getDate() + 1)
   }
@@ -160,7 +174,7 @@ function getDateListByTaskFrequency(periode, frekuensi) {
     if (cursor.getDay() === 0) cursor.setDate(cursor.getDate() + 1)
     const end = new Date(`${monthRange.end}T00:00:00`)
     while (cursor <= end) {
-      const text = cursor.toISOString().slice(0, 10)
+      const text = formatAdminTaskLocalDate(cursor)
       if (!isAhadDate(text)) dates.push(text)
       cursor.setDate(cursor.getDate() + 7)
     }
@@ -219,7 +233,103 @@ function escapeAttr(value) {
 }
 
 function pickStatusLabel(raw) {
-  return String(raw || '').toLowerCase() === 'selesai' ? 'Selesai' : 'Belum'
+  const normalized = String(raw || '').toLowerCase()
+  if (normalized === 'selesai') return 'Selesai'
+  if (normalized === 'izin') return 'Izin'
+  return 'Belum'
+}
+
+function normalizeAdminDailyTaskIzinStatus(value) {
+  const raw = String(value || '').trim().toLowerCase()
+  if (ADMIN_DAILY_TASK_IZIN_ACCEPTED.has(raw)) return 'diterima'
+  if (raw === 'ditolak' || raw === 'rejected') return 'ditolak'
+  return raw || 'menunggu'
+}
+
+function buildAdminDailyTaskIzinReasonText(item) {
+  const keperluan = String(item?.keperluan || '').trim()
+  const catatan = String(item?.catatan_wakasek || '').trim()
+  if (keperluan && catatan) return `${keperluan} | Catatan wakasek: ${catatan}`
+  if (keperluan) return keperluan
+  if (catatan) return `Catatan wakasek: ${catatan}`
+  return 'Izin disetujui wakasek'
+}
+
+function formatAdminDailyTaskDateLabel(value) {
+  const text = String(value || '').slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return '-'
+  const date = new Date(`${text}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return text
+  return date.toLocaleDateString('id-ID', {
+    weekday: 'long',
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric'
+  })
+}
+
+function formatAdminDailyTaskTimestamp(value) {
+  const text = String(value || '').trim()
+  if (!text) return '-'
+  const date = new Date(text)
+  if (Number.isNaN(date.getTime())) return text.replace('T', ' ').slice(0, 16)
+  return date.toLocaleString('id-ID', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
+async function fetchAdminDailyTaskPagedRows(buildQuery, pageSize = ADMIN_DAILY_TASK_PAGE_SIZE) {
+  const rows = []
+  let offset = 0
+
+  while (true) {
+    const query = buildQuery(offset, offset + pageSize - 1)
+    const { data, error } = await query
+    if (error) throw error
+    const batch = Array.isArray(data) ? data : []
+    rows.push(...batch)
+    if (batch.length < pageSize) break
+    offset += pageSize
+  }
+
+  return rows
+}
+
+function buildAdminDailyTaskApprovedIzinLookup(rows = [], karyawanRows = [], startDate = '', endDate = '') {
+  const lookup = new Map()
+  const canonicalGuruIdSet = new Set((karyawanRows || []).map(item => String(item?.id || '').trim()).filter(Boolean))
+  const altGuruIdMap = new Map()
+  ;(karyawanRows || []).forEach(item => {
+    const canonicalId = String(item?.id || '').trim()
+    if (!canonicalId) return
+    const kode = String(item?.id_karyawan || '').trim().toLowerCase()
+    const nama = String(item?.nama || '').trim().toLowerCase()
+    if (kode) altGuruIdMap.set(kode, canonicalId)
+    if (nama) altGuruIdMap.set(nama, canonicalId)
+  })
+  ;(Array.isArray(rows) ? rows : []).forEach(item => {
+    if (normalizeAdminDailyTaskIzinStatus(item?.status) !== 'diterima') return
+    const rawGuruId = String(item?.guru_id || '').trim()
+    const normalizedGuruKey = rawGuruId.toLowerCase()
+    const guruId = canonicalGuruIdSet.has(rawGuruId)
+      ? rawGuruId
+      : (altGuruIdMap.get(normalizedGuruKey) || rawGuruId)
+    if (!guruId) return
+    const reason = buildAdminDailyTaskIzinReasonText(item)
+    getAdminTaskDateRangeKeys(item?.tanggal_mulai, item?.tanggal_selesai || item?.tanggal_mulai)
+      .filter(date => (!startDate || date >= startDate) && (!endDate || date <= endDate))
+      .forEach(date => {
+        lookup.set(`${guruId}__${date}`, {
+          reason,
+          row: item
+        })
+      })
+  })
+  return lookup
 }
 
 function ensureAdminTaskDraftSeed() {
@@ -385,46 +495,60 @@ async function loadAdminDailyTaskData(periode) {
   const tahunAjaran = await getActiveTahunAjaranAdminDailyTask()
   const tahunAjaranId = tahunAjaran?.id || null
 
-  let templateQuery = sb
-    .from(DAILY_TASK_TEMPLATE_TABLE)
-    .select('id, tahun_ajaran_id, tanggal, judul, deskripsi, aktif')
-    .gte('tanggal', range.start)
-    .lte('tanggal', range.end)
-    .order('tanggal', { ascending: true })
-    .order('created_at', { ascending: true })
-  if (tahunAjaranId) templateQuery = templateQuery.eq('tahun_ajaran_id', tahunAjaranId)
-
-  const [templateRes, submissionRes, guruRes] = await Promise.all([
-    templateQuery,
-    sb
-      .from(DAILY_TASK_SUBMIT_TABLE)
-      .select('id, template_id, guru_id, tanggal, status, catatan, submitted_at, updated_at')
-      .gte('tanggal', range.start)
-      .lte('tanggal', range.end),
-    sb
-      .from('karyawan')
-      .select('id, nama, role, aktif')
-      .eq('aktif', true)
-      .order('nama')
+  const [templateRows, submissionRows, guruRows, izinRows] = await Promise.all([
+    fetchAdminDailyTaskPagedRows((from, to) => {
+      let query = sb
+        .from(DAILY_TASK_TEMPLATE_TABLE)
+        .select('id, tahun_ajaran_id, tanggal, judul, deskripsi, aktif')
+        .gte('tanggal', range.start)
+        .lte('tanggal', range.end)
+        .order('tanggal', { ascending: true })
+        .order('created_at', { ascending: true })
+      if (tahunAjaranId) query = query.eq('tahun_ajaran_id', tahunAjaranId)
+      return query.range(from, to)
+    }),
+    fetchAdminDailyTaskPagedRows((from, to) =>
+      sb
+        .from(DAILY_TASK_SUBMIT_TABLE)
+        .select('id, template_id, guru_id, tanggal, status, catatan, submitted_at, updated_at')
+        .gte('tanggal', range.start)
+        .lte('tanggal', range.end)
+        .order('tanggal', { ascending: true })
+        .order('submitted_at', { ascending: true })
+        .range(from, to)
+    ),
+    fetchAdminDailyTaskPagedRows((from, to) =>
+      sb
+        .from('karyawan')
+        .select('id, nama, id_karyawan, role, aktif')
+        .eq('aktif', true)
+        .order('nama')
+        .range(from, to)
+    ),
+    fetchAdminDailyTaskPagedRows((from, to) =>
+      sb
+        .from(ADMIN_DAILY_TASK_IZIN_TABLE)
+        .select('id, guru_id, tanggal_mulai, tanggal_selesai, keperluan, catatan_wakasek, status')
+        .lte('tanggal_mulai', range.end)
+        .gte('tanggal_selesai', range.start)
+        .order('tanggal_mulai', { ascending: true })
+        .range(from, to)
+    )
   ])
 
-  if (templateRes.error || submissionRes.error || guruRes.error) {
-    const firstError = templateRes.error || submissionRes.error || guruRes.error
-    throw firstError
-  }
-
-  const guruList = (guruRes.data || []).filter(item => {
+  const guruList = (guruRows || []).filter(item => {
     const roles = String(item.role || '').toLowerCase()
     return roles.includes('guru')
   })
 
   return {
     tahunAjaran,
-    templates: (templateRes.data || []).filter(item => {
+    templates: (templateRows || []).filter(item => {
       const tanggal = String(item?.tanggal || '').slice(0, 10)
       return !isAhadDate(tanggal) && !academicHolidayDates.has(tanggal)
     }),
-    submissions: (submissionRes.data || []).filter(item => !academicHolidayDates.has(String(item?.tanggal || '').slice(0, 10))),
+    submissions: (submissionRows || []).filter(item => !academicHolidayDates.has(String(item?.tanggal || '').slice(0, 10))),
+    approvedIzinLookup: buildAdminDailyTaskApprovedIzinLookup(izinRows || [], guruRows || [], range.start, range.end),
     guruList
   }
 }
@@ -509,16 +633,12 @@ function renderAdminDailyTaskRekap() {
   if (!box) return
 
   const templates = adminDailyTaskState.templates || []
-  const submissions = adminDailyTaskState.submissions || []
   const guruList = adminDailyTaskState.guruList || []
 
   if (!guruList.length) {
     box.innerHTML = '<div style="color:#64748b;">Data guru tidak ditemukan.</div>'
     return
   }
-
-  const templateIds = new Set(templates.filter(t => t.aktif !== false).map(t => String(t.id)))
-  const totalTask = templateIds.size
 
   let html = `
     <div style="overflow:auto;">
@@ -537,13 +657,10 @@ function renderAdminDailyTaskRekap() {
 
   html += guruList.map((guru, index) => {
     const sid = String(guru.id || '')
-    const doneSet = new Set(
-      submissions
-        .filter(row => String(row.guru_id || '') === sid && templateIds.has(String(row.template_id || '')) && String(row.status || '').toLowerCase() === 'selesai')
-        .map(row => String(row.template_id))
-    )
-    const done = doneSet.size
-    const pct = totalTask > 0 ? Math.round((done / totalTask) * 100) : 0
+    const progress = getAdminDailyTaskGuruProgress(sid)
+    const done = progress.done
+    const totalTask = progress.total
+    const pct = progress.pct
 
     return `
       <tr>
@@ -562,6 +679,214 @@ function renderAdminDailyTaskRekap() {
   box.innerHTML = html
 }
 
+function buildAdminDailyTaskSubmissionMapForGuru(guruId) {
+  const map = new Map()
+  ;(adminDailyTaskState.submissions || [])
+    .filter(item => String(item.guru_id || '') === String(guruId || ''))
+    .forEach(item => {
+      const templateId = String(item.template_id || '')
+      const tanggal = String(item.tanggal || '').slice(0, 10)
+      const key = `${templateId}__${tanggal}`
+      const current = map.get(key)
+      if (!current) {
+        map.set(key, item)
+        return
+      }
+      const currentTime = String(current.updated_at || current.submitted_at || '')
+      const nextTime = String(item.updated_at || item.submitted_at || '')
+      if (nextTime.localeCompare(currentTime) >= 0) map.set(key, item)
+    })
+  return map
+}
+
+function buildAdminDailyTaskGuruDetailRows(guruId) {
+  const templates = (adminDailyTaskState.templates || [])
+    .filter(item => item.aktif !== false)
+    .slice()
+    .sort((a, b) => {
+      const dateCmp = String(a.tanggal || '').localeCompare(String(b.tanggal || ''))
+      if (dateCmp !== 0) return dateCmp
+      return String(a.judul || '').localeCompare(String(b.judul || ''), undefined, { sensitivity: 'base' })
+    })
+  const submissionMap = buildAdminDailyTaskSubmissionMapForGuru(guruId)
+
+  return templates.map(template => {
+    const templateId = String(template.id || '')
+    const tanggal = String(template.tanggal || '').slice(0, 10)
+    const submission = submissionMap.get(`${templateId}__${tanggal}`) || null
+    const izinInfo = adminDailyTaskState.approvedIzinLookup?.get(`${String(guruId || '')}__${tanggal}`) || null
+    const excluded = Boolean(izinInfo)
+    const rawStatus = excluded
+      ? 'izin'
+      : (String(submission?.status || '').toLowerCase() === 'selesai' ? 'selesai' : 'belum')
+    return {
+      templateId,
+      tanggal,
+      judul: String(template.judul || '').trim(),
+      deskripsi: String(template.deskripsi || '').trim(),
+      status: rawStatus,
+      statusLabel: pickStatusLabel(rawStatus),
+      selesai: rawStatus === 'selesai',
+      excluded,
+      exclusionReason: String(izinInfo?.reason || '').trim(),
+      catatan: String(submission?.catatan || '').trim(),
+      submittedAt: String(submission?.submitted_at || submission?.updated_at || '')
+    }
+  })
+}
+
+function getAdminDailyTaskGuruProgress(guruId) {
+  const rows = buildAdminDailyTaskGuruDetailRows(guruId)
+  const countedRows = rows.filter(item => !item.excluded)
+  const total = countedRows.length
+  const done = countedRows.filter(item => item.selesai).length
+  const excluded = rows.filter(item => item.excluded).length
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0
+  return { total, done, excluded, pct, rows }
+}
+
+function groupAdminDailyTaskRowsByDate(rows = []) {
+  const map = new Map()
+  rows.forEach(item => {
+    const key = String(item.tanggal || '')
+    if (!map.has(key)) map.set(key, [])
+    map.get(key).push(item)
+  })
+
+  return Array.from(map.entries())
+    .sort((a, b) => String(b[0]).localeCompare(String(a[0])))
+    .map(([tanggal, items]) => {
+      const sortedItems = items.slice().sort((a, b) => String(a.judul || '').localeCompare(String(b.judul || ''), undefined, { sensitivity: 'base' }))
+      const countedItems = sortedItems.filter(item => !item.excluded)
+      const done = countedItems.filter(item => item.selesai).length
+      const total = countedItems.length
+      const excluded = sortedItems.filter(item => item.excluded).length
+      return {
+        tanggal,
+        label: formatAdminDailyTaskDateLabel(tanggal),
+        done,
+        total,
+        excluded,
+        pct: total > 0 ? Math.round((done / total) * 100) : null,
+        items: sortedItems
+      }
+    })
+}
+
+function groupAdminDailyTaskRowsByTask(rows = []) {
+  const map = new Map()
+  rows.forEach(item => {
+    const key = `${String(item.judul || '').trim()}__${String(item.deskripsi || '').trim()}`
+    if (!map.has(key)) map.set(key, [])
+    map.get(key).push(item)
+  })
+
+  return Array.from(map.entries())
+    .sort((a, b) => {
+      const aTitle = String(a[1]?.[0]?.judul || '')
+      const bTitle = String(b[1]?.[0]?.judul || '')
+      return aTitle.localeCompare(bTitle, undefined, { sensitivity: 'base' })
+    })
+    .map(([_, items]) => {
+      const sortedItems = items.slice().sort((a, b) => String(b.tanggal || '').localeCompare(String(a.tanggal || '')))
+      const countedItems = sortedItems.filter(item => !item.excluded)
+      const done = countedItems.filter(item => item.selesai).length
+      const total = countedItems.length
+      const excluded = sortedItems.filter(item => item.excluded).length
+      return {
+        judul: String(sortedItems[0]?.judul || '').trim(),
+        deskripsi: String(sortedItems[0]?.deskripsi || '').trim(),
+        done,
+        total,
+        excluded,
+        pct: total > 0 ? Math.round((done / total) * 100) : null,
+        items: sortedItems
+      }
+    })
+}
+
+function formatAdminDailyTaskProgressChip(pct, total, excluded) {
+  if (Number(total || 0) > 0 && Number.isFinite(Number(pct))) return `${pct}%`
+  if (Number(excluded || 0) > 0) return 'Izin'
+  return '-'
+}
+
+function renderAdminDailyTaskStatusBadge(status) {
+  const normalized = String(status || '').toLowerCase()
+  const toneClass = normalized === 'selesai'
+    ? 'is-selesai'
+    : (normalized === 'izin' ? 'is-izin' : 'is-belum')
+  return `<span class="th-admin-status-badge ${toneClass}">${escapeHtml(pickStatusLabel(status))}</span>`
+}
+
+function renderAdminDailyTaskDateGroupHtml(groups = []) {
+  return groups.map((group, index) => `
+    <details class="th-admin-detail-group" ${index === 0 ? 'open' : ''}>
+      <summary class="th-admin-detail-summary">
+        <div>
+          <div class="th-admin-detail-title-main">${escapeHtml(group.label)}</div>
+          <div class="th-admin-detail-sub">
+            ${group.total > 0 ? `${group.done}/${group.total} tugas selesai` : 'Hari ini dikecualikan dari penilaian'}
+            ${group.excluded ? ` • ${group.excluded} izin` : ''}
+          </div>
+        </div>
+        <span class="th-admin-progress-chip">${escapeHtml(formatAdminDailyTaskProgressChip(group.pct, group.total, group.excluded))}</span>
+      </summary>
+      <div class="th-admin-detail-items">
+        ${group.items.map(item => `
+          <div class="th-admin-detail-item">
+            <div class="th-admin-detail-item-head">
+              <div>
+                <div class="th-admin-detail-item-title">${escapeHtml(item.judul || '-')}</div>
+                ${item.deskripsi ? `<div class="th-admin-detail-item-desc">${escapeHtml(item.deskripsi)}</div>` : ''}
+              </div>
+              ${renderAdminDailyTaskStatusBadge(item.status)}
+            </div>
+            <div class="th-admin-detail-item-meta">
+              <span><strong>Submit:</strong> ${escapeHtml(formatAdminDailyTaskTimestamp(item.submittedAt))}</span>
+              <span><strong>Catatan:</strong> ${escapeHtml(item.excluded ? (item.exclusionReason || 'Izin disetujui wakasek') : (item.catatan || '-'))}</span>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </details>
+  `).join('')
+}
+
+function renderAdminDailyTaskTaskGroupHtml(groups = []) {
+  return groups.map((group, index) => `
+    <details class="th-admin-detail-group" ${index === 0 ? 'open' : ''}>
+      <summary class="th-admin-detail-summary">
+        <div>
+          <div class="th-admin-detail-title-main">${escapeHtml(group.judul || '-')}</div>
+          <div class="th-admin-detail-sub">
+            ${group.total > 0 ? `${group.done}/${group.total} selesai` : 'Tugas ini dikecualikan dari penilaian'}
+            ${group.excluded ? ` • ${group.excluded} izin` : ''}${group.deskripsi ? ` • ${escapeHtml(group.deskripsi)}` : ''}
+          </div>
+        </div>
+        <span class="th-admin-progress-chip">${escapeHtml(formatAdminDailyTaskProgressChip(group.pct, group.total, group.excluded))}</span>
+      </summary>
+      <div class="th-admin-detail-items">
+        ${group.items.map(item => `
+          <div class="th-admin-detail-item">
+            <div class="th-admin-detail-item-head">
+              <div>
+                <div class="th-admin-detail-item-title">${escapeHtml(formatAdminDailyTaskDateLabel(item.tanggal))}</div>
+                <div class="th-admin-detail-item-desc">${escapeHtml(item.tanggal || '-')}</div>
+              </div>
+              ${renderAdminDailyTaskStatusBadge(item.status)}
+            </div>
+            <div class="th-admin-detail-item-meta">
+              <span><strong>Submit:</strong> ${escapeHtml(formatAdminDailyTaskTimestamp(item.submittedAt))}</span>
+              <span><strong>Catatan:</strong> ${escapeHtml(item.excluded ? (item.exclusionReason || 'Izin disetujui wakasek') : (item.catatan || '-'))}</span>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </details>
+  `).join('')
+}
+
 function renderAdminDailyTaskGuruDetail() {
   const box = document.getElementById('th-admin-detail-list')
   const title = document.getElementById('th-admin-detail-title')
@@ -575,60 +900,37 @@ function renderAdminDailyTaskGuruDetail() {
   }
 
   const guru = (adminDailyTaskState.guruList || []).find(item => String(item.id) === guruId)
-  const templates = (adminDailyTaskState.templates || []).filter(item => item.aktif !== false)
-  const submissions = adminDailyTaskState.submissions || []
-  const templateMap = new Map(templates.map(item => [String(item.id), item]))
+  const progress = getAdminDailyTaskGuruProgress(guruId)
+  const rows = progress.rows
 
-  const rows = submissions
-    .filter(item => String(item.guru_id || '') === guruId && templateMap.has(String(item.template_id || '')))
-    .slice()
-    .sort((a, b) => {
-      const dateCmp = String(a.tanggal || '').localeCompare(String(b.tanggal || ''))
-      if (dateCmp !== 0) return dateCmp
-      return String(a.submitted_at || '').localeCompare(String(b.submitted_at || ''))
-    })
-
-  title.textContent = `Riwayat: ${guru?.nama || '-'}`
+  title.textContent = `Riwayat: ${guru?.nama || '-'} • ${progress.done}/${progress.total} • ${progress.pct}%${progress.excluded ? ` • ${progress.excluded} izin` : ''}`
 
   if (!rows.length) {
-    box.innerHTML = '<div style="color:#64748b;">Belum ada submit tugas pada periode ini.</div>'
+    box.innerHTML = '<div style="color:#64748b;">Belum ada template tugas pada periode ini.</div>'
     return
   }
 
-  let html = `
-    <div style="overflow:auto;">
-      <table style="width:100%; border-collapse:collapse; font-size:13px;">
-        <thead>
-          <tr style="background:#f8fafc;">
-            <th style="padding:8px; border:1px solid #e2e8f0; width:120px;">Tanggal</th>
-            <th style="padding:8px; border:1px solid #e2e8f0;">Tugas</th>
-            <th style="padding:8px; border:1px solid #e2e8f0; width:100px;">Status</th>
-            <th style="padding:8px; border:1px solid #e2e8f0;">Catatan</th>
-            <th style="padding:8px; border:1px solid #e2e8f0; width:160px;">Submit</th>
-          </tr>
-        </thead>
-        <tbody>
+  const mode = String(adminDailyTaskState.detailViewMode || 'tanggal') === 'tugas' ? 'tugas' : 'tanggal'
+  const contentHtml = mode === 'tugas'
+    ? renderAdminDailyTaskTaskGroupHtml(groupAdminDailyTaskRowsByTask(rows))
+    : renderAdminDailyTaskDateGroupHtml(groupAdminDailyTaskRowsByDate(rows))
+
+  box.innerHTML = `
+    <div class="th-admin-detail-toolbar">
+      <button type="button" class="th-admin-chip-btn ${mode === 'tanggal' ? 'is-active' : ''}" onclick="setAdminDailyTaskDetailMode('tanggal')">Per Tanggal</button>
+      <button type="button" class="th-admin-chip-btn ${mode === 'tugas' ? 'is-active' : ''}" onclick="setAdminDailyTaskDetailMode('tugas')">Per Tugas</button>
+    </div>
+    <div class="th-admin-detail-groups">${contentHtml}</div>
   `
-
-  html += rows.map(item => {
-    const task = templateMap.get(String(item.template_id || ''))
-    return `
-      <tr>
-        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.tanggal || '-')}</td>
-        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(task?.judul || '-')}</td>
-        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(pickStatusLabel(item.status))}</td>
-        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.catatan || '-')}</td>
-        <td style="padding:8px; border:1px solid #e2e8f0;">${escapeHtml(item.submitted_at ? String(item.submitted_at).replace('T', ' ').slice(0, 16) : '-')}</td>
-      </tr>
-    `
-  }).join('')
-
-  html += '</tbody></table></div>'
-  box.innerHTML = html
 }
 
 function openAdminDailyTaskGuruDetail(guruId) {
   adminDailyTaskState.selectedGuruId = String(guruId || '')
+  renderAdminDailyTaskGuruDetail()
+}
+
+function setAdminDailyTaskDetailMode(mode) {
+  adminDailyTaskState.detailViewMode = String(mode || '') === 'tugas' ? 'tugas' : 'tanggal'
   renderAdminDailyTaskGuruDetail()
 }
 
@@ -860,14 +1162,17 @@ async function loadAdminDailyTaskPage(forceRefresh = false) {
 
   const templateBox = document.getElementById('th-admin-template-list')
   const rekapBox = document.getElementById('th-admin-rekap-list')
+  const detailBox = document.getElementById('th-admin-detail-list')
   if (templateBox) templateBox.innerHTML = 'Loading...'
   if (rekapBox) rekapBox.innerHTML = 'Loading...'
+  if (detailBox) detailBox.innerHTML = 'Loading...'
 
   try {
     const payload = await loadAdminDailyTaskData(periode)
     adminDailyTaskState.tahunAjaran = payload.tahunAjaran
     adminDailyTaskState.templates = payload.templates
     adminDailyTaskState.submissions = payload.submissions
+    adminDailyTaskState.approvedIzinLookup = payload.approvedIzinLookup || new Map()
     adminDailyTaskState.guruList = payload.guruList
     if (forceRefresh) adminDailyTaskState.selectedGuruId = ''
 
@@ -880,12 +1185,14 @@ async function loadAdminDailyTaskPage(forceRefresh = false) {
       alert(getAdminDailyTaskMissingTableMessage())
       if (templateBox) templateBox.innerHTML = 'Tabel tugas harian belum tersedia.'
       if (rekapBox) rekapBox.innerHTML = 'Tabel tugas harian belum tersedia.'
+      if (detailBox) detailBox.innerHTML = 'Tabel tugas harian belum tersedia.'
       return
     }
 
     const msg = error?.message || 'Unknown error'
     if (templateBox) templateBox.innerHTML = `Gagal load data tugas harian: ${escapeHtml(msg)}`
     if (rekapBox) rekapBox.innerHTML = `Gagal load rekap: ${escapeHtml(msg)}`
+    if (detailBox) detailBox.innerHTML = `Gagal load detail: ${escapeHtml(msg)}`
   }
 }
 
@@ -919,6 +1226,7 @@ window.setAdminDailyTaskToNextMonth = setAdminDailyTaskToNextMonth
 window.deleteAdminDailyTaskTemplate = deleteAdminDailyTaskTemplate
 window.deleteAdminMonthlyTaskGroup = deleteAdminMonthlyTaskGroup
 window.openAdminDailyTaskGuruDetail = openAdminDailyTaskGuruDetail
+window.setAdminDailyTaskDetailMode = setAdminDailyTaskDetailMode
 window.addAdminMonthlyTaskDraft = addAdminMonthlyTaskDraft
 window.updateAdminMonthlyTaskDraft = updateAdminMonthlyTaskDraft
 window.removeAdminMonthlyTaskDraft = removeAdminMonthlyTaskDraft

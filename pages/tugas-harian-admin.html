@@ -92,6 +92,138 @@
     border-color: #94a3b8;
     color: #64748b;
   }
+  .th-admin-detail-toolbar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .th-admin-chip-btn {
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    padding: 7px 12px;
+    background: #fff;
+    color: #334155;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+  }
+  .th-admin-chip-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
+  }
+  .th-admin-chip-btn.is-active {
+    border-color: #2563eb;
+    background: #eff6ff;
+    color: #1d4ed8;
+  }
+  .th-admin-detail-groups {
+    display: grid;
+    gap: 10px;
+  }
+  .th-admin-detail-group {
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    overflow: hidden;
+  }
+  .th-admin-detail-summary {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 16px;
+    cursor: pointer;
+  }
+  .th-admin-detail-summary::-webkit-details-marker {
+    display: none;
+  }
+  .th-admin-detail-title-main {
+    font-size: 14px;
+    font-weight: 800;
+    color: #0f172a;
+  }
+  .th-admin-detail-sub {
+    margin-top: 4px;
+    font-size: 12px;
+    color: #64748b;
+  }
+  .th-admin-progress-chip {
+    border-radius: 999px;
+    padding: 6px 11px;
+    background: #dbeafe;
+    color: #1d4ed8;
+    font-size: 12px;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+  .th-admin-detail-items {
+    display: grid;
+    gap: 8px;
+    padding: 0 14px 14px;
+  }
+  .th-admin-detail-item {
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    background: #fff;
+    padding: 12px;
+  }
+  .th-admin-detail-item-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .th-admin-detail-item-title {
+    font-size: 13px;
+    font-weight: 800;
+    color: #0f172a;
+  }
+  .th-admin-detail-item-desc {
+    margin-top: 4px;
+    font-size: 12px;
+    color: #64748b;
+  }
+  .th-admin-detail-item-meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 6px 10px;
+    margin-top: 10px;
+    font-size: 12px;
+    color: #475569;
+  }
+  .th-admin-status-badge {
+    border-radius: 999px;
+    padding: 6px 11px;
+    font-size: 11px;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+  .th-admin-status-badge.is-selesai {
+    background: #dcfce7;
+    color: #15803d;
+  }
+  .th-admin-status-badge.is-belum {
+    background: #fee2e2;
+    color: #b91c1c;
+  }
+  .th-admin-status-badge.is-izin {
+    background: #fef3c7;
+    color: #b45309;
+  }
+  @media (max-width: 640px) {
+    .th-admin-detail-summary,
+    .th-admin-detail-item-head {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .th-admin-progress-chip,
+    .th-admin-status-badge {
+      align-self: flex-start;
+    }
+  }
 </style>
 
 <div class="th-admin-card">
