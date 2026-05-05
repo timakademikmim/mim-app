@@ -85,9 +85,9 @@ import androidx.compose.ui.unit.dp
 import com.mim.guruapp.MonthlyExtracurricularSaveOutcome
 import com.mim.guruapp.MonthlyReportSaveOutcome
 import com.mim.guruapp.data.model.MonthlyExtracurricularReport
+import com.mim.guruapp.data.model.MonthlyAttendanceSummary
 import com.mim.guruapp.data.model.MonthlyReportItem
 import com.mim.guruapp.data.model.MonthlyReportSnapshot
-import com.mim.guruapp.data.model.MonthlyAttendanceSummary
 import com.mim.guruapp.data.model.GuruProfile
 import com.mim.guruapp.data.model.WaliSantriProfile
 import com.mim.guruapp.data.model.WaliSantriSnapshot
@@ -127,6 +127,7 @@ fun LaporanBulananScreen(
   onRefresh: () -> Unit,
   onSaveReport: suspend (MonthlyReportItem) -> MonthlyReportSaveOutcome,
   onSaveExtracurricularReports: suspend (List<MonthlyExtracurricularReport>) -> MonthlyExtracurricularSaveOutcome,
+  onLoadAttendanceSummaries: suspend (String) -> List<MonthlyAttendanceSummary>,
   onDetailModeChange: (Boolean) -> Unit = {},
   modifier: Modifier = Modifier
 ) {
@@ -137,8 +138,12 @@ fun LaporanBulananScreen(
   var selectedSantriId by rememberSaveable { mutableStateOf<String?>(null) }
   var quickActionSantriId by rememberSaveable { mutableStateOf<String?>(null) }
   var isSaving by rememberSaveable { mutableStateOf(false) }
+  var isAttendanceLoading by rememberSaveable { mutableStateOf(false) }
   val snackbarHostState = remember { SnackbarHostState() }
   val snackbarScope = rememberCoroutineScope()
+  var liveAttendanceSummaries by remember(monthlyReportSnapshot.updatedAt) {
+    mutableStateOf(monthlyReportSnapshot.attendanceSummaries)
+  }
 
   LaunchedEffect(periods) {
     if (selectedPeriod !in periods) {
@@ -168,8 +173,20 @@ fun LaporanBulananScreen(
       .filter { it.period == selectedPeriod }
       .associateBy { it.studentId }
   }
-  val attendanceByStudent = remember(monthlyReportSnapshot.attendanceSummaries, selectedPeriod) {
-    monthlyReportSnapshot.attendanceSummaries
+  LaunchedEffect(selectedPeriod, monthlyReportSnapshot.updatedAt, waliSantriSnapshot.updatedAt) {
+    if (selectedPeriod.isBlank()) return@LaunchedEffect
+    isAttendanceLoading = true
+    val loaded = onLoadAttendanceSummaries(selectedPeriod)
+    liveAttendanceSummaries = if (loaded.isNotEmpty()) {
+      monthlyReportSnapshot.attendanceSummaries
+        .filterNot { it.period == selectedPeriod } + loaded
+    } else {
+      monthlyReportSnapshot.attendanceSummaries
+    }
+    isAttendanceLoading = false
+  }
+  val attendanceByStudent = remember(liveAttendanceSummaries, selectedPeriod) {
+    liveAttendanceSummaries
       .filter { it.period == selectedPeriod }
       .associateBy { it.studentId }
   }
@@ -178,7 +195,7 @@ fun LaporanBulananScreen(
       .filter { it.period == selectedPeriod }
       .groupBy { it.studentId }
   }
-  val showSkeleton = students.isEmpty() && (isRefreshing || waliSantriSnapshot.updatedAt <= 0L)
+  val showSkeleton = (students.isEmpty() && (isRefreshing || waliSantriSnapshot.updatedAt <= 0L)) || isAttendanceLoading
 
   BackHandler(enabled = selectedSantri != null) {
     selectedSantriId = null

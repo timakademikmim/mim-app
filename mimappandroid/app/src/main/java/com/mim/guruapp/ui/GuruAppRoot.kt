@@ -31,6 +31,7 @@ import com.mim.guruapp.data.model.MapelPatronMateriSnapshot
 import com.mim.guruapp.data.model.MapelScoreSnapshot
 import com.mim.guruapp.data.model.MutabaahSnapshot
 import com.mim.guruapp.data.model.MonthlyExtracurricularReport
+import com.mim.guruapp.data.model.MonthlyAttendanceSummary
 import com.mim.guruapp.data.model.MonthlyReportItem
 import com.mim.guruapp.data.model.PatronMateriItem
 import com.mim.guruapp.data.model.ScoreStudent
@@ -38,6 +39,7 @@ import com.mim.guruapp.data.model.SubjectOverview
 import com.mim.guruapp.data.model.TeacherOption
 import com.mim.guruapp.data.model.TeachingReminderSettings
 import com.mim.guruapp.data.model.UtsReportOverride
+import com.mim.guruapp.data.model.WaliAttendanceDetailSnapshot
 import com.mim.guruapp.data.model.WaliSantriProfile
 import com.mim.guruapp.ui.components.clearFocusOnOutsideTap
 import com.mim.guruapp.ui.screens.GuruHomeScreen
@@ -89,6 +91,8 @@ fun GuruAppRoot(
   onSaveSantri: suspend (WaliSantriProfile) -> SantriSaveOutcome,
   onSaveMonthlyReport: suspend (MonthlyReportItem) -> MonthlyReportSaveOutcome,
   onSaveMonthlyExtracurricularReports: suspend (List<MonthlyExtracurricularReport>) -> MonthlyExtracurricularSaveOutcome,
+  onLoadMonthlyAttendanceSummaries: suspend (String) -> List<MonthlyAttendanceSummary>,
+  onLoadMonthlyAttendanceDetail: suspend (String, WaliSantriProfile) -> WaliAttendanceDetailSnapshot?,
   onSaveUtsReportOverride: suspend (UtsReportOverride) -> UtsReportSaveOutcome,
   onLoadMutabaah: suspend (LocalDate) -> MutabaahSnapshot?,
   onSaveMutabaahStatus: suspend (String, String, Boolean) -> MutabaahSaveOutcome,
@@ -176,6 +180,8 @@ fun GuruAppRoot(
             onSaveSantri = onSaveSantri,
             onSaveMonthlyReport = onSaveMonthlyReport,
             onSaveMonthlyExtracurricularReports = onSaveMonthlyExtracurricularReports,
+            onLoadMonthlyAttendanceSummaries = onLoadMonthlyAttendanceSummaries,
+            onLoadMonthlyAttendanceDetail = onLoadMonthlyAttendanceDetail,
             onSaveUtsReportOverride = onSaveUtsReportOverride,
             onLoadMutabaah = onLoadMutabaah,
             onSaveMutabaahStatus = onSaveMutabaahStatus,

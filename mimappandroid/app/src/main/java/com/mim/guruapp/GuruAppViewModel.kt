@@ -56,6 +56,7 @@ import com.mim.guruapp.data.model.MapelAttendanceSnapshot
 import com.mim.guruapp.data.model.MapelPatronMateriSnapshot
 import com.mim.guruapp.data.model.MapelScoreSnapshot
 import com.mim.guruapp.data.model.MonthlyExtracurricularReport
+import com.mim.guruapp.data.model.MonthlyAttendanceSummary
 import com.mim.guruapp.data.model.MonthlyReportItem
 import com.mim.guruapp.data.model.MonthlyReportSnapshot
 import com.mim.guruapp.data.model.MutabaahSnapshot
@@ -71,6 +72,7 @@ import com.mim.guruapp.data.model.TeacherOption
 import com.mim.guruapp.data.model.TeachingReminderSettings
 import com.mim.guruapp.data.model.UtsReportOverride
 import com.mim.guruapp.data.model.UtsReportSnapshot
+import com.mim.guruapp.data.model.WaliAttendanceDetailSnapshot
 import com.mim.guruapp.data.model.WaliSantriProfile
 import com.mim.guruapp.data.model.WaliSantriSnapshot
 import com.mim.guruapp.data.storage.GuruCacheStore
@@ -814,6 +816,26 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
       "E" -> "Sangat Kurang"
       else -> ""
     }
+  }
+
+  suspend fun loadMonthlyAttendanceDetail(
+    period: String,
+    student: WaliSantriProfile
+  ): WaliAttendanceDetailSnapshot? {
+    return monthlyReportRemoteDataSource.fetchAttendanceDetailSnapshot(
+      period = period,
+      student = student
+    )
+  }
+
+  suspend fun loadMonthlyAttendanceSummaries(
+    period: String
+  ): List<MonthlyAttendanceSummary> {
+    val dashboard = uiState.dashboard ?: return emptyList()
+    return monthlyReportRemoteDataSource.fetchAttendanceSummariesForPeriod(
+      period = period,
+      waliSantriSnapshot = dashboard.waliSantriSnapshot
+    )
   }
 
   suspend fun loadMutabaahSnapshot(referenceDate: LocalDate): MutabaahSnapshot? {

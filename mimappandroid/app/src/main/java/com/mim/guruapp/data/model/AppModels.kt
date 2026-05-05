@@ -168,12 +168,29 @@ data class MonthlyExtracurricularReport(
 data class MonthlyAttendanceSummary(
   val period: String = "",
   val studentId: String = "",
+  val hadirCount: Int = 0,
   val attendancePercent: String = "",
   val attendancePredicate: String = "",
   val sakitCount: Int = 0,
   val izinCount: Int = 0,
   val alpaCount: Int = 0,
   val totalDays: Int = 0
+)
+
+@Serializable
+data class WaliAttendanceDetailSnapshot(
+  val studentId: String = "",
+  val period: String = "",
+  val rows: List<WaliAttendanceDetailRow> = emptyList(),
+  val updatedAt: Long = 0L
+)
+
+@Serializable
+data class WaliAttendanceDetailRow(
+  val id: String = "",
+  val dateIso: String = "",
+  val subjectName: String = "",
+  val status: String = ""
 )
 
 @Serializable

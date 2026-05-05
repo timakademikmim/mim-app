@@ -5,6 +5,9 @@ import com.mim.guruapp.data.model.MonthlyAttendanceSummary
 import com.mim.guruapp.data.model.MonthlyExtracurricularReport
 import com.mim.guruapp.data.model.MonthlyReportItem
 import com.mim.guruapp.data.model.MonthlyReportSnapshot
+import com.mim.guruapp.data.model.WaliAttendanceDetailRow
+import com.mim.guruapp.data.model.WaliAttendanceDetailSnapshot
+import com.mim.guruapp.data.model.WaliSantriProfile
 import com.mim.guruapp.data.model.WaliSantriSnapshot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -278,6 +281,82 @@ class GuruMonthlyReportRemoteDataSource {
     }
   }
 
+  suspend fun fetchAttendanceDetailSnapshot(
+    period: String,
+    student: WaliSantriProfile
+  ): WaliAttendanceDetailSnapshot? = withContext(Dispatchers.IO) {
+    val normalizedPeriod = period.trim()
+    val studentId = student.id.trim()
+    val classId = student.classId.trim()
+    if (normalizedPeriod.isBlank() || studentId.isBlank() || classId.isBlank()) {
+      return@withContext WaliAttendanceDetailSnapshot(
+        studentId = studentId,
+        period = normalizedPeriod,
+        updatedAt = System.currentTimeMillis()
+      )
+    }
+
+    val range = runCatching { YearMonth.parse(normalizedPeriod) }.getOrNull()
+      ?: return@withContext WaliAttendanceDetailSnapshot(
+        studentId = studentId,
+        period = normalizedPeriod,
+        updatedAt = System.currentTimeMillis()
+      )
+    val holidayDates = fetchAcademicHolidayDates()
+    val rows = runCatching {
+      fetchRows(
+        table = "absensi_santri",
+        query = buildString {
+          append("select=id,tanggal,status,mapel_id,kelas_id")
+          append("&santri_id=eq.")
+          append(encodeValue(studentId))
+          append("&kelas_id=eq.")
+          append(encodeValue(classId))
+          append("&tanggal=gte.")
+          append(range.atDay(1))
+          append("&tanggal=lte.")
+          append(range.atEndOfMonth())
+          append("&order=tanggal.asc")
+        }
+      )
+    }.getOrDefault(emptyList())
+      .filterNot { row -> row.cleanString("tanggal").take(10) in holidayDates }
+
+    val subjectIds = rows.map { it.cleanString("mapel_id") }.filter { it.isNotBlank() }.distinct()
+    val subjectMap = fetchMapelLabelMap(subjectIds)
+
+    WaliAttendanceDetailSnapshot(
+      studentId = studentId,
+      period = normalizedPeriod,
+      rows = rows.mapIndexed { index, row ->
+        WaliAttendanceDetailRow(
+          id = row.cleanString("id").ifBlank { "$studentId-$normalizedPeriod-$index" },
+          dateIso = row.cleanString("tanggal").take(10),
+          subjectName = subjectMap[row.cleanString("mapel_id")].orEmpty().ifBlank { "-" },
+          status = normalizeStatusLabel(row.cleanString("status"))
+        )
+      },
+      updatedAt = System.currentTimeMillis()
+    )
+  }
+
+  suspend fun fetchAttendanceSummariesForPeriod(
+    period: String,
+    waliSantriSnapshot: WaliSantriSnapshot
+  ): List<MonthlyAttendanceSummary> = withContext(Dispatchers.IO) {
+    val normalizedPeriod = period.trim()
+    val parsedPeriod = runCatching { YearMonth.parse(normalizedPeriod) }.getOrNull()
+      ?: return@withContext emptyList()
+    val studentIds = waliSantriSnapshot.students.map { it.id.trim() }.filter { it.isNotBlank() }.distinct()
+    val classIds = waliSantriSnapshot.classes.map { it.id.trim() }.filter { it.isNotBlank() }.distinct()
+    if (studentIds.isEmpty()) return@withContext emptyList()
+    fetchAttendanceSummaries(
+      periods = listOf(parsedPeriod.toString()),
+      studentIds = studentIds,
+      classIds = classIds
+    )
+  }
+
   private fun fetchExtracurricularReports(
     periods: List<String>,
     studentIds: List<String>
@@ -494,6 +573,49 @@ class GuruMonthlyReportRemoteDataSource {
     return keys.firstNotNullOfOrNull { key -> row.cleanString(key).takeIf { it.isNotBlank() } }.orEmpty()
   }
 
+  private fun JSONObject.subjectName(): String {
+    return pickFirst(this, "nama", "nama_mapel", "nama_pelajaran", "mapel", "judul")
+      .replace(Regex("\\s+"), " ")
+      .trim()
+  }
+
+  private fun JSONObject.subjectLabel(): String {
+    val name = subjectName()
+    val category = cleanString("kategori")
+    return buildString {
+      append(name.ifBlank { "-" })
+      if (category.isNotBlank()) {
+        append(" (")
+        append(category)
+        append(")")
+      }
+    }.trim()
+  }
+
+  private fun fetchMapelLabelMap(subjectIds: List<String>): Map<String, String> {
+    if (subjectIds.isEmpty()) return emptyMap()
+    val result = linkedMapOf<String, String>()
+    subjectIds.forEach { subjectId ->
+      val normalizedId = subjectId.trim()
+      if (normalizedId.isBlank()) return@forEach
+      val row = runCatching {
+        fetchRows(
+          table = "mapel",
+          query = buildString {
+            append("select=id,nama,kategori,nama_mapel,nama_pelajaran,mapel,judul")
+            append("&id=eq.")
+            append(encodeValue(normalizedId))
+            append("&limit=1")
+          }
+        ).firstOrNull()
+      }.getOrNull()
+      if (row != null) {
+        result[normalizedId] = row.subjectLabel()
+      }
+    }
+    return result
+  }
+
   private fun fetchAttendanceSummaries(
     periods: List<String>,
     studentIds: List<String>,
@@ -503,6 +625,7 @@ class GuruMonthlyReportRemoteDataSource {
     val sortedPeriods = periods.mapNotNull { runCatching { YearMonth.parse(it) }.getOrNull() }.sorted()
     val start = sortedPeriods.firstOrNull()?.atDay(1) ?: return emptyList()
     val end = sortedPeriods.lastOrNull()?.atEndOfMonth() ?: return emptyList()
+    val holidayDates = fetchAcademicHolidayDates()
 
     val rows = runCatching {
       fetchRows(
@@ -526,7 +649,9 @@ class GuruMonthlyReportRemoteDataSource {
     }.getOrDefault(emptyList())
 
     val dailyByPeriodStudent = linkedMapOf<Pair<String, String>, MutableMap<String, MutableList<String>>>()
-    rows.forEach { row ->
+    rows
+      .filterNot { row -> row.cleanString("tanggal").take(10) in holidayDates }
+      .forEach { row ->
       val studentId = row.cleanString("santri_id")
       val date = row.cleanString("tanggal").take(10)
       val period = runCatching { YearMonth.from(LocalDate.parse(date)).toString() }.getOrNull().orEmpty()
@@ -548,6 +673,7 @@ class GuruMonthlyReportRemoteDataSource {
       MonthlyAttendanceSummary(
         period = key.first,
         studentId = key.second,
+        hadirCount = hadir,
         attendancePercent = percentLabel,
         attendancePredicate = getKehadiranPredikat(percent),
         sakitCount = sakit,
@@ -556,6 +682,27 @@ class GuruMonthlyReportRemoteDataSource {
         totalDays = total
       )
     }
+  }
+
+  private fun fetchAcademicHolidayDates(): Set<String> {
+    return runCatching {
+      val rows = fetchRows(
+        table = "kalender_akademik",
+        query = "select=mulai,selesai,judul,detail,jenis_kegiatan"
+      )
+      rows.flatMap { row ->
+        val text = "${row.cleanString("jenis_kegiatan")} ${row.cleanString("judul")} ${row.cleanString("detail")}".lowercase()
+        val isHoliday = "libur akademik" in text ||
+          "libur semua" in text ||
+          row.cleanString("jenis_kegiatan").equals("libur_akademik", ignoreCase = true) ||
+          row.cleanString("jenis_kegiatan").equals("libur_semua_kegiatan", ignoreCase = true)
+        if (!isHoliday) {
+          emptyList()
+        } else {
+          expandDateRange(row.cleanString("mulai").take(10), row.cleanString("selesai").take(10))
+        }
+      }.toSet()
+    }.getOrDefault(emptySet())
   }
 
   private fun buildMonthlyReportQuery(
@@ -715,12 +862,42 @@ class GuruMonthlyReportRemoteDataSource {
 
   private fun resolveDailyAttendanceStatus(statuses: List<String>): String {
     val normalized = statuses.map { it.trim().lowercase() }.filter { it.isNotBlank() }
+    val presentLikeCount = normalized.count { it == "hadir" || it == "terlambat" }
+    val sakitCount = normalized.count { it == "sakit" }
+    val izinCount = normalized.count { it == "izin" || it == "ijin" }
+    val alpaCount = normalized.count { it == "alpa" || it == "alpha" || it == "absen" }
     return when {
-      normalized.any { it == "hadir" || it == "terlambat" } -> "Hadir"
-      normalized.any { it == "sakit" } -> "Sakit"
-      normalized.any { it == "izin" } -> "Izin"
-      normalized.any { it == "alpa" } -> "Alpa"
+      presentLikeCount > 0 -> "Hadir"
+      sakitCount > izinCount -> "Sakit"
+      izinCount > sakitCount -> "Izin"
+      sakitCount > 0 -> "Sakit"
+      izinCount > 0 -> "Izin"
+      alpaCount > 0 -> "Alpa"
       else -> "-"
+    }
+  }
+
+  private fun expandDateRange(startIso: String, endIso: String): List<String> {
+    val start = runCatching { LocalDate.parse(startIso.take(10)) }.getOrNull() ?: return emptyList()
+    val end = runCatching { LocalDate.parse(endIso.take(10)) }.getOrNull() ?: start
+    val result = mutableListOf<String>()
+    var cursor = if (start <= end) start else end
+    val last = if (start <= end) end else start
+    while (!cursor.isAfter(last)) {
+      result += cursor.toString()
+      cursor = cursor.plusDays(1)
+    }
+    return result
+  }
+
+  private fun normalizeStatusLabel(raw: String): String {
+    return when (raw.trim().lowercase()) {
+      "hadir", "masuk" -> "Hadir"
+      "terlambat", "telat" -> "Terlambat"
+      "sakit" -> "Sakit"
+      "izin", "ijin" -> "Izin"
+      "alpa", "alpha", "absen" -> "Alpa"
+      else -> raw.trim().ifBlank { "-" }
     }
   }
 

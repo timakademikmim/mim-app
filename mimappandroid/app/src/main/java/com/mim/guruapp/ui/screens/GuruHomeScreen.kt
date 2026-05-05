@@ -84,6 +84,7 @@ import com.mim.guruapp.data.model.MapelPatronMateriSnapshot
 import com.mim.guruapp.data.model.MapelScoreSnapshot
 import com.mim.guruapp.data.model.MutabaahSnapshot
 import com.mim.guruapp.data.model.MonthlyExtracurricularReport
+import com.mim.guruapp.data.model.MonthlyAttendanceSummary
 import com.mim.guruapp.data.model.MonthlyReportItem
 import com.mim.guruapp.data.model.PatronMateriItem
 import com.mim.guruapp.data.model.ScoreStudent
@@ -92,6 +93,7 @@ import com.mim.guruapp.data.model.SyncBannerState
 import com.mim.guruapp.data.model.TeacherOption
 import com.mim.guruapp.data.model.TeachingReminderSettings
 import com.mim.guruapp.data.model.UtsReportOverride
+import com.mim.guruapp.data.model.WaliAttendanceDetailSnapshot
 import com.mim.guruapp.data.model.WaliSantriProfile
 import com.mim.guruapp.ui.components.AgendaCard
 import com.mim.guruapp.ui.components.AttendanceApprovalPopup
@@ -104,6 +106,7 @@ import com.mim.guruapp.ui.components.EmptyPlaceholderCard
 import com.mim.guruapp.ui.components.HomeHeroCard
 import com.mim.guruapp.ui.components.InputAbsensiScreen
 import com.mim.guruapp.ui.components.InputNilaiScreen
+import com.mim.guruapp.ui.components.LaporanAbsensiScreen
 import com.mim.guruapp.ui.components.LaporanBulananScreen
 import com.mim.guruapp.ui.components.LaporanUtsScreen
 import com.mim.guruapp.ui.components.MapelToolbarCard
@@ -211,6 +214,8 @@ fun GuruHomeScreen(
   onSaveSantri: suspend (WaliSantriProfile) -> SantriSaveOutcome,
   onSaveMonthlyReport: suspend (MonthlyReportItem) -> MonthlyReportSaveOutcome,
   onSaveMonthlyExtracurricularReports: suspend (List<MonthlyExtracurricularReport>) -> MonthlyExtracurricularSaveOutcome,
+  onLoadMonthlyAttendanceSummaries: suspend (String) -> List<MonthlyAttendanceSummary>,
+  onLoadMonthlyAttendanceDetail: suspend (String, WaliSantriProfile) -> WaliAttendanceDetailSnapshot?,
   onSaveUtsReportOverride: suspend (UtsReportOverride) -> UtsReportSaveOutcome,
   onLoadMutabaah: suspend (LocalDate) -> MutabaahSnapshot?,
   onSaveMutabaahStatus: suspend (String, String, Boolean) -> MutabaahSaveOutcome,
@@ -510,7 +515,20 @@ fun GuruHomeScreen(
         onRefresh = onRefreshClick,
         onSaveReport = onSaveMonthlyReport,
         onSaveExtracurricularReports = onSaveMonthlyExtracurricularReports,
+        onLoadAttendanceSummaries = onLoadMonthlyAttendanceSummaries,
         onDetailModeChange = { isLaporanBulananDetailMode = it },
+        modifier = Modifier
+          .fillMaxSize()
+      )
+    } else if (targetDestination == GuruSidebarDestination.LaporanAbsensi) {
+      LaporanAbsensiScreen(
+        waliSantriSnapshot = dashboard.waliSantriSnapshot,
+        monthlyReportSnapshot = dashboard.monthlyReportSnapshot,
+        isRefreshing = syncBanner.isSyncing,
+        onMenuClick = onToggleSidebar,
+        onRefresh = onRefreshClick,
+        onLoadAttendanceSummaries = onLoadMonthlyAttendanceSummaries,
+        onLoadAttendanceDetail = onLoadMonthlyAttendanceDetail,
         modifier = Modifier
           .fillMaxSize()
       )
@@ -1114,6 +1132,8 @@ private fun GuruHomeScreenPreview() {
       onSaveSantri = { SantriSaveOutcome(true, "OK") },
       onSaveMonthlyReport = { MonthlyReportSaveOutcome(true, "OK") },
       onSaveMonthlyExtracurricularReports = { MonthlyExtracurricularSaveOutcome(true, "OK") },
+      onLoadMonthlyAttendanceSummaries = { emptyList() },
+      onLoadMonthlyAttendanceDetail = { _, _ -> null },
       onSaveUtsReportOverride = { UtsReportSaveOutcome(true, "OK") },
       onLoadMutabaah = { null },
       onSaveMutabaahStatus = { _, _, _ -> MutabaahSaveOutcome(true, "OK") },

@@ -98,6 +98,8 @@ class MainActivity : ComponentActivity() {
           onSaveSantri = viewModel::saveWaliSantriProfile,
           onSaveMonthlyReport = viewModel::saveMonthlyReport,
           onSaveMonthlyExtracurricularReports = viewModel::saveMonthlyExtracurricularReports,
+          onLoadMonthlyAttendanceSummaries = viewModel::loadMonthlyAttendanceSummaries,
+          onLoadMonthlyAttendanceDetail = viewModel::loadMonthlyAttendanceDetail,
           onSaveUtsReportOverride = viewModel::saveUtsReportOverride,
           onLoadMutabaah = viewModel::loadMutabaahSnapshot,
           onSaveMutabaahStatus = viewModel::saveMutabaahStatus,
