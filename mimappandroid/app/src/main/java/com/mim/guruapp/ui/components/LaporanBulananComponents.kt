@@ -1,5 +1,12 @@
 package com.mim.guruapp.ui.components
 
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.ContactsContract
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -29,6 +36,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -42,6 +51,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Phone
 import androidx.compose.material.icons.outlined.Print
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.UploadFile
@@ -578,6 +588,7 @@ private fun LaporanBulananListContent(
           targetNumber = waTargetNumber,
           onTargetNumberChange = { waTargetNumber = it },
           onDismiss = { if (!isExporting) isWaDialogOpen = false },
+          showMessage = showMessage,
           onSend = {
             val phone = waTargetNumber
             scope.launch {
@@ -1096,6 +1107,7 @@ private fun LaporanBulananDetailContent(
         targetNumber = waTargetNumber,
         onTargetNumberChange = { waTargetNumber = it },
         onDismiss = { if (!isExporting) isWaDialogOpen = false },
+        showMessage = showMessage,
         onSend = {
           val phone = waTargetNumber
           scope.launch {
@@ -1206,8 +1218,24 @@ private fun WhatsAppTargetDialog(
   targetNumber: String,
   onTargetNumberChange: (String) -> Unit,
   onDismiss: () -> Unit,
+  showMessage: (String) -> Unit,
   onSend: () -> Unit
 ) {
+  val context = LocalContext.current
+  val contactPicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+    if (result.resultCode == Activity.RESULT_OK) {
+      val pickedContact = result.data?.data?.let { uri -> readMonthlyPhoneDirectlyFromUri(context, uri) }
+      val pickedPhone = pickedContact?.phone.orEmpty()
+      if (pickedPhone.isBlank()) {
+        showMessage("Kontak yang dipilih belum punya nomor telepon.")
+        return@rememberLauncherForActivityResult
+      }
+
+      onTargetNumberChange(pickedPhone)
+      showMessage("Nomor ${pickedContact?.label.orEmpty().ifBlank { "kontak" }} dipilih.")
+    }
+  }
+
   AlertDialog(
     onDismissRequest = onDismiss,
     title = {
@@ -1219,9 +1247,12 @@ private fun WhatsAppTargetDialog(
       )
     },
     text = {
-      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+      Column(
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.verticalScroll(rememberScrollState())
+      ) {
         Text(
-          text = "Pilih nomor tujuan atau isi manual. PDF laporan akan dibuka sebagai lampiran WhatsApp, dan caption otomatis disalin sebagai cadangan.",
+          text = "Pilih nomor tujuan, isi manual, atau ambil dari kontak HP. PDF laporan akan dibuka sebagai lampiran WhatsApp, dan caption otomatis disalin sebagai cadangan.",
           style = MaterialTheme.typography.bodySmall,
           color = SubtleInk
         )
@@ -1258,10 +1289,49 @@ private fun WhatsAppTargetDialog(
           label = "Nomor WhatsApp",
           modifier = Modifier.fillMaxWidth()
         )
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .shadow(10.dp, RoundedCornerShape(16.dp), ambientColor = Color(0x1F1D4ED8), spotColor = Color(0x241D4ED8))
+            .clip(RoundedCornerShape(16.dp))
+            .background(PrimaryBlue.copy(alpha = 0.13f))
+            .border(1.dp, PrimaryBlue.copy(alpha = 0.22f), RoundedCornerShape(16.dp))
+            .clickable {
+              val intent = Intent(Intent.ACTION_PICK, ContactsContract.CommonDataKinds.Phone.CONTENT_URI)
+              runCatching { contactPicker.launch(intent) }
+                .onFailure { showMessage("Tidak bisa membuka kontak HP.") }
+            }
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+          horizontalArrangement = Arrangement.spacedBy(10.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Box(
+            modifier = Modifier
+              .size(34.dp)
+              .clip(CircleShape)
+              .background(Color.White.copy(alpha = 0.92f)),
+            contentAlignment = Alignment.Center
+          ) {
+            Icon(Icons.Outlined.Phone, contentDescription = "Pilih kontak", tint = PrimaryBlue, modifier = Modifier.size(18.dp))
+          }
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = "Pilih dari kontak HP",
+              style = MaterialTheme.typography.labelLarge,
+              color = PrimaryBlueDark,
+              fontWeight = FontWeight.Bold
+            )
+            Text(
+              text = "Ambil nomor dari kontak yang tersimpan di perangkat.",
+              style = MaterialTheme.typography.bodySmall,
+              color = SubtleInk
+            )
+          }
+        }
       }
     },
     confirmButton = {
-      Button(onClick = onSend) {
+      Button(onClick = onSend, enabled = targetNumber.trim().isNotBlank()) {
         Text("Kirim")
       }
     },
@@ -1272,6 +1342,37 @@ private fun WhatsAppTargetDialog(
     },
     containerColor = CardBackground
   )
+}
+
+private data class MonthlyPickedContact(
+  val label: String,
+  val phone: String
+)
+
+private fun readMonthlyPhoneDirectlyFromUri(context: Context, uri: Uri): MonthlyPickedContact? {
+  return runCatching {
+    context.contentResolver.query(
+      uri,
+      arrayOf(
+        ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+        ContactsContract.CommonDataKinds.Phone.NUMBER
+      ),
+      null,
+      null,
+      null
+    )?.use { cursor ->
+      if (!cursor.moveToFirst()) return@use null
+      val phone = cursor.getMonthlyStringOrBlank(ContactsContract.CommonDataKinds.Phone.NUMBER)
+      val name = cursor.getMonthlyStringOrBlank(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+      if (phone.isBlank()) null else MonthlyPickedContact(name, phone)
+    }
+  }.getOrNull()
+}
+
+private fun android.database.Cursor.getMonthlyStringOrBlank(columnName: String): String {
+  val index = getColumnIndex(columnName)
+  if (index < 0) return ""
+  return getString(index).orEmpty().trim()
 }
 
 @Composable

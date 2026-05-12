@@ -21,6 +21,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -107,6 +109,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.window.Dialog
+import android.widget.Toast
 import com.mim.guruapp.AttendanceSaveOutcome
 import com.mim.guruapp.PatronMateriSaveOutcome
 import com.mim.guruapp.ScoreSaveOutcome
@@ -499,6 +502,7 @@ private fun MapelDetailScreen(
   var isCreatingQuestion by remember(subject.id) { mutableStateOf(false) }
   var isAddingQuestionModel by remember(subject.id) { mutableStateOf(false) }
   var activeQuestionId by rememberSaveable(subject.id) { mutableStateOf<String?>(null) }
+  var editorQuestionDraft by remember(subject.id) { mutableStateOf<MapelQuestionDraft?>(null) }
   var questionUndoStack by remember(subject.id) { mutableStateOf<List<MapelQuestionDraft>>(emptyList()) }
   var isPrintingQuestion by remember(subject.id) { mutableStateOf(false) }
   var isLoadingAttendance by remember(subject.id) { mutableStateOf(true) }
@@ -520,28 +524,37 @@ private fun MapelDetailScreen(
   }
   val detailScope = rememberCoroutineScope()
   val context = LocalContext.current
-  val activeQuestion = remember(questionItems, activeQuestionId) {
-    questionItems.firstOrNull { it.id == activeQuestionId }
-  }
+  val activeQuestion = editorQuestionDraft
   val isQuestionEditorOpen = selectedSection == MapelDetailSection.Soal && activeQuestion != null
 
   fun updateQuestionDraft(updated: MapelQuestionDraft) {
+    val latestUpdated = updated.copy(updatedAt = System.currentTimeMillis())
+    if (activeQuestionId == latestUpdated.id) {
+      editorQuestionDraft = latestUpdated
+    }
     val nextItems = questionItems.map { current ->
-      if (current.id == updated.id) updated.copy(updatedAt = System.currentTimeMillis()) else current
+      if (current.id == latestUpdated.id) latestUpdated else current
     }.sortedByDescending { it.updatedAt }
     questionItems = nextItems
     saveMapelQuestions(context, subject.id, nextItems)
   }
 
+  fun flushLatestQuestionItems(): List<MapelQuestionDraft> {
+    val latestItems = if (activeQuestionId != null && editorQuestionDraft != null) {
+      questionItems.map { current ->
+        if (current.id == activeQuestionId) editorQuestionDraft!! else current
+      }.sortedByDescending { it.updatedAt }
+    } else {
+      questionItems
+    }
+    questionItems = latestItems
+    saveMapelQuestions(context, subject.id, latestItems, synchronous = true)
+    return loadMapelQuestions(context, subject.id)
+  }
+
   fun addQuestionModel(question: MapelQuestionDraft, typeKey: String) {
     val selectedType = SoalTypeOptions.firstOrNull { it.key == typeKey } ?: SoalTypeOptions.first()
-    val newSection = MapelQuestionSection(
-      id = "model-${System.currentTimeMillis()}",
-      typeKey = selectedType.key,
-      typeLabel = selectedType.label,
-      count = 0,
-      choiceQuestions = emptyList<MapelChoiceQuestion>().withTrailingBlankQuestion()
-    )
+    val newSection = buildQuestionSectionDraft(selectedType)
     val nextSections = question.sections + newSection
     updateQuestionDraft(
       question.copy(
@@ -556,9 +569,21 @@ private fun MapelDetailScreen(
       detailScope.launch {
         isPrintingQuestion = true
         runCatching {
-          val exportData = question.toExportData()
-          val pdf = MapelQuestionExporter.createPdfFile(context, subject, exportData)
-          MapelQuestionExporter.printPdf(context, pdf, exportData)
+          val latestQuestion = if (activeQuestionId == question.id) {
+            editorQuestionDraft ?: question
+          } else {
+            val latestQuestions = flushLatestQuestionItems()
+            latestQuestions.firstOrNull { it.id == question.id } ?: question
+          }
+          val exportData = latestQuestion.toExportData()
+          val docx = MapelQuestionExporter.createDocxFile(context, subject, exportData)
+          MapelQuestionExporter.openDocument(context, docx, exportData)
+        }.onFailure {
+          Toast.makeText(
+            context,
+            it.message ?: "Gagal menyiapkan dokumen Word.",
+            Toast.LENGTH_LONG
+          ).show()
         }
         isPrintingQuestion = false
       }
@@ -621,18 +646,36 @@ private fun MapelDetailScreen(
     isLoadingAttendance = true
     isLoadingScores = true
     isLoadingPatronMateri = true
-    questionItems = loadMapelQuestions(context, subject.id)
+    val loadedQuestions = loadMapelQuestions(context, subject.id)
+    questionItems = loadedQuestions
     attendanceSnapshot = onLoadAttendance(subject.id, subject)
     scoreSnapshot = onLoadScores(subject.id, subject)
     patronMateriSnapshot = onLoadPatronMateri(subject.id, subject)
     patronMateriItems = patronMateriSnapshot?.items.orEmpty()
+    editorQuestionDraft = activeQuestionId?.let { currentId ->
+      loadedQuestions.firstOrNull { it.id == currentId }
+    }
     isLoadingAttendance = false
     isLoadingScores = false
     isLoadingPatronMateri = false
   }
 
-  LaunchedEffect(selectedSection, activeQuestionId, activeQuestion) {
-    if (selectedSection != MapelDetailSection.Soal || (activeQuestionId != null && activeQuestion == null)) {
+  LaunchedEffect(selectedSection, activeQuestionId, questionItems) {
+    if (selectedSection != MapelDetailSection.Soal) {
+      activeQuestionId = null
+      editorQuestionDraft = null
+    } else if (activeQuestionId != null) {
+      val matching = questionItems.firstOrNull { it.id == activeQuestionId }
+      if (matching == null) {
+        activeQuestionId = null
+        editorQuestionDraft = null
+      } else if (editorQuestionDraft == null || editorQuestionDraft?.id != activeQuestionId) {
+        editorQuestionDraft = matching
+      }
+    } else {
+      editorQuestionDraft = null
+    }
+    if (selectedSection != MapelDetailSection.Soal || (activeQuestionId != null && editorQuestionDraft == null)) {
       activeQuestionId = null
     }
   }
@@ -643,6 +686,7 @@ private fun MapelDetailScreen(
 
   BackHandler(enabled = selectedSection == MapelDetailSection.Soal && activeQuestionId != null) {
     activeQuestionId = null
+    editorQuestionDraft = null
   }
 
   Scaffold(
@@ -665,6 +709,7 @@ private fun MapelDetailScreen(
         onBackClick = {
           if (isQuestionEditorOpen) {
             activeQuestionId = null
+            editorQuestionDraft = null
           } else {
             onBackClick()
           }
@@ -732,9 +777,16 @@ private fun MapelDetailScreen(
                       detailScope.launch {
                         isPrintingQuestion = true
                         runCatching {
-                          val combined = questionItems.toCombinedExportData(subject)
-                          val pdf = MapelQuestionExporter.createPdfFile(context, subject, combined)
-                          MapelQuestionExporter.printPdf(context, pdf, combined)
+                          val latestQuestions = flushLatestQuestionItems()
+                          val combined = latestQuestions.toCombinedExportData(subject)
+                          val docx = MapelQuestionExporter.createDocxFile(context, subject, combined)
+                          MapelQuestionExporter.openDocument(context, docx, combined)
+                        }.onFailure {
+                          Toast.makeText(
+                            context,
+                            it.message ?: "Gagal menyiapkan dokumen Word.",
+                            Toast.LENGTH_LONG
+                          ).show()
                         }
                         isPrintingQuestion = false
                       }
@@ -965,15 +1017,26 @@ private fun MapelDetailScreen(
                 ) { question ->
                   SoalCard(
                     question = question,
-                    onEdit = { activeQuestionId = question.id },
+                    onEdit = {
+                      activeQuestionId = question.id
+                      editorQuestionDraft = question
+                    },
                     onPrint = {
                       if (!isPrintingQuestion) {
                         detailScope.launch {
                           isPrintingQuestion = true
                           runCatching {
-                            val exportData = question.toExportData()
-                            val pdf = MapelQuestionExporter.createPdfFile(context, subject, exportData)
-                            MapelQuestionExporter.printPdf(context, pdf, exportData)
+                            val latestQuestions = flushLatestQuestionItems()
+                            val latestQuestion = latestQuestions.firstOrNull { it.id == question.id } ?: question
+                            val exportData = latestQuestion.toExportData()
+                            val docx = MapelQuestionExporter.createDocxFile(context, subject, exportData)
+                            MapelQuestionExporter.openDocument(context, docx, exportData)
+                          }.onFailure {
+                            Toast.makeText(
+                              context,
+                              it.message ?: "Gagal menyiapkan dokumen Word.",
+                              Toast.LENGTH_LONG
+                            ).show()
                           }
                           isPrintingQuestion = false
                         }
@@ -1023,6 +1086,7 @@ private fun MapelDetailScreen(
               saveMapelQuestions(context, subject.id, nextItems)
               isCreatingQuestion = false
               activeQuestionId = created.id
+              editorQuestionDraft = created
             }
           )
         }
@@ -1338,6 +1402,12 @@ private fun SoalWorkspaceScreen(
     modifier = Modifier.fillMaxWidth(),
     verticalArrangement = Arrangement.spacedBy(14.dp)
   ) {
+    SoalGeneralInstructionCard(
+      instruction = question.instruction,
+      onInstructionChange = { nextInstruction ->
+        onQuestionChange(question.copy(instruction = nextInstruction))
+      }
+    )
     if (question.sections.isEmpty()) {
       EmptyPlaceholderCard("Belum ada model soal. Tekan tombol + di kanan bawah untuk menambahkan model.")
     } else {
@@ -1471,16 +1541,36 @@ private fun SoalSectionEditorCard(
     SoalTypeDropdown(
       selectedTypeKey = section.typeKey,
       onSelect = { option ->
-        val normalizedChoiceQuestions = if (option.key.usesQuestionPromptEditor()) {
-          section.choiceQuestions.withTrailingBlankQuestion()
-        } else {
-          section.choiceQuestions
-        }
         onChange(
           section.copy(
             typeKey = option.key,
             typeLabel = option.label,
-            choiceQuestions = normalizedChoiceQuestions
+            count = when {
+              option.key.usesMatchingPairEditor() -> 1
+              option.key.usesWordSearchEditor() -> 0
+              option.key.usesCrosswordEditor() -> 0
+              else -> section.count
+            },
+            choiceQuestions = if (option.key.usesQuestionPromptEditor()) {
+              section.choiceQuestions.withTrailingBlankQuestion()
+            } else {
+              emptyList()
+            },
+            matchingPairs = if (option.key.usesMatchingPairEditor()) {
+              section.matchingPairs.withTrailingBlankMatchingPair()
+            } else {
+              emptyList()
+            },
+            wordSearchQuestions = if (option.key.usesWordSearchEditor()) {
+              listOf(section.wordSearchQuestions.firstOrNull() ?: MapelWordSearchQuestion(id = "ws-1"))
+            } else {
+              emptyList()
+            },
+            crosswordQuestions = if (option.key.usesCrosswordEditor()) {
+              listOf(section.crosswordQuestions.firstOrNull() ?: MapelCrosswordQuestion(id = "cw-1"))
+            } else {
+              emptyList()
+            }
           )
         )
       }
@@ -1514,6 +1604,47 @@ private fun SoalSectionEditorCard(
           )
         }
       }
+    } else if (section.typeKey.usesMatchingPairEditor()) {
+      SoalMatchingPairsEditor(
+        section = section,
+        palette = palette,
+        onChange = { nextPairs ->
+          onChange(
+            section.copy(
+              count = if (nextPairs.filledMatchingPairs().isNotEmpty()) 1 else 0,
+              matchingPairs = nextPairs
+            )
+          )
+        }
+      )
+    } else if (section.typeKey.usesWordSearchEditor()) {
+      SoalWordSearchEditor(
+        section = section,
+        palette = palette,
+        onChange = { nextQuestions ->
+          val primaryQuestion = nextQuestions.firstOrNull() ?: MapelWordSearchQuestion(id = "ws-1")
+          onChange(
+            section.copy(
+              count = if (primaryQuestion.hasContent()) 1 else 0,
+              wordSearchQuestions = listOf(primaryQuestion)
+            )
+          )
+        }
+      )
+    } else if (section.typeKey.usesCrosswordEditor()) {
+      SoalCrosswordEditor(
+        section = section,
+        palette = palette,
+        onChange = { nextQuestions ->
+          val primaryQuestion = nextQuestions.firstOrNull() ?: MapelCrosswordQuestion(id = "cw-1")
+          onChange(
+            section.copy(
+              count = if (primaryQuestion.hasContent()) 1 else 0,
+              crosswordQuestions = listOf(primaryQuestion)
+            )
+          )
+        }
+      )
     } else {
       SoalTextField(
         value = section.content,
@@ -1702,6 +1833,87 @@ private fun SoalTypeDropdown(
     },
     modifier = modifier
   )
+}
+
+private fun buildQuestionSectionDraft(selectedType: SoalTypeOption): MapelQuestionSection {
+  return MapelQuestionSection(
+    id = "model-${System.currentTimeMillis()}",
+    typeKey = selectedType.key,
+    typeLabel = selectedType.label,
+    count = if (selectedType.key.usesMatchingPairEditor() || selectedType.key.usesWordSearchEditor() || selectedType.key.usesCrosswordEditor()) 1 else 0,
+    choiceQuestions = if (selectedType.key.usesQuestionPromptEditor()) {
+      emptyList<MapelChoiceQuestion>().withTrailingBlankQuestion()
+    } else {
+      emptyList()
+    },
+    matchingPairs = if (selectedType.key.usesMatchingPairEditor()) {
+      emptyList<MapelMatchingPair>().withTrailingBlankMatchingPair()
+    } else {
+      emptyList()
+    },
+    wordSearchQuestions = if (selectedType.key.usesWordSearchEditor()) {
+      listOf(MapelWordSearchQuestion(id = "ws-1"))
+    } else {
+      emptyList()
+    },
+    crosswordQuestions = if (selectedType.key.usesCrosswordEditor()) {
+      listOf(MapelCrosswordQuestion(id = "cw-1"))
+    } else {
+      emptyList()
+    }
+  )
+}
+
+@Composable
+private fun SoalGeneralInstructionCard(
+  instruction: String,
+  onInstructionChange: (String) -> Unit
+) {
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .shadow(12.dp, RoundedCornerShape(24.dp), ambientColor = Color(0x160F172A), spotColor = Color(0x160F172A))
+      .clip(RoundedCornerShape(24.dp))
+      .background(Color.White.copy(alpha = 0.94f))
+      .border(1.dp, CardBorder.copy(alpha = 0.9f), RoundedCornerShape(24.dp))
+      .padding(15.dp),
+    verticalArrangement = Arrangement.spacedBy(10.dp)
+  ) {
+    Row(
+      horizontalArrangement = Arrangement.spacedBy(12.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Box(
+        modifier = Modifier
+          .size(42.dp)
+          .clip(RoundedCornerShape(16.dp))
+          .background(PrimaryBlue.copy(alpha = 0.12f))
+          .border(1.dp, PrimaryBlue.copy(alpha = 0.18f), RoundedCornerShape(16.dp)),
+        contentAlignment = Alignment.Center
+      ) {
+        Icon(Icons.Outlined.EditNote, contentDescription = null, tint = PrimaryBlue, modifier = Modifier.size(20.dp))
+      }
+      Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+          text = "Instruksi Umum",
+          style = MaterialTheme.typography.titleMedium,
+          color = PrimaryBlueDark,
+          fontWeight = FontWeight.ExtraBold
+        )
+        Text(
+          text = "Bagian ini dicetak sekali di awal dokumen.",
+          style = MaterialTheme.typography.bodySmall,
+          color = SubtleInk
+        )
+      }
+    }
+    SoalTextField(
+      value = instruction,
+      onValueChange = onInstructionChange,
+      label = "Instruksi umum untuk peserta",
+      minLines = 3
+    )
+  }
 }
 
 @Composable
@@ -4251,25 +4463,29 @@ private data class MapelQuestionDraft(
   }
 
   fun toExportData(): MapelQuestionExportData {
+    val payloadJson = buildDocxQuestionsPayloadJson()
+    val languageCode = detectQuestionLanguage()
     return MapelQuestionExportData(
       id = id,
       title = title,
       category = category,
       form = form,
       dateLabel = dateIso,
-      instruction = exportInstructionText(),
-      questionsText = exportQuestionText()
+      instruction = instruction.trim(),
+      questionsText = exportQuestionText(),
+      questionsPayloadJson = payloadJson,
+      languageCode = languageCode
     )
   }
 
-  private fun exportInstructionText(): String {
+  fun exportInstructionText(): String {
     if (instruction.isNotBlank()) return instruction
     return sections
       .filter { it.instruction.isNotBlank() }
       .joinToString("\n") { "${it.typeLabel}: ${it.instruction}" }
   }
 
-  private fun exportQuestionText(): String {
+  fun exportQuestionText(): String {
     if (sections.isEmpty()) return questionsText
     return sections.mapIndexed { index, section ->
       buildString {
@@ -4277,7 +4493,56 @@ private data class MapelQuestionDraft(
         appendLine("MODEL ${modelOrdinalLabel(index)}: ${section.typeLabel} (${sectionCount} nomor)")
         if (section.instruction.isNotBlank()) appendLine("Instruksi: ${section.instruction}")
         appendLine()
-        if (section.typeKey == "pilihan-ganda") {
+        if (section.typeKey == "teka-silang") {
+          val question = section.crosswordQuestions.firstOrNull() ?: MapelCrosswordQuestion(id = "cw-1")
+          val model = buildCrosswordModel(question)
+          appendLine("Mendatar")
+          if (model.entriesAcross.isEmpty()) {
+            appendLine("-")
+          } else {
+            model.entriesAcross.forEach { entry ->
+              appendLine("${entry.number}. ${entry.clue.ifBlank { "........................................................" }} (${entry.length})")
+            }
+          }
+          appendLine()
+          appendLine("Menurun")
+          if (model.entriesDown.isEmpty()) {
+            appendLine("-")
+          } else {
+            model.entriesDown.forEach { entry ->
+              appendLine("${entry.number}. ${entry.clue.ifBlank { "........................................................" }} (${entry.length})")
+            }
+          }
+        } else if (section.typeKey == "cari-kata") {
+          val questions = section.wordSearchQuestions.filledWordSearchQuestions()
+          if (questions.isEmpty()) {
+            appendLine("Kata: ........................................................")
+          } else {
+            questions.forEachIndexed { questionIndex, question ->
+              appendLine("Kata: ${question.words().joinToString(", ").ifBlank { "........................................................" }}")
+              if (questionIndex < questions.lastIndex) appendLine()
+            }
+          }
+        } else if (section.typeKey == "pasangkan-kata") {
+          val pairs = section.matchingPairs.filledMatchingPairs()
+          if (pairs.isEmpty()) {
+            appendLine("Qoimah A")
+            appendLine("1. ........................................................")
+            appendLine()
+            appendLine("Qoimah B")
+            appendLine("A. ........................................................")
+          } else {
+            appendLine("Qoimah A")
+            pairs.forEachIndexed { pairIndex, pair ->
+              appendLine("${pairIndex + 1}. ${pair.leftText.ifBlank { "........................................................" }}")
+            }
+            appendLine()
+            appendLine("Qoimah B")
+            pairs.forEachIndexed { pairIndex, pair ->
+              appendLine("${('A'.code + pairIndex).toChar()}. ${pair.rightText.ifBlank { "........................................................" }}")
+            }
+          }
+        } else if (section.typeKey == "pilihan-ganda") {
           val questions = section.choiceQuestions.filledQuestions()
           if (questions.isEmpty() && section.content.isNotBlank()) {
             appendLine(section.content)
@@ -4320,6 +4585,1125 @@ private data class MapelQuestionDraft(
   }
 }
 
+private fun MapelQuestionDraft.buildDocxQuestionsPayloadJson(): String {
+  val questionRows = JSONArray()
+  if (sections.isNotEmpty()) {
+    sections.forEachIndexed { sectionIndex, section ->
+      val sectionKey = section.id.ifBlank { "section-${sectionIndex + 1}" }
+      val instruction = section.instruction.trim()
+      if (section.typeKey.usesCrosswordEditor()) {
+        val question = section.crosswordQuestions.firstOrNull() ?: MapelCrosswordQuestion(id = "cw-1")
+        val model = buildCrosswordModel(question)
+        questionRows.put(
+          JSONObject().apply {
+            put("no", 1)
+            put("type", section.typeKey)
+            put("sectionKey", sectionKey)
+            put("sectionInstruction", instruction)
+            put("text", "")
+            put("rows", model.rows)
+            put("cols", model.cols)
+            put("mask", JSONArray().apply { model.maskRows.forEach { put(it) } })
+            put(
+              "entriesAcross",
+              JSONArray().apply {
+                model.entriesAcross.forEach { entry ->
+                  put(
+                    JSONObject().apply {
+                      put("direction", "across")
+                      put("row", entry.row)
+                      put("col", entry.col)
+                      put("length", entry.length)
+                      put("clue", entry.clue)
+                      put("answer", entry.answer)
+                      put("number", entry.number)
+                    }
+                  )
+                }
+              }
+            )
+            put(
+              "entriesDown",
+              JSONArray().apply {
+                model.entriesDown.forEach { entry ->
+                  put(
+                    JSONObject().apply {
+                      put("direction", "down")
+                      put("row", entry.row)
+                      put("col", entry.col)
+                      put("length", entry.length)
+                      put("clue", entry.clue)
+                      put("answer", entry.answer)
+                      put("number", entry.number)
+                    }
+                  )
+                }
+              }
+            )
+          }
+        )
+      } else if (section.typeKey.usesWordSearchEditor()) {
+        section.wordSearchQuestions
+          .filledWordSearchQuestions()
+          .forEachIndexed { questionIndex, question ->
+            val puzzle = buildWordSearchPuzzle(question)
+            questionRows.put(
+              JSONObject().apply {
+                put("no", questionIndex + 1)
+                put("type", section.typeKey)
+                put("sectionKey", sectionKey)
+                put("sectionInstruction", instruction)
+                put("text", "")
+                put("rows", puzzle.rows)
+                put("cols", puzzle.cols)
+                put("words", JSONArray().apply { puzzle.words.forEach { put(it) } })
+                put(
+                  "grid",
+                  JSONArray().apply {
+                    puzzle.grid.forEach { row ->
+                      put(JSONArray().apply { row.forEach { put(it.toString()) } })
+                    }
+                  }
+                )
+                put(
+                  "placements",
+                  JSONArray().apply {
+                    puzzle.placements.forEach { placement ->
+                      put(
+                        JSONObject().apply {
+                          put("word", placement.word)
+                          put("row", placement.row)
+                          put("col", placement.col)
+                          put("direction", placement.direction)
+                        }
+                      )
+                    }
+                  }
+                )
+              }
+            )
+          }
+      } else if (section.typeKey.usesMatchingPairEditor()) {
+        val pairs = section.matchingPairs.filledMatchingPairs()
+        questionRows.put(
+          JSONObject().apply {
+            put("no", 1)
+            put("type", section.typeKey)
+            put("sectionKey", sectionKey)
+            put("sectionInstruction", instruction)
+            put("text", "")
+            put(
+              "columnA",
+              JSONArray().apply {
+                pairs.forEach { pair ->
+                  if (pair.leftText.isNotBlank()) put(pair.leftText)
+                }
+              }
+            )
+            put(
+              "columnB",
+              JSONArray().apply {
+                pairs.forEach { pair ->
+                  if (pair.rightText.isNotBlank()) put(pair.rightText)
+                }
+              }
+            )
+          }
+        )
+      } else if (section.typeKey.usesQuestionPromptEditor()) {
+        section.choiceQuestions
+          .filledQuestions()
+          .forEachIndexed { questionIndex, question ->
+            val row = JSONObject().apply {
+              put("no", questionIndex + 1)
+              put("type", section.typeKey)
+              put("sectionKey", sectionKey)
+              put("sectionInstruction", instruction)
+              put("text", question.prompt.ifBlank { "........................................................" })
+            }
+            if (section.typeKey == "pilihan-ganda") {
+              val options = JSONObject()
+              question.options
+                .normalizedChoiceOptions()
+                .filter { it.isNotBlank() }
+                .forEachIndexed { optionIndex, optionText ->
+                  val optionKey = ('a'.code + optionIndex).toChar().toString()
+                  options.put(optionKey, JSONObject().apply { put("text", optionText) })
+                }
+              row.put("options", options)
+            }
+            questionRows.put(row)
+          }
+      } else {
+        val contentLines = section.content
+          .lines()
+          .map { it.trim() }
+          .filter { it.isNotBlank() }
+        if (contentLines.isEmpty()) {
+          questionRows.put(
+            JSONObject().apply {
+              put("no", 1)
+              put("type", section.typeKey)
+              put("sectionKey", sectionKey)
+              put("sectionInstruction", instruction)
+              put("text", "........................................................")
+            }
+          )
+        } else {
+          contentLines.forEachIndexed { lineIndex, line ->
+            questionRows.put(
+              JSONObject().apply {
+                put("no", lineIndex + 1)
+                put("type", section.typeKey)
+                put("sectionKey", sectionKey)
+                put("sectionInstruction", instruction)
+                put("text", line)
+              }
+            )
+          }
+        }
+      }
+    }
+  }
+  if (questionRows.length() == 0) {
+    exportQuestionText()
+      .lines()
+      .map { it.trim() }
+      .filter { it.isNotBlank() }
+      .forEachIndexed { index, line ->
+        questionRows.put(
+          JSONObject().apply {
+            put("no", index + 1)
+            put("type", "esai")
+            put("sectionKey", "fallback-esai")
+            put("sectionInstruction", instruction.trim())
+            put("text", line)
+          }
+        )
+      }
+  }
+  return JSONObject().apply {
+    put("questions", questionRows)
+  }.toString()
+}
+
+private fun MapelQuestionDraft.detectQuestionLanguage(): String {
+  val combinedText = buildString {
+    append(title)
+    append('\n')
+    append(category)
+    append('\n')
+    append(exportInstructionText())
+    append('\n')
+    append(exportQuestionText())
+  }
+  return if (Regex("[\\u0600-\\u06FF\\u0750-\\u077F\\u0870-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF]").containsMatchIn(combinedText)) {
+    "AR"
+  } else {
+    "ID"
+  }
+}
+
+@Composable
+private fun SoalMatchingPairsEditor(
+  section: MapelQuestionSection,
+  palette: SoalModelPalette,
+  onChange: (List<MapelMatchingPair>) -> Unit
+) {
+  val visiblePairs = section.matchingPairs.withTrailingBlankMatchingPair()
+  Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.SpaceBetween,
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Text(
+        text = "Pasangan A - B",
+        style = MaterialTheme.typography.labelLarge,
+        color = palette.text,
+        fontWeight = FontWeight.ExtraBold
+      )
+      Text(
+        text = "Baris kosong baru muncul otomatis",
+        style = MaterialTheme.typography.labelSmall,
+        color = palette.accent
+      )
+    }
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+      Text(
+        text = "Qoimah A",
+        modifier = Modifier.weight(1f),
+        style = MaterialTheme.typography.labelMedium,
+        color = palette.text,
+        fontWeight = FontWeight.Bold
+      )
+      Text(
+        text = "Qoimah B",
+        modifier = Modifier.weight(1f),
+        style = MaterialTheme.typography.labelMedium,
+        color = palette.text,
+        fontWeight = FontWeight.Bold
+      )
+    }
+    visiblePairs.forEachIndexed { pairIndex, pair ->
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.Top
+      ) {
+        Box(
+          modifier = Modifier
+            .padding(top = 10.dp)
+            .size(28.dp)
+            .clip(CircleShape)
+            .background(palette.accent.copy(alpha = 0.10f))
+            .border(1.dp, palette.accent.copy(alpha = 0.20f), CircleShape),
+          contentAlignment = Alignment.Center
+        ) {
+          Text(
+            text = "${pairIndex + 1}",
+            style = MaterialTheme.typography.labelMedium,
+            color = palette.text,
+            fontWeight = FontWeight.ExtraBold
+          )
+        }
+        OutlinedTextField(
+          value = pair.leftText,
+          onValueChange = { value ->
+            onChange(
+              visiblePairs.toMutableList()
+                .also { it[pairIndex] = pair.copy(leftText = value) }
+                .withTrailingBlankMatchingPair()
+            )
+          },
+          label = { Text("Pilihan A") },
+          modifier = Modifier.weight(1f),
+          shape = RoundedCornerShape(16.dp)
+        )
+        OutlinedTextField(
+          value = pair.rightText,
+          onValueChange = { value ->
+            onChange(
+              visiblePairs.toMutableList()
+                .also { it[pairIndex] = pair.copy(rightText = value) }
+                .withTrailingBlankMatchingPair()
+            )
+          },
+          label = { Text("Pilihan B") },
+          modifier = Modifier.weight(1f),
+          shape = RoundedCornerShape(16.dp)
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun SoalWordSearchEditor(
+  section: MapelQuestionSection,
+  palette: SoalModelPalette,
+  onChange: (List<MapelWordSearchQuestion>) -> Unit
+) {
+  val question = section.wordSearchQuestions.firstOrNull() ?: MapelWordSearchQuestion(id = "ws-1")
+  var rowsInput by rememberSaveable(question.id) { mutableStateOf(question.rows.toString()) }
+  var colsInput by rememberSaveable(question.id) { mutableStateOf(question.cols.toString()) }
+  val puzzle = remember(question.prompt, question.rows, question.cols, question.wordsText) {
+    buildWordSearchPuzzle(question)
+  }
+  LaunchedEffect(question.rows) {
+    val desired = question.rows.toString()
+    if (rowsInput != desired) rowsInput = desired
+  }
+  LaunchedEffect(question.cols) {
+    val desired = question.cols.toString()
+    if (colsInput != desired) colsInput = desired
+  }
+  Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(18.dp))
+        .background(Color.White.copy(alpha = 0.78f))
+        .border(1.dp, palette.border.copy(alpha = 0.78f), RoundedCornerShape(18.dp))
+        .padding(12.dp),
+      verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+      Row(
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        Box(
+          modifier = Modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(palette.accent)
+            .shadow(8.dp, CircleShape, ambientColor = palette.accent.copy(alpha = 0.16f), spotColor = palette.accent.copy(alpha = 0.2f)),
+          contentAlignment = Alignment.Center
+        ) {
+          Icon(
+            imageVector = Icons.Outlined.Quiz,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size(18.dp)
+          )
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+          Text(
+            text = "Puzzle Cari Kata",
+            style = MaterialTheme.typography.labelLarge,
+            color = palette.text,
+            fontWeight = FontWeight.ExtraBold
+          )
+          Text(
+            text = if (question.hasContent()) "${question.rows} x ${question.cols}" else "Isi daftar kata",
+            style = MaterialTheme.typography.labelSmall,
+            color = palette.text.copy(alpha = 0.68f),
+            fontWeight = FontWeight.SemiBold
+          )
+        }
+      }
+
+      Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        OutlinedTextField(
+          value = rowsInput,
+          onValueChange = { value ->
+            val filtered = value.filter { it.isDigit() }.take(2)
+            rowsInput = filtered
+            val parsed = filtered.toIntOrNull()
+            if (parsed != null && parsed in 5..20) {
+              onChange(listOf(question.copy(rows = parsed)))
+            }
+          },
+          label = { Text("Baris") },
+          modifier = Modifier.weight(1f),
+          singleLine = true,
+          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+          shape = RoundedCornerShape(16.dp)
+        )
+        OutlinedTextField(
+          value = colsInput,
+          onValueChange = { value ->
+            val filtered = value.filter { it.isDigit() }.take(2)
+            colsInput = filtered
+            val parsed = filtered.toIntOrNull()
+            if (parsed != null && parsed in 5..20) {
+              onChange(listOf(question.copy(cols = parsed)))
+            }
+          },
+          label = { Text("Kolom") },
+          modifier = Modifier.weight(1f),
+          singleLine = true,
+          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+          shape = RoundedCornerShape(16.dp)
+        )
+      }
+
+      SoalTextField(
+        value = question.wordsText,
+        onValueChange = { value ->
+          onChange(listOf(question.copy(wordsText = value)))
+        },
+        label = "Daftar kata, satu kata per baris",
+        minLines = 5
+      )
+
+      if (puzzle.words.isEmpty()) {
+        Text(
+          text = "Isi daftar kata untuk melihat preview puzzle.",
+          style = MaterialTheme.typography.bodySmall,
+          color = palette.text.copy(alpha = 0.72f)
+        )
+      } else {
+        WordSearchPreviewCard(puzzle = puzzle, palette = palette)
+      }
+    }
+  }
+}
+
+@Composable
+private fun SoalCrosswordEditor(
+  section: MapelQuestionSection,
+  palette: SoalModelPalette,
+  onChange: (List<MapelCrosswordQuestion>) -> Unit
+) {
+  val question = section.crosswordQuestions.firstOrNull() ?: MapelCrosswordQuestion(id = "cw-1")
+  val model = remember(question.rows, question.cols, question.entriesAcross, question.entriesDown) {
+    buildCrosswordModel(question)
+  }
+  var rowsInput by rememberSaveable(question.id) { mutableStateOf(question.rows.toString()) }
+  var colsInput by rememberSaveable(question.id) { mutableStateOf(question.cols.toString()) }
+  var anchorRow by rememberSaveable(question.id) { mutableStateOf(-1) }
+  var anchorCol by rememberSaveable(question.id) { mutableStateOf(-1) }
+  var pendingRow by rememberSaveable(question.id) { mutableStateOf(-1) }
+  var pendingCol by rememberSaveable(question.id) { mutableStateOf(-1) }
+
+  fun resetDraftSelection() {
+    anchorRow = -1
+    anchorCol = -1
+    pendingRow = -1
+    pendingCol = -1
+  }
+
+  fun buildDraftEntry(): MapelCrosswordEntry? {
+    if (anchorRow < 0 || anchorCol < 0 || pendingRow < 0 || pendingCol < 0) return null
+    return when {
+      anchorRow == pendingRow -> {
+        val startCol = minOf(anchorCol, pendingCol)
+        val endCol = maxOf(anchorCol, pendingCol)
+        MapelCrosswordEntry(
+          id = "across-${System.currentTimeMillis()}",
+          direction = "across",
+          row = anchorRow + 1,
+          col = startCol + 1,
+          length = (endCol - startCol) + 1
+        )
+      }
+
+      anchorCol == pendingCol -> {
+        val startRow = minOf(anchorRow, pendingRow)
+        val endRow = maxOf(anchorRow, pendingRow)
+        MapelCrosswordEntry(
+          id = "down-${System.currentTimeMillis()}",
+          direction = "down",
+          row = startRow + 1,
+          col = anchorCol + 1,
+          length = (endRow - startRow) + 1
+        )
+      }
+
+      else -> null
+    }?.takeIf { it.length >= 2 }
+  }
+
+  LaunchedEffect(question.rows) {
+    val desired = question.rows.toString()
+    if (rowsInput != desired) rowsInput = desired
+  }
+  LaunchedEffect(question.cols) {
+    val desired = question.cols.toString()
+    if (colsInput != desired) colsInput = desired
+  }
+
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(18.dp))
+      .background(Color.White.copy(alpha = 0.78f))
+      .border(1.dp, palette.border.copy(alpha = 0.78f), RoundedCornerShape(18.dp))
+      .padding(12.dp),
+    verticalArrangement = Arrangement.spacedBy(10.dp)
+  ) {
+    Row(
+      horizontalArrangement = Arrangement.spacedBy(10.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Box(
+        modifier = Modifier
+          .size(34.dp)
+          .clip(CircleShape)
+          .background(palette.accent)
+          .shadow(8.dp, CircleShape, ambientColor = palette.accent.copy(alpha = 0.16f), spotColor = palette.accent.copy(alpha = 0.2f)),
+        contentAlignment = Alignment.Center
+      ) {
+        Icon(Icons.Outlined.Quiz, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+      }
+      Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        Text(
+          text = "Puzzle Teka-Teki Silang",
+          style = MaterialTheme.typography.labelLarge,
+          color = palette.text,
+          fontWeight = FontWeight.ExtraBold
+        )
+        Text(
+          text = if (question.hasContent()) "${question.rows} x ${question.cols}" else "Isi slot mendatar dan menurun",
+          style = MaterialTheme.typography.labelSmall,
+          color = palette.text.copy(alpha = 0.68f),
+          fontWeight = FontWeight.SemiBold
+        )
+      }
+    }
+
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+      OutlinedTextField(
+        value = rowsInput,
+        onValueChange = { value ->
+          val filtered = value.filter { it.isDigit() }.take(2)
+          rowsInput = filtered
+          val parsed = filtered.toIntOrNull()
+          if (parsed != null && parsed in 5..20) {
+            onChange(listOf(question.copy(rows = parsed)))
+          }
+        },
+        label = { Text("Baris") },
+        modifier = Modifier.weight(1f),
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        shape = RoundedCornerShape(16.dp)
+      )
+      OutlinedTextField(
+        value = colsInput,
+        onValueChange = { value ->
+          val filtered = value.filter { it.isDigit() }.take(2)
+          colsInput = filtered
+          val parsed = filtered.toIntOrNull()
+          if (parsed != null && parsed in 5..20) {
+            onChange(listOf(question.copy(cols = parsed)))
+          }
+        },
+        label = { Text("Kolom") },
+        modifier = Modifier.weight(1f),
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        shape = RoundedCornerShape(16.dp)
+      )
+    }
+
+    Text(
+      text = if (pendingRow >= 0 && pendingCol >= 0) {
+        "Draft slot siap dikonfirmasi"
+      } else if (anchorRow >= 0 && anchorCol >= 0) {
+        "Titik awal: baris ${anchorRow + 1}, kolom ${anchorCol + 1}"
+      } else {
+        "Pilih titik awal lalu titik akhir. Arah slot otomatis mengikuti garis yang Anda pilih."
+      },
+      style = MaterialTheme.typography.labelSmall,
+      color = palette.text.copy(alpha = 0.72f)
+    )
+
+    InteractiveCrosswordGridCard(
+      model = model,
+      palette = palette,
+      anchorRow = anchorRow,
+      anchorCol = anchorCol,
+      pendingRow = pendingRow,
+      pendingCol = pendingCol,
+      onClearAll = {
+        onChange(listOf(question.copy(entriesAcross = emptyList(), entriesDown = emptyList())))
+        resetDraftSelection()
+      },
+      onConfirmDraft = {
+        val nextEntry = buildDraftEntry() ?: return@InteractiveCrosswordGridCard
+        val nextAcross = if (nextEntry.direction == "across") {
+          upsertCrosswordEntry(question.entriesAcross, nextEntry)
+        } else {
+          question.entriesAcross
+        }
+        val nextDown = if (nextEntry.direction == "down") {
+          upsertCrosswordEntry(question.entriesDown, nextEntry)
+        } else {
+          question.entriesDown
+        }
+        onChange(listOf(question.copy(entriesAcross = nextAcross, entriesDown = nextDown)))
+        resetDraftSelection()
+      },
+      onCellClick = { rowIndex, colIndex ->
+        if (anchorRow < 0 || anchorCol < 0) {
+          anchorRow = rowIndex
+          anchorCol = colIndex
+          pendingRow = -1
+          pendingCol = -1
+          return@InteractiveCrosswordGridCard
+        }
+        if (anchorRow == rowIndex && anchorCol == colIndex) {
+          resetDraftSelection()
+          return@InteractiveCrosswordGridCard
+        }
+        val validEndpoint = (anchorRow == rowIndex && kotlin.math.abs(anchorCol - colIndex) >= 1) ||
+          (anchorCol == colIndex && kotlin.math.abs(anchorRow - rowIndex) >= 1)
+        if (validEndpoint) {
+          pendingRow = rowIndex
+          pendingCol = colIndex
+        } else {
+          anchorRow = rowIndex
+          anchorCol = colIndex
+          pendingRow = -1
+          pendingCol = -1
+        }
+      }
+    )
+
+    CrosswordEntryGroup(
+      title = "Mendatar",
+      entries = model.entriesAcross,
+      palette = palette,
+      onEntryChange = { updated ->
+        onChange(
+          listOf(
+            question.copy(
+              entriesAcross = question.entriesAcross.map { current ->
+                if (current.id == updated.id) {
+                  current.copy(clue = updated.clue, answer = updated.answer)
+                } else {
+                  current
+                }
+              }
+            )
+          )
+        )
+      },
+      onDeleteEntry = { entryId ->
+        onChange(
+          listOf(
+            question.copy(
+              entriesAcross = question.entriesAcross.filterNot { it.id == entryId }
+            )
+          )
+        )
+      }
+    )
+
+    CrosswordEntryGroup(
+      title = "Menurun",
+      entries = model.entriesDown,
+      palette = palette,
+      onEntryChange = { updated ->
+        onChange(
+          listOf(
+            question.copy(
+              entriesDown = question.entriesDown.map { current ->
+                if (current.id == updated.id) {
+                  current.copy(clue = updated.clue, answer = updated.answer)
+                } else {
+                  current
+                }
+              }
+            )
+          )
+        )
+      },
+      onDeleteEntry = { entryId ->
+        onChange(
+          listOf(
+            question.copy(
+              entriesDown = question.entriesDown.filterNot { it.id == entryId }
+            )
+          )
+        )
+      }
+    )
+
+  }
+}
+
+@Composable
+private fun InteractiveCrosswordGridCard(
+  model: CrosswordModel,
+  palette: SoalModelPalette,
+  anchorRow: Int,
+  anchorCol: Int,
+  pendingRow: Int,
+  pendingCol: Int,
+  onClearAll: () -> Unit,
+  onConfirmDraft: () -> Unit,
+  onCellClick: (Int, Int) -> Unit
+) {
+  val numberMap = remember(model) { model.numberMap }
+  val usedCells = remember(model) {
+    buildSet {
+      (model.entriesAcross + model.entriesDown).forEach { entry ->
+        repeat(entry.length) { offset ->
+          val row = entry.row + if (entry.direction == "down") offset else 0
+          val col = entry.col + if (entry.direction == "across") offset else 0
+          add("$row:$col")
+        }
+      }
+    }
+  }
+  val letterMap = remember(model) {
+    buildMap {
+      (model.entriesAcross + model.entriesDown).forEach { entry ->
+        val letters = entry.answer
+          .filterNot { it.isWhitespace() }
+          .take(entry.length)
+        letters.forEachIndexed { index, char ->
+          val row = entry.row + if (entry.direction == "down") index else 0
+          val col = entry.col + if (entry.direction == "across") index else 0
+          putIfAbsent("$row:$col", char.toString())
+        }
+      }
+    }
+  }
+  val draftCells = remember(model, anchorRow, anchorCol, pendingRow, pendingCol) {
+    buildSet {
+      if (anchorRow < 0 || anchorCol < 0 || pendingRow < 0 || pendingCol < 0) return@buildSet
+      if (anchorRow == pendingRow) {
+        val start = minOf(anchorCol, pendingCol)
+        val end = maxOf(anchorCol, pendingCol)
+        for (col in start..end) add("$anchorRow:$col")
+      } else if (anchorCol == pendingCol) {
+        val start = minOf(anchorRow, pendingRow)
+        val end = maxOf(anchorRow, pendingRow)
+        for (row in start..end) add("$row:$anchorCol")
+      }
+    }
+  }
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(16.dp))
+      .background(palette.accent.copy(alpha = 0.08f))
+      .border(1.dp, palette.border.copy(alpha = 0.84f), RoundedCornerShape(16.dp))
+      .padding(12.dp),
+    verticalArrangement = Arrangement.spacedBy(10.dp)
+  ) {
+    Row(
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Column(
+        modifier = Modifier.weight(1f),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+      ) {
+        Text(
+          text = "Grid Teka-Teki Silang",
+          style = MaterialTheme.typography.labelLarge,
+          color = palette.text,
+          fontWeight = FontWeight.ExtraBold
+        )
+        Text(
+          text = "Pilih titik awal lalu titik akhir. Slot baru disimpan setelah dikonfirmasi.",
+          style = MaterialTheme.typography.bodySmall,
+          color = palette.text.copy(alpha = 0.72f)
+        )
+      }
+      Box(
+        modifier = Modifier
+          .clip(RoundedCornerShape(999.dp))
+          .background(Color.White.copy(alpha = 0.9f))
+          .border(1.dp, Color(0xFFF5C2E7), RoundedCornerShape(999.dp))
+          .clickable(onClick = onClearAll)
+          .padding(horizontal = 12.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center
+      ) {
+        Row(
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Icon(Icons.Outlined.Delete, contentDescription = null, tint = Color(0xFF9D174D), modifier = Modifier.size(16.dp))
+          Text(
+            text = "Hapus semua slot",
+            style = MaterialTheme.typography.labelMedium,
+            color = Color(0xFF9D174D),
+            fontWeight = FontWeight.Bold
+          )
+        }
+      }
+    }
+    Box(
+      modifier = Modifier
+        .fillMaxWidth()
+        .horizontalScroll(rememberScrollState())
+    ) {
+      Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        (0 until model.rows).forEach { rowIndex ->
+          Row(horizontalArrangement = Arrangement.spacedBy(1.dp)) {
+            (0 until model.cols).forEach { colIndex ->
+              val key = "$rowIndex:$colIndex"
+              val isAnchor = anchorRow == rowIndex && anchorCol == colIndex
+              val isPending = pendingRow == rowIndex && pendingCol == colIndex
+              val isUsed = key in usedCells
+              val isDraft = key in draftCells && !isAnchor && !isPending
+              val isSelectableEnd = anchorRow >= 0 &&
+                anchorCol >= 0 &&
+                pendingRow < 0 &&
+                pendingCol < 0 &&
+                (
+                  (rowIndex == anchorRow && kotlin.math.abs(colIndex - anchorCol) >= 1) ||
+                    (colIndex == anchorCol && kotlin.math.abs(rowIndex - anchorRow) >= 1)
+                  )
+              val number = numberMap[key]
+              val letter = letterMap[key]
+              Box(
+                modifier = Modifier
+                  .size(30.dp)
+                  .clip(RoundedCornerShape(5.dp))
+                  .background(
+                    when {
+                      isAnchor -> Color(0xFFFDE68A)
+                      isPending -> Color(0xFF86EFAC)
+                      isDraft -> Color(0xFFDCFCE7)
+                      isSelectableEnd -> Color(0xFFECFCCB)
+                      isUsed -> palette.accent.copy(alpha = 0.14f)
+                      else -> Color.White.copy(alpha = 0.95f)
+                    }
+                  )
+                  .border(
+                    1.dp,
+                    when {
+                      isAnchor -> Color(0xFFD97706)
+                      isPending -> Color(0xFF16A34A)
+                      isDraft -> Color(0xFF22C55E)
+                      isSelectableEnd -> Color(0xFF84CC16)
+                      isUsed -> palette.accent.copy(alpha = 0.65f)
+                      else -> palette.border.copy(alpha = 0.7f)
+                    },
+                    RoundedCornerShape(5.dp)
+                  )
+                  .clickable { onCellClick(rowIndex, colIndex) }
+              ) {
+                if (number != null) {
+                  Text(
+                    text = number.toString(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.text,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.align(Alignment.TopStart).padding(start = 3.dp, top = 1.dp)
+                  )
+                }
+                if (!letter.isNullOrBlank()) {
+                  Text(
+                    text = letter,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.text,
+                    fontWeight = FontWeight.ExtraBold,
+                    modifier = Modifier.align(Alignment.Center)
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    AnimatedVisibility(visible = pendingRow >= 0 && pendingCol >= 0) {
+      Box(
+        modifier = Modifier
+          .clip(RoundedCornerShape(999.dp))
+          .background(Color(0xFF16A34A))
+          .clickable(onClick = onConfirmDraft)
+          .padding(horizontal = 14.dp, vertical = 10.dp)
+      ) {
+        Row(
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Icon(Icons.Outlined.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+          Text(
+            text = "Konfirmasi slot",
+            style = MaterialTheme.typography.labelMedium,
+            color = Color.White,
+            fontWeight = FontWeight.Bold
+          )
+        }
+      }
+    }
+    if (anchorRow >= 0 && anchorCol >= 0 && pendingRow < 0 && pendingCol < 0) {
+      Text(
+        text = "Pilih titik akhir pada baris atau kolom yang sama untuk melanjutkan draft.",
+        style = MaterialTheme.typography.bodySmall,
+        color = palette.text.copy(alpha = 0.72f)
+      )
+    }
+  }
+}
+
+@Composable
+private fun CrosswordEntryGroup(
+  title: String,
+  entries: List<CrosswordEntryModel>,
+  palette: SoalModelPalette,
+  onEntryChange: (CrosswordEntryModel) -> Unit,
+  onDeleteEntry: (String) -> Unit
+) {
+  Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Text(
+      text = title,
+      style = MaterialTheme.typography.labelLarge,
+      color = palette.text,
+      fontWeight = FontWeight.ExtraBold
+    )
+    if (entries.isEmpty()) {
+      Text(
+        text = "Belum ada slot. Buat dari grid di atas.",
+        style = MaterialTheme.typography.bodySmall,
+        color = palette.text.copy(alpha = 0.72f)
+      )
+    }
+    entries.forEach { entry ->
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .clip(RoundedCornerShape(16.dp))
+          .background(palette.accent.copy(alpha = 0.06f))
+          .border(1.dp, palette.border.copy(alpha = 0.74f), RoundedCornerShape(16.dp))
+          .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+      ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+          Box(
+            modifier = Modifier
+              .size(30.dp)
+              .clip(CircleShape)
+              .background(palette.accent.copy(alpha = 0.12f))
+              .border(1.dp, palette.accent.copy(alpha = 0.20f), CircleShape),
+            contentAlignment = Alignment.Center
+          ) {
+            Text("${entry.number}", style = MaterialTheme.typography.labelMedium, color = palette.text, fontWeight = FontWeight.Bold)
+          }
+          Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+              text = "Baris ${entry.row + 1}, Kolom ${entry.col + 1}",
+              style = MaterialTheme.typography.labelMedium,
+              color = palette.text,
+              fontWeight = FontWeight.Bold
+            )
+            Text(
+              text = "${entry.length} kotak",
+              style = MaterialTheme.typography.bodySmall,
+              color = palette.text.copy(alpha = 0.72f)
+            )
+          }
+          Box(
+            modifier = Modifier
+              .clip(RoundedCornerShape(999.dp))
+              .background(Color.White.copy(alpha = 0.92f))
+              .border(1.dp, Color(0xFFF5C2E7), RoundedCornerShape(999.dp))
+              .clickable(onClick = { onDeleteEntry(entry.id) })
+              .padding(horizontal = 10.dp, vertical = 8.dp),
+            contentAlignment = Alignment.Center
+          ) {
+            Icon(Icons.Outlined.Close, contentDescription = "Hapus slot", tint = Color(0xFFBE123C), modifier = Modifier.size(16.dp))
+          }
+        }
+        SoalTextField(
+          value = entry.clue,
+          onValueChange = { value ->
+            onEntryChange(entry.copy(clue = value))
+          },
+          label = "Petunjuk",
+          modifier = Modifier.fillMaxWidth(),
+          minLines = 2
+        )
+        SoalTextField(
+          value = entry.answer,
+          onValueChange = { value ->
+            val compact = value.filterNot { it.isWhitespace() }.take(entry.length)
+            onEntryChange(entry.copy(answer = compact))
+          },
+          label = "Jawaban",
+          modifier = Modifier.fillMaxWidth()
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun CrosswordPreviewCard(
+  model: CrosswordModel,
+  palette: SoalModelPalette
+) {
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(16.dp))
+      .background(palette.accent.copy(alpha = 0.08f))
+      .border(1.dp, palette.border.copy(alpha = 0.84f), RoundedCornerShape(16.dp))
+      .padding(12.dp),
+    verticalArrangement = Arrangement.spacedBy(10.dp)
+  ) {
+    Text(
+      text = "Preview puzzle",
+      style = MaterialTheme.typography.labelLarge,
+      color = palette.text,
+      fontWeight = FontWeight.ExtraBold
+    )
+    model.maskRows.forEachIndexed { rowIndex, row ->
+      Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        row.forEachIndexed { colIndex, cell ->
+          val isOpen = cell == '.'
+          val number = model.numberMap["$rowIndex:$colIndex"]
+          Box(
+            modifier = Modifier
+              .size(24.dp)
+              .clip(RoundedCornerShape(6.dp))
+              .background(if (isOpen) Color.White.copy(alpha = 0.94f) else palette.text.copy(alpha = 0.9f))
+              .border(1.dp, if (isOpen) palette.border.copy(alpha = 0.7f) else palette.text.copy(alpha = 0.9f), RoundedCornerShape(6.dp)),
+            contentAlignment = Alignment.Center
+          ) {
+            if (isOpen && number != null) {
+              Text(
+                text = number.toString(),
+                style = MaterialTheme.typography.labelSmall,
+                color = palette.text,
+                fontWeight = FontWeight.Bold
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun WordSearchPreviewCard(
+  puzzle: WordSearchPuzzle,
+  palette: SoalModelPalette
+) {
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(16.dp))
+      .background(palette.accent.copy(alpha = 0.08f))
+      .border(1.dp, palette.border.copy(alpha = 0.84f), RoundedCornerShape(16.dp))
+      .padding(12.dp),
+    verticalArrangement = Arrangement.spacedBy(10.dp)
+  ) {
+    Text(
+      text = "Preview puzzle",
+      style = MaterialTheme.typography.labelLarge,
+      color = palette.text,
+      fontWeight = FontWeight.ExtraBold
+    )
+    Box(
+      modifier = Modifier
+        .fillMaxWidth()
+        .horizontalScroll(rememberScrollState())
+    ) {
+      Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        puzzle.grid.forEach { row ->
+          Row(horizontalArrangement = Arrangement.spacedBy(1.dp)) {
+            row.forEach { cell ->
+              Box(
+                modifier = Modifier
+                  .size(28.dp)
+                  .clip(RoundedCornerShape(5.dp))
+                  .background(Color.White.copy(alpha = 0.92f))
+                  .border(1.dp, palette.border.copy(alpha = 0.7f), RoundedCornerShape(5.dp)),
+                contentAlignment = Alignment.Center
+              ) {
+                Text(
+                  text = cell.toString(),
+                  style = MaterialTheme.typography.labelSmall,
+                  color = palette.text,
+                  fontWeight = FontWeight.Bold
+                )
+              }
+            }
+          }
+        }
+      }
+    }
+    Text(
+      text = puzzle.words.joinToString(", "),
+      style = MaterialTheme.typography.bodySmall,
+      color = palette.text.copy(alpha = 0.8f)
+    )
+    if (puzzle.unplacedWords.isNotEmpty()) {
+      Text(
+        text = "Kata belum muat: ${puzzle.unplacedWords.joinToString(", ")}",
+        style = MaterialTheme.typography.labelSmall,
+        color = Color(0xFFB91C1C),
+        fontWeight = FontWeight.SemiBold
+      )
+    }
+  }
+}
+
 private data class MapelQuestionSection(
   val id: String,
   val typeKey: String,
@@ -4328,7 +5712,10 @@ private data class MapelQuestionSection(
   val instruction: String = "",
   val content: String = "",
   val scoreText: String = "",
-  val choiceQuestions: List<MapelChoiceQuestion> = emptyList()
+  val choiceQuestions: List<MapelChoiceQuestion> = emptyList(),
+  val matchingPairs: List<MapelMatchingPair> = emptyList(),
+  val wordSearchQuestions: List<MapelWordSearchQuestion> = emptyList(),
+  val crosswordQuestions: List<MapelCrosswordQuestion> = emptyList()
 )
 
 private data class SoalModelPalette(
@@ -4357,6 +5744,74 @@ private data class MapelChoiceQuestion(
   val options: List<String> = listOf("", "")
 )
 
+private data class MapelMatchingPair(
+  val id: String,
+  val leftText: String = "",
+  val rightText: String = ""
+)
+
+private data class MapelWordSearchQuestion(
+  val id: String,
+  val prompt: String = "",
+  val rows: Int = 10,
+  val cols: Int = 10,
+  val wordsText: String = ""
+)
+
+private data class MapelCrosswordEntry(
+  val id: String,
+  val direction: String,
+  val row: Int = 1,
+  val col: Int = 1,
+  val length: Int = 2,
+  val clue: String = "",
+  val answer: String = ""
+)
+
+private data class MapelCrosswordQuestion(
+  val id: String,
+  val rows: Int = 10,
+  val cols: Int = 10,
+  val entriesAcross: List<MapelCrosswordEntry> = emptyList(),
+  val entriesDown: List<MapelCrosswordEntry> = emptyList()
+)
+
+private data class WordSearchPlacement(
+  val word: String,
+  val row: Int,
+  val col: Int,
+  val direction: String
+)
+
+private data class WordSearchPuzzle(
+  val rows: Int,
+  val cols: Int,
+  val words: List<String>,
+  val grid: List<List<Char>>,
+  val placements: List<WordSearchPlacement>,
+  val unplacedWords: List<String>
+)
+
+private data class CrosswordEntryModel(
+  val id: String,
+  val direction: String,
+  val row: Int,
+  val col: Int,
+  val length: Int,
+  val clue: String,
+  val answer: String,
+  val number: Int
+)
+
+private data class CrosswordModel(
+  val rows: Int,
+  val cols: Int,
+  val maskRows: List<String>,
+  val numberMap: Map<String, Int>,
+  val entriesAcross: List<CrosswordEntryModel>,
+  val entriesDown: List<CrosswordEntryModel>
+)
+
 private data class SoalTypeOption(
   val key: String,
   val label: String
@@ -4383,7 +5838,22 @@ private val SoalTypeOptions = listOf(
 )
 
 private fun String.usesQuestionPromptEditor(): Boolean {
-  return this in SoalTypeOptions.map { it.key }
+  return this in SoalTypeOptions.map { it.key } &&
+    this != "pasangkan-kata" &&
+    this != "cari-kata" &&
+    this != "teka-silang"
+}
+
+private fun String.usesMatchingPairEditor(): Boolean {
+  return this == "pasangkan-kata"
+}
+
+private fun String.usesWordSearchEditor(): Boolean {
+  return this == "cari-kata"
+}
+
+private fun String.usesCrosswordEditor(): Boolean {
+  return this == "teka-silang"
 }
 
 private fun modelOrdinalLabel(index: Int): String {
@@ -4450,12 +5920,281 @@ private fun MapelChoiceQuestion.hasQuestionContent(): Boolean {
   return prompt.isNotBlank() || options.any { it.isNotBlank() }
 }
 
+private fun List<MapelMatchingPair>.withTrailingBlankMatchingPair(): List<MapelMatchingPair> {
+  val cleanPairs = mapIndexed { index, current ->
+    current.copy(id = current.id.ifBlank { "pair-${index + 1}" })
+  }.toMutableList()
+  while (cleanPairs.isNotEmpty() && !cleanPairs.last().hasContent()) {
+    cleanPairs.removeAt(cleanPairs.lastIndex)
+  }
+  cleanPairs.add(MapelMatchingPair(id = "pair-${cleanPairs.size + 1}"))
+  return cleanPairs
+}
+
+private fun List<MapelMatchingPair>.filledMatchingPairs(): List<MapelMatchingPair> {
+  return mapIndexed { index, current ->
+    current.copy(id = current.id.ifBlank { "pair-${index + 1}" })
+  }.filter { it.hasContent() }
+}
+
+private fun MapelMatchingPair.hasContent(): Boolean {
+  return leftText.isNotBlank() || rightText.isNotBlank()
+}
+
+private fun List<MapelWordSearchQuestion>.filledWordSearchQuestions(): List<MapelWordSearchQuestion> {
+  return take(1).mapIndexed { index, current ->
+    current.copy(
+      id = current.id.ifBlank { "ws-${index + 1}" },
+      rows = current.rows.coerceIn(5, 20),
+      cols = current.cols.coerceIn(5, 20)
+    )
+  }.filter { it.hasContent() }
+}
+
+private fun MapelWordSearchQuestion.hasContent(): Boolean {
+  return words().isNotEmpty()
+}
+
+private fun MapelWordSearchQuestion.words(languageCode: String = "ID"): List<String> {
+  val isArabic = languageCode.uppercase() == "AR"
+  return wordsText
+    .lines()
+    .map { line ->
+      val trimmed = line.trim()
+      if (isArabic) trimmed.replace(Regex("\\s+"), "")
+      else trimmed.uppercase().replace(Regex("[^A-Z0-9]"), "")
+    }
+    .filter { it.isNotBlank() }
+    .distinct()
+}
+
+private fun List<MapelCrosswordEntry>.withTrailingBlankCrosswordEntry(direction: String): List<MapelCrosswordEntry> {
+  val safeDirection = if (direction == "down") "down" else "across"
+  val cleanEntries = mapIndexed { index, current ->
+    current.copy(
+      id = current.id.ifBlank { "$safeDirection-${index + 1}" },
+      direction = safeDirection
+    )
+  }.toMutableList()
+  while (cleanEntries.isNotEmpty() && !cleanEntries.last().hasContent()) {
+    cleanEntries.removeAt(cleanEntries.lastIndex)
+  }
+  cleanEntries.add(MapelCrosswordEntry(id = "$safeDirection-${cleanEntries.size + 1}", direction = safeDirection))
+  return cleanEntries
+}
+
+private fun List<MapelCrosswordEntry>.filledCrosswordEntries(direction: String): List<MapelCrosswordEntry> {
+  val safeDirection = if (direction == "down") "down" else "across"
+  return mapIndexed { index, current ->
+    current.copy(
+      id = current.id.ifBlank { "$safeDirection-${index + 1}" },
+      direction = safeDirection,
+      row = current.row.coerceIn(1, 20),
+      col = current.col.coerceIn(1, 20),
+      length = current.length.coerceIn(2, 20)
+    )
+  }.filter { it.hasContent() }
+}
+
+private fun upsertCrosswordEntry(
+  currentEntries: List<MapelCrosswordEntry>,
+  newEntry: MapelCrosswordEntry
+): List<MapelCrosswordEntry> {
+  val safeDirection = if (newEntry.direction == "down") "down" else "across"
+  val normalizedNew = newEntry.copy(direction = safeDirection)
+  val previous = currentEntries.firstOrNull { entry ->
+    entry.direction == safeDirection &&
+      entry.row == normalizedNew.row &&
+      entry.col == normalizedNew.col
+  }
+  val filtered = currentEntries.filterNot { entry ->
+    val sameDirection = entry.direction == safeDirection
+    val sameStart = entry.row == normalizedNew.row && entry.col == normalizedNew.col
+    sameDirection && sameStart
+  }
+  val merged = normalizedNew.copy(
+    id = previous?.id?.ifBlank { normalizedNew.id } ?: normalizedNew.id,
+    clue = if (normalizedNew.clue.isBlank()) previous?.clue.orEmpty() else normalizedNew.clue,
+    answer = if (normalizedNew.answer.isBlank()) previous?.answer.orEmpty() else normalizedNew.answer
+  )
+  return (filtered + merged)
+    .sortedWith(compareBy<MapelCrosswordEntry> { it.row }.thenBy { it.col }.thenBy { it.length })
+}
+
+private fun MapelCrosswordEntry.isPlaceholderCrosswordEntry(): Boolean {
+  return clue.isBlank() &&
+    answer.isBlank() &&
+    row == 1 &&
+    col == 1 &&
+    length == 2 &&
+    Regex("^(across|down)-\\d+$").matches(id)
+}
+
+private fun MapelCrosswordEntry.hasContent(): Boolean {
+  return !isPlaceholderCrosswordEntry()
+}
+
+private fun MapelCrosswordQuestion.hasContent(): Boolean {
+  return entriesAcross.filledCrosswordEntries("across").isNotEmpty() ||
+    entriesDown.filledCrosswordEntries("down").isNotEmpty()
+}
+
 private fun MapelQuestionSection.effectiveQuestionCount(): Int {
   return when {
+    typeKey.usesCrosswordEditor() -> if (crosswordQuestions.firstOrNull()?.hasContent() == true) 1 else 0
+    typeKey.usesWordSearchEditor() -> wordSearchQuestions.filledWordSearchQuestions().size
+    typeKey.usesMatchingPairEditor() -> if (matchingPairs.filledMatchingPairs().isNotEmpty()) 1 else 0
     typeKey.usesQuestionPromptEditor() -> choiceQuestions.filledQuestionCount()
     content.isNotBlank() -> count.coerceAtLeast(1)
     else -> count.coerceAtLeast(0)
   }
+}
+
+private fun buildWordSearchPuzzle(
+  question: MapelWordSearchQuestion,
+  languageCode: String = "ID"
+): WordSearchPuzzle {
+  val rows = question.rows.coerceIn(5, 20)
+  val cols = question.cols.coerceIn(5, 20)
+  val words = question.words(languageCode).sortedByDescending { it.length }
+  val random = seededWordSearchRandom("${languageCode.uppercase()}|${rows}x$cols|${question.prompt}|${question.wordsText}")
+  val alphabet = if (languageCode.uppercase() == "AR") {
+    listOf('ا', 'ب', 'ت', 'ث', 'ج', 'ح', 'خ', 'د', 'ر', 'س', 'ص', 'ع', 'ف', 'ق', 'ك', 'ل', 'م', 'ن', 'ه', 'و', 'ي')
+  } else {
+    ('A'..'Z').toList()
+  }
+  val grid = MutableList(rows) { MutableList(cols) { '\u0000' } }
+  val directions = listOf(
+    Triple(1, 0, "H"),
+    Triple(0, 1, "V"),
+    Triple(1, 1, "D1"),
+    Triple(-1, 1, "D2")
+  )
+  val placements = mutableListOf<WordSearchPlacement>()
+  val unplacedWords = mutableListOf<String>()
+
+  words.forEach { word ->
+    val letters = word.toList()
+    val candidates = mutableListOf<Triple<Int, Int, Triple<Int, Int, String>>>()
+    directions.forEach { direction ->
+      for (row in 0 until rows) {
+        for (col in 0 until cols) {
+          val endRow = row + (direction.second * (letters.size - 1))
+          val endCol = col + (direction.first * (letters.size - 1))
+          if (endRow !in 0 until rows || endCol !in 0 until cols) continue
+          var fits = true
+          letters.forEachIndexed { index, char ->
+            val rr = row + (direction.second * index)
+            val cc = col + (direction.first * index)
+            val current = grid[rr][cc]
+            if (current != '\u0000' && current != char) {
+              fits = false
+              return@forEachIndexed
+            }
+          }
+          if (fits) candidates.add(Triple(row, col, direction))
+        }
+      }
+    }
+    if (candidates.isEmpty()) {
+      unplacedWords.add(word)
+    } else {
+      val choice = candidates[random.nextInt(candidates.size)]
+      letters.forEachIndexed { index, char ->
+        val rr = choice.first + (choice.third.second * index)
+        val cc = choice.second + (choice.third.first * index)
+        grid[rr][cc] = char
+      }
+      placements.add(WordSearchPlacement(word, choice.first, choice.second, choice.third.third))
+    }
+  }
+
+  for (row in 0 until rows) {
+    for (col in 0 until cols) {
+      if (grid[row][col] == '\u0000') {
+        grid[row][col] = alphabet[random.nextInt(alphabet.size)]
+      }
+    }
+  }
+
+  return WordSearchPuzzle(
+    rows = rows,
+    cols = cols,
+    words = words,
+    grid = grid.map { it.toList() },
+    placements = placements,
+    unplacedWords = unplacedWords
+  )
+}
+
+private fun seededWordSearchRandom(seed: String): java.util.Random {
+  var hash = 1125899906842597L
+  seed.forEach { char ->
+    hash = 31L * hash + char.code.toLong()
+  }
+  return java.util.Random(hash)
+}
+
+private fun buildCrosswordModel(question: MapelCrosswordQuestion): CrosswordModel {
+  val rows = question.rows.coerceIn(5, 20)
+  val cols = question.cols.coerceIn(5, 20)
+  val entriesAcross = question.entriesAcross.filledCrosswordEntries("across")
+  val entriesDown = question.entriesDown.filledCrosswordEntries("down")
+  val startCells = linkedMapOf<String, Pair<Int, Int>>()
+  val maskGrid = MutableList(rows) { MutableList(cols) { '#' } }
+
+  fun apply(entries: List<MapelCrosswordEntry>) {
+    entries.forEach { entry ->
+      val row = (entry.row - 1).coerceIn(0, rows - 1)
+      val col = (entry.col - 1).coerceIn(0, cols - 1)
+      val maxLength = if (entry.direction == "down") rows - row else cols - col
+      val length = entry.length.coerceIn(2, maxLength.coerceAtLeast(2))
+      startCells.putIfAbsent("$row:$col", row to col)
+      repeat(length) { offset ->
+        val rr = row + if (entry.direction == "down") offset else 0
+        val cc = col + if (entry.direction == "across") offset else 0
+        if (rr in 0 until rows && cc in 0 until cols) {
+          maskGrid[rr][cc] = '.'
+        }
+      }
+    }
+  }
+
+  apply(entriesAcross)
+  apply(entriesDown)
+
+  val numberMap = linkedMapOf<String, Int>()
+  startCells.values
+    .sortedWith(compareBy<Pair<Int, Int>> { it.first }.thenBy { it.second })
+    .forEachIndexed { index, pair ->
+      numberMap["${pair.first}:${pair.second}"] = index + 1
+    }
+
+  fun toModel(entries: List<MapelCrosswordEntry>): List<CrosswordEntryModel> {
+    return entries.map { entry ->
+      val row = (entry.row - 1).coerceIn(0, rows - 1)
+      val col = (entry.col - 1).coerceIn(0, cols - 1)
+      CrosswordEntryModel(
+        id = entry.id,
+        direction = entry.direction,
+        row = row,
+        col = col,
+        length = entry.length.coerceAtLeast(2),
+        clue = entry.clue,
+        answer = entry.answer,
+        number = numberMap["$row:$col"] ?: 0
+      )
+    }
+  }
+
+  return CrosswordModel(
+    rows = rows,
+    cols = cols,
+    maskRows = maskGrid.map { it.joinToString("") },
+    numberMap = numberMap,
+    entriesAcross = toModel(entriesAcross),
+    entriesDown = toModel(entriesDown)
+  )
 }
 
 private fun List<String>.normalizedChoiceOptions(): List<String> {
@@ -4469,6 +6208,29 @@ private fun List<String>.normalizedChoiceOptions(): List<String> {
 
 private fun List<MapelQuestionDraft>.toCombinedExportData(subject: SubjectOverview): MapelQuestionExportData {
   val sorted = sortedBy { it.updatedAt }
+  val combinedQuestionRows = JSONArray()
+  sorted.forEachIndexed { draftIndex, draft ->
+    val draftPayload = runCatching { JSONObject(draft.buildDocxQuestionsPayloadJson()) }.getOrNull()
+    val rows = draftPayload?.optJSONArray("questions") ?: JSONArray()
+    for (index in 0 until rows.length()) {
+      val row = rows.optJSONObject(index) ?: continue
+      val originalKey = row.optString("sectionKey").ifBlank { "section-${index + 1}" }
+      row.put("sectionKey", "draft-${draftIndex + 1}-$originalKey")
+      if (index == 0) {
+        val intro = buildString {
+          append(draft.title.ifBlank { "Soal" })
+          if (draft.category.isNotBlank()) append(" (${draft.category})")
+          if (draft.exportInstructionText().isNotBlank()) {
+            append('\n')
+            append(draft.exportInstructionText())
+          }
+        }
+        row.put("sectionInstruction", intro)
+      }
+      combinedQuestionRows.put(row)
+    }
+  }
+  val languageCode = if (sorted.any { it.detectQuestionLanguage() == "AR" }) "AR" else "ID"
   return MapelQuestionExportData(
     id = "combined-${subject.id}-${System.currentTimeMillis()}",
     title = "Kumpulan Soal ${subject.title}",
@@ -4476,6 +6238,10 @@ private fun List<MapelQuestionDraft>.toCombinedExportData(subject: SubjectOvervi
     form = sorted.map { it.form }.filter { it.isNotBlank() }.distinct().joinToString(", "),
     dateLabel = LocalDate.now().toString(),
     instruction = "Dokumen ini berisi ${sorted.size} paket soal yang dibuat guru.",
+    questionsPayloadJson = JSONObject().apply {
+      put("questions", combinedQuestionRows)
+    }.toString(),
+    languageCode = languageCode,
     questionsText = sorted.joinToString("\n\n") { draft ->
       buildString {
         appendLine(draft.title.ifBlank { "Soal" })
@@ -4516,6 +6282,101 @@ private fun loadChoiceQuestions(array: JSONArray?): List<MapelChoiceQuestion> {
   }
 }
 
+private fun loadMatchingPairs(array: JSONArray?): List<MapelMatchingPair> {
+  if (array == null) return emptyList()
+  return buildList {
+    for (index in 0 until array.length()) {
+      val row = array.optJSONObject(index)
+      if (row != null) {
+        add(
+          MapelMatchingPair(
+            id = row.optString("id").ifBlank { "pair-${index + 1}" },
+            leftText = row.optString("leftText"),
+            rightText = row.optString("rightText")
+          )
+        )
+      } else {
+        val text = array.optString(index)
+        if (text.isNotBlank()) add(MapelMatchingPair(id = "pair-${index + 1}", leftText = text))
+      }
+    }
+  }
+}
+
+private fun loadWordSearchQuestions(array: JSONArray?): List<MapelWordSearchQuestion> {
+  if (array == null) return emptyList()
+  return buildList {
+    for (index in 0 until array.length()) {
+      val row = array.optJSONObject(index) ?: continue
+      add(
+        MapelWordSearchQuestion(
+          id = row.optString("id").ifBlank { "ws-${index + 1}" },
+          prompt = row.optString("prompt"),
+          rows = row.optInt("rows", 10).coerceIn(5, 20),
+          cols = row.optInt("cols", 10).coerceIn(5, 20),
+          wordsText = row.optString("wordsText")
+        )
+      )
+    }
+  }
+}
+
+private fun loadCrosswordEntries(array: JSONArray?, direction: String): List<MapelCrosswordEntry> {
+  if (array == null) return emptyList()
+  val safeDirection = if (direction == "down") "down" else "across"
+  return buildList {
+    for (index in 0 until array.length()) {
+      val row = array.optJSONObject(index) ?: continue
+      add(
+        MapelCrosswordEntry(
+          id = row.optString("id").ifBlank { "$safeDirection-${index + 1}" },
+          direction = safeDirection,
+          row = row.optInt("row", 1),
+          col = row.optInt("col", 1),
+          length = row.optInt("length", 2),
+          clue = row.optString("clue"),
+          answer = row.optString("answer")
+        )
+      )
+    }
+  }
+}
+
+private fun loadCrosswordQuestions(sectionRow: JSONObject): List<MapelCrosswordQuestion> {
+  val explicitArray = sectionRow.optJSONArray("crosswordQuestions")
+  if (explicitArray != null) {
+    return buildList {
+      for (index in 0 until explicitArray.length()) {
+        val row = explicitArray.optJSONObject(index) ?: continue
+        add(
+          MapelCrosswordQuestion(
+            id = row.optString("id").ifBlank { "cw-${index + 1}" },
+            rows = row.optInt("rows", 10).coerceIn(5, 20),
+            cols = row.optInt("cols", 10).coerceIn(5, 20),
+            entriesAcross = loadCrosswordEntries(row.optJSONArray("entriesAcross"), "across"),
+            entriesDown = loadCrosswordEntries(row.optJSONArray("entriesDown"), "down")
+          )
+        )
+      }
+    }
+  }
+  val legacyAcross = loadCrosswordEntries(sectionRow.optJSONArray("entriesAcross"), "across")
+  val legacyDown = loadCrosswordEntries(sectionRow.optJSONArray("entriesDown"), "down")
+  return if (legacyAcross.isNotEmpty() || legacyDown.isNotEmpty()) {
+    listOf(
+      MapelCrosswordQuestion(
+        id = "cw-1",
+        rows = sectionRow.optInt("rows", 10).coerceIn(5, 20),
+        cols = sectionRow.optInt("cols", 10).coerceIn(5, 20),
+        entriesAcross = legacyAcross,
+        entriesDown = legacyDown
+      )
+    )
+  } else {
+    emptyList()
+  }
+}
+
 private fun loadMapelQuestions(context: Context, subjectId: String): List<MapelQuestionDraft> {
   val rawJson = context.getSharedPreferences("mapel_questions", Context.MODE_PRIVATE)
     .getString(subjectId, "[]")
@@ -4544,7 +6405,10 @@ private fun loadMapelQuestions(context: Context, subjectId: String): List<MapelQ
                   instruction = sectionRow.optString("instruction"),
                   content = sectionRow.optString("content"),
                   scoreText = sectionRow.optString("scoreText"),
-                  choiceQuestions = loadChoiceQuestions(sectionRow.optJSONArray("choiceQuestions"))
+                  choiceQuestions = loadChoiceQuestions(sectionRow.optJSONArray("choiceQuestions")),
+                  matchingPairs = loadMatchingPairs(sectionRow.optJSONArray("matchingPairs")),
+                  wordSearchQuestions = loadWordSearchQuestions(sectionRow.optJSONArray("wordSearchQuestions")),
+                  crosswordQuestions = loadCrosswordQuestions(sectionRow)
                 )
               )
             }
@@ -4572,7 +6436,8 @@ private fun loadMapelQuestions(context: Context, subjectId: String): List<MapelQ
 private fun saveMapelQuestions(
   context: Context,
   subjectId: String,
-  questions: List<MapelQuestionDraft>
+  questions: List<MapelQuestionDraft>,
+  synchronous: Boolean = false
 ) {
   val array = JSONArray()
   questions.forEach { item ->
@@ -4617,6 +6482,84 @@ private fun saveMapelQuestions(
                       }
                     }
                   )
+                  put(
+                    "matchingPairs",
+                    JSONArray().apply {
+                      section.matchingPairs.forEach { pair ->
+                        put(
+                          JSONObject().apply {
+                            put("id", pair.id)
+                            put("leftText", pair.leftText)
+                            put("rightText", pair.rightText)
+                          }
+                        )
+                      }
+                    }
+                  )
+                  put(
+                    "wordSearchQuestions",
+                    JSONArray().apply {
+                      section.wordSearchQuestions.forEach { question ->
+                        put(
+                          JSONObject().apply {
+                            put("id", question.id)
+                            put("prompt", question.prompt)
+                            put("rows", question.rows)
+                            put("cols", question.cols)
+                            put("wordsText", question.wordsText)
+                          }
+                        )
+                      }
+                    }
+                  )
+                  put(
+                    "crosswordQuestions",
+                    JSONArray().apply {
+                      section.crosswordQuestions.forEach { question ->
+                        put(
+                          JSONObject().apply {
+                            put("id", question.id)
+                            put("rows", question.rows)
+                            put("cols", question.cols)
+                            put(
+                              "entriesAcross",
+                              JSONArray().apply {
+                                question.entriesAcross.forEach { entry ->
+                                  put(
+                                    JSONObject().apply {
+                                      put("id", entry.id)
+                                      put("row", entry.row)
+                                      put("col", entry.col)
+                                      put("length", entry.length)
+                                      put("clue", entry.clue)
+                                      put("answer", entry.answer)
+                                    }
+                                  )
+                                }
+                              }
+                            )
+                            put(
+                              "entriesDown",
+                              JSONArray().apply {
+                                question.entriesDown.forEach { entry ->
+                                  put(
+                                    JSONObject().apply {
+                                      put("id", entry.id)
+                                      put("row", entry.row)
+                                      put("col", entry.col)
+                                      put("length", entry.length)
+                                      put("clue", entry.clue)
+                                      put("answer", entry.answer)
+                                    }
+                                  )
+                                }
+                              }
+                            )
+                          }
+                        )
+                      }
+                    }
+                  )
                 }
               )
             }
@@ -4627,10 +6570,14 @@ private fun saveMapelQuestions(
       }
     )
   }
-  context.getSharedPreferences("mapel_questions", Context.MODE_PRIVATE)
+  val editor = context.getSharedPreferences("mapel_questions", Context.MODE_PRIVATE)
     .edit()
     .putString(subjectId, array.toString())
-    .apply()
+  if (synchronous) {
+    editor.commit()
+  } else {
+    editor.apply()
+  }
 }
 
 private data class AttendanceDateOverview(

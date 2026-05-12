@@ -36,6 +36,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -1257,7 +1259,10 @@ private fun UtsWhatsAppTargetDialog(
       )
     },
     text = {
-      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+      Column(
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.verticalScroll(rememberScrollState())
+      ) {
         Text(
           text = "Pilih nomor keluarga, isi manual, atau ambil dari kontak HP. PDF akan dibuka sebagai lampiran WhatsApp dan caption disalin sebagai cadangan.",
           style = MaterialTheme.typography.bodySmall,
