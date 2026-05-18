@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import com.mim.guruapp.GuruAppUiState
 import com.mim.guruapp.GuruDestination
@@ -20,6 +21,7 @@ import com.mim.guruapp.MutabaahSaveOutcome
 import com.mim.guruapp.MonthlyExtracurricularSaveOutcome
 import com.mim.guruapp.MonthlyReportSaveOutcome
 import com.mim.guruapp.UtsReportSaveOutcome
+import com.mim.guruapp.WakasekReviewOutcome
 import com.mim.guruapp.data.model.AttendanceHistoryEntry
 import com.mim.guruapp.data.model.AttendanceApprovalRequest
 import com.mim.guruapp.data.model.CalendarEvent
@@ -42,6 +44,9 @@ import com.mim.guruapp.data.model.UtsReportOverride
 import com.mim.guruapp.data.model.WaliAttendanceDetailSnapshot
 import com.mim.guruapp.data.model.WaliSantriProfile
 import com.mim.guruapp.ui.components.clearFocusOnOutsideTap
+import com.mim.guruapp.ui.i18n.AppLanguage
+import com.mim.guruapp.ui.i18n.LocalAppLanguage
+import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.screens.GuruHomeScreen
 import com.mim.guruapp.ui.screens.LoginScreen
 import com.mim.guruapp.ui.screens.WelcomeScreen
@@ -59,6 +64,7 @@ fun GuruAppRoot(
   onCloseSidebar: () -> Unit,
   onToggleSidebarParent: (GuruSidebarParent) -> Unit,
   onSelectSidebarDestination: (GuruSidebarDestination) -> Unit,
+  onUpdateBottomNavShortcuts: (List<GuruSidebarDestination>) -> Unit,
   onOpenCalendarScreen: () -> Unit,
   onCloseCalendarScreen: () -> Unit,
   onOpenNotificationPopup: () -> Unit,
@@ -100,38 +106,43 @@ fun GuruAppRoot(
   onLoadLeaveRequests: suspend () -> LeaveRequestSnapshot?,
   onSubmitLeaveRequest: suspend (String, String, String) -> LeaveRequestSaveOutcome,
   onDeleteLeaveRequest: suspend (String) -> LeaveRequestSaveOutcome,
+  onReviewWakasekLeaveRequest: suspend (String, Boolean, String) -> WakasekReviewOutcome,
+  onApplyLanguage: (String) -> Unit,
+  onApplyThemeMode: (String) -> Unit,
   onRefreshClick: () -> Unit,
   onLogoutClick: () -> Unit
 ) {
-  Surface(
-    modifier = Modifier
-      .fillMaxSize()
-      .clearFocusOnOutsideTap()
-      .background(AppBackground)
-  ) {
-    when (state.destination) {
-      GuruDestination.Splash -> WelcomeScreen(
-        title = "MIM Guru App",
-        message = state.splashMessage
-      )
+  CompositionLocalProvider(LocalAppLanguage provides AppLanguage.fromCode(state.languageCode)) {
+    Surface(
+      modifier = Modifier
+        .fillMaxSize()
+        .clearFocusOnOutsideTap()
+        .background(AppBackground)
+    ) {
+      when (state.destination) {
+        GuruDestination.Splash -> WelcomeScreen(
+          title = t("MIM Guru App"),
+          message = t(state.splashMessage),
+          progress = state.splashProgress
+        )
 
-      GuruDestination.Login -> LoginScreen(
-        teacherName = state.loginTeacherName,
-        password = state.loginPassword,
-        errorMessage = state.loginError,
-        isBusy = state.isBusy,
-        onTeacherNameChange = onTeacherNameChange,
-        onPasswordChange = onPasswordChange,
-        onLoginClick = onLoginClick,
-        onUseDemoAccount = onUseDemoAccount
-      )
+        GuruDestination.Login -> LoginScreen(
+          teacherName = state.loginTeacherName,
+          password = state.loginPassword,
+          errorMessage = t(state.loginError),
+          isBusy = state.isBusy,
+          onTeacherNameChange = onTeacherNameChange,
+          onPasswordChange = onPasswordChange,
+          onLoginClick = onLoginClick,
+          onUseDemoAccount = onUseDemoAccount
+        )
 
-      GuruDestination.Home -> {
-        val dashboard = state.dashboard
-        if (dashboard == null) {
-          Box(modifier = Modifier.fillMaxSize())
-        } else {
-          GuruHomeScreen(
+        GuruDestination.Home -> {
+          val dashboard = state.dashboard
+          if (dashboard == null) {
+            Box(modifier = Modifier.fillMaxSize())
+          } else {
+            GuruHomeScreen(
             dashboard = dashboard,
             syncBanner = state.syncBanner,
             selectedDestination = state.selectedSidebarDestination,
@@ -142,12 +153,16 @@ fun GuruAppRoot(
             pendingInputAbsensiTarget = state.pendingInputAbsensiTarget,
             isSidebarOpen = state.isSidebarOpen,
             expandedSidebarParent = state.expandedSidebarParent,
+            bottomNavShortcutDestinations = state.bottomNavShortcutDestinations,
+            languageCode = state.languageCode,
+            themeModeCode = state.themeModeCode,
             isClaimSectionVisible = state.isClaimSectionVisible,
             selectedClaimSubjectIds = state.selectedClaimSubjectIds,
             onToggleSidebar = onToggleSidebar,
             onCloseSidebar = onCloseSidebar,
             onToggleSidebarParent = onToggleSidebarParent,
             onSelectDestination = onSelectSidebarDestination,
+            onUpdateBottomNavShortcuts = onUpdateBottomNavShortcuts,
             onOpenCalendarScreen = onOpenCalendarScreen,
             onCloseCalendarScreen = onCloseCalendarScreen,
             onOpenNotificationPopup = onOpenNotificationPopup,
@@ -189,9 +204,13 @@ fun GuruAppRoot(
             onLoadLeaveRequests = onLoadLeaveRequests,
             onSubmitLeaveRequest = onSubmitLeaveRequest,
             onDeleteLeaveRequest = onDeleteLeaveRequest,
+            onReviewWakasekLeaveRequest = onReviewWakasekLeaveRequest,
+            onApplyLanguage = onApplyLanguage,
+            onApplyThemeMode = onApplyThemeMode,
             onRefreshClick = onRefreshClick,
             onLogoutClick = onLogoutClick
-          )
+            )
+          }
         }
       }
     }

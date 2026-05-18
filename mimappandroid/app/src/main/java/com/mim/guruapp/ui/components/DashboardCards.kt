@@ -28,6 +28,7 @@ import com.mim.guruapp.data.model.NoticeItem
 import com.mim.guruapp.data.model.QuickStat
 import com.mim.guruapp.data.model.SubjectOverview
 import com.mim.guruapp.data.model.SyncBannerState
+import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.CardBackground
 import com.mim.guruapp.ui.theme.CardBorder
 import com.mim.guruapp.ui.theme.CardGradientEnd
@@ -52,14 +53,14 @@ fun PlaceholderPanel(
       .padding(16.dp)
   ) {
     Text(
-      text = title,
+      text = t(title),
       style = MaterialTheme.typography.titleMedium,
       fontWeight = FontWeight.Bold,
       color = MaterialTheme.colorScheme.onSurface
     )
     if (!subtitle.isNullOrBlank()) {
       Text(
-        text = subtitle,
+        text = t(subtitle),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = 6.dp, bottom = 12.dp)
@@ -84,13 +85,13 @@ fun SyncBannerCard(state: SyncBannerState) {
       .padding(16.dp)
   ) {
     Text(
-      text = if (state.isSyncing) "Sinkronisasi Berjalan" else "Data Lokal Aktif",
+      text = if (state.isSyncing) t("Sinkronisasi Berjalan") else t("Data Lokal Aktif"),
       style = MaterialTheme.typography.titleSmall,
       fontWeight = FontWeight.Bold,
       color = MaterialTheme.colorScheme.onSurface
     )
     Text(
-      text = state.message,
+      text = t(state.message),
       style = MaterialTheme.typography.bodyMedium,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
       modifier = Modifier.padding(top = 6.dp)
@@ -109,12 +110,12 @@ fun QuickStatsRow(stats: List<QuickStat>) {
         modifier = Modifier
           .weight(1f)
           .clip(RoundedCornerShape(14.dp))
-          .background(Color.White)
+          .background(CardBackground)
           .border(1.dp, CardBorder, RoundedCornerShape(14.dp))
           .padding(horizontal = 12.dp, vertical = 10.dp)
       ) {
         Text(
-          text = stat.label,
+          text = t(stat.label),
           style = MaterialTheme.typography.labelSmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -137,7 +138,7 @@ fun AgendaCard(notice: NoticeItem, accent: Color) {
       .clip(RoundedCornerShape(16.dp))
       .background(
         Brush.verticalGradient(
-          colors = listOf(Color.White, Color(0xFFF8FAFC))
+          colors = listOf(CardBackground, CardGradientEnd)
         )
       )
       .border(1.dp, CardBorder, RoundedCornerShape(16.dp))
@@ -190,13 +191,13 @@ fun SubjectCard(subject: SubjectOverview) {
       color = MaterialTheme.colorScheme.onSurface
     )
     Text(
-      text = "Kelas: ${subject.className}",
+      text = "${t("Kelas")}: ${subject.className}",
       style = MaterialTheme.typography.bodySmall,
       color = SubtleInk,
       modifier = Modifier.padding(top = 6.dp)
     )
     Text(
-      text = "Semester: ${subject.semester}",
+      text = "${t("Semester")}: ${subject.semester}",
       style = MaterialTheme.typography.bodySmall,
       color = SubtleInk,
       modifier = Modifier.padding(top = 2.dp)
@@ -207,15 +208,15 @@ fun SubjectCard(subject: SubjectOverview) {
       horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
       StatusPill(
-        text = "Absen ${subject.attendancePending}",
+        text = "${t("Absen")} ${subject.attendancePending}",
         tone = HighlightCard
       )
       StatusPill(
-        text = "Nilai ${subject.scorePending}",
+        text = "${t("Nilai")} ${subject.scorePending}",
         tone = WarmAccent
       )
       StatusPill(
-        text = "Materi ${subject.materialCount}",
+        text = "${t("Materi")} ${subject.materialCount}",
         tone = SuccessTint
       )
     }
@@ -228,7 +229,7 @@ fun NoticeCard(notice: NoticeItem) {
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(16.dp))
-      .background(Color.White)
+      .background(CardBackground)
       .border(1.dp, CardBorder, RoundedCornerShape(16.dp))
       .padding(14.dp)
   ) {

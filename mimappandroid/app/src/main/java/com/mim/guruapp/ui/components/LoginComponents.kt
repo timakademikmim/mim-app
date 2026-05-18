@@ -54,6 +54,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.mim.guruapp.R
+import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.PrimaryBlueDark
 
 @Composable
@@ -172,7 +173,7 @@ fun LoginHeader(
     )
   }
   Text(
-    text = "Login",
+    text = t("Login"),
     style = MaterialTheme.typography.headlineMedium,
     color = Color.White,
     fontWeight = FontWeight.ExtraBold,
@@ -182,7 +183,7 @@ fun LoginHeader(
       .padding(top = 16.dp)
   )
   Text(
-    text = subtitle,
+    text = t(subtitle),
     style = MaterialTheme.typography.bodyMedium,
     color = Color(0xFFE5E7EB),
     textAlign = TextAlign.Center,
@@ -207,7 +208,7 @@ fun LoginTextField(
   val shape = RoundedCornerShape(18.dp)
   Column(modifier = modifier.fillMaxWidth()) {
     Text(
-      text = label,
+      text = t(label),
       style = MaterialTheme.typography.labelLarge,
       color = Color.White.copy(alpha = 0.92f),
       modifier = Modifier.padding(bottom = 8.dp)
@@ -243,7 +244,7 @@ fun LoginTextField(
           Box(modifier = Modifier.weight(1f)) {
             if (value.isBlank()) {
               Text(
-                text = placeholder,
+                text = t(placeholder),
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color.White.copy(alpha = 0.54f)
               )
@@ -253,7 +254,7 @@ fun LoginTextField(
           if (isPassword && onPasswordVisibilityToggle != null) {
             Icon(
               imageVector = if (passwordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-              contentDescription = if (passwordVisible) "Sembunyikan password" else "Lihat password",
+              contentDescription = if (passwordVisible) t("Sembunyikan password") else t("Lihat password"),
               tint = Color.White.copy(alpha = 0.82f),
               modifier = Modifier
                 .size(20.dp)
@@ -290,14 +291,14 @@ fun RememberMeRow(
         )
       )
       Text(
-        text = "Remember me",
+        text = t("Remember me"),
         style = MaterialTheme.typography.bodyMedium,
         color = Color.White.copy(alpha = 0.88f)
       )
     }
 
     Text(
-      text = "Isi contoh ID",
+      text = t("Isi contoh ID"),
       style = MaterialTheme.typography.bodySmall,
       color = Color(0xFFD1FAE5),
       modifier = Modifier.clickable(onClick = onUseDemoAccount)
@@ -340,7 +341,7 @@ fun GradientLoginButton(
     contentAlignment = Alignment.Center
   ) {
     Text(
-      text = text,
+      text = t(text),
       style = MaterialTheme.typography.titleSmall,
       color = Color.White,
       fontWeight = FontWeight.Bold

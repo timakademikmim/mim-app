@@ -66,6 +66,7 @@ import com.mim.guruapp.data.model.LeaveRequestItem
 import com.mim.guruapp.data.model.MutabaahSnapshot
 import com.mim.guruapp.data.model.MutabaahSubmission
 import com.mim.guruapp.data.model.MutabaahTask
+import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.AppBackground
 import com.mim.guruapp.ui.theme.CardBackground
 import com.mim.guruapp.ui.theme.CardBorder
@@ -216,7 +217,7 @@ fun MutabaahScreen(
         )
 
         Text(
-          text = "Timeline Mutabaah",
+          text = t("Timeline Mutabaah"),
           style = MaterialTheme.typography.titleMedium,
           color = PrimaryBlueDark,
           fontWeight = FontWeight.ExtraBold
@@ -329,7 +330,7 @@ private fun MutabaahHeader(
   ) {
     MutabaahCircleButton(
       icon = Icons.Outlined.Menu,
-      contentDescription = "Buka sidebar",
+      contentDescription = t("Buka sidebar"),
       onClick = onMenuClick
     )
 
@@ -346,7 +347,7 @@ private fun MutabaahHeader(
         textAlign = TextAlign.Center
       )
       Text(
-        text = title,
+        text = t(title),
         style = MaterialTheme.typography.headlineSmall,
         color = HighlightCard,
         fontWeight = FontWeight.ExtraBold,
@@ -365,13 +366,13 @@ private fun MutabaahHeader(
     Box(
       modifier = Modifier
         .clip(RoundedCornerShape(14.dp))
-        .background(Color.White.copy(alpha = 0.88f))
+        .background(CardBackground.copy(alpha = 0.88f))
         .border(1.dp, CardBorder, RoundedCornerShape(14.dp))
         .clickable(onClick = onJumpToToday)
         .padding(horizontal = 14.dp, vertical = 10.dp)
     ) {
       Text(
-        text = "Hari ini",
+        text = t("Hari ini"),
         style = MaterialTheme.typography.labelLarge,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.SemiBold
@@ -393,7 +394,7 @@ private fun MutabaahWeekSwitcher(
   Row(
     modifier = Modifier
       .fillMaxWidth()
-      .background(Color.White.copy(alpha = 0.86f), RoundedCornerShape(20.dp))
+      .background(CardBackground.copy(alpha = 0.86f), RoundedCornerShape(20.dp))
       .border(1.dp, CardBorder, RoundedCornerShape(20.dp))
       .padding(horizontal = 14.dp, vertical = 12.dp),
     verticalAlignment = Alignment.CenterVertically,
@@ -401,7 +402,7 @@ private fun MutabaahWeekSwitcher(
   ) {
     MutabaahCircleButton(
       icon = Icons.Outlined.ChevronLeft,
-      contentDescription = "Minggu sebelumnya",
+      contentDescription = t("Minggu sebelumnya"),
       onClick = onPreviousWeek
     )
     Text(
@@ -412,7 +413,7 @@ private fun MutabaahWeekSwitcher(
     )
     MutabaahCircleButton(
       icon = Icons.Outlined.ChevronRight,
-      contentDescription = "Minggu berikutnya",
+      contentDescription = t("Minggu berikutnya"),
       onClick = onNextWeek
     )
   }
@@ -436,7 +437,7 @@ private fun MutabaahSummaryCard(
     else -> "$done dari $total selesai"
   }
   val percent = if (total <= 0) 0 else ((done.toFloat() / total.toFloat()) * 100).toInt()
-  val scoreText = if (isApprovedLeave) "Izin" else "$percent%"
+  val scoreText = if (isApprovedLeave) t("Izin") else "$percent%"
   Column(
     modifier = Modifier
       .fillMaxWidth()
@@ -454,13 +455,13 @@ private fun MutabaahSummaryCard(
     ) {
       Column {
         Text(
-          text = "Progress Mutabaah",
+          text = t("Progress Mutabaah"),
           style = MaterialTheme.typography.titleSmall,
           color = PrimaryBlueDark,
           fontWeight = FontWeight.ExtraBold
         )
         Text(
-          text = label,
+          text = t(label),
           style = MaterialTheme.typography.bodySmall,
           color = SubtleInk,
           modifier = Modifier.padding(top = 2.dp)
@@ -512,7 +513,7 @@ private fun MutabaahTimelineRow(
           .size(30.dp)
           .shadow(8.dp, CircleShape, ambientColor = Color(0x180F172A), spotColor = Color(0x180F172A))
           .clip(CircleShape)
-          .background(if (checked) HighlightCard else Color.White)
+          .background(if (checked) HighlightCard else CardBackground)
           .border(
             2.dp,
             if (checked) HighlightCard.copy(alpha = 0.28f) else WarmAccent.copy(alpha = 0.62f),
@@ -530,7 +531,7 @@ private fun MutabaahTimelineRow(
 
           checked -> Icon(
             imageVector = Icons.Outlined.Check,
-            contentDescription = "Selesai",
+            contentDescription = t("Selesai"),
             tint = Color.White,
             modifier = Modifier.size(16.dp)
           )
@@ -594,8 +595,8 @@ private fun MutabaahTimelineRow(
             modifier = Modifier
               .size(38.dp)
               .clip(RoundedCornerShape(14.dp))
-              .background(Color.White.copy(alpha = 0.62f))
-              .border(1.dp, Color.White.copy(alpha = 0.58f), RoundedCornerShape(14.dp)),
+              .background(CardBackground.copy(alpha = 0.62f))
+              .border(1.dp, CardBorder.copy(alpha = 0.58f), RoundedCornerShape(14.dp)),
             contentAlignment = Alignment.Center
           ) {
             Icon(
@@ -637,8 +638,8 @@ private fun MutabaahTimelineRow(
           Box(
             modifier = Modifier
               .clip(RoundedCornerShape(999.dp))
-              .background(Color.White.copy(alpha = 0.68f))
-              .border(1.dp, Color.White.copy(alpha = 0.58f), RoundedCornerShape(999.dp))
+              .background(CardBackground.copy(alpha = 0.68f))
+              .border(1.dp, CardBorder.copy(alpha = 0.58f), RoundedCornerShape(999.dp))
               .padding(horizontal = 10.dp, vertical = 6.dp)
           ) {
             Text(
@@ -676,7 +677,7 @@ private fun MutabaahEmptyCard(message: String) {
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(22.dp))
-      .background(Color.White.copy(alpha = 0.84f))
+      .background(CardBackground.copy(alpha = 0.84f))
       .border(1.dp, CardBorder, RoundedCornerShape(22.dp))
       .padding(18.dp)
   ) {
@@ -697,14 +698,14 @@ private fun MutabaahCircleButton(
   Box(
     modifier = Modifier
       .size(42.dp)
-      .background(Color.White.copy(alpha = 0.86f), CircleShape)
+      .background(CardBackground.copy(alpha = 0.86f), CircleShape)
       .border(1.dp, CardBorder, CircleShape)
       .clickable(onClick = onClick),
     contentAlignment = Alignment.Center
   ) {
     Icon(
       imageVector = icon,
-      contentDescription = contentDescription,
+      contentDescription = t(contentDescription),
       tint = PrimaryBlueDark
     )
   }

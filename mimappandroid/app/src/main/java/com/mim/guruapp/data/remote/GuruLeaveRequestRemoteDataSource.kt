@@ -15,7 +15,11 @@ import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
 sealed interface GuruLeaveRequestSaveResult {
-  data class Success(val snapshot: LeaveRequestSnapshot) : GuruLeaveRequestSaveResult
+  data class Success(
+    val snapshot: LeaveRequestSnapshot,
+    val changedItem: LeaveRequestItem? = null,
+    val deletedId: String = ""
+  ) : GuruLeaveRequestSaveResult
   data class Error(val message: String) : GuruLeaveRequestSaveResult
 }
 
@@ -102,17 +106,18 @@ class GuruLeaveRequestRemoteDataSource {
         stream.write(payload.toString().toByteArray(Charsets.UTF_8))
         stream.flush()
       }
-      connection.useJsonArrayResponse { }
+      val createdItem = connection.useJsonArrayResponse { response ->
+        parseLeaveRequestItem(response.optJSONObject(0))
+      }
 
-      val snapshot = fetchLeaveRequestSnapshot(
-        teacherRowId = guruId,
-        teacherKaryawanId = teacherKaryawanId
-      ) ?: LeaveRequestSnapshot(
-        guruId = guruId,
-        requests = emptyList(),
-        updatedAt = System.currentTimeMillis()
+      GuruLeaveRequestSaveResult.Success(
+        snapshot = LeaveRequestSnapshot(
+          guruId = guruId,
+          requests = createdItem?.let(::listOf).orEmpty(),
+          updatedAt = System.currentTimeMillis()
+        ),
+        changedItem = createdItem
       )
-      GuruLeaveRequestSaveResult.Success(snapshot)
     }.getOrElse { error ->
       GuruLeaveRequestSaveResult.Error(resolveErrorMessage(error, fallback = "Gagal mengirim pengajuan izin."))
     }
@@ -148,15 +153,14 @@ class GuruLeaveRequestRemoteDataSource {
       }
       connection.useJsonArrayResponse { }
 
-      val snapshot = fetchLeaveRequestSnapshot(
-        teacherRowId = guruId,
-        teacherKaryawanId = teacherKaryawanId
-      ) ?: LeaveRequestSnapshot(
-        guruId = guruId,
-        requests = emptyList(),
-        updatedAt = System.currentTimeMillis()
+      GuruLeaveRequestSaveResult.Success(
+        snapshot = LeaveRequestSnapshot(
+          guruId = guruId,
+          requests = emptyList(),
+          updatedAt = System.currentTimeMillis()
+        ),
+        deletedId = normalizedRequestId
       )
-      GuruLeaveRequestSaveResult.Success(snapshot)
     }.getOrElse { error ->
       GuruLeaveRequestSaveResult.Error(resolveErrorMessage(error, fallback = "Gagal menghapus pengajuan izin."))
     }

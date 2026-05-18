@@ -25,6 +25,7 @@ import com.mim.guruapp.ui.components.LogoBackground
 import com.mim.guruapp.ui.components.PasswordIcon
 import com.mim.guruapp.ui.components.RememberMeRow
 import com.mim.guruapp.ui.components.UsernameIcon
+import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.MimGuruTheme
 
 @Composable
@@ -86,7 +87,7 @@ fun LoginScreen(
         )
 
         GradientLoginButton(
-          text = if (isBusy) "Memeriksa akun..." else "Login",
+          text = if (isBusy) t("Memeriksa akun...") else t("Login"),
           enabled = !isBusy,
           onClick = onLoginClick,
           modifier = Modifier.padding(top = 18.dp)

@@ -55,6 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -71,18 +72,23 @@ import com.mim.guruapp.data.model.MapelPatronMateriSnapshot
 import com.mim.guruapp.data.model.SubjectOverview
 import com.mim.guruapp.data.model.SyncBannerState
 import com.mim.guruapp.data.model.TeacherOption
+import com.mim.guruapp.ui.i18n.LocalAppLanguage
+import com.mim.guruapp.ui.i18n.formatDateForLanguage
+import com.mim.guruapp.ui.i18n.t
+import com.mim.guruapp.ui.i18n.ti
 import com.mim.guruapp.ui.theme.AppBackground
 import com.mim.guruapp.ui.theme.CardBorder
+import com.mim.guruapp.ui.theme.CardBackground
 import com.mim.guruapp.ui.theme.HighlightCard
 import com.mim.guruapp.ui.theme.PrimaryBlue
 import com.mim.guruapp.ui.theme.PrimaryBlueDark
+import com.mim.guruapp.ui.theme.SoftPanel
 import com.mim.guruapp.ui.theme.SubtleInk
 import com.mim.guruapp.ui.theme.SuccessTint
 import com.mim.guruapp.ui.theme.WarmAccent
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.coroutines.launch
 
@@ -217,8 +223,9 @@ fun InputAbsensiScreen(
       .distinct()
   }
   val students = attendanceSnapshot?.students.orEmpty()
-  val materiSuggestion = remember(students, dateIso, selectedSubjectId) {
-    buildInputAbsensiMateriSuggestion(students = students, dateIso = dateIso)
+  val language = LocalAppLanguage.current
+  val materiSuggestion = remember(students, dateIso, selectedSubjectId, language) {
+    buildInputAbsensiMateriSuggestion(students = students, dateIso = dateIso, language = language)
   }
 
   LaunchedEffect(scheduleOptionsForDate, selectedClassName, selectedSubjectId) {
@@ -537,13 +544,13 @@ fun InputAbsensiScreen(
           ) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
               Text(
-                text = "Kehadiran Siswa",
+                text = t("Kehadiran Siswa"),
                 style = MaterialTheme.typography.titleMedium,
                 color = PrimaryBlueDark,
                 fontWeight = FontWeight.ExtraBold
               )
               Text(
-                text = "${students.size} santri siap diisi",
+                text = "${students.size} ${t("santri siap diisi")}",
                 style = MaterialTheme.typography.bodySmall,
                 color = SubtleInk
               )
@@ -688,7 +695,7 @@ private fun InputAbsensiTopBar(
   ) {
     InputAbsensiGlassActionButton(
       icon = Icons.Outlined.Menu,
-      contentDescription = "Buka sidebar",
+      contentDescription = t("Buka sidebar"),
       onClick = onMenuClick
     )
 
@@ -703,7 +710,7 @@ private fun InputAbsensiTopBar(
         verticalArrangement = Arrangement.spacedBy(5.dp)
       ) {
         Text(
-          text = title,
+          text = t(title),
           style = MaterialTheme.typography.titleLarge,
           color = PrimaryBlueDark,
           fontWeight = FontWeight.ExtraBold,
@@ -742,18 +749,19 @@ private fun InputAbsensiGlassActionButton(
   contentDescription: String,
   onClick: () -> Unit
 ) {
+  val isDarkMode = CardBackground.luminance() < 0.5f
   Box(
     modifier = Modifier
       .size(42.dp)
-      .background(Color.White.copy(alpha = 0.86f), CircleShape)
-      .border(1.dp, CardBorder, CircleShape)
+      .background(if (isDarkMode) SoftPanel.copy(alpha = 0.94f) else CardBackground.copy(alpha = 0.86f), CircleShape)
+      .border(1.dp, if (isDarkMode) PrimaryBlue.copy(alpha = 0.24f) else CardBorder, CircleShape)
       .clickable(onClick = onClick),
     contentAlignment = Alignment.Center
   ) {
     Icon(
       imageVector = icon,
-      contentDescription = contentDescription,
-      tint = PrimaryBlueDark
+      contentDescription = t(contentDescription),
+      tint = if (isDarkMode) PrimaryBlue else PrimaryBlueDark
     )
   }
 }
@@ -850,12 +858,12 @@ private fun InputAbsensiDateField(
             showPicker = false
           }
         ) {
-          Text("Pilih")
+          Text(t("Pilih"))
         }
       },
       dismissButton = {
         TextButton(onClick = { showPicker = false }) {
-          Text("Batal")
+          Text(t("Batal"))
         }
       }
     ) {
@@ -882,8 +890,8 @@ private fun InputAbsensiMateriCard(
       value = materiText,
       onValueChange = onMateriChange,
       singleLine = true,
-      label = { Text("Materi") },
-      placeholder = { Text("Contoh: Murojaah bab fi'il") },
+      label = { Text(t("Materi")) },
+      placeholder = { Text(t("Contoh: Murojaah bab fi'il")) },
       modifier = Modifier.fillMaxWidth(),
       shape = RoundedCornerShape(16.dp)
     )
@@ -894,7 +902,7 @@ private fun InputAbsensiMateriCard(
       )
     } else {
       Text(
-        text = "Belum ada riwayat materi sebelumnya untuk mapel ini.",
+        text = t("Belum ada riwayat materi sebelumnya untuk mapel ini."),
         style = MaterialTheme.typography.bodySmall,
         color = SubtleInk
       )
@@ -929,7 +937,7 @@ private fun InputAbsensiMateriSuggestionChip(
       modifier = Modifier
         .size(34.dp)
         .clip(RoundedCornerShape(13.dp))
-        .background(Color.White.copy(alpha = 0.72f)),
+        .background(CardBackground.copy(alpha = 0.72f)),
       contentAlignment = Alignment.Center
     ) {
       Icon(
@@ -959,7 +967,7 @@ private fun InputAbsensiMateriSuggestionChip(
       )
     }
     Text(
-      text = "Pakai",
+      text = t("Pakai"),
       style = MaterialTheme.typography.labelMedium,
       color = HighlightCard,
       fontWeight = FontWeight.ExtraBold
@@ -1038,8 +1046,8 @@ private fun InputAbsensiGuruPenggantiCard(
           value = note,
           onValueChange = onNoteChange,
           singleLine = true,
-          label = { Text("Keterangan pengganti") },
-          placeholder = { Text("Contoh: Guru utama izin") },
+          label = { Text(t("Keterangan pengganti")) },
+          placeholder = { Text(t("Contoh: Guru utama izin")) },
           modifier = Modifier.fillMaxWidth(),
           shape = RoundedCornerShape(16.dp)
         )
@@ -1057,7 +1065,7 @@ private fun InputAbsensiGuruPenggantiCard(
         )
         if (!canSendDelegation) {
           Text(
-            text = "Pilih guru pengganti dan minimal satu jam pelajaran terlebih dahulu.",
+            text = t("Pilih guru pengganti dan minimal satu jam pelajaran terlebih dahulu."),
             style = MaterialTheme.typography.bodySmall,
             color = SubtleInk
           )
@@ -1084,13 +1092,13 @@ private fun InputAbsensiSubstituteToggleRow(
       verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
       Text(
-        text = title,
+        text = t(title),
         style = MaterialTheme.typography.bodyMedium,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.SemiBold
       )
       Text(
-        text = subtitle,
+        text = ti(subtitle),
         style = MaterialTheme.typography.bodySmall,
         color = SubtleInk
       )
@@ -1115,7 +1123,7 @@ private fun InputAbsensiSectionCard(
       .fillMaxWidth()
       .shadow(12.dp, RoundedCornerShape(24.dp), ambientColor = Color(0x100F172A), spotColor = Color(0x100F172A))
       .clip(RoundedCornerShape(24.dp))
-      .background(Color.White.copy(alpha = 0.94f))
+      .background(CardBackground.copy(alpha = 0.94f))
       .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(24.dp))
       .padding(16.dp),
     verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -1139,7 +1147,7 @@ private fun InputAbsensiSectionCard(
         )
       }
       Text(
-        text = title,
+        text = t(title),
         style = MaterialTheme.typography.titleMedium,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.ExtraBold,
@@ -1152,14 +1160,14 @@ private fun InputAbsensiSectionCard(
           modifier = Modifier
             .size(34.dp)
             .clip(CircleShape)
-            .background(Color(0xFFF8FAFC))
+            .background(SoftPanel)
             .border(1.dp, CardBorder.copy(alpha = 0.9f), CircleShape)
             .clickable { showInfo = true },
           contentAlignment = Alignment.Center
         ) {
           Icon(
             imageVector = Icons.Outlined.Info,
-            contentDescription = "Info $title",
+            contentDescription = "${t("Info")} ${t(title)}",
             tint = SubtleInk,
             modifier = Modifier.size(18.dp)
           )
@@ -1176,19 +1184,19 @@ private fun InputAbsensiSectionCard(
                 .padding(top = 42.dp)
                 .shadow(16.dp, RoundedCornerShape(18.dp), ambientColor = Color(0x1A0F172A), spotColor = Color(0x1A0F172A))
                 .clip(RoundedCornerShape(18.dp))
-                .background(Color.White.copy(alpha = 0.98f))
+                .background(CardBackground.copy(alpha = 0.98f))
                 .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(18.dp))
                 .padding(14.dp),
               verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
               Text(
-                text = "Catatan",
+                text = t("Catatan"),
                 style = MaterialTheme.typography.labelLarge,
                 color = PrimaryBlueDark,
                 fontWeight = FontWeight.ExtraBold
               )
               Text(
-                text = infoText,
+                text = ti(infoText),
                 style = MaterialTheme.typography.bodySmall,
                 color = SubtleInk
               )
@@ -1223,13 +1231,13 @@ private fun <T> InputAbsensiDropdownField(
     ) {
       if (options.isEmpty()) {
         DropdownMenuItem(
-          text = { Text("Belum ada pilihan") },
+          text = { Text(t("Belum ada pilihan")) },
           onClick = { expanded = false }
         )
       } else {
         options.forEach { option ->
           DropdownMenuItem(
-            text = { Text(optionLabel(option)) },
+            text = { Text(t(optionLabel(option))) },
             onClick = {
               onSelect(option)
               expanded = false
@@ -1252,21 +1260,21 @@ private fun InputAbsensiPickerSurface(
     modifier = modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(16.dp))
-      .background(Color.White.copy(alpha = 0.74f))
+      .background(SoftPanel.copy(alpha = 0.86f))
       .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(16.dp))
       .clickable(onClick = onClick)
       .padding(horizontal = 14.dp, vertical = 10.dp),
     verticalArrangement = Arrangement.spacedBy(3.dp)
   ) {
     Text(
-      text = label,
+      text = t(label),
       style = MaterialTheme.typography.labelSmall,
       color = SubtleInk,
       fontWeight = FontWeight.SemiBold,
       maxLines = 1
     )
     Text(
-      text = value,
+      text = t(value),
       style = MaterialTheme.typography.bodyMedium,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.SemiBold,
@@ -1288,7 +1296,7 @@ private fun InputAbsensiStudentCard(
       .fillMaxWidth()
       .shadow(9.dp, RoundedCornerShape(20.dp), ambientColor = Color(0x100F172A), spotColor = Color(0x100F172A))
       .clip(RoundedCornerShape(20.dp))
-      .background(Color.White.copy(alpha = 0.94f))
+      .background(CardBackground.copy(alpha = 0.94f))
       .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(20.dp))
       .animateContentSize()
       .padding(14.dp),
@@ -1314,7 +1322,7 @@ private fun InputAbsensiStudentCard(
           overflow = TextOverflow.Ellipsis
         )
         Text(
-          text = "Status hari ini: $status",
+          text = "${t("Status hari ini")}: ${t(status)}",
           style = MaterialTheme.typography.bodySmall,
           color = SubtleInk
         )
@@ -1329,7 +1337,7 @@ private fun InputAbsensiStudentCard(
           modifier = Modifier
             .weight(1f)
             .clip(RoundedCornerShape(999.dp))
-            .background(if (selected) optionPalette.background else Color(0xFFF8FAFC))
+            .background(if (selected) optionPalette.background else SoftPanel)
             .border(
               1.dp,
               if (selected) optionPalette.border else CardBorder.copy(alpha = 0.84f),
@@ -1384,7 +1392,7 @@ private fun InputAbsensiStudentCompactCard(
       .fillMaxWidth()
       .shadow(9.dp, RoundedCornerShape(20.dp), ambientColor = Color(0x100F172A), spotColor = Color(0x100F172A))
       .clip(RoundedCornerShape(20.dp))
-      .background(Color.White.copy(alpha = 0.94f))
+      .background(CardBackground.copy(alpha = 0.94f))
       .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(20.dp))
       .padding(horizontal = 14.dp, vertical = 12.dp),
     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1465,7 +1473,7 @@ private fun InputAbsensiSaveButton(
   Box(
     modifier = modifier
       .clip(RoundedCornerShape(999.dp))
-      .background(if (enabled) SuccessTint.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.7f))
+      .background(if (enabled) SuccessTint.copy(alpha = 0.18f) else SoftPanel.copy(alpha = 0.7f))
       .border(
         1.dp,
         if (enabled) SuccessTint.copy(alpha = 0.38f) else CardBorder.copy(alpha = 0.86f),
@@ -1592,7 +1600,8 @@ private fun buildInputAbsensiEntries(
 
 private fun buildInputAbsensiMateriSuggestion(
   students: List<AttendanceStudent>,
-  dateIso: String
+  dateIso: String,
+  language: com.mim.guruapp.ui.i18n.AppLanguage
 ): InputAbsensiMateriSuggestion? {
   val histories = students
     .flatMap { it.history }
@@ -1608,7 +1617,7 @@ private fun buildInputAbsensiMateriSuggestion(
   }
 
   val latest = histories.maxByOrNull { it.dateIso } ?: return null
-  val formattedDate = runCatching { formatInputAbsensiDate(latest.dateIso) }
+  val formattedDate = runCatching { formatDateForLanguage(LocalDate.parse(latest.dateIso), "EEEE, dd MMM yyyy", language) }
     .getOrDefault(latest.dateIso)
   val materi = latest.patronMateri.trim()
   return InputAbsensiMateriSuggestion(
@@ -1668,9 +1677,10 @@ private fun String.normalizedNullableId(): String {
   return if (text.equals("null", ignoreCase = true)) "" else text
 }
 
+@Composable
 private fun formatInputAbsensiDate(dateIso: String): String {
   val date = runCatching { LocalDate.parse(dateIso) }.getOrDefault(LocalDate.now())
-  return date.format(DateTimeFormatter.ofPattern("EEEE, dd MMM yyyy", Locale.forLanguageTag("id-ID")))
+  return formatDateForLanguage(date, "EEEE, dd MMM yyyy", LocalAppLanguage.current)
 }
 
 private fun dateIsoToPickerMillis(dateIso: String): Long {

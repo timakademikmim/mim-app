@@ -28,30 +28,31 @@ class GuruWaliSantriRemoteDataSource {
     teacherRowId: String,
     teacherKaryawanId: String
   ): WaliSantriSnapshot? = withContext(Dispatchers.IO) {
-    val teacherIds = listOf(teacherRowId, teacherKaryawanId)
-      .map { it.trim() }
-      .filter { it.isNotBlank() }
-      .distinct()
-    if (teacherIds.isEmpty()) return@withContext null
+    val teacherId = teacherRowId.trim()
+    if (teacherId.isBlank()) {
+      return@withContext WaliSantriSnapshot(
+        isWaliKelas = false,
+        classes = emptyList(),
+        students = emptyList(),
+        updatedAt = System.currentTimeMillis()
+      )
+    }
 
     runCatching {
       val activeYearId = resolveActiveTahunAjaranId()
-      val kelasRows = teacherIds.firstNotNullOfOrNull { teacherId ->
-        val rows = fetchRows(
-          table = "kelas",
-          query = buildString {
-            append("select=id,nama_kelas,wali_kelas_id,tahun_ajaran_id")
-            append("&wali_kelas_id=eq.")
-            append(encodeValue(teacherId))
-            if (activeYearId.isNotBlank()) {
-              append("&tahun_ajaran_id=eq.")
-              append(encodeValue(activeYearId))
-            }
-            append("&order=nama_kelas.asc")
+      val kelasRows = fetchRows(
+        table = "kelas",
+        query = buildString {
+          append("select=id,nama_kelas,wali_kelas_id,tahun_ajaran_id")
+          append("&wali_kelas_id=eq.")
+          append(encodeValue(teacherId))
+          if (activeYearId.isNotBlank()) {
+            append("&tahun_ajaran_id=eq.")
+            append(encodeValue(activeYearId))
           }
-        )
-        rows.takeIf { it.isNotEmpty() }
-      }.orEmpty()
+          append("&order=nama_kelas.asc")
+        }
+      )
 
       if (kelasRows.isEmpty()) {
         return@runCatching WaliSantriSnapshot(
@@ -83,7 +84,8 @@ class GuruWaliSantriRemoteDataSource {
   }
 
   suspend fun updateWaliSantriProfile(
-    draft: WaliSantriProfile
+    draft: WaliSantriProfile,
+    original: WaliSantriProfile? = null
   ): GuruWaliSantriSaveResult = withContext(Dispatchers.IO) {
     val normalizedId = draft.id.trim()
     val normalizedName = draft.name.trim()
@@ -94,7 +96,7 @@ class GuruWaliSantriRemoteDataSource {
       return@withContext GuruWaliSantriSaveResult.Error("Nama santri wajib diisi.")
     }
 
-    val updateFields = linkedMapOf(
+    val draftFields = linkedMapOf(
       "nama" to normalizedName,
       "nisn" to draft.nisn.trim(),
       "jenis_kelamin" to draft.gender.trim(),
@@ -108,6 +110,28 @@ class GuruWaliSantriRemoteDataSource {
       "alamat" to draft.address.trim(),
       "catatan" to draft.note.trim()
     )
+    val originalFields = original?.let { source ->
+      linkedMapOf(
+        "nama" to source.name.trim(),
+        "nisn" to source.nisn.trim(),
+        "jenis_kelamin" to source.gender.trim(),
+        "ayah" to source.fatherName.trim(),
+        "ibu" to source.motherName.trim(),
+        "wali" to source.guardianName.trim(),
+        "no_hp_ayah" to source.fatherPhone.trim(),
+        "no_hp_ibu" to source.motherPhone.trim(),
+        "no_hp_wali" to source.guardianPhone.trim(),
+        "no_hp" to source.studentPhone.trim(),
+        "alamat" to source.address.trim(),
+        "catatan" to source.note.trim()
+      )
+    }
+    val updateFields = draftFields.filterTo(linkedMapOf()) { (key, value) ->
+      originalFields == null || originalFields[key].orEmpty() != value
+    }
+    if (updateFields.isEmpty()) {
+      return@withContext GuruWaliSantriSaveResult.Success(draft, "Tidak ada perubahan data santri.")
+    }
     val savedFields = linkedMapOf<String, String>()
     val unsupportedFields = mutableSetOf<String>()
 
@@ -238,7 +262,7 @@ class GuruWaliSantriRemoteDataSource {
     return runCatching {
       fetchRows(
         table = "tahun_ajaran",
-        query = "select=id&aktif=eq.true&limit=1"
+        query = "select=id&aktif=eq.true&order=id.desc&limit=1"
       ).firstOrNull()?.cleanString("id").orEmpty()
     }.getOrDefault("")
   }

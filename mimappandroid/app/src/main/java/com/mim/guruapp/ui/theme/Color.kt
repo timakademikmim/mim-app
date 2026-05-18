@@ -1,6 +1,7 @@
 package com.mim.guruapp.ui.theme
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
 internal val LightPrimaryBlue = Color(0xFF1D4ED8)
@@ -19,62 +20,134 @@ internal val LightSubtleInk = Color(0xFF475569)
 internal val LightLoginButtonYellow = Color(0xFFD4D456)
 internal val LightLoginFieldFill = Color(0xFFDBE7F8)
 
+internal val DarkPrimaryBlue = Color(0xFF93C5FD)
+internal val DarkPrimaryBlueDark = Color(0xFFE2E8F0)
+internal val DarkHighlightCard = Color(0xFF38BDF8)
+internal val DarkSuccessTint = Color(0xFF34D399)
+internal val DarkWarmAccent = Color(0xFFFBBF24)
+internal val DarkAppBackground = Color(0xFF07111F)
+internal val DarkLoginBackground = Color(0xFF08111F)
+internal val DarkCardBackground = Color(0xFF111827)
+internal val DarkCardBorder = Color(0xFF334155)
+internal val DarkCardGradientStart = Color(0xFF111827)
+internal val DarkCardGradientEnd = Color(0xFF0F172A)
+internal val DarkSoftPanel = Color(0xFF172033)
+internal val DarkSubtleInk = Color(0xFFCBD5E1)
+internal val DarkLoginButtonYellow = Color(0xFFE2E85D)
+internal val DarkLoginFieldFill = Color(0xFF172A46)
+
+internal data class MimGuruColors(
+  val appBackground: Color,
+  val loginBackground: Color,
+  val primaryBlue: Color,
+  val primaryBlueDark: Color,
+  val highlightCard: Color,
+  val successTint: Color,
+  val cardBackground: Color,
+  val cardBorder: Color,
+  val warmAccent: Color,
+  val cardGradientStart: Color,
+  val cardGradientEnd: Color,
+  val softPanel: Color,
+  val subtleInk: Color,
+  val loginButtonYellow: Color,
+  val loginFieldFill: Color
+)
+
+internal val LightMimGuruColors = MimGuruColors(
+  appBackground = LightAppBackground,
+  loginBackground = LightLoginBackground,
+  primaryBlue = LightPrimaryBlue,
+  primaryBlueDark = LightPrimaryBlueDark,
+  highlightCard = LightHighlightCard,
+  successTint = LightSuccessTint,
+  cardBackground = LightCardBackground,
+  cardBorder = LightCardBorder,
+  warmAccent = LightWarmAccent,
+  cardGradientStart = LightCardGradientStart,
+  cardGradientEnd = LightCardGradientEnd,
+  softPanel = LightSoftPanel,
+  subtleInk = LightSubtleInk,
+  loginButtonYellow = LightLoginButtonYellow,
+  loginFieldFill = LightLoginFieldFill
+)
+
+internal val DarkMimGuruColors = MimGuruColors(
+  appBackground = DarkAppBackground,
+  loginBackground = DarkLoginBackground,
+  primaryBlue = DarkPrimaryBlue,
+  primaryBlueDark = DarkPrimaryBlueDark,
+  highlightCard = DarkHighlightCard,
+  successTint = DarkSuccessTint,
+  cardBackground = DarkCardBackground,
+  cardBorder = DarkCardBorder,
+  warmAccent = DarkWarmAccent,
+  cardGradientStart = DarkCardGradientStart,
+  cardGradientEnd = DarkCardGradientEnd,
+  softPanel = DarkSoftPanel,
+  subtleInk = DarkSubtleInk,
+  loginButtonYellow = DarkLoginButtonYellow,
+  loginFieldFill = DarkLoginFieldFill
+)
+
+internal val LocalMimGuruColors = staticCompositionLocalOf { LightMimGuruColors }
+
 val AppBackground: Color
   @Composable
-  get() = LightAppBackground
+  get() = LocalMimGuruColors.current.appBackground
 
 val LoginBackground: Color
   @Composable
-  get() = LightLoginBackground
+  get() = LocalMimGuruColors.current.loginBackground
 
 val PrimaryBlue: Color
   @Composable
-  get() = LightPrimaryBlue
+  get() = LocalMimGuruColors.current.primaryBlue
 
 val PrimaryBlueDark: Color
   @Composable
-  get() = LightPrimaryBlueDark
+  get() = LocalMimGuruColors.current.primaryBlueDark
 
 val HighlightCard: Color
   @Composable
-  get() = LightHighlightCard
+  get() = LocalMimGuruColors.current.highlightCard
 
 val SuccessTint: Color
   @Composable
-  get() = LightSuccessTint
+  get() = LocalMimGuruColors.current.successTint
 
 val CardBackground: Color
   @Composable
-  get() = LightCardBackground
+  get() = LocalMimGuruColors.current.cardBackground
 
 val CardBorder: Color
   @Composable
-  get() = LightCardBorder
+  get() = LocalMimGuruColors.current.cardBorder
 
 val WarmAccent: Color
   @Composable
-  get() = LightWarmAccent
+  get() = LocalMimGuruColors.current.warmAccent
 
 val CardGradientStart: Color
   @Composable
-  get() = LightCardGradientStart
+  get() = LocalMimGuruColors.current.cardGradientStart
 
 val CardGradientEnd: Color
   @Composable
-  get() = LightCardGradientEnd
+  get() = LocalMimGuruColors.current.cardGradientEnd
 
 val SoftPanel: Color
   @Composable
-  get() = LightSoftPanel
+  get() = LocalMimGuruColors.current.softPanel
 
 val SubtleInk: Color
   @Composable
-  get() = LightSubtleInk
+  get() = LocalMimGuruColors.current.subtleInk
 
 val LoginButtonYellow: Color
   @Composable
-  get() = LightLoginButtonYellow
+  get() = LocalMimGuruColors.current.loginButtonYellow
 
 val LoginFieldFill: Color
   @Composable
-  get() = LightLoginFieldFill
+  get() = LocalMimGuruColors.current.loginFieldFill

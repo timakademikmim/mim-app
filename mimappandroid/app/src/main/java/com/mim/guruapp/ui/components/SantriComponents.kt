@@ -79,6 +79,7 @@ import androidx.compose.ui.unit.dp
 import com.mim.guruapp.SantriSaveOutcome
 import com.mim.guruapp.data.model.WaliSantriProfile
 import com.mim.guruapp.data.model.WaliSantriSnapshot
+import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.AppBackground
 import com.mim.guruapp.ui.theme.CardBackground
 import com.mim.guruapp.ui.theme.CardBorder
@@ -480,7 +481,7 @@ private fun SantriTopBar(
       onClick = onLeadingClick
     )
     Text(
-      text = title,
+      text = t(title),
       style = MaterialTheme.typography.titleMedium,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.ExtraBold,
@@ -519,7 +520,7 @@ private fun SantriTopButton(
   ) {
     Icon(
       imageVector = icon,
-      contentDescription = contentDescription,
+      contentDescription = t(contentDescription),
       tint = PrimaryBlueDark
     )
   }
@@ -534,12 +535,12 @@ private fun SantriSearchBar(
   OutlinedTextField(
     value = query,
     onValueChange = onQueryChange,
-    placeholder = { Text("Cari nama atau NISN") },
+    placeholder = { Text(t("Cari nama atau NISN")) },
     singleLine = true,
     leadingIcon = {
       Icon(
         imageVector = Icons.Outlined.Search,
-        contentDescription = "Cari",
+        contentDescription = t("Cari"),
         tint = SubtleInk
       )
     },
@@ -580,7 +581,7 @@ private fun SantriCard(
         overflow = TextOverflow.Ellipsis
       )
       Text(
-        text = if (santri.nisn.isBlank()) "NISN belum tersedia" else "NISN ${santri.nisn}",
+        text = if (santri.nisn.isBlank()) t("NISN belum tersedia") else "NISN ${santri.nisn}",
         style = MaterialTheme.typography.bodySmall,
         color = SubtleInk,
         maxLines = 1,
@@ -614,7 +615,7 @@ private fun SantriProfileHeader(
       ) {
         Icon(
           imageVector = Icons.Outlined.Edit,
-          contentDescription = "Edit foto santri",
+          contentDescription = t("Edit foto santri"),
           tint = Color.White,
           modifier = Modifier.size(16.dp)
         )
@@ -622,7 +623,7 @@ private fun SantriProfileHeader(
     }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
       Text(
-        text = name.ifBlank { "Nama Santri" },
+        text = name.ifBlank { t("Nama Santri") },
         style = MaterialTheme.typography.titleLarge,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.ExtraBold,
@@ -655,13 +656,13 @@ private fun SantriFormPanel(
     verticalArrangement = Arrangement.spacedBy(14.dp)
   ) {
     Text(
-      text = title,
+      text = t(title),
       style = MaterialTheme.typography.titleMedium,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.ExtraBold
     )
     Text(
-      text = subtitle,
+      text = t(subtitle),
       style = MaterialTheme.typography.bodySmall,
       color = SubtleInk
     )
@@ -687,7 +688,7 @@ private fun ContactPersonFields(
     verticalArrangement = Arrangement.spacedBy(10.dp)
   ) {
     Text(
-      text = title,
+      text = t(title),
       style = MaterialTheme.typography.titleSmall,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.ExtraBold
@@ -735,7 +736,7 @@ private fun SantriGenderDropdownField(
       ) {
         Icon(
           imageVector = Icons.Outlined.Person,
-          contentDescription = label,
+          contentDescription = t(label),
           tint = SubtleInk,
           modifier = Modifier.size(20.dp)
         )
@@ -745,13 +746,13 @@ private fun SantriGenderDropdownField(
         verticalArrangement = Arrangement.spacedBy(2.dp)
       ) {
         Text(
-          text = label,
+          text = t(label),
           style = MaterialTheme.typography.labelMedium,
           color = SubtleInk,
           fontWeight = FontWeight.SemiBold
         )
         Text(
-          text = selectedLabel,
+          text = t(selectedLabel),
           style = MaterialTheme.typography.bodyMedium,
           color = if (normalizeGenderCode(value).isBlank()) SubtleInk else PrimaryBlueDark,
           fontWeight = FontWeight.SemiBold,
@@ -761,7 +762,7 @@ private fun SantriGenderDropdownField(
       }
       Icon(
         imageVector = Icons.Outlined.KeyboardArrowDown,
-        contentDescription = "Buka pilihan jenis kelamin",
+        contentDescription = t("Buka pilihan jenis kelamin"),
         tint = SubtleInk,
         modifier = Modifier.size(20.dp)
       )
@@ -773,7 +774,7 @@ private fun SantriGenderDropdownField(
     ) {
       SantriGenderOptions.forEach { option ->
         DropdownMenuItem(
-          text = { Text(option.label) },
+          text = { Text(t(option.label)) },
           onClick = {
             onValueChange(option.code)
             expanded = false
@@ -857,7 +858,7 @@ private fun SantriInputField(
       ) {
         Icon(
           imageVector = leadingIcon,
-          contentDescription = label,
+          contentDescription = t(label),
           tint = SubtleInk,
           modifier = Modifier.size(20.dp)
         )
@@ -865,7 +866,7 @@ private fun SantriInputField(
       OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        label = { Text(label) },
+        label = { Text(t(label)) },
         modifier = Modifier.weight(1f),
         singleLine = false,
         minLines = minLines,
@@ -880,7 +881,7 @@ private fun SantriInputField(
   OutlinedTextField(
     value = value,
     onValueChange = onValueChange,
-    label = { Text(label) },
+    label = { Text(t(label)) },
     modifier = Modifier.fillMaxWidth(),
     singleLine = singleLine,
     minLines = minLines,
@@ -891,7 +892,7 @@ private fun SantriInputField(
       ) {
         Icon(
           imageVector = leadingIcon,
-          contentDescription = label,
+          contentDescription = t(label),
           tint = SubtleInk,
           modifier = Modifier.size(20.dp)
         )

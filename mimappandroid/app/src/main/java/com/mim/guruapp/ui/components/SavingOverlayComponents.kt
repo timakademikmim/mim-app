@@ -28,6 +28,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.CardBackground
 import com.mim.guruapp.ui.theme.CardBorder
 import com.mim.guruapp.ui.theme.PrimaryBlue
@@ -82,14 +83,14 @@ fun SavingOverlay(
             modifier = Modifier.size(34.dp)
           )
           Text(
-            text = title,
+            text = t(title),
             style = MaterialTheme.typography.bodyMedium,
             color = PrimaryBlueDark,
             fontWeight = FontWeight.SemiBold,
             textAlign = TextAlign.Center
           )
           Text(
-            text = subtitle,
+            text = t(subtitle),
             style = MaterialTheme.typography.bodySmall,
             color = SubtleInk,
             textAlign = TextAlign.Center

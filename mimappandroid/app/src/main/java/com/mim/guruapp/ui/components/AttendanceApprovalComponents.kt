@@ -41,6 +41,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mim.guruapp.data.model.AttendanceApprovalRequest
 import com.mim.guruapp.data.model.AttendanceApprovalStudent
+import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.CardBorder
 import com.mim.guruapp.ui.theme.PrimaryBlueDark
 import com.mim.guruapp.ui.theme.SubtleInk
@@ -95,13 +96,13 @@ fun AttendanceApprovalPopup(
           verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
           Text(
-            text = "Review Absensi Pengganti",
+            text = t("Review Absensi Pengganti"),
             style = MaterialTheme.typography.titleLarge,
             color = PrimaryBlueDark,
             fontWeight = FontWeight.ExtraBold
           )
           Text(
-            text = "Persetujuan guru utama diperlukan sebelum absensi masuk ke sistem.",
+            text = t("Persetujuan guru utama diperlukan sebelum absensi masuk ke sistem."),
             style = MaterialTheme.typography.bodySmall,
             color = SubtleInk
           )
@@ -116,7 +117,7 @@ fun AttendanceApprovalPopup(
         ) {
           Icon(
             imageVector = Icons.Outlined.Close,
-            contentDescription = "Tutup review",
+            contentDescription = t("Tutup review"),
             tint = SubtleInk,
             modifier = Modifier.size(18.dp)
           )
@@ -143,13 +144,13 @@ fun AttendanceApprovalPopup(
           onValueChange = { reviewerNote = it },
           modifier = Modifier.fillMaxWidth(),
           shape = RoundedCornerShape(18.dp),
-          label = { Text("Catatan review (opsional)") },
+          label = { Text(t("Catatan review (opsional)")) },
           minLines = 2,
           maxLines = 4
         )
 
         Text(
-          text = "Daftar santri",
+          text = t("Daftar santri"),
           style = MaterialTheme.typography.titleSmall,
           color = PrimaryBlueDark,
           fontWeight = FontWeight.Bold
@@ -251,7 +252,7 @@ private fun AttendanceApprovalMetaRow(
     horizontalArrangement = Arrangement.spacedBy(10.dp)
   ) {
     Text(
-      text = label,
+      text = t(label),
       style = MaterialTheme.typography.labelMedium,
       color = SubtleInk,
       fontWeight = FontWeight.SemiBold,
@@ -301,7 +302,7 @@ private fun AttendanceApprovalStudentCard(
         .padding(horizontal = 10.dp, vertical = 6.dp)
     ) {
       Text(
-        text = student.status,
+        text = t(student.status),
         style = MaterialTheme.typography.labelMedium,
         color = palette,
         fontWeight = FontWeight.Bold
@@ -335,7 +336,7 @@ private fun AttendanceApprovalActionButton(
       modifier = Modifier.size(18.dp)
     )
     Text(
-      text = title,
+      text = t(title),
       style = MaterialTheme.typography.labelLarge,
       color = tint,
       fontWeight = FontWeight.ExtraBold,

@@ -104,6 +104,7 @@ import com.mim.guruapp.data.model.UtsSubjectOverride
 import com.mim.guruapp.data.model.WaliSantriProfile
 import com.mim.guruapp.data.model.WaliSantriSnapshot
 import com.mim.guruapp.export.UtsReportExporter
+import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.AppBackground
 import com.mim.guruapp.ui.theme.CardBackground
 import com.mim.guruapp.ui.theme.CardBorder
@@ -622,7 +623,7 @@ private fun LaporanUtsDetailContent(
             LaporanUtsEditableInfoRow("Halaqah - Sakit", halaqahSakit, editMode, onValueChange = { halaqahSakit = sanitizeCountInput(it) })
             if (draftPayload.attendanceRangeLabel.isNotBlank()) {
               Text(
-                text = "Rentang: ${draftPayload.attendanceRangeLabel}",
+                text = "${t("Rentang")}: ${draftPayload.attendanceRangeLabel}",
                 style = MaterialTheme.typography.labelMedium,
                 color = SubtleInk
               )
@@ -704,10 +705,10 @@ private fun LaporanUtsTopBar(
         .clickable(onClick = onNavigationClick),
       contentAlignment = Alignment.Center
     ) {
-      Icon(navigationIcon, contentDescription = title, tint = PrimaryBlueDark)
+      Icon(navigationIcon, contentDescription = t(title), tint = PrimaryBlueDark)
     }
     Text(
-      text = title,
+      text = t(title),
       style = MaterialTheme.typography.titleLarge,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.ExtraBold,
@@ -727,7 +728,7 @@ private fun LaporanUtsTopBar(
           .clickable(onClick = onActionClick),
         contentAlignment = Alignment.Center
       ) {
-        Icon(actionIcon, contentDescription = "Aksi", tint = PrimaryBlue)
+        Icon(actionIcon, contentDescription = t("Aksi"), tint = PrimaryBlue)
       }
     } else {
       Spacer(modifier = Modifier.width(42.dp))
@@ -760,7 +761,7 @@ private fun LaporanUtsControlCard(
       verticalAlignment = Alignment.CenterVertically
     ) {
       Column(modifier = Modifier.weight(1f)) {
-        Text("Periode PTS", style = MaterialTheme.typography.labelLarge, color = SubtleInk)
+        Text(t("Periode PTS"), style = MaterialTheme.typography.labelLarge, color = SubtleInk)
         Box {
           Row(
             modifier = Modifier
@@ -776,7 +777,7 @@ private fun LaporanUtsControlCard(
               color = PrimaryBlueDark,
               fontWeight = FontWeight.SemiBold
             )
-            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Pilih semester", tint = SubtleInk)
+            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = t("Pilih semester"), tint = SubtleInk)
           }
           DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             semesters.forEach { semester ->
@@ -792,19 +793,19 @@ private fun LaporanUtsControlCard(
         }
       }
       Button(onClick = onImportClick) {
-        Icon(Icons.Outlined.UploadFile, contentDescription = "Input massal")
+        Icon(Icons.Outlined.UploadFile, contentDescription = t("Input massal"))
         Spacer(modifier = Modifier.width(8.dp))
-        Text("Input Massal")
+        Text(t("Input Massal"))
       }
     }
     Text(
-      text = "Data dasar diambil dari nilai PTS sistem. Edit dan input massal disimpan sebagai override laporan saja.",
+      text = t("Data dasar diambil dari nilai PTS sistem. Edit dan input massal disimpan sebagai override laporan saja."),
       style = MaterialTheme.typography.bodySmall,
       color = SubtleInk
     )
     if (missingTable) {
       Text(
-        text = "Tabel override laporan_uts_input_massal belum tersedia, edit/input massal belum bisa disimpan.",
+        text = t("Tabel override laporan_uts_input_massal belum tersedia, edit/input massal belum bisa disimpan."),
         style = MaterialTheme.typography.bodySmall,
         color = Color(0xFFB45309),
         fontWeight = FontWeight.SemiBold
@@ -836,24 +837,24 @@ private fun LaporanUtsResetCard(
       modifier = Modifier
         .size(44.dp)
         .clip(CircleShape)
-        .background(Color.White.copy(alpha = 0.86f)),
+        .background(CardBackground.copy(alpha = 0.86f)),
       contentAlignment = Alignment.Center
     ) {
       Icon(
         imageVector = Icons.Outlined.RestartAlt,
-        contentDescription = title,
+        contentDescription = t(title),
         tint = if (isBusy) SubtleInk.copy(alpha = 0.55f) else Color(0xFFEA580C)
       )
     }
     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
       Text(
-        text = title,
+        text = t(title),
         style = MaterialTheme.typography.titleSmall,
         color = Color(0xFF9A3412),
         fontWeight = FontWeight.ExtraBold
       )
       Text(
-        text = body,
+        text = t(body),
         style = MaterialTheme.typography.bodySmall,
         color = SubtleInk
       )
@@ -866,7 +867,7 @@ private fun LaporanUtsResetCard(
         fontWeight = FontWeight.ExtraBold,
         modifier = Modifier
           .clip(RoundedCornerShape(999.dp))
-          .background(Color.White.copy(alpha = 0.86f))
+          .background(CardBackground.copy(alpha = 0.86f))
           .padding(horizontal = 10.dp, vertical = 6.dp)
       )
     }
@@ -922,7 +923,7 @@ private fun LaporanUtsStudentCard(
         )
         if (hasOverride) {
           Text(
-            text = "Manual",
+            text = t("Manual"),
             style = MaterialTheme.typography.labelSmall,
             color = PrimaryBlue,
             fontWeight = FontWeight.Bold,
@@ -952,7 +953,7 @@ private fun LaporanUtsStudentCard(
         color = utsScoreColorFor(payload.averageScoreText),
         fontWeight = FontWeight.ExtraBold
       )
-      Text("Rata-rata", style = MaterialTheme.typography.labelSmall, color = SubtleInk)
+      Text(t("Rata-rata"), style = MaterialTheme.typography.labelSmall, color = SubtleInk)
     }
   }
 }
@@ -980,7 +981,7 @@ private fun LaporanUtsStudentHeaderCard(
       LaporanUtsMiniStat("Rata-rata", payload.averageScoreText)
       if (hasOverride) {
         Text(
-          text = "Manual",
+          text = t("Manual"),
           style = MaterialTheme.typography.labelMedium,
           color = PrimaryBlue,
           fontWeight = FontWeight.ExtraBold,
@@ -1025,9 +1026,9 @@ private fun LaporanUtsSectionCard(
     verticalArrangement = Arrangement.spacedBy(10.dp)
   ) {
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-      Text(title, style = MaterialTheme.typography.titleMedium, color = PrimaryBlueDark, fontWeight = FontWeight.ExtraBold)
+      Text(t(title), style = MaterialTheme.typography.titleMedium, color = PrimaryBlueDark, fontWeight = FontWeight.ExtraBold)
       if (subtitle.isNotBlank()) {
-        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = SubtleInk)
+        Text(t(subtitle), style = MaterialTheme.typography.bodySmall, color = SubtleInk)
       }
     }
     content()
@@ -1047,7 +1048,7 @@ private fun LaporanUtsSubjectRow(
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(16.dp))
-      .background(Color.White.copy(alpha = 0.76f))
+      .background(CardBackground.copy(alpha = 0.76f))
       .border(1.dp, CardBorder.copy(alpha = 0.72f), RoundedCornerShape(16.dp))
       .padding(horizontal = 12.dp, vertical = 11.dp),
     verticalAlignment = Alignment.CenterVertically,
@@ -1066,7 +1067,7 @@ private fun LaporanUtsSubjectRow(
         overflow = TextOverflow.Ellipsis
       )
       Text(
-        text = "Batas remedial ${subject.kkmText.ifBlank { UTS_REMEDIAL_THRESHOLD.toInt().toString() }}",
+        text = "${t("Batas remedial")} ${subject.kkmText.ifBlank { UTS_REMEDIAL_THRESHOLD.toInt().toString() }}",
         style = MaterialTheme.typography.bodySmall,
         color = SubtleInk
       )
@@ -1128,7 +1129,7 @@ private fun LaporanUtsEditableInfoRow(
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(16.dp))
-      .background(Color.White.copy(alpha = 0.76f))
+      .background(CardBackground.copy(alpha = 0.76f))
       .border(1.dp, CardBorder.copy(alpha = 0.72f), RoundedCornerShape(16.dp))
       .padding(12.dp),
     verticalArrangement = Arrangement.spacedBy(7.dp)
@@ -1160,7 +1161,7 @@ private fun LaporanUtsReadOnlyInfoRow(label: String, value: String) {
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(16.dp))
-      .background(Color.White.copy(alpha = 0.76f))
+      .background(CardBackground.copy(alpha = 0.76f))
       .border(1.dp, CardBorder.copy(alpha = 0.72f), RoundedCornerShape(16.dp))
       .padding(horizontal = 12.dp, vertical = 11.dp),
     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1183,7 +1184,7 @@ private fun LaporanUtsQuickActionBar(
       .padding(horizontal = 18.dp, vertical = 10.dp)
       .shadow(18.dp, RoundedCornerShape(32.dp), ambientColor = Color(0x180F172A), spotColor = Color(0x180F172A))
       .clip(RoundedCornerShape(32.dp))
-      .background(Color.White.copy(alpha = 0.96f))
+      .background(CardBackground.copy(alpha = 0.96f))
       .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(32.dp))
       .padding(horizontal = 10.dp, vertical = 8.dp),
     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1252,7 +1253,7 @@ private fun UtsWhatsAppTargetDialog(
     onDismissRequest = onDismiss,
     title = {
       Text(
-        text = "Kirim Laporan PTS",
+        text = t("Kirim Laporan PTS"),
         style = MaterialTheme.typography.titleMedium,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.ExtraBold
@@ -1264,7 +1265,7 @@ private fun UtsWhatsAppTargetDialog(
         modifier = Modifier.verticalScroll(rememberScrollState())
       ) {
         Text(
-          text = "Pilih nomor keluarga, isi manual, atau ambil dari kontak HP. PDF akan dibuka sebagai lampiran WhatsApp dan caption disalin sebagai cadangan.",
+          text = t("Pilih nomor keluarga, isi manual, atau ambil dari kontak HP. PDF akan dibuka sebagai lampiran WhatsApp dan caption disalin sebagai cadangan."),
           style = MaterialTheme.typography.bodySmall,
           color = SubtleInk
         )
@@ -1274,7 +1275,7 @@ private fun UtsWhatsAppTargetDialog(
             modifier = Modifier
               .fillMaxWidth()
               .clip(RoundedCornerShape(14.dp))
-              .background(Color.White.copy(alpha = 0.82f))
+              .background(CardBackground.copy(alpha = 0.82f))
               .border(1.dp, CardBorder, RoundedCornerShape(14.dp))
               .clickable { onTargetNumberChange(target.phone) }
               .padding(horizontal = 12.dp, vertical = 10.dp),
@@ -1299,7 +1300,7 @@ private fun UtsWhatsAppTargetDialog(
             if (target.phone == targetNumber) {
               Icon(
                 imageVector = Icons.Outlined.Check,
-                contentDescription = "Terpilih",
+                contentDescription = t("Terpilih"),
                 tint = PrimaryBlue,
                 modifier = Modifier
                   .padding(start = 8.dp)
@@ -1312,7 +1313,7 @@ private fun UtsWhatsAppTargetDialog(
         OutlinedTextField(
           value = targetNumber,
           onValueChange = onTargetNumberChange,
-          label = { Text("Nomor WhatsApp") },
+          label = { Text(t("Nomor WhatsApp")) },
           modifier = Modifier.fillMaxWidth(),
           singleLine = true,
           colors = laporanUtsTextFieldColors()
@@ -1338,20 +1339,20 @@ private fun UtsWhatsAppTargetDialog(
             modifier = Modifier
               .size(34.dp)
               .clip(CircleShape)
-              .background(Color.White.copy(alpha = 0.92f)),
+              .background(CardBackground.copy(alpha = 0.92f)),
             contentAlignment = Alignment.Center
           ) {
-            Icon(Icons.Outlined.Phone, contentDescription = "Pilih kontak", tint = PrimaryBlue, modifier = Modifier.size(18.dp))
+            Icon(Icons.Outlined.Phone, contentDescription = t("Pilih kontak"), tint = PrimaryBlue, modifier = Modifier.size(18.dp))
           }
           Column(modifier = Modifier.weight(1f)) {
             Text(
-              text = "Pilih dari kontak HP",
+              text = t("Pilih dari kontak HP"),
               style = MaterialTheme.typography.labelLarge,
               color = PrimaryBlueDark,
               fontWeight = FontWeight.Bold
             )
             Text(
-              text = "Ambil nomor dari kontak yang tersimpan di perangkat.",
+              text = t("Ambil nomor dari kontak yang tersimpan di perangkat."),
               style = MaterialTheme.typography.bodySmall,
               color = SubtleInk
             )
@@ -1364,12 +1365,12 @@ private fun UtsWhatsAppTargetDialog(
         onClick = onSend,
         enabled = targetNumber.trim().isNotBlank()
       ) {
-        Text("Kirim")
+        Text(t("Kirim"))
       }
     },
     dismissButton = {
       TextButton(onClick = onDismiss) {
-        Text("Batal")
+        Text(t("Batal"))
       }
     },
     containerColor = CardBackground
@@ -1388,10 +1389,10 @@ private fun LaporanUtsInfoCard(icon: ImageVector, title: String, body: String) {
     horizontalArrangement = Arrangement.spacedBy(12.dp),
     verticalAlignment = Alignment.CenterVertically
   ) {
-    Icon(icon, contentDescription = title, tint = Color(0xFFB45309))
+    Icon(icon, contentDescription = t(title), tint = Color(0xFFB45309))
     Column {
-      Text(title, style = MaterialTheme.typography.titleSmall, color = Color(0xFF92400E), fontWeight = FontWeight.Bold)
-      Text(body, style = MaterialTheme.typography.bodySmall, color = Color(0xFF92400E))
+      Text(t(title), style = MaterialTheme.typography.titleSmall, color = Color(0xFF92400E), fontWeight = FontWeight.Bold)
+      Text(t(body), style = MaterialTheme.typography.bodySmall, color = Color(0xFF92400E))
     }
   }
 }
@@ -1439,16 +1440,16 @@ private fun LaporanUtsBulkImportDialog(
             onDismiss()
           }
         }
-      ) { Text("Simpan Preview") }
+      ) { Text(t("Simpan Preview")) }
     },
     dismissButton = {
-      TextButton(onClick = onDismiss) { Text("Tutup") }
+      TextButton(onClick = onDismiss) { Text(t("Tutup")) }
     },
-    title = { Text("Input Massal Laporan PTS") },
+    title = { Text(t("Input Massal Laporan PTS")) },
     text = {
       Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(
-          text = "Masukkan link Google Sheet/CSV. Sistem akan mencocokkan NISN/nama santri dan kolom mapel, lalu menyimpan hasilnya sebagai override laporan.",
+          text = t("Masukkan link Google Sheet/CSV. Sistem akan mencocokkan NISN/nama santri dan kolom mapel, lalu menyimpan hasilnya sebagai override laporan."),
           style = MaterialTheme.typography.bodySmall,
           color = SubtleInk
         )
@@ -1456,7 +1457,7 @@ private fun LaporanUtsBulkImportDialog(
           value = link,
           onValueChange = { link = it },
           modifier = Modifier.fillMaxWidth(),
-          label = { Text("Link spreadsheet / CSV") },
+          label = { Text(t("Link spreadsheet / CSV")) },
           singleLine = false,
           minLines = 2
         )
@@ -1484,7 +1485,7 @@ private fun LaporanUtsBulkImportDialog(
             }
           }
         ) {
-          if (isLoading) Text("Membaca...") else Text("Ambil Preview")
+          if (isLoading) Text(t("Membaca...")) else Text(t("Ambil Preview"))
         }
         if (preview.isNotEmpty()) {
           LazyColumn(
@@ -1530,8 +1531,8 @@ private fun laporanUtsTextFieldColors() = TextFieldDefaults.colors(
   unfocusedIndicatorColor = CardBorder,
   focusedTextColor = PrimaryBlueDark,
   unfocusedTextColor = PrimaryBlueDark,
-  focusedContainerColor = Color.White.copy(alpha = 0.78f),
-  unfocusedContainerColor = Color.White.copy(alpha = 0.78f)
+  focusedContainerColor = CardBackground.copy(alpha = 0.78f),
+  unfocusedContainerColor = CardBackground.copy(alpha = 0.78f)
 )
 
 private fun buildUtsPayload(

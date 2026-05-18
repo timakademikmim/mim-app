@@ -31,6 +31,7 @@ import androidx.activity.viewModels
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import com.mim.guruapp.ui.GuruAppRoot
+import com.mim.guruapp.ui.theme.AppThemeMode
 import com.mim.guruapp.ui.theme.MimGuruTheme
 import com.mim.guruapp.update.AppUpdateClient
 import com.mim.guruapp.update.AppUpdateInfo
@@ -55,7 +56,7 @@ class MainActivity : ComponentActivity() {
     viewModel.handleSystemNavigationIntent(intent)
 
     setContent {
-      MimGuruTheme {
+      MimGuruTheme(themeMode = AppThemeMode.fromCode(viewModel.uiState.themeModeCode)) {
         GuruAppRoot(
           state = viewModel.uiState,
           onTeacherNameChange = viewModel::onTeacherNameChange,
@@ -66,6 +67,7 @@ class MainActivity : ComponentActivity() {
           onCloseSidebar = viewModel::closeSidebar,
           onToggleSidebarParent = viewModel::toggleSidebarParent,
           onSelectSidebarDestination = viewModel::selectSidebarDestination,
+          onUpdateBottomNavShortcuts = viewModel::updateBottomNavShortcuts,
           onOpenCalendarScreen = viewModel::openCalendarScreen,
           onCloseCalendarScreen = viewModel::closeCalendarScreen,
           onOpenNotificationPopup = viewModel::openNotificationPopup,
@@ -107,6 +109,9 @@ class MainActivity : ComponentActivity() {
           onLoadLeaveRequests = viewModel::loadLeaveRequestSnapshot,
           onSubmitLeaveRequest = viewModel::submitLeaveRequest,
           onDeleteLeaveRequest = viewModel::deleteLeaveRequest,
+          onReviewWakasekLeaveRequest = viewModel::reviewWakasekLeaveRequest,
+          onApplyLanguage = viewModel::updateLanguage,
+          onApplyThemeMode = viewModel::updateThemeMode,
           onRefreshClick = { viewModel.refreshFromServer(force = true) },
           onLogoutClick = viewModel::logout
         )

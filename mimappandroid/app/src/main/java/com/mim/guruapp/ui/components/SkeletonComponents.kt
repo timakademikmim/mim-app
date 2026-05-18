@@ -29,7 +29,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.mim.guruapp.ui.theme.CardBackground
 import com.mim.guruapp.ui.theme.CardBorder
+import com.mim.guruapp.ui.theme.CardGradientEnd
+import com.mim.guruapp.ui.theme.SoftPanel
 
 @Composable
 fun rememberSkeletonBrush(): Brush {
@@ -46,9 +49,9 @@ fun rememberSkeletonBrush(): Brush {
   val startX = (translate * 900f) - 320f
   return Brush.linearGradient(
     colors = listOf(
-      Color(0xFFE5E7EB).copy(alpha = 0.78f),
-      Color(0xFFF8FAFC).copy(alpha = 0.96f),
-      Color(0xFFD7DBE2).copy(alpha = 0.82f)
+      SoftPanel.copy(alpha = 0.78f),
+      CardGradientEnd.copy(alpha = 0.96f),
+      CardBorder.copy(alpha = 0.82f)
     ),
     start = Offset(startX, 0f),
     end = Offset(startX + 320f, 120f)
@@ -83,7 +86,7 @@ fun SkeletonContentCard(
       .fillMaxWidth()
       .shadow(9.dp, RoundedCornerShape(20.dp), ambientColor = Color(0x100F172A), spotColor = Color(0x100F172A))
       .clip(RoundedCornerShape(20.dp))
-      .background(Color.White.copy(alpha = 0.82f))
+      .background(CardBackground.copy(alpha = 0.82f))
       .border(1.dp, CardBorder.copy(alpha = 0.9f), RoundedCornerShape(20.dp))
       .padding(horizontal = 16.dp, vertical = 14.dp),
     horizontalArrangement = Arrangement.spacedBy(12.dp),

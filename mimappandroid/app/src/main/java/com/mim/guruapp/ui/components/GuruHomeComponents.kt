@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.mim.guruapp.data.model.AvailableSubjectOffer
 import com.mim.guruapp.data.model.SubjectOverview
+import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.CardBackground
 import com.mim.guruapp.ui.theme.CardBorder
 import com.mim.guruapp.ui.theme.CardGradientEnd
@@ -49,7 +50,7 @@ fun HomeHeroCard(
       .fillMaxWidth()
       .shadow(16.dp, RoundedCornerShape(24.dp), ambientColor = Color(0x180F172A), spotColor = Color(0x180F172A))
       .background(
-        brush = Brush.verticalGradient(listOf(Color.White, CardGradientEnd)),
+        brush = Brush.verticalGradient(listOf(CardBackground, CardGradientEnd)),
         shape = RoundedCornerShape(24.dp)
       )
       .border(BorderStroke(1.dp, CardBorder), RoundedCornerShape(24.dp))
@@ -66,7 +67,7 @@ fun HomeHeroCard(
           .background(SuccessTint)
       )
       Text(
-        text = teacherRole,
+        text = t(teacherRole),
         style = MaterialTheme.typography.labelLarge,
         color = PrimaryBlue
       )
@@ -78,7 +79,7 @@ fun HomeHeroCard(
       modifier = Modifier.padding(top = 8.dp)
     )
     Text(
-      text = message,
+      text = t(message),
       style = MaterialTheme.typography.bodyMedium,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
       modifier = Modifier.padding(top = 10.dp)
@@ -94,7 +95,7 @@ fun MapelToolbarCard(
 ) {
   PlaceholderPanel(
     title = "Mapel",
-    subtitle = "Halaman ini mengikuti struktur daftar mapel di panel guru versi web."
+    subtitle = t("Halaman ini mengikuti struktur daftar mapel di panel guru versi web.")
   ) {
     Row(
       modifier = Modifier.fillMaxWidth(),
@@ -102,7 +103,7 @@ fun MapelToolbarCard(
       verticalAlignment = Alignment.CenterVertically
     ) {
       Text(
-        text = "Guru hanya bisa mengambil mapel yang belum memiliki pengajar. Penggantian pengajar tetap melalui admin.",
+        text = t("Guru hanya bisa mengambil mapel yang belum memiliki pengajar. Penggantian pengajar tetap melalui admin."),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.weight(1f)
@@ -112,13 +113,13 @@ fun MapelToolbarCard(
         modifier = Modifier.padding(start = 12.dp)
       ) {
         Text(
-          text = if (isClaimSectionVisible) "Tutup" else "Tambah Mapel"
+          text = if (isClaimSectionVisible) t("Tutup") else t("Tambah Mapel")
         )
       }
     }
     if (!hasAvailableSubjects) {
       Text(
-        text = "Tidak ada mapel kosong untuk tahun ajaran aktif saat ini.",
+        text = t("Tidak ada mapel kosong untuk tahun ajaran aktif saat ini."),
         style = MaterialTheme.typography.bodySmall,
         color = SubtleInk,
         modifier = Modifier.padding(top = 12.dp)
@@ -139,12 +140,12 @@ fun AvailableMapelPanel(
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(18.dp))
-      .background(Color.White)
+      .background(CardBackground)
       .border(BorderStroke(1.dp, CardBorder), RoundedCornerShape(18.dp))
       .padding(16.dp)
   ) {
     Text(
-      text = "Mapel tersedia untuk diambil",
+      text = t("Mapel tersedia untuk diambil"),
       style = MaterialTheme.typography.titleSmall,
       fontWeight = FontWeight.Bold
     )
@@ -167,14 +168,14 @@ fun AvailableMapelPanel(
       horizontalArrangement = Arrangement.End
     ) {
       OutlinedButton(onClick = onClearSelection) {
-        Text("Batal Pilih")
+        Text(t("Batal Pilih"))
       }
       androidx.compose.foundation.layout.Spacer(modifier = Modifier.size(8.dp))
       OutlinedButton(
         onClick = onClaimSelectedSubjects,
         enabled = selectedIds.isNotEmpty()
       ) {
-        Text("Tambahkan Terpilih")
+        Text(t("Tambahkan Terpilih"))
       }
     }
   }
@@ -205,7 +206,7 @@ fun AvailableMapelCard(
         onCheckedChange = { onToggle() }
       )
       Text(
-        text = "Pilih mapel ini",
+        text = t("Pilih mapel ini"),
         style = MaterialTheme.typography.labelMedium,
         color = SubtleInk
       )
@@ -216,13 +217,13 @@ fun AvailableMapelCard(
       fontWeight = FontWeight.Bold
     )
     Text(
-      text = "Kelas: ${subject.className}",
+      text = "${t("Kelas")}: ${subject.className}",
       style = MaterialTheme.typography.bodySmall,
       color = SubtleInk,
       modifier = Modifier.padding(top = 6.dp)
     )
     Text(
-      text = "Semester: ${subject.semester}${if (subject.semesterActive) " (Aktif)" else ""}",
+      text = "${t("Semester")}: ${subject.semester}${if (subject.semesterActive) " (${t("Aktif")})" else ""}",
       style = MaterialTheme.typography.bodySmall,
       color = SubtleInk,
       modifier = Modifier.padding(top = 2.dp)
@@ -249,13 +250,13 @@ fun WebMapelCard(subject: SubjectOverview) {
       fontWeight = FontWeight.Bold
     )
     Text(
-      text = "Kelas: ${subject.className}",
+      text = "${t("Kelas")}: ${subject.className}",
       style = MaterialTheme.typography.bodySmall,
       color = SubtleInk,
       modifier = Modifier.padding(top = 8.dp)
     )
     Text(
-      text = "Semester: ${subject.semester}${if (subject.semesterActive) " (Aktif)" else ""}",
+      text = "${t("Semester")}: ${subject.semester}${if (subject.semesterActive) " (${t("Aktif")})" else ""}",
       style = MaterialTheme.typography.bodySmall,
       color = SubtleInk,
       modifier = Modifier.padding(top = 2.dp)
@@ -264,9 +265,9 @@ fun WebMapelCard(subject: SubjectOverview) {
       modifier = Modifier.padding(top = 12.dp),
       horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-      StatusPill("Absen ${subject.attendancePending}", HighlightCard)
-      StatusPill("Nilai ${subject.scorePending}", WarmAccent)
-      StatusPill("Materi ${subject.materialCount}", SuccessTint)
+      StatusPill("${t("Absen")} ${subject.attendancePending}", HighlightCard)
+      StatusPill("${t("Nilai")} ${subject.scorePending}", WarmAccent)
+      StatusPill("${t("Materi")} ${subject.materialCount}", SuccessTint)
     }
   }
 }
@@ -277,7 +278,7 @@ fun EmptyPlaceholderCard(message: String) {
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(14.dp))
-      .background(Color(0xFFF8FAFC))
+      .background(CardGradientEnd)
       .border(
         BorderStroke(1.dp, CardBorder),
         RoundedCornerShape(14.dp)
@@ -285,7 +286,7 @@ fun EmptyPlaceholderCard(message: String) {
       .padding(14.dp)
   ) {
     Text(
-      text = message,
+      text = t(message),
       style = MaterialTheme.typography.bodySmall,
       color = SubtleInk
     )
@@ -302,12 +303,12 @@ fun ProfileInfoRow(
     modifier = modifier
       .widthIn(min = 120.dp)
       .clip(RoundedCornerShape(14.dp))
-      .background(Color.White)
+      .background(CardBackground)
       .border(BorderStroke(1.dp, CardBorder), RoundedCornerShape(14.dp))
       .padding(12.dp)
   ) {
     Text(
-      text = label,
+      text = t(label),
       style = MaterialTheme.typography.labelMedium,
       color = MaterialTheme.colorScheme.onSurfaceVariant
     )

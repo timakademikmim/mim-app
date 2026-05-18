@@ -44,8 +44,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.mim.guruapp.data.model.AppNotification
+import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.CardBorder
+import com.mim.guruapp.ui.theme.CardBackground
+import com.mim.guruapp.ui.theme.PrimaryBlue
 import com.mim.guruapp.ui.theme.PrimaryBlueDark
+import com.mim.guruapp.ui.theme.SoftPanel
 import com.mim.guruapp.ui.theme.SubtleInk
 import java.time.Instant
 import java.time.LocalDate
@@ -84,7 +88,7 @@ fun NotificationPopup(
         .fillMaxWidth()
         .heightIn(max = 560.dp)
         .shadow(18.dp, RoundedCornerShape(24.dp), ambientColor = Color(0x220F172A), spotColor = Color(0x220F172A))
-        .background(Color.White.copy(alpha = 0.96f), RoundedCornerShape(24.dp))
+        .background(CardBackground.copy(alpha = 0.96f), RoundedCornerShape(24.dp))
         .border(1.dp, CardBorder.copy(alpha = 0.85f), RoundedCornerShape(24.dp))
         .padding(18.dp)
         .clickable(
@@ -133,13 +137,13 @@ fun NotificationHeader(
     verticalAlignment = Alignment.CenterVertically
   ) {
     Text(
-      text = "Notifikasi",
+      text = t("Notifikasi"),
       style = MaterialTheme.typography.titleLarge,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.ExtraBold
     )
     Text(
-      text = "Tandai semua dibaca",
+      text = t("Tandai semua dibaca"),
       style = MaterialTheme.typography.bodySmall,
       color = if (hasUnread) MaterialTheme.colorScheme.primary else SubtleInk.copy(alpha = 0.6f),
       fontWeight = FontWeight.SemiBold,
@@ -156,7 +160,7 @@ fun NotificationTabs(
   Row(
     modifier = Modifier
       .fillMaxWidth()
-      .background(Color(0xFFF4F7FB), RoundedCornerShape(18.dp))
+      .background(SoftPanel, RoundedCornerShape(18.dp))
       .padding(4.dp),
     horizontalArrangement = Arrangement.spacedBy(8.dp)
   ) {
@@ -166,7 +170,7 @@ fun NotificationTabs(
         modifier = Modifier
           .weight(1f)
           .background(
-            if (isSelected) Color(0xFFDCE8FF) else Color.Transparent,
+            if (isSelected) PrimaryBlue.copy(alpha = 0.16f) else Color.Transparent,
             RoundedCornerShape(14.dp)
           )
           .clickable { onFilterSelected(filter) }
@@ -174,7 +178,7 @@ fun NotificationTabs(
         contentAlignment = Alignment.Center
       ) {
         Text(
-          text = filter.label,
+          text = t(filter.label),
           style = MaterialTheme.typography.bodyMedium,
           color = if (isSelected) PrimaryBlueDark else SubtleInk,
           fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
@@ -193,12 +197,12 @@ fun NotificationItem(
     modifier = Modifier
       .fillMaxWidth()
       .background(
-        if (notification.isRead) Color(0xFFF8FAFC) else Color(0xFFEFF6FF),
+        if (notification.isRead) SoftPanel.copy(alpha = 0.92f) else PrimaryBlue.copy(alpha = 0.12f),
         RoundedCornerShape(18.dp)
       )
       .border(
         1.dp,
-        if (notification.isRead) CardBorder.copy(alpha = 0.65f) else Color(0xFFBFDBFE),
+        if (notification.isRead) CardBorder.copy(alpha = 0.65f) else PrimaryBlue.copy(alpha = 0.24f),
         RoundedCornerShape(18.dp)
       )
       .clickable(onClick = onClick)
@@ -279,12 +283,12 @@ private fun EmptyNotificationState() {
   Box(
     modifier = Modifier
       .fillMaxWidth()
-      .background(Color(0xFFF8FAFC), RoundedCornerShape(18.dp))
+      .background(SoftPanel, RoundedCornerShape(18.dp))
       .border(1.dp, CardBorder.copy(alpha = 0.65f), RoundedCornerShape(18.dp))
       .padding(18.dp)
   ) {
     Text(
-      text = "Belum ada notifikasi pada rentang waktu ini.",
+      text = t("Belum ada notifikasi pada rentang waktu ini."),
       style = MaterialTheme.typography.bodyMedium,
       color = SubtleInk
     )

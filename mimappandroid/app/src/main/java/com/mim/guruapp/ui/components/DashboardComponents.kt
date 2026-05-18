@@ -5,17 +5,18 @@ import android.graphics.Shader
 import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -48,21 +49,27 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.mim.guruapp.data.model.CalendarEvent
 import com.mim.guruapp.data.model.DashboardCategory
 import com.mim.guruapp.data.model.DashboardTask
+import com.mim.guruapp.ui.i18n.LocalAppLanguage
+import com.mim.guruapp.ui.i18n.formatDateForLanguage
+import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.CardBorder
-import com.mim.guruapp.ui.theme.CardGradientEnd
+import com.mim.guruapp.ui.theme.CardBackground
+import com.mim.guruapp.ui.theme.PrimaryBlue
 import com.mim.guruapp.ui.theme.PrimaryBlueDark
 import com.mim.guruapp.ui.theme.SubtleInk
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -82,7 +89,8 @@ fun DashboardScreenScaffold(
   var searchQuery by remember { mutableStateOf("") }
   var selectedCategoryId by rememberSaveable { mutableStateOf("semua") }
   val normalizedQuery = searchQuery.trim().lowercase()
-  val filteredTasks = remember(calendarEvents, selectedCategoryId, normalizedQuery, currentDate) {
+  val language = LocalAppLanguage.current
+  val filteredTasks = remember(calendarEvents, selectedCategoryId, normalizedQuery, currentDate, language) {
     val filteredEvents = calendarEvents.filter { event ->
       val matchesCategory = when {
         selectedCategoryId == "semua" -> true
@@ -98,7 +106,7 @@ fun DashboardScreenScaffold(
       val matchesSearch = normalizedQuery.isBlank() || haystack.contains(normalizedQuery)
       matchesCategory && matchesSearch
     }
-    buildAgendaTasksForDashboard(filteredEvents)
+    buildAgendaTasksForDashboard(filteredEvents, language)
   }
 
   Scaffold(
@@ -199,7 +207,7 @@ fun TopBarCustom(
   onDateClick: () -> Unit,
   onNotificationClick: () -> Unit
 ) {
-  val formatter = DateTimeFormatter.ofPattern("EEEE, dd MMM yyyy")
+  val language = LocalAppLanguage.current
 
   Row(
     modifier = Modifier
@@ -209,11 +217,11 @@ fun TopBarCustom(
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.SpaceBetween
   ) {
-    GlassActionButton(
-      icon = Icons.Outlined.Menu,
-      contentDescription = "Open sidebar",
-      onClick = onMenuClick
-    )
+      GlassActionButton(
+        icon = Icons.Outlined.Menu,
+        contentDescription = t("Buka sidebar"),
+        onClick = onMenuClick
+      )
 
     Row(
       modifier = Modifier
@@ -230,7 +238,7 @@ fun TopBarCustom(
         modifier = Modifier.size(18.dp)
       )
       Text(
-        text = formatter.format(currentDate),
+        text = formatDateForLanguage(currentDate, "EEEE, dd MMM yyyy", language),
         style = MaterialTheme.typography.bodyMedium,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.SemiBold,
@@ -241,7 +249,7 @@ fun TopBarCustom(
     Box {
       GlassActionButton(
         icon = Icons.Outlined.NotificationsNone,
-        contentDescription = "Notifications",
+        contentDescription = t("Notifikasi"),
         onClick = onNotificationClick
       )
       if (notificationCount > 0) {
@@ -265,7 +273,7 @@ fun SearchBar(
   Row(
     modifier = modifier
       .fillMaxWidth()
-      .background(Color.White.copy(alpha = 0.88f), RoundedCornerShape(18.dp))
+      .background(CardBackground.copy(alpha = 0.88f), RoundedCornerShape(18.dp))
       .border(1.dp, CardBorder, RoundedCornerShape(18.dp))
       .padding(horizontal = 16.dp, vertical = 14.dp),
     verticalAlignment = Alignment.CenterVertically
@@ -287,9 +295,9 @@ fun SearchBar(
       decorationBox = { innerTextField ->
         if (value.isBlank()) {
           Text(
-            text = placeholder,
+            text = t(placeholder),
             style = MaterialTheme.typography.bodyMedium,
-            color = Color(0xFF94A3B8)
+            color = SubtleInk.copy(alpha = 0.72f)
           )
         }
         innerTextField()
@@ -304,71 +312,32 @@ fun CategoryCard(
   selected: Boolean,
   onClick: () -> Unit
 ) {
-  GlassColorCard(
-    tint = parseHexColor(category.colorHex),
+  val localizedSubtitle = remember(category.subtitle) {
+    category.subtitle.removeSuffix(" Agenda").takeIf { it != category.subtitle }
+  }?.let { count -> "$count ${t("Agenda")}" } ?: t(category.subtitle)
+
+  PremiumGlassCard(
+    accentColor = parseHexColor(category.colorHex),
+    title = t(category.title),
+    subtitle = localizedSubtitle,
     modifier = Modifier
       .width(168.dp)
-      .clickable(onClick = onClick),
-    selected = selected
-  ) {
-    Text(
-      text = category.title,
-      style = MaterialTheme.typography.titleSmall,
-      color = PrimaryBlueDark,
-      fontWeight = FontWeight.ExtraBold
-    )
-    Text(
-      text = category.subtitle,
-      style = MaterialTheme.typography.bodySmall,
-      color = SubtleInk,
-      modifier = Modifier.padding(top = 8.dp)
-    )
-  }
+      .height(96.dp),
+    selected = selected,
+    compact = true,
+    onClick = onClick
+  )
 }
 
 @Composable
 fun TaskCard(task: DashboardTask) {
-  GlassColorCard(
-    tint = parseHexColor(task.colorHex),
-    modifier = Modifier.fillMaxWidth()
-  ) {
-    Text(
-      text = task.title,
-      style = MaterialTheme.typography.titleSmall,
-      color = PrimaryBlueDark,
-      fontWeight = FontWeight.ExtraBold
-    )
-    Text(
-      text = task.timeLabel,
-      style = MaterialTheme.typography.bodySmall,
-      color = SubtleInk,
-      modifier = Modifier.padding(top = 10.dp)
-    )
-  }
-}
-
-@Composable
-private fun GlassColorCard(
-  tint: Color,
-  modifier: Modifier = Modifier,
-  selected: Boolean = false,
-  content: @Composable ColumnScope.() -> Unit
-) {
-  Box(
-    modifier = modifier
-      .shadow(10.dp, RoundedCornerShape(20.dp), ambientColor = Color(0x120F172A), spotColor = Color(0x120F172A))
-      .border(
-        1.dp,
-        if (selected) PrimaryBlueDark.copy(alpha = 0.28f) else Color.White.copy(alpha = 0.40f),
-        RoundedCornerShape(20.dp)
-      )
-  ) {
-    GlassBackground(tint = tint)
-    Column(
-      modifier = Modifier.padding(16.dp),
-      content = content
-    )
-  }
+  PremiumGlassCard(
+    accentColor = parseHexColor(task.colorHex),
+    title = task.title,
+    subtitle = task.timeLabel,
+    modifier = Modifier.fillMaxWidth(),
+    onClick = {}
+  )
 }
 
 @Composable
@@ -376,12 +345,12 @@ private fun EmptyAgendaState() {
   Box(
     modifier = Modifier
       .fillMaxWidth()
-      .background(Color.White.copy(alpha = 0.82f), RoundedCornerShape(20.dp))
+      .background(CardBackground.copy(alpha = 0.82f), RoundedCornerShape(20.dp))
       .border(1.dp, CardBorder, RoundedCornerShape(20.dp))
       .padding(16.dp)
   ) {
     Text(
-      text = "Tidak ada agenda yang cocok dengan kategori atau pencarian ini.",
+      text = t("Tidak ada agenda yang cocok dengan kategori atau pencarian ini."),
       style = MaterialTheme.typography.bodyMedium,
       color = SubtleInk
     )
@@ -389,24 +358,211 @@ private fun EmptyAgendaState() {
 }
 
 @Composable
-private fun BoxScope.GlassBackground(tint: Color) {
+private fun PremiumGlassCard(
+  accentColor: Color,
+  title: String,
+  subtitle: String,
+  modifier: Modifier = Modifier,
+  selected: Boolean = false,
+  compact: Boolean = false,
+  onClick: () -> Unit
+) {
+  val isDarkMode = CardBackground.luminance() < 0.5f
+  if (!isDarkMode) {
+    LightDashboardCard(
+      accentColor = accentColor,
+      title = title,
+      subtitle = subtitle,
+      modifier = modifier,
+      selected = selected,
+      compact = compact,
+      onClick = onClick
+    )
+    return
+  }
+  val shape = RoundedCornerShape(36.dp)
+  val minHeight = if (compact) 92.dp else 112.dp
+  val contentPadding = if (compact) 14.dp else 18.dp
   Box(
+    modifier = modifier
+      .heightIn(min = minHeight)
+      .shadow(
+        elevation = 22.dp,
+        shape = shape,
+        ambientColor = accentColor.copy(alpha = 0.18f),
+        spotColor = Color(0x66000000)
+      )
+      .clip(shape)
+      .background(Color(0xFF101216).copy(alpha = 0.88f), shape)
+      .border(
+        1.dp,
+        if (selected) accentColor.copy(alpha = 0.48f) else Color.White.copy(alpha = 0.13f),
+        shape
+      )
+      .clickable(onClick = onClick)
+  ) {
+    AmbientGlowLayer(accentColor = accentColor)
+    GlassSurface()
+    Column(
+      modifier = Modifier
+        .fillMaxSize()
+        .padding(contentPadding),
+      verticalArrangement = Arrangement.Bottom
+    ) {
+      Column(verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp)) {
+        Text(
+          text = title,
+          style = MaterialTheme.typography.titleSmall,
+          color = Color.White.copy(alpha = 0.96f),
+          fontWeight = FontWeight.ExtraBold,
+          maxLines = 2
+        )
+        Text(
+          text = subtitle,
+          style = MaterialTheme.typography.bodySmall,
+          color = Color.White.copy(alpha = 0.64f),
+          fontWeight = FontWeight.Medium,
+          maxLines = 2
+        )
+      }
+    }
+    if (selected) {
+      Box(
+        modifier = Modifier
+          .align(Alignment.TopEnd)
+          .padding(16.dp)
+          .size(8.dp)
+          .background(accentColor.copy(alpha = 0.95f), CircleShape)
+      )
+    }
+  }
+}
+
+@Composable
+private fun LightDashboardCard(
+  accentColor: Color,
+  title: String,
+  subtitle: String,
+  modifier: Modifier = Modifier,
+  selected: Boolean = false,
+  compact: Boolean = false,
+  onClick: () -> Unit
+) {
+  val shape = RoundedCornerShape(20.dp)
+  val contentPadding = if (compact) 14.dp else 16.dp
+  Box(
+    modifier = modifier
+      .shadow(10.dp, shape, ambientColor = Color(0x120F172A), spotColor = Color(0x120F172A))
+      .clip(shape)
+      .background(
+        brush = Brush.verticalGradient(
+          listOf(
+            CardBackground.copy(alpha = 0.96f),
+            accentColor.copy(alpha = 0.12f),
+            CardBackground.copy(alpha = 0.92f)
+          )
+        ),
+        shape = shape
+      )
+      .border(
+        1.dp,
+        if (selected) PrimaryBlue.copy(alpha = 0.36f) else CardBorder.copy(alpha = 0.72f),
+        shape
+      )
+      .clickable(onClick = onClick)
+      .padding(contentPadding)
+  ) {
+    Column(verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 8.dp)) {
+      Text(
+        text = title,
+        style = MaterialTheme.typography.titleSmall,
+        color = PrimaryBlueDark,
+        fontWeight = FontWeight.ExtraBold,
+        maxLines = 2
+      )
+      Text(
+        text = subtitle,
+        style = MaterialTheme.typography.bodySmall,
+        color = SubtleInk,
+        maxLines = 2
+      )
+    }
+  }
+}
+
+@Composable
+private fun BoxScope.AmbientGlowLayer(accentColor: Color) {
+  Canvas(
     modifier = Modifier
       .matchParentSize()
       .graphicsLayer {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
           renderEffect = RenderEffect
-            .createBlurEffect(18f, 18f, Shader.TileMode.CLAMP)
+            .createBlurEffect(34f, 34f, Shader.TileMode.CLAMP)
             .asComposeRenderEffect()
         }
       }
-      .background(
-        brush = Brush.verticalGradient(
-          colors = listOf(tint.copy(alpha = 0.88f), tint.copy(alpha = 0.72f), CardGradientEnd.copy(alpha = 0.86f))
+  ) {
+    drawRect(
+      brush = Brush.radialGradient(
+        colors = listOf(
+          accentColor.copy(alpha = 0.58f),
+          accentColor.copy(alpha = 0.26f),
+          Color.Transparent
         ),
-        shape = RoundedCornerShape(20.dp)
+        center = Offset(size.width * 1.03f, size.height * 0.42f),
+        radius = size.maxDimension * 0.78f
       )
-  )
+    )
+    drawRect(
+      brush = Brush.radialGradient(
+        colors = listOf(
+          accentColor.copy(alpha = 0.36f),
+          Color.Transparent
+        ),
+        center = Offset(size.width * 0.92f, size.height * 1.04f),
+        radius = size.maxDimension * 0.50f
+      )
+    )
+  }
+}
+
+@Composable
+private fun BoxScope.GlassSurface() {
+  Canvas(modifier = Modifier.matchParentSize()) {
+    val corner = CornerRadius(36.dp.toPx(), 36.dp.toPx())
+    drawRoundRect(
+      brush = Brush.verticalGradient(
+        listOf(
+          Color.White.copy(alpha = 0.11f),
+          Color.White.copy(alpha = 0.025f),
+          Color.Black.copy(alpha = 0.18f)
+        )
+      ),
+      cornerRadius = corner
+    )
+    drawRoundRect(
+      brush = Brush.horizontalGradient(
+        listOf(
+          Color.White.copy(alpha = 0.055f),
+          Color.Transparent,
+          Color.Black.copy(alpha = 0.20f)
+        )
+      ),
+      cornerRadius = corner
+    )
+    drawRoundRect(
+      brush = Brush.verticalGradient(
+        listOf(
+          Color.White.copy(alpha = 0.18f),
+          Color.Transparent
+        ),
+        startY = 0f,
+        endY = size.height * 0.36f
+      ),
+      cornerRadius = corner
+    )
+  }
 }
 
 @Composable
@@ -418,14 +574,14 @@ private fun GlassActionButton(
   Box(
     modifier = Modifier
       .size(42.dp)
-      .background(Color.White.copy(alpha = 0.86f), CircleShape)
+      .background(CardBackground.copy(alpha = 0.86f), CircleShape)
       .border(1.dp, CardBorder, CircleShape)
       .clickable(onClick = onClick),
     contentAlignment = Alignment.Center
   ) {
     Icon(
       imageVector = icon,
-      contentDescription = contentDescription,
+      contentDescription = t(contentDescription),
       tint = PrimaryBlueDark
     )
   }
@@ -443,14 +599,14 @@ private fun DashboardSectionHeader(
     verticalAlignment = Alignment.CenterVertically
   ) {
     Text(
-      text = title,
+      text = t(title),
       style = MaterialTheme.typography.titleMedium,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.ExtraBold
     )
     if (!actionLabel.isNullOrBlank()) {
       Text(
-        text = actionLabel,
+        text = t(actionLabel),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.primary,
         fontWeight = FontWeight.SemiBold
@@ -467,7 +623,10 @@ private fun parseHexColor(hex: String): Color {
   }
 }
 
-private fun buildAgendaTasksForDashboard(events: List<CalendarEvent>): List<DashboardTask> {
+private fun buildAgendaTasksForDashboard(
+  events: List<CalendarEvent>,
+  language: com.mim.guruapp.ui.i18n.AppLanguage
+): List<DashboardTask> {
   val today = LocalDate.now()
   return events
     .sortedWith(
@@ -479,7 +638,7 @@ private fun buildAgendaTasksForDashboard(events: List<CalendarEvent>): List<Dash
       DashboardTask(
         id = "agenda-${event.id}",
         title = event.title,
-        timeLabel = formatDashboardEventRange(event),
+        timeLabel = formatDashboardEventRange(event, language),
         colorHex = event.colorHex,
         categoryKey = event.categoryKey,
         description = event.description
@@ -497,14 +656,16 @@ private fun eventPriority(event: CalendarEvent, today: LocalDate): Int {
   }
 }
 
-private fun formatDashboardEventRange(event: CalendarEvent): String {
+private fun formatDashboardEventRange(
+  event: CalendarEvent,
+  language: com.mim.guruapp.ui.i18n.AppLanguage
+): String {
   val start = parseDashboardEventStart(event)
   val end = parseDashboardEventEnd(event)
-  val formatter = DateTimeFormatter.ofPattern("dd MMM yyyy")
   val range = if (start == end) {
-    formatter.format(start)
+    formatDateForLanguage(start, "dd MMM yyyy", language)
   } else {
-    "${formatter.format(start)} - ${formatter.format(end)}"
+    "${formatDateForLanguage(start, "dd MMM yyyy", language)} - ${formatDateForLanguage(end, "dd MMM yyyy", language)}"
   }
   return if (event.timeLabel.isBlank()) range else "$range | ${event.timeLabel}"
 }

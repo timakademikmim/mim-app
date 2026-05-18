@@ -54,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -68,19 +69,23 @@ import com.mim.guruapp.data.model.ScoreDetailRow
 import com.mim.guruapp.data.model.ScoreStudent
 import com.mim.guruapp.data.model.SubjectOverview
 import com.mim.guruapp.data.model.SyncBannerState
+import com.mim.guruapp.ui.i18n.LocalAppLanguage
+import com.mim.guruapp.ui.i18n.formatDateForLanguage
+import com.mim.guruapp.ui.i18n.t
+import com.mim.guruapp.ui.i18n.ti
 import com.mim.guruapp.ui.theme.AppBackground
 import com.mim.guruapp.ui.theme.CardBorder
+import com.mim.guruapp.ui.theme.CardBackground
 import com.mim.guruapp.ui.theme.HighlightCard
 import com.mim.guruapp.ui.theme.PrimaryBlue
 import com.mim.guruapp.ui.theme.PrimaryBlueDark
+import com.mim.guruapp.ui.theme.SoftPanel
 import com.mim.guruapp.ui.theme.SubtleInk
 import com.mim.guruapp.ui.theme.SuccessTint
 import com.mim.guruapp.ui.theme.WarmAccent
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -138,8 +143,9 @@ fun InputNilaiScreen(
       .filter { it.isNotBlank() }
       .distinct()
   }
-  val materiSuggestion = remember(students, dateIso, selectedMetricKey) {
-    buildInputNilaiMateriSuggestion(students, dateIso, selectedMetricKey)
+  val language = LocalAppLanguage.current
+  val materiSuggestion = remember(students, dateIso, selectedMetricKey, language) {
+    buildInputNilaiMateriSuggestion(students, dateIso, selectedMetricKey, language)
   }
 
   LaunchedEffect(subjectsForClass, selectedClassName, selectedSubjectId) {
@@ -293,13 +299,13 @@ fun InputNilaiScreen(
           ) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
               Text(
-                text = "Nilai Siswa",
+                text = t("Nilai Siswa"),
                 style = MaterialTheme.typography.titleMedium,
                 color = PrimaryBlueDark,
                 fontWeight = FontWeight.ExtraBold
               )
               Text(
-                text = "${students.size} santri - ${selectedMetric.label}",
+                text = "${students.size} ${t("santri")} - ${t(selectedMetric.label)}",
                 style = MaterialTheme.typography.bodySmall,
                 color = SubtleInk
               )
@@ -422,7 +428,7 @@ private fun InputNilaiTopBar(
   ) {
     InputNilaiGlassActionButton(
       icon = Icons.Outlined.Menu,
-      contentDescription = "Buka sidebar",
+      contentDescription = t("Buka sidebar"),
       onClick = onMenuClick
     )
 
@@ -437,7 +443,7 @@ private fun InputNilaiTopBar(
         verticalArrangement = Arrangement.spacedBy(5.dp)
       ) {
         Text(
-          text = title,
+          text = t(title),
           style = MaterialTheme.typography.titleLarge,
           color = PrimaryBlueDark,
           fontWeight = FontWeight.ExtraBold,
@@ -476,18 +482,19 @@ private fun InputNilaiGlassActionButton(
   contentDescription: String,
   onClick: () -> Unit
 ) {
+  val isDarkMode = CardBackground.luminance() < 0.5f
   Box(
     modifier = Modifier
       .size(42.dp)
-      .background(Color.White.copy(alpha = 0.86f), CircleShape)
-      .border(1.dp, CardBorder, CircleShape)
+      .background(if (isDarkMode) SoftPanel.copy(alpha = 0.94f) else CardBackground.copy(alpha = 0.86f), CircleShape)
+      .border(1.dp, if (isDarkMode) PrimaryBlue.copy(alpha = 0.24f) else CardBorder, CircleShape)
       .clickable(onClick = onClick),
     contentAlignment = Alignment.Center
   ) {
     Icon(
       imageVector = icon,
-      contentDescription = contentDescription,
-      tint = PrimaryBlueDark
+      contentDescription = t(contentDescription),
+      tint = if (isDarkMode) PrimaryBlue else PrimaryBlueDark
     )
   }
 }
@@ -568,12 +575,12 @@ private fun InputNilaiDateField(
             showPicker = false
           }
         ) {
-          Text("Pilih")
+          Text(t("Pilih"))
         }
       },
       dismissButton = {
         TextButton(onClick = { showPicker = false }) {
-          Text("Batal")
+          Text(t("Batal"))
         }
       }
     ) {
@@ -600,8 +607,8 @@ private fun InputNilaiMateriCard(
       value = materiText,
       onValueChange = onMateriChange,
       singleLine = true,
-      label = { Text("Materi") },
-      placeholder = { Text("Contoh: Murojaah bab fi'il") },
+      label = { Text(t("Materi")) },
+      placeholder = { Text(t("Contoh: Murojaah bab fi'il")) },
       modifier = Modifier.fillMaxWidth(),
       shape = RoundedCornerShape(16.dp)
     )
@@ -612,7 +619,7 @@ private fun InputNilaiMateriCard(
       )
     } else {
       Text(
-        text = "Belum ada riwayat materi nilai sebelumnya untuk mapel ini.",
+        text = t("Belum ada riwayat materi nilai sebelumnya untuk mapel ini."),
         style = MaterialTheme.typography.bodySmall,
         color = SubtleInk
       )
@@ -647,7 +654,7 @@ private fun InputNilaiSuggestionChip(
       modifier = Modifier
         .size(34.dp)
         .clip(RoundedCornerShape(13.dp))
-        .background(Color.White.copy(alpha = 0.72f)),
+        .background(CardBackground.copy(alpha = 0.72f)),
       contentAlignment = Alignment.Center
     ) {
       Icon(
@@ -677,7 +684,7 @@ private fun InputNilaiSuggestionChip(
       )
     }
     Text(
-      text = "Pakai",
+      text = t("Pakai"),
       style = MaterialTheme.typography.labelMedium,
       color = HighlightCard,
       fontWeight = FontWeight.ExtraBold
@@ -698,7 +705,7 @@ private fun InputNilaiSectionCard(
       .fillMaxWidth()
       .shadow(12.dp, RoundedCornerShape(24.dp), ambientColor = Color(0x100F172A), spotColor = Color(0x100F172A))
       .clip(RoundedCornerShape(24.dp))
-      .background(Color.White.copy(alpha = 0.94f))
+      .background(CardBackground.copy(alpha = 0.94f))
       .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(24.dp))
       .padding(16.dp),
     verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -722,7 +729,7 @@ private fun InputNilaiSectionCard(
         )
       }
       Text(
-        text = title,
+        text = t(title),
         style = MaterialTheme.typography.titleMedium,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.ExtraBold,
@@ -735,14 +742,14 @@ private fun InputNilaiSectionCard(
           modifier = Modifier
             .size(34.dp)
             .clip(CircleShape)
-            .background(Color(0xFFF8FAFC))
+            .background(SoftPanel)
             .border(1.dp, CardBorder.copy(alpha = 0.9f), CircleShape)
             .clickable { showInfo = true },
           contentAlignment = Alignment.Center
         ) {
           Icon(
             imageVector = Icons.Outlined.Info,
-            contentDescription = "Info $title",
+            contentDescription = "${t("Info")} ${t(title)}",
             tint = SubtleInk,
             modifier = Modifier.size(18.dp)
           )
@@ -759,19 +766,19 @@ private fun InputNilaiSectionCard(
                 .padding(top = 42.dp)
                 .shadow(16.dp, RoundedCornerShape(18.dp), ambientColor = Color(0x1A0F172A), spotColor = Color(0x1A0F172A))
                 .clip(RoundedCornerShape(18.dp))
-                .background(Color.White.copy(alpha = 0.98f))
+                .background(CardBackground.copy(alpha = 0.98f))
                 .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(18.dp))
                 .padding(14.dp),
               verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
               Text(
-                text = "Catatan",
+                text = t("Catatan"),
                 style = MaterialTheme.typography.labelLarge,
                 color = PrimaryBlueDark,
                 fontWeight = FontWeight.ExtraBold
               )
               Text(
-                text = infoText,
+                text = ti(infoText),
                 style = MaterialTheme.typography.bodySmall,
                 color = SubtleInk
               )
@@ -806,13 +813,13 @@ private fun <T> InputNilaiDropdownField(
     ) {
       if (options.isEmpty()) {
         DropdownMenuItem(
-          text = { Text("Belum ada pilihan") },
+          text = { Text(t("Belum ada pilihan")) },
           onClick = { expanded = false }
         )
       } else {
         options.forEach { option ->
           DropdownMenuItem(
-            text = { Text(optionLabel(option)) },
+            text = { Text(t(optionLabel(option))) },
             onClick = {
               onSelect(option)
               expanded = false
@@ -835,21 +842,21 @@ private fun InputNilaiPickerSurface(
     modifier = modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(16.dp))
-      .background(Color.White.copy(alpha = 0.74f))
+      .background(SoftPanel.copy(alpha = 0.86f))
       .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(16.dp))
       .clickable(onClick = onClick)
       .padding(horizontal = 14.dp, vertical = 10.dp),
     verticalArrangement = Arrangement.spacedBy(3.dp)
   ) {
     Text(
-      text = label,
+      text = t(label),
       style = MaterialTheme.typography.labelSmall,
       color = SubtleInk,
       fontWeight = FontWeight.SemiBold,
       maxLines = 1
     )
     Text(
-      text = value,
+      text = t(value),
       style = MaterialTheme.typography.bodyMedium,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.SemiBold,
@@ -870,7 +877,7 @@ private fun InputNilaiStudentCard(
       .fillMaxWidth()
       .shadow(9.dp, RoundedCornerShape(20.dp), ambientColor = Color(0x100F172A), spotColor = Color(0x100F172A))
       .clip(RoundedCornerShape(20.dp))
-      .background(Color.White.copy(alpha = 0.94f))
+      .background(CardBackground.copy(alpha = 0.94f))
       .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(20.dp))
       .padding(horizontal = 14.dp, vertical = 12.dp),
     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -926,7 +933,7 @@ private fun InputNilaiSaveButton(
   Box(
     modifier = modifier
       .clip(RoundedCornerShape(999.dp))
-      .background(if (enabled) SuccessTint.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.7f))
+      .background(if (enabled) SuccessTint.copy(alpha = 0.18f) else SoftPanel.copy(alpha = 0.7f))
       .border(
         1.dp,
         if (enabled) SuccessTint.copy(alpha = 0.38f) else CardBorder.copy(alpha = 0.86f),
@@ -954,7 +961,7 @@ private fun InputNilaiSaveButton(
           modifier = Modifier.size(18.dp)
         )
         Text(
-          text = "Simpan",
+          text = t("Simpan"),
           style = MaterialTheme.typography.labelLarge,
           color = if (enabled) SuccessTint else SubtleInk,
           fontWeight = FontWeight.ExtraBold
@@ -1073,7 +1080,8 @@ private fun applyInputNilaiMetricValue(
 private fun buildInputNilaiMateriSuggestion(
   students: List<ScoreStudent>,
   dateIso: String,
-  metricKey: String
+  metricKey: String,
+  language: com.mim.guruapp.ui.i18n.AppLanguage
 ): InputNilaiMateriSuggestion? {
   val rows = students
     .flatMap { it.detailRowsByMetric[metricKey].orEmpty() }
@@ -1090,7 +1098,7 @@ private fun buildInputNilaiMateriSuggestion(
   }
 
   val latest = rows.maxByOrNull { it.dateIso } ?: return null
-  val formattedDate = runCatching { formatInputNilaiDate(latest.dateIso) }.getOrDefault(latest.dateIso)
+  val formattedDate = runCatching { formatDateForLanguage(LocalDate.parse(latest.dateIso), "dd MMM yyyy", language) }.getOrDefault(latest.dateIso)
   val materi = normalizeInputNilaiMaterial(latest.material)
   return InputNilaiMateriSuggestion(
     title = "Materi terakhir dinilai",
@@ -1134,10 +1142,10 @@ private fun formatInputNilaiNumber(value: Double): String {
   return if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
 }
 
+@Composable
 private fun formatInputNilaiDate(value: String): String {
   val date = runCatching { LocalDate.parse(value) }.getOrNull() ?: return value
-  val formatter = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.forLanguageTag("id-ID"))
-  return formatter.format(date)
+  return formatDateForLanguage(date, "dd MMM yyyy", LocalAppLanguage.current)
 }
 
 private fun dateIsoToInputNilaiPickerMillis(value: String): Long {

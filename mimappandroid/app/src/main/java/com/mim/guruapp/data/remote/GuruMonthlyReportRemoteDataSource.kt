@@ -38,6 +38,11 @@ sealed interface GuruMonthlyExtracurricularSaveResult {
   data class Error(val message: String) : GuruMonthlyExtracurricularSaveResult
 }
 
+private data class LessonLabelInfo(
+  val label: String,
+  val sortKey: String
+)
+
 class GuruMonthlyReportRemoteDataSource {
   suspend fun fetchMonthlyReportSnapshot(
     teacherRowId: String,
@@ -307,7 +312,7 @@ class GuruMonthlyReportRemoteDataSource {
       fetchRows(
         table = "absensi_santri",
         query = buildString {
-          append("select=id,tanggal,status,mapel_id,kelas_id")
+          append("select=id,tanggal,status,mapel_id,kelas_id,distribusi_id,jam_pelajaran_id")
           append("&santri_id=eq.")
           append(encodeValue(studentId))
           append("&kelas_id=eq.")
@@ -319,23 +324,67 @@ class GuruMonthlyReportRemoteDataSource {
           append("&order=tanggal.asc")
         }
       )
-    }.getOrDefault(emptyList())
+    }.getOrElse { error ->
+      if (!isMissingColumnError(error)) {
+        emptyList()
+      } else {
+        fetchRows(
+          table = "absensi_santri",
+          query = buildString {
+            append("select=id,tanggal,status,mapel_id,kelas_id")
+            append("&santri_id=eq.")
+            append(encodeValue(studentId))
+            append("&kelas_id=eq.")
+            append(encodeValue(classId))
+            append("&tanggal=gte.")
+            append(range.atDay(1))
+            append("&tanggal=lte.")
+            append(range.atEndOfMonth())
+            append("&order=tanggal.asc")
+          }
+        )
+      }
+    }
       .filterNot { row -> row.cleanString("tanggal").take(10) in holidayDates }
 
-    val subjectIds = rows.map { it.cleanString("mapel_id") }.filter { it.isNotBlank() }.distinct()
+    val distributionSubjectMap = fetchDistribusiSubjectMap(
+      rows.map { it.cleanString("distribusi_id") }
+    )
+    val subjectIds = (rows.map { row ->
+      row.cleanString("mapel_id").ifBlank {
+        distributionSubjectMap[row.cleanString("distribusi_id")].orEmpty()
+      }
+    })
+      .filter { it.isNotBlank() }
+      .distinct()
     val subjectMap = fetchMapelLabelMap(subjectIds)
+    val lessonMap = fetchJamLabelMap(
+      rows.map { it.cleanString("jam_pelajaran_id") }
+    )
 
     WaliAttendanceDetailSnapshot(
       studentId = studentId,
       period = normalizedPeriod,
       rows = rows.mapIndexed { index, row ->
+        val lessonId = row.cleanString("jam_pelajaran_id")
+        val lessonInfo = lessonMap[lessonId]
         WaliAttendanceDetailRow(
           id = row.cleanString("id").ifBlank { "$studentId-$normalizedPeriod-$index" },
           dateIso = row.cleanString("tanggal").take(10),
-          subjectName = subjectMap[row.cleanString("mapel_id")].orEmpty().ifBlank { "-" },
+          subjectName = subjectMap[
+            row.cleanString("mapel_id").ifBlank {
+              distributionSubjectMap[row.cleanString("distribusi_id")].orEmpty()
+            }
+          ].orEmpty().ifBlank { "-" },
+          lessonLabel = lessonInfo?.label.orEmpty(),
+          lessonSortKey = lessonInfo?.sortKey.orEmpty(),
           status = normalizeStatusLabel(row.cleanString("status"))
         )
-      },
+      }.sortedWith(
+        compareBy<WaliAttendanceDetailRow> { it.dateIso }
+          .thenBy { it.lessonSortKey.ifBlank { "99:99" } }
+          .thenBy { it.subjectName.lowercase() }
+      ),
       updatedAt = System.currentTimeMillis()
     )
   }
@@ -573,47 +622,92 @@ class GuruMonthlyReportRemoteDataSource {
     return keys.firstNotNullOfOrNull { key -> row.cleanString(key).takeIf { it.isNotBlank() } }.orEmpty()
   }
 
-  private fun JSONObject.subjectName(): String {
-    return pickFirst(this, "nama", "nama_mapel", "nama_pelajaran", "mapel", "judul")
-      .replace(Regex("\\s+"), " ")
-      .trim()
-  }
-
-  private fun JSONObject.subjectLabel(): String {
-    val name = subjectName()
-    val category = cleanString("kategori")
-    return buildString {
-      append(name.ifBlank { "-" })
-      if (category.isNotBlank()) {
-        append(" (")
-        append(category)
-        append(")")
-      }
-    }.trim()
-  }
-
   private fun fetchMapelLabelMap(subjectIds: List<String>): Map<String, String> {
     if (subjectIds.isEmpty()) return emptyMap()
-    val result = linkedMapOf<String, String>()
-    subjectIds.forEach { subjectId ->
-      val normalizedId = subjectId.trim()
-      if (normalizedId.isBlank()) return@forEach
-      val row = runCatching {
+    return subjectIds
+      .map { it.trim() }
+      .filter { it.isNotBlank() }
+      .distinct()
+      .chunked(100)
+      .flatMap { chunk ->
         fetchRows(
           table = "mapel",
           query = buildString {
-            append("select=id,nama,kategori,nama_mapel,nama_pelajaran,mapel,judul")
-            append("&id=eq.")
-            append(encodeValue(normalizedId))
-            append("&limit=1")
+            append("select=id,nama")
+            append("&id=in.(")
+            append(chunk.joinToString(",") { "\"${encodeValue(it)}\"" })
+            append(")")
           }
-        ).firstOrNull()
-      }.getOrNull()
-      if (row != null) {
-        result[normalizedId] = row.subjectLabel()
+        )
       }
-    }
-    return result
+      .associate { row ->
+        row.cleanString("id") to row.cleanString("nama")
+      }
+      .filterKeys(String::isNotBlank)
+      .filterValues(String::isNotBlank)
+  }
+
+  private fun fetchDistribusiSubjectMap(distributionIds: List<String>): Map<String, String> {
+    val normalizedIds = distributionIds
+      .map { it.trim() }
+      .filter { it.isNotBlank() }
+      .distinct()
+    if (normalizedIds.isEmpty()) return emptyMap()
+    return runCatching {
+      normalizedIds
+        .chunked(100)
+        .flatMap { chunk ->
+          fetchRows(
+            table = "distribusi_mapel",
+            query = buildString {
+              append("select=id,mapel_id")
+              append("&id=in.(")
+              append(chunk.joinToString(",") { "\"${encodeValue(it)}\"" })
+              append(")")
+            }
+          )
+        }
+        .associate { row ->
+          row.cleanString("id") to row.cleanString("mapel_id")
+        }
+        .filterKeys(String::isNotBlank)
+        .filterValues(String::isNotBlank)
+    }.getOrDefault(emptyMap())
+  }
+
+  private fun fetchJamLabelMap(ids: List<String>): Map<String, LessonLabelInfo> {
+    val normalizedIds = ids
+      .map { it.trim() }
+      .filter { it.isNotBlank() }
+      .distinct()
+    if (normalizedIds.isEmpty()) return emptyMap()
+    return runCatching {
+      normalizedIds
+        .chunked(100)
+        .flatMap { chunk ->
+          fetchRows(
+            table = "jam_pelajaran",
+            query = buildString {
+              append("select=id,nama,jam_mulai,jam_selesai")
+              append("&id=in.(")
+              append(chunk.joinToString(",") { "\"${encodeValue(it)}\"" })
+              append(")")
+            }
+          )
+        }
+        .associate { row ->
+          val id = row.cleanString("id")
+          val name = row.cleanString("nama").ifBlank { "Jam" }
+          val start = toTimeLabel(row.cleanString("jam_mulai"))
+          val end = toTimeLabel(row.cleanString("jam_selesai"))
+          val range = listOf(start, end).filter { it.isNotBlank() }.joinToString("-")
+          id to LessonLabelInfo(
+            label = if (range.isBlank()) name else "$name ($range)",
+            sortKey = start.ifBlank { name }
+          )
+        }
+        .filterKeys(String::isNotBlank)
+    }.getOrDefault(emptyMap())
   }
 
   private fun fetchAttendanceSummaries(
@@ -814,6 +908,12 @@ class GuruMonthlyReportRemoteDataSource {
 
   private fun encodeValue(value: String): String {
     return URLEncoder.encode(value.trim(), Charsets.UTF_8.name())
+  }
+
+  private fun toTimeLabel(value: String): String {
+    val cleaned = value.trim()
+    if (cleaned.isBlank()) return ""
+    return cleaned.take(5)
   }
 
   private fun normalizeAkhlakGrade(value: String): String {

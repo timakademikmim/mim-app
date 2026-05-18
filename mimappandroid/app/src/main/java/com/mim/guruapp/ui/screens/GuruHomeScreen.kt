@@ -71,6 +71,7 @@ import com.mim.guruapp.MutabaahSaveOutcome
 import com.mim.guruapp.MonthlyExtracurricularSaveOutcome
 import com.mim.guruapp.MonthlyReportSaveOutcome
 import com.mim.guruapp.UtsReportSaveOutcome
+import com.mim.guruapp.WakasekReviewOutcome
 import com.mim.guruapp.SampleDataFactory
 import com.mim.guruapp.data.model.AttendanceHistoryEntry
 import com.mim.guruapp.data.model.AttendanceApprovalRequest
@@ -99,6 +100,7 @@ import com.mim.guruapp.ui.components.AgendaCard
 import com.mim.guruapp.ui.components.AttendanceApprovalPopup
 import com.mim.guruapp.ui.components.AvailableMapelPanel
 import com.mim.guruapp.ui.components.BottomNavBar
+import com.mim.guruapp.ui.components.BottomNavShortcutDialog
 import com.mim.guruapp.ui.components.CalendarScreen
 import com.mim.guruapp.ui.components.DashboardScreenScaffold
 import com.mim.guruapp.ui.components.EditProfileScreen
@@ -123,9 +125,13 @@ import com.mim.guruapp.ui.components.Sidebar
 import com.mim.guruapp.ui.components.SidebarScrim
 import com.mim.guruapp.ui.components.SyncBannerCard
 import com.mim.guruapp.ui.components.TeachingScheduleScreen
+import com.mim.guruapp.ui.components.WakasekKurikulumPage
+import com.mim.guruapp.ui.components.WakasekKurikulumScreen
 import com.mim.guruapp.ui.components.WebMapelCard
+import com.mim.guruapp.ui.components.buildAvailableBottomNavShortcutItems
 import com.mim.guruapp.ui.components.buildGuruBottomNavItems
 import com.mim.guruapp.ui.components.buildGuruSidebarContent
+import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.AppBackground
 import com.mim.guruapp.ui.theme.CardBorder
 import com.mim.guruapp.ui.theme.HighlightCard
@@ -160,6 +166,9 @@ private fun GuruHomeContentTarget.transitionOrder(): Int {
     GuruSidebarDestination.Profil,
     GuruSidebarDestination.Pesan,
     GuruSidebarDestination.Notifikasi -> 5
+    GuruSidebarDestination.WakasekMonitoringGuru,
+    GuruSidebarDestination.WakasekMonitoringSiswa,
+    GuruSidebarDestination.WakasekPerizinan -> 6
     else -> 6
   }
 }
@@ -176,12 +185,16 @@ fun GuruHomeScreen(
   pendingInputAbsensiTarget: InputAbsensiNavigationTarget?,
   isSidebarOpen: Boolean,
   expandedSidebarParent: GuruSidebarParent?,
+  bottomNavShortcutDestinations: List<GuruSidebarDestination>,
+  languageCode: String,
+  themeModeCode: String,
   isClaimSectionVisible: Boolean,
   selectedClaimSubjectIds: Set<String>,
   onToggleSidebar: () -> Unit,
   onCloseSidebar: () -> Unit,
   onToggleSidebarParent: (GuruSidebarParent) -> Unit,
   onSelectDestination: (GuruSidebarDestination) -> Unit,
+  onUpdateBottomNavShortcuts: (List<GuruSidebarDestination>) -> Unit,
   onOpenCalendarScreen: () -> Unit,
   onCloseCalendarScreen: () -> Unit,
   onOpenNotificationPopup: () -> Unit,
@@ -223,6 +236,9 @@ fun GuruHomeScreen(
   onLoadLeaveRequests: suspend () -> LeaveRequestSnapshot?,
   onSubmitLeaveRequest: suspend (String, String, String) -> LeaveRequestSaveOutcome,
   onDeleteLeaveRequest: suspend (String) -> LeaveRequestSaveOutcome,
+  onReviewWakasekLeaveRequest: suspend (String, Boolean, String) -> WakasekReviewOutcome,
+  onApplyLanguage: (String) -> Unit,
+  onApplyThemeMode: (String) -> Unit,
   onRefreshClick: () -> Unit,
   onLogoutClick: () -> Unit
 ) {
@@ -231,20 +247,29 @@ fun GuruHomeScreen(
   val scope = rememberCoroutineScope()
   val selectedCalendarDate = runCatching { LocalDate.parse(selectedCalendarDateIso) }
     .getOrDefault(LocalDate.now())
-  val bottomNavItems = buildGuruBottomNavItems()
+  val availableBottomNavItems = buildAvailableBottomNavShortcutItems(
+    isWaliKelas = dashboard.waliSantriSnapshot.isWaliKelas,
+    isWakasekKurikulum = dashboard.wakasekKurikulumSnapshot.isWakasekKurikulum
+  )
+  val availableBottomNavDestinations = availableBottomNavItems.map { it.destination }.toSet()
+  val effectiveBottomNavShortcuts = bottomNavShortcutDestinations
+    .filter { availableBottomNavDestinations.contains(it) || it == GuruSidebarDestination.Dashboard }
+    .ifEmpty { listOf(GuruSidebarDestination.Dashboard) }
+  val bottomNavItems = buildGuruBottomNavItems(effectiveBottomNavShortcuts)
+  var isShortcutDialogOpen by remember { mutableStateOf(false) }
   val sidebarWidthPx = with(androidx.compose.ui.platform.LocalDensity.current) { SidebarWidth.toPx() }
   val sidebarOffsetPx = remember { Animatable(-sidebarWidthPx) }
   val sidebarGestureScope = rememberCoroutineScope()
   val selectedBottomNavDestination = when (selectedDestination) {
-    GuruSidebarDestination.Dashboard -> GuruSidebarDestination.Dashboard
-    GuruSidebarDestination.Mapel -> GuruSidebarDestination.Mapel
-    GuruSidebarDestination.Jadwal -> GuruSidebarDestination.Jadwal
+    GuruSidebarDestination.Dashboard -> GuruSidebarDestination.Dashboard.takeIf { effectiveBottomNavShortcuts.contains(it) }
+    GuruSidebarDestination.Mapel -> GuruSidebarDestination.Mapel.takeIf { effectiveBottomNavShortcuts.contains(it) }
+    GuruSidebarDestination.Jadwal -> GuruSidebarDestination.Jadwal.takeIf { effectiveBottomNavShortcuts.contains(it) }
     GuruSidebarDestination.InputNilai,
-    GuruSidebarDestination.InputAbsensi -> GuruSidebarDestination.InputAbsensi
+    GuruSidebarDestination.InputAbsensi -> GuruSidebarDestination.InputAbsensi.takeIf { effectiveBottomNavShortcuts.contains(it) }
     GuruSidebarDestination.Profil,
     GuruSidebarDestination.Pesan,
-    GuruSidebarDestination.Notifikasi -> GuruSidebarDestination.Profil
-    else -> null
+    GuruSidebarDestination.Notifikasi -> GuruSidebarDestination.Profil.takeIf { effectiveBottomNavShortcuts.contains(it) }
+    else -> selectedDestination.takeIf { effectiveBottomNavShortcuts.contains(it) }
   }
   val contentDestination = when (selectedDestination) {
     GuruSidebarDestination.InputNilai,
@@ -491,6 +516,10 @@ fun GuruHomeScreen(
         isRefreshing = syncBanner.isSyncing,
         onMenuClick = onToggleSidebar,
         onRefresh = onRefreshClick,
+        languageCode = languageCode,
+        onApplyLanguage = onApplyLanguage,
+        themeModeCode = themeModeCode,
+        onApplyThemeMode = onApplyThemeMode,
         onSaveClick = onSaveProfile,
         modifier = Modifier
           .fillMaxSize()
@@ -602,6 +631,24 @@ fun GuruHomeScreen(
         modifier = Modifier
           .fillMaxSize()
       )
+    } else if (
+      targetDestination == GuruSidebarDestination.WakasekMonitoringGuru ||
+      targetDestination == GuruSidebarDestination.WakasekMonitoringSiswa ||
+      targetDestination == GuruSidebarDestination.WakasekPerizinan
+    ) {
+      WakasekKurikulumScreen(
+        page = when (targetDestination) {
+          GuruSidebarDestination.WakasekMonitoringSiswa -> WakasekKurikulumPage.Student
+          GuruSidebarDestination.WakasekPerizinan -> WakasekKurikulumPage.Permission
+          else -> WakasekKurikulumPage.Teacher
+        },
+        snapshot = dashboard.wakasekKurikulumSnapshot,
+        isRefreshing = syncBanner.isSyncing,
+        onMenuClick = onToggleSidebar,
+        onRefresh = onRefreshClick,
+        onReviewLeaveRequest = onReviewWakasekLeaveRequest,
+        modifier = Modifier.fillMaxSize()
+      )
     } else {
       LazyColumn(
         modifier = Modifier
@@ -702,9 +749,22 @@ fun GuruHomeScreen(
         items = bottomNavItems,
         selectedDestination = selectedBottomNavDestination,
         onSelect = onSelectDestination,
+        onLongPress = { isShortcutDialogOpen = true },
         modifier = Modifier
           .navigationBarsPadding()
           .padding(horizontal = 18.dp, vertical = 10.dp)
+      )
+    }
+
+    if (isShortcutDialogOpen) {
+      BottomNavShortcutDialog(
+        availableItems = availableBottomNavItems,
+        selectedDestinations = effectiveBottomNavShortcuts,
+        onDismiss = { isShortcutDialogOpen = false },
+        onSave = { destinations ->
+          onUpdateBottomNavShortcuts(destinations)
+          isShortcutDialogOpen = false
+        }
       )
     }
 
@@ -717,7 +777,9 @@ fun GuruHomeScreen(
       appName = "MIM App",
       content = buildGuruSidebarContent(
         pendingSyncCount = dashboard.pendingSyncCount,
-        activeMapelCount = dashboard.subjects.size
+        activeMapelCount = dashboard.subjects.size,
+        isWaliKelas = dashboard.waliSantriSnapshot.isWaliKelas,
+        isWakasekKurikulum = dashboard.wakasekKurikulumSnapshot.isWakasekKurikulum
       ),
       selectedDestination = selectedDestination,
       expandedParent = expandedSidebarParent,
@@ -992,7 +1054,7 @@ private fun InputPagerHeader(
     ) {
       Icon(
         imageVector = Icons.Outlined.Menu,
-        contentDescription = "Buka sidebar",
+        contentDescription = t("Buka sidebar"),
         tint = PrimaryBlueDark
       )
     }
@@ -1008,7 +1070,7 @@ private fun InputPagerHeader(
         verticalArrangement = Arrangement.spacedBy(5.dp)
       ) {
         Text(
-          text = title,
+          text = t(title),
           style = MaterialTheme.typography.titleLarge,
           color = PrimaryBlueDark,
           fontWeight = FontWeight.ExtraBold,
@@ -1059,19 +1121,19 @@ private fun GuruHomeTopBar(
     ) {
       Icon(
         imageVector = Icons.Outlined.Menu,
-        contentDescription = "Buka sidebar",
+        contentDescription = t("Buka sidebar"),
         tint = PrimaryBlueDark
       )
     }
     Column(modifier = Modifier.padding(start = 14.dp)) {
       Text(
-        text = title,
+        text = t(title),
         style = MaterialTheme.typography.titleSmall,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.ExtraBold
       )
       Text(
-        text = "Drawer ini mengikuti struktur menu guru versi web",
+        text = t("Drawer ini mengikuti struktur menu guru versi web"),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant
       )
@@ -1094,12 +1156,16 @@ private fun GuruHomeScreenPreview() {
       pendingInputAbsensiTarget = null,
       isSidebarOpen = true,
       expandedSidebarParent = GuruSidebarParent.AktivitasHarian,
+      bottomNavShortcutDestinations = com.mim.guruapp.defaultBottomNavShortcutDestinations(),
+      languageCode = "id",
+      themeModeCode = "system",
       isClaimSectionVisible = true,
       selectedClaimSubjectIds = setOf("offer-1"),
       onToggleSidebar = {},
       onCloseSidebar = {},
       onToggleSidebarParent = {},
       onSelectDestination = {},
+      onUpdateBottomNavShortcuts = {},
       onOpenCalendarScreen = {},
       onCloseCalendarScreen = {},
       onOpenNotificationPopup = {},
@@ -1141,6 +1207,9 @@ private fun GuruHomeScreenPreview() {
       onLoadLeaveRequests = { null },
       onSubmitLeaveRequest = { _, _, _ -> LeaveRequestSaveOutcome(true, "OK") },
       onDeleteLeaveRequest = { _ -> LeaveRequestSaveOutcome(true, "OK") },
+      onReviewWakasekLeaveRequest = { _, _, _ -> WakasekReviewOutcome(true, "OK") },
+      onApplyLanguage = {},
+      onApplyThemeMode = {},
       onRefreshClick = {},
       onLogoutClick = {}
     )

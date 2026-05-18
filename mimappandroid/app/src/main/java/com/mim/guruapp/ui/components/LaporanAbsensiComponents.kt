@@ -61,6 +61,7 @@ import com.mim.guruapp.data.model.MonthlyReportSnapshot
 import com.mim.guruapp.data.model.WaliAttendanceDetailSnapshot
 import com.mim.guruapp.data.model.WaliSantriProfile
 import com.mim.guruapp.data.model.WaliSantriSnapshot
+import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.AppBackground
 import com.mim.guruapp.ui.theme.CardBackground
 import com.mim.guruapp.ui.theme.CardBorder
@@ -282,7 +283,7 @@ fun LaporanAbsensiScreen(
 
               else -> {
                 items(selectedDetail?.rows.orEmpty(), key = { it.id }) { row ->
-                  LaporanAbsensiDetailRowCard(row.dateIso, row.subjectName, row.status)
+                  LaporanAbsensiDetailRowCard(row.dateIso, row.subjectName, row.lessonLabel, row.status)
                 }
               }
             }
@@ -308,7 +309,7 @@ private fun LaporanAbsensiTopBar(
   ) {
     LaporanAbsensiCircleButton(
       icon = if (isDetail) Icons.AutoMirrored.Outlined.ArrowBack else Icons.Outlined.Menu,
-      contentDescription = if (isDetail) "Kembali ke daftar absensi" else "Buka sidebar",
+      contentDescription = if (isDetail) t("Kembali ke daftar absensi") else t("Buka sidebar"),
       onClick = onPrimaryClick
     )
 
@@ -319,13 +320,13 @@ private fun LaporanAbsensiTopBar(
       horizontalAlignment = Alignment.CenterHorizontally
     ) {
       Text(
-        text = subtitle,
+        text = t(subtitle),
         style = MaterialTheme.typography.bodyMedium,
         color = SubtleInk,
         textAlign = TextAlign.Center
       )
       Text(
-        text = title,
+        text = t(title),
         style = MaterialTheme.typography.headlineSmall,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.ExtraBold,
@@ -370,7 +371,7 @@ private fun LaporanAbsensiPeriodPicker(
       }
       Column(modifier = Modifier.weight(1f)) {
         Text(
-          text = "Periode",
+          text = t("Periode"),
           style = MaterialTheme.typography.labelMedium,
           color = SubtleInk
         )
@@ -522,7 +523,7 @@ private fun LaporanAbsensiStudentCard(
         LaporanAbsensiStatusPill("Alpa", "${summary?.alpaCount ?: 0}", Color(0xFFFFE4E6), Color(0xFFBE123C))
       }
       Text(
-        text = "Kehadiran ${summary?.attendancePercent.withPercentSuffix()}",
+        text = "${t("Kehadiran")} ${summary?.attendancePercent.withPercentSuffix()}",
         style = MaterialTheme.typography.labelMedium,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.SemiBold
@@ -599,6 +600,7 @@ private fun LaporanAbsensiDetailHeader(
 private fun LaporanAbsensiDetailRowCard(
   dateIso: String,
   subjectName: String,
+  lessonLabel: String,
   status: String
 ) {
   Row(
@@ -634,10 +636,21 @@ private fun LaporanAbsensiDetailRowCard(
       )
       Text(
         text = subjectName.ifBlank { "-" },
-        style = MaterialTheme.typography.titleMedium,
+        style = MaterialTheme.typography.bodyMedium,
         color = PrimaryBlueDark,
-        fontWeight = FontWeight.Bold
+        fontWeight = FontWeight.Bold,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
       )
+      if (lessonLabel.isNotBlank()) {
+        Text(
+          text = lessonLabel,
+          style = MaterialTheme.typography.labelSmall,
+          color = SubtleInk,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis
+        )
+      }
     }
 
     Text(
@@ -680,14 +693,14 @@ private fun LaporanAbsensiCircleButton(
     modifier = Modifier
       .size(42.dp)
       .clip(CircleShape)
-      .background(Color.White.copy(alpha = 0.86f))
+      .background(CardBackground.copy(alpha = 0.86f))
       .border(1.dp, CardBorder, CircleShape)
       .clickable(onClick = onClick),
     contentAlignment = Alignment.Center
   ) {
     Icon(
       imageVector = icon,
-      contentDescription = contentDescription,
+      contentDescription = t(contentDescription),
       tint = PrimaryBlueDark
     )
   }

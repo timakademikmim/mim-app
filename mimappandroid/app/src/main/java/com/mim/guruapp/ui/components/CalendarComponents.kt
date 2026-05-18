@@ -84,6 +84,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -93,10 +94,21 @@ import androidx.compose.ui.window.Dialog
 import com.mim.guruapp.data.model.CalendarEvent
 import com.mim.guruapp.data.model.TeachingReminderSettings
 import com.mim.guruapp.alarm.TeachingReminderNotifier
+import com.mim.guruapp.ui.i18n.LocalAppLanguage
+import com.mim.guruapp.ui.i18n.dayNameForLanguage
+import com.mim.guruapp.ui.i18n.formatDateForLanguage
+import com.mim.guruapp.ui.i18n.formatMonthForLanguage
+import com.mim.guruapp.ui.i18n.localeForLanguage
+import com.mim.guruapp.ui.i18n.t
+import com.mim.guruapp.ui.i18n.ti
 import com.mim.guruapp.ui.theme.CardBorder
+import com.mim.guruapp.ui.theme.CardBackground
 import com.mim.guruapp.ui.theme.CardGradientEnd
+import com.mim.guruapp.ui.theme.PrimaryBlue
 import com.mim.guruapp.ui.theme.PrimaryBlueDark
+import com.mim.guruapp.ui.theme.SoftPanel
 import com.mim.guruapp.ui.theme.SubtleInk
+import com.mim.guruapp.ui.theme.WarmAccent
 import org.json.JSONArray
 import org.json.JSONObject
 import androidx.core.content.ContextCompat
@@ -106,9 +118,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.YearMonth
-import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
-import java.util.Locale
 
 private enum class CalendarViewMode {
   Week,
@@ -226,7 +236,7 @@ fun CalendarScreen(
 
         item {
           Text(
-            text = "Timeline",
+            text = t("Timeline"),
             style = MaterialTheme.typography.titleMedium,
             color = PrimaryBlueDark,
             fontWeight = FontWeight.ExtraBold
@@ -445,11 +455,11 @@ fun CalendarHeader(
   onJumpToToday: () -> Unit,
   onBackClick: () -> Unit
 ) {
-  val dateFormatter = DateTimeFormatter.ofPattern("MMMM d, yyyy")
+  val language = LocalAppLanguage.current
   val title = if (selectedDate == LocalDate.now()) {
     "Today"
   } else {
-    selectedDate.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.getDefault())
+    dayNameForLanguage(selectedDate, TextStyle.FULL, language)
   }
 
   Row(
@@ -471,13 +481,13 @@ fun CalendarHeader(
       horizontalAlignment = Alignment.CenterHorizontally
     ) {
       Text(
-        text = dateFormatter.format(selectedDate),
+        text = formatDateForLanguage(selectedDate, "MMMM d, yyyy", language),
         style = MaterialTheme.typography.bodyMedium,
         color = SubtleInk,
         textAlign = TextAlign.Center
       )
       Text(
-        text = title,
+        text = t(title),
         style = MaterialTheme.typography.headlineMedium,
         color = accentColor,
         fontWeight = FontWeight.ExtraBold,
@@ -499,11 +509,11 @@ private fun TeachingScheduleHeader(
   onJumpToToday: () -> Unit,
   onMenuClick: () -> Unit
 ) {
-  val dateFormatter = DateTimeFormatter.ofPattern("MMMM d, yyyy")
+  val language = LocalAppLanguage.current
   val title = if (selectedDate == LocalDate.now()) {
     "Jadwal Hari Ini"
   } else {
-    selectedDate.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.getDefault())
+    dayNameForLanguage(selectedDate, TextStyle.FULL, language)
   }
 
   Row(
@@ -514,7 +524,7 @@ private fun TeachingScheduleHeader(
   ) {
     GlassCircleButton(
       icon = Icons.Outlined.Menu,
-      contentDescription = "Buka sidebar",
+      contentDescription = t("Buka sidebar"),
       onClick = onMenuClick
     )
 
@@ -525,13 +535,13 @@ private fun TeachingScheduleHeader(
       horizontalAlignment = Alignment.CenterHorizontally
     ) {
       Text(
-        text = dateFormatter.format(selectedDate),
+        text = formatDateForLanguage(selectedDate, "MMMM d, yyyy", language),
         style = MaterialTheme.typography.bodyMedium,
         color = SubtleInk,
         textAlign = TextAlign.Center
       )
       Text(
-        text = title,
+        text = t(title),
         style = MaterialTheme.typography.headlineMedium,
         color = Color(0xFF60A5FA),
         fontWeight = FontWeight.ExtraBold,
@@ -558,7 +568,7 @@ private fun TimelineTitleWithAlarm(
     verticalAlignment = Alignment.CenterVertically
   ) {
     Text(
-      text = "Timeline",
+      text = t("Timeline"),
       style = MaterialTheme.typography.titleMedium,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.ExtraBold
@@ -566,15 +576,15 @@ private fun TimelineTitleWithAlarm(
     Box(contentAlignment = Alignment.TopEnd) {
       GlassCircleButton(
         icon = Icons.Outlined.Alarm,
-        contentDescription = "Atur pengingat jadwal",
+        contentDescription = t("Atur pengingat jadwal"),
         onClick = onAlarmClick
       )
       if (reminderEnabled) {
         Box(
           modifier = Modifier
-            .size(10.dp)
-            .background(Color(0xFF22C55E), CircleShape)
-            .border(1.dp, Color.White, CircleShape)
+        .size(10.dp)
+        .background(Color(0xFF22C55E), CircleShape)
+            .border(1.dp, CardBackground, CircleShape)
         )
       }
     }
@@ -601,9 +611,10 @@ private fun TeachingReminderSettingsDialog(
     Surface(
       modifier = Modifier
         .fillMaxWidth()
-        .heightIn(max = 660.dp),
+        .heightIn(max = 660.dp)
+        .border(1.dp, CardBorder, RoundedCornerShape(28.dp)),
       shape = RoundedCornerShape(28.dp),
-      color = Color.White,
+      color = CardBackground,
       tonalElevation = 6.dp,
       shadowElevation = 14.dp
     ) {
@@ -619,24 +630,24 @@ private fun TeachingReminderSettingsDialog(
           Box(
             modifier = Modifier
               .size(42.dp)
-              .background(Color(0xFFE0F2FE), RoundedCornerShape(16.dp)),
+              .background(PrimaryBlue.copy(alpha = 0.16f), RoundedCornerShape(16.dp)),
             contentAlignment = Alignment.Center
           ) {
             androidx.compose.material3.Icon(
               imageVector = Icons.Outlined.Alarm,
               contentDescription = null,
-              tint = Color(0xFF0369A1)
+              tint = PrimaryBlue
             )
           }
           Column(modifier = Modifier.weight(1f)) {
             Text(
-              text = "Pengingat Jam Pelajaran",
+              text = t("Pengingat Jam Pelajaran"),
               style = MaterialTheme.typography.titleMedium,
               color = PrimaryBlueDark,
               fontWeight = FontWeight.ExtraBold
             )
             Text(
-              text = if (settings.enabled) "Aktif" else "Nonaktif",
+              text = if (settings.enabled) t("Aktif") else t("Nonaktif"),
               style = MaterialTheme.typography.bodySmall,
               color = SubtleInk
             )
@@ -690,7 +701,7 @@ private fun TeachingReminderSettingsDialog(
               ReminderOptionRow(
                 icon = Icons.Outlined.MusicNote,
                 title = "Nada alarm",
-                value = settings.ringtoneLabel.ifBlank { "Nada default sistem" },
+                value = settings.ringtoneLabel.ifBlank { t("Nada default sistem") },
                 onClick = onPickRingtone
               )
             }
@@ -733,7 +744,7 @@ private fun TeachingReminderSettingsDialog(
           } else {
             item {
               Text(
-                text = "Aktifkan pengingat untuk mengatur target mapel, frekuensi, dan nada alarm.",
+                text = t("Aktifkan pengingat untuk mengatur target mapel, frekuensi, dan nada alarm."),
                 style = MaterialTheme.typography.bodyMedium,
                 color = SubtleInk
               )
@@ -742,7 +753,7 @@ private fun TeachingReminderSettingsDialog(
         }
 
         Text(
-          text = "Tutup",
+          text = t("Tutup"),
           style = MaterialTheme.typography.labelLarge,
           color = PrimaryBlueDark,
           fontWeight = FontWeight.ExtraBold,
@@ -764,7 +775,7 @@ private fun ReminderTargetSelector(
 ) {
   Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
     Text(
-      text = "Target pengingat",
+      text = t("Target pengingat"),
       style = MaterialTheme.typography.labelLarge,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.Bold
@@ -801,7 +812,7 @@ private fun ReminderSubjectPicker(
 ) {
   Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
     Text(
-      text = "Daftar pengingat",
+      text = t("Daftar pengingat"),
       style = MaterialTheme.typography.labelLarge,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.Bold
@@ -811,7 +822,7 @@ private fun ReminderSubjectPicker(
       settings.targetMode != ReminderTargetSpecific -> {
         ReminderSummaryCard(
           title = "Semua mapel",
-          subtitle = "${subjectOptions.size} jadwal mapel tersimpan"
+          subtitle = "${subjectOptions.size} ${t("jadwal mapel tersimpan")}"
         )
       }
 
@@ -828,7 +839,7 @@ private fun ReminderSubjectPicker(
           Row(
             modifier = Modifier
               .fillMaxWidth()
-              .background(Color(0xFFF8FAFC), RoundedCornerShape(18.dp))
+              .background(SoftPanel, RoundedCornerShape(18.dp))
               .border(1.dp, CardBorder.copy(alpha = 0.9f), RoundedCornerShape(18.dp))
               .clickable {
                 val nextIds = if (selected) {
@@ -861,7 +872,7 @@ private fun ReminderSubjectPicker(
                 fontWeight = FontWeight.Bold
               )
               Text(
-                text = option.subtitle,
+                text = ti(option.subtitle),
                 style = MaterialTheme.typography.bodySmall,
                 color = SubtleInk
               )
@@ -880,7 +891,7 @@ private fun ReminderRepeatSelector(
 ) {
   Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
     Text(
-      text = "Frekuensi ulang",
+      text = t("Frekuensi ulang"),
       style = MaterialTheme.typography.labelLarge,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.Bold
@@ -910,8 +921,8 @@ private fun ReminderRadioRow(
   Row(
     modifier = Modifier
       .fillMaxWidth()
-      .background(if (selected) Color(0xFFEFF6FF) else Color(0xFFF8FAFC), RoundedCornerShape(18.dp))
-      .border(1.dp, if (selected) Color(0xFFBFDBFE) else CardBorder.copy(alpha = 0.9f), RoundedCornerShape(18.dp))
+      .background(if (selected) PrimaryBlue.copy(alpha = 0.14f) else SoftPanel, RoundedCornerShape(18.dp))
+      .border(1.dp, if (selected) PrimaryBlue.copy(alpha = 0.26f) else CardBorder.copy(alpha = 0.9f), RoundedCornerShape(18.dp))
       .clickable(onClick = onClick)
       .padding(horizontal = 12.dp, vertical = 10.dp),
     horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -923,13 +934,13 @@ private fun ReminderRadioRow(
     )
     Column(modifier = Modifier.weight(1f)) {
       Text(
-        text = title,
+        text = t(title),
         style = MaterialTheme.typography.bodyMedium,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.Bold
       )
       Text(
-        text = subtitle,
+        text = t(subtitle),
         style = MaterialTheme.typography.bodySmall,
         color = SubtleInk
       )
@@ -945,19 +956,19 @@ private fun ReminderSummaryCard(
   Column(
     modifier = Modifier
       .fillMaxWidth()
-      .background(Color(0xFFF8FAFC), RoundedCornerShape(18.dp))
+      .background(SoftPanel, RoundedCornerShape(18.dp))
       .border(1.dp, CardBorder.copy(alpha = 0.9f), RoundedCornerShape(18.dp))
       .padding(horizontal = 14.dp, vertical = 12.dp),
     verticalArrangement = Arrangement.spacedBy(2.dp)
   ) {
     Text(
-      text = title,
+      text = t(title),
       style = MaterialTheme.typography.bodyMedium,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.Bold
     )
     Text(
-      text = subtitle,
+      text = t(subtitle),
       style = MaterialTheme.typography.bodySmall,
       color = SubtleInk
     )
@@ -1005,7 +1016,7 @@ private fun TeachingReminderSettingsCard(
   Column(
     modifier = Modifier
       .fillMaxWidth()
-      .background(Color.White.copy(alpha = 0.86f), RoundedCornerShape(22.dp))
+      .background(CardBackground.copy(alpha = 0.86f), RoundedCornerShape(22.dp))
       .border(1.dp, CardBorder, RoundedCornerShape(22.dp))
       .padding(16.dp),
     verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -1029,13 +1040,13 @@ private fun TeachingReminderSettingsCard(
       }
       Column(modifier = Modifier.weight(1f)) {
         Text(
-          text = "Pengingat Jam Pelajaran",
+          text = t("Pengingat Jam Pelajaran"),
           style = MaterialTheme.typography.titleMedium,
           color = PrimaryBlueDark,
           fontWeight = FontWeight.ExtraBold
         )
         Text(
-          text = "Alarm lokal akan berbunyi sebelum jam pelajaran dimulai.",
+          text = t("Alarm lokal akan berbunyi sebelum jam pelajaran dimulai."),
           style = MaterialTheme.typography.bodySmall,
           color = SubtleInk
         )
@@ -1059,7 +1070,7 @@ private fun TeachingReminderSettingsCard(
       ReminderOptionRow(
         icon = Icons.Outlined.MusicNote,
         title = "Nada dering",
-        value = settings.ringtoneLabel.ifBlank { "Nada default sistem" },
+        value = settings.ringtoneLabel.ifBlank { t("Nada default sistem") },
         onClick = onPickRingtone
       )
 
@@ -1093,7 +1104,7 @@ private fun ReminderLeadTimeSelector(
     ReminderOptionRow(
       icon = Icons.Outlined.Schedule,
       title = "Waktu pengingat",
-      value = if (selectedMinutes == 0) "Tepat saat mulai" else "$selectedMinutes menit sebelum",
+      value = if (selectedMinutes == 0) t("Tepat saat mulai") else "$selectedMinutes ${t("menit sebelum")}",
       onClick = { expanded = true }
     )
     DropdownMenu(
@@ -1102,7 +1113,7 @@ private fun ReminderLeadTimeSelector(
     ) {
       options.forEach { minutes ->
         DropdownMenuItem(
-          text = { Text(if (minutes == 0) "Tepat saat mulai" else "$minutes menit sebelum") },
+          text = { Text(if (minutes == 0) t("Tepat saat mulai") else "$minutes ${t("menit sebelum")}") },
           onClick = {
             onSelect(minutes)
             expanded = false
@@ -1123,7 +1134,7 @@ private fun ReminderOptionRow(
   Row(
     modifier = Modifier
       .fillMaxWidth()
-      .background(Color(0xFFF8FAFC), RoundedCornerShape(18.dp))
+      .background(SoftPanel, RoundedCornerShape(18.dp))
       .border(1.dp, CardBorder.copy(alpha = 0.9f), RoundedCornerShape(18.dp))
       .clickable(onClick = onClick)
       .padding(horizontal = 14.dp, vertical = 12.dp),
@@ -1133,7 +1144,7 @@ private fun ReminderOptionRow(
     Box(
       modifier = Modifier
         .size(36.dp)
-        .background(Color.White, RoundedCornerShape(14.dp))
+        .background(CardBackground, RoundedCornerShape(14.dp))
         .border(1.dp, CardBorder.copy(alpha = 0.9f), RoundedCornerShape(14.dp)),
       contentAlignment = Alignment.Center
     ) {
@@ -1145,13 +1156,13 @@ private fun ReminderOptionRow(
     }
     Column(modifier = Modifier.weight(1f)) {
       Text(
-        text = title,
+        text = t(title),
         style = MaterialTheme.typography.labelLarge,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.Bold
       )
       Text(
-        text = value,
+        text = t(value),
         style = MaterialTheme.typography.bodySmall,
         color = SubtleInk
       )
@@ -1168,22 +1179,22 @@ private fun ReminderPermissionBanner(
   Row(
     modifier = Modifier
       .fillMaxWidth()
-      .background(Color(0xFFFFFBEB), RoundedCornerShape(18.dp))
-      .border(1.dp, Color(0xFFFDE68A), RoundedCornerShape(18.dp))
+      .background(WarmAccent.copy(alpha = 0.12f), RoundedCornerShape(18.dp))
+      .border(1.dp, WarmAccent.copy(alpha = 0.28f), RoundedCornerShape(18.dp))
       .padding(horizontal = 14.dp, vertical = 12.dp),
     horizontalArrangement = Arrangement.SpaceBetween,
     verticalAlignment = Alignment.CenterVertically
   ) {
     Text(
-      text = title,
+      text = t(title),
       style = MaterialTheme.typography.bodySmall,
       color = PrimaryBlueDark,
       modifier = Modifier.weight(1f)
     )
     Text(
-      text = actionLabel,
+      text = t(actionLabel),
       style = MaterialTheme.typography.labelLarge,
-      color = Color(0xFFB45309),
+      color = WarmAccent,
       fontWeight = FontWeight.ExtraBold,
       modifier = Modifier.clickable(onClick = onClick)
     )
@@ -1202,13 +1213,13 @@ private fun TodayShortcutRow(
     Box(
       modifier = Modifier
         .clip(RoundedCornerShape(14.dp))
-        .background(Color.White.copy(alpha = 0.88f))
+        .background(CardBackground.copy(alpha = 0.88f))
         .border(1.dp, CardBorder, RoundedCornerShape(14.dp))
         .clickable(onClick = onClick)
         .padding(horizontal = 14.dp, vertical = 10.dp)
     ) {
       Text(
-        text = "Hari ini",
+        text = t("Hari ini"),
         style = MaterialTheme.typography.labelLarge,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.SemiBold
@@ -1223,14 +1234,14 @@ private fun WeekSwitcherRow(
   onPreviousWeek: () -> Unit,
   onNextWeek: () -> Unit
 ) {
+  val language = LocalAppLanguage.current
   val startOfWeek = selectedDate.minusDays((selectedDate.dayOfWeek.value - DayOfWeek.MONDAY.value).toLong())
   val endOfWeek = startOfWeek.plusDays(6)
-  val formatter = DateTimeFormatter.ofPattern("dd MMM", Locale("id", "ID"))
 
   Row(
     modifier = Modifier
       .fillMaxWidth()
-      .background(Color.White.copy(alpha = 0.86f), RoundedCornerShape(20.dp))
+      .background(CardBackground.copy(alpha = 0.86f), RoundedCornerShape(20.dp))
       .border(1.dp, CardBorder, RoundedCornerShape(20.dp))
       .padding(horizontal = 14.dp, vertical = 12.dp),
     verticalAlignment = Alignment.CenterVertically,
@@ -1242,7 +1253,7 @@ private fun WeekSwitcherRow(
       onClick = onPreviousWeek
     )
     Text(
-      text = "${formatter.format(startOfWeek)} - ${formatter.format(endOfWeek)}",
+      text = "${formatDateForLanguage(startOfWeek, "dd MMM", language)} - ${formatDateForLanguage(endOfWeek, "dd MMM", language)}",
       style = MaterialTheme.typography.titleSmall,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.ExtraBold
@@ -1264,7 +1275,7 @@ private fun CalendarViewToggle(
   Row(
     modifier = Modifier
       .fillMaxWidth()
-      .background(Color.White.copy(alpha = 0.86f), RoundedCornerShape(18.dp))
+      .background(CardBackground.copy(alpha = 0.86f), RoundedCornerShape(18.dp))
       .border(1.dp, CardBorder, RoundedCornerShape(18.dp))
       .padding(6.dp),
     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1303,7 +1314,7 @@ private fun CalendarToggleChip(
     contentAlignment = Alignment.Center
   ) {
     Text(
-      text = label,
+      text = t(label),
       style = MaterialTheme.typography.bodyMedium,
       color = if (isSelected) PrimaryBlueDark else SubtleInk,
       fontWeight = FontWeight.SemiBold
@@ -1363,7 +1374,8 @@ fun MonthCalendar(
   onNextMonth: () -> Unit,
   onSelectDate: (LocalDate) -> Unit
 ) {
-  val monthTitle = DateTimeFormatter.ofPattern("MMMM yyyy").format(currentMonth.atDay(1))
+  val language = LocalAppLanguage.current
+  val monthTitle = formatMonthForLanguage(currentMonth, "MMMM yyyy", language)
   val firstDay = currentMonth.atDay(1)
   val leadingSlots = firstDay.dayOfWeek.value - 1
   val monthDays = (1..currentMonth.lengthOfMonth()).map { currentMonth.atDay(it) }
@@ -1392,7 +1404,7 @@ fun MonthCalendar(
           }
         )
       }
-      .background(Color.White.copy(alpha = 0.80f), RoundedCornerShape(22.dp))
+      .background(CardBackground.copy(alpha = 0.80f), RoundedCornerShape(22.dp))
       .border(1.dp, CardBorder, RoundedCornerShape(22.dp))
       .padding(16.dp)
       .animateContentSize(),
@@ -1425,9 +1437,9 @@ fun MonthCalendar(
       modifier = Modifier.fillMaxWidth(),
       horizontalArrangement = Arrangement.SpaceBetween
     ) {
-      listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun").forEach { dayName ->
+      listOf(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY, DayOfWeek.SATURDAY, DayOfWeek.SUNDAY).forEach { day ->
         Text(
-          text = dayName,
+          text = day.getDisplayName(TextStyle.SHORT, localeForLanguage(language)),
           style = MaterialTheme.typography.bodySmall,
           color = SubtleInk,
           fontWeight = FontWeight.SemiBold,
@@ -1475,12 +1487,12 @@ fun EventTimeline(
     Box(
       modifier = modifier
         .fillMaxWidth()
-        .background(Color.White.copy(alpha = 0.82f), RoundedCornerShape(22.dp))
+        .background(CardBackground.copy(alpha = 0.82f), RoundedCornerShape(22.dp))
         .border(1.dp, CardBorder, RoundedCornerShape(22.dp))
         .padding(18.dp)
     ) {
       Text(
-        text = emptyMessage,
+        text = t(emptyMessage),
         style = MaterialTheme.typography.bodyMedium,
         color = SubtleInk
       )
@@ -1547,6 +1559,7 @@ fun EventCard(
   val tint = parseCalendarColor(event.colorHex)
   val title = remember(event.title) { sanitizeCalendarText(event.title).ifBlank { "Agenda Akademik" } }
   val description = remember(event.description) { sanitizeCalendarText(event.description) }
+  val language = LocalAppLanguage.current
   AnimatedVisibility(
     visible = true,
     enter = fadeIn(animationSpec = tween(260)) + slideInVertically(animationSpec = tween(260)) { it / 8 },
@@ -1556,7 +1569,8 @@ fun EventCard(
       modifier = Modifier
         .fillMaxWidth()
         .shadow(10.dp, RoundedCornerShape(22.dp), ambientColor = Color(0x140F172A), spotColor = Color(0x140F172A))
-        .border(1.dp, Color.White.copy(alpha = 0.40f), RoundedCornerShape(22.dp))
+        .clip(RoundedCornerShape(22.dp))
+        .border(1.dp, CardBorder.copy(alpha = 0.78f), RoundedCornerShape(22.dp))
     ) {
       CalendarGlassBackground(tint = tint)
       Column(
@@ -1564,20 +1578,20 @@ fun EventCard(
         verticalArrangement = Arrangement.spacedBy(8.dp)
       ) {
         Text(
-          text = buildCalendarEventMeta(event),
+          text = buildCalendarEventMeta(event, language),
           style = MaterialTheme.typography.labelLarge,
           color = PrimaryBlueDark.copy(alpha = 0.78f),
           fontWeight = FontWeight.Bold
         )
         Text(
-          text = title,
+          text = t(title),
           style = MaterialTheme.typography.titleSmall,
           color = PrimaryBlueDark,
           fontWeight = FontWeight.ExtraBold
         )
         if (description.isNotBlank()) {
           Text(
-            text = description,
+            text = ti(description),
             style = MaterialTheme.typography.bodySmall,
             color = SubtleInk
           )
@@ -1622,7 +1636,7 @@ private fun DayChip(
     horizontalAlignment = Alignment.CenterHorizontally
   ) {
     Text(
-      text = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.getDefault()),
+      text = dayNameForLanguage(date, TextStyle.SHORT, LocalAppLanguage.current),
       style = MaterialTheme.typography.labelMedium,
       color = if (isSelected) Color.White else SubtleInk,
       fontWeight = FontWeight.SemiBold
@@ -1652,7 +1666,7 @@ private fun DayChip(
       }
       if (isToday) {
         Text(
-          text = "Hari ini",
+          text = t("Hari ini"),
           style = MaterialTheme.typography.labelSmall,
           color = if (isSelected) Color.White else PrimaryBlueDark,
           fontWeight = FontWeight.Bold
@@ -1731,22 +1745,44 @@ private fun MonthDayCell(
 
 @Composable
 private fun BoxScope.CalendarGlassBackground(tint: Color) {
+  val isDarkMode = CardBackground.luminance() < 0.5f
+  val baseColors = if (isDarkMode) {
+    listOf(
+      Color(0xFF101216).copy(alpha = 0.90f),
+      CardBackground.copy(alpha = 0.94f),
+      Color(0xFF0B1018).copy(alpha = 0.92f)
+    )
+  } else {
+    listOf(
+      CardBackground.copy(alpha = 0.96f),
+      tint.copy(alpha = 0.14f),
+      CardGradientEnd.copy(alpha = 0.90f)
+    )
+  }
+  Box(
+    modifier = Modifier
+      .matchParentSize()
+      .background(
+        brush = Brush.verticalGradient(baseColors),
+        shape = RoundedCornerShape(22.dp)
+      )
+  )
   Box(
     modifier = Modifier
       .matchParentSize()
       .graphicsLayer {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
           renderEffect = RenderEffect
-            .createBlurEffect(18f, 18f, Shader.TileMode.CLAMP)
+            .createBlurEffect(if (isDarkMode) 28f else 18f, if (isDarkMode) 28f else 18f, Shader.TileMode.CLAMP)
             .asComposeRenderEffect()
         }
       }
       .background(
-        brush = Brush.verticalGradient(
+        brush = Brush.horizontalGradient(
           colors = listOf(
-            tint.copy(alpha = 0.88f),
-            tint.copy(alpha = 0.72f),
-            CardGradientEnd.copy(alpha = 0.84f)
+            Color.Transparent,
+            tint.copy(alpha = if (isDarkMode) 0.42f else 0.24f),
+            tint.copy(alpha = if (isDarkMode) 0.18f else 0.10f)
           )
         ),
         shape = RoundedCornerShape(22.dp)
@@ -1763,14 +1799,14 @@ private fun GlassCircleButton(
   Box(
     modifier = Modifier
       .size(42.dp)
-      .background(Color.White.copy(alpha = 0.86f), CircleShape)
+      .background(CardBackground.copy(alpha = 0.86f), CircleShape)
       .border(1.dp, CardBorder, CircleShape)
       .clickable(onClick = onClick),
     contentAlignment = Alignment.Center
   ) {
     androidx.compose.material3.Icon(
       imageVector = icon,
-      contentDescription = contentDescription,
+      contentDescription = t(contentDescription),
       tint = PrimaryBlueDark
     )
   }
@@ -1794,6 +1830,7 @@ private fun colorsForDate(
     .distinct()
 }
 
+@Composable
 private fun dayCellBrush(
   isSelected: Boolean,
   accentColor: Color,
@@ -1801,12 +1838,13 @@ private fun dayCellBrush(
 ): Brush {
   return when {
     isSelected -> Brush.verticalGradient(listOf(accentColor.copy(alpha = 0.94f), accentColor.copy(alpha = 0.86f)))
-    eventColors.size > 1 -> Brush.horizontalGradient(eventColors.map { it.copy(alpha = 0.18f) } + listOf(Color.White.copy(alpha = 0.78f)))
-    eventColors.size == 1 -> Brush.verticalGradient(listOf(eventColors.first().copy(alpha = 0.20f), Color.White.copy(alpha = 0.78f)))
-    else -> Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.78f), Color.White.copy(alpha = 0.78f)))
+    eventColors.size > 1 -> Brush.horizontalGradient(eventColors.map { it.copy(alpha = 0.18f) } + listOf(CardBackground.copy(alpha = 0.78f)))
+    eventColors.size == 1 -> Brush.verticalGradient(listOf(eventColors.first().copy(alpha = 0.20f), CardBackground.copy(alpha = 0.78f)))
+    else -> Brush.verticalGradient(listOf(CardBackground.copy(alpha = 0.78f), CardBackground.copy(alpha = 0.78f)))
   }
 }
 
+@Composable
 private fun monthDayCellBrush(
   isSelected: Boolean,
   isCurrentMonth: Boolean,
@@ -1816,9 +1854,9 @@ private fun monthDayCellBrush(
   return when {
     isSelected -> Brush.verticalGradient(listOf(accentColor.copy(alpha = 0.94f), accentColor.copy(alpha = 0.86f)))
     !isCurrentMonth -> Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent))
-    eventColors.size > 1 -> Brush.horizontalGradient(eventColors.map { it.copy(alpha = 0.14f) } + listOf(Color(0xFFF8FAFC)))
-    eventColors.size == 1 -> Brush.verticalGradient(listOf(eventColors.first().copy(alpha = 0.16f), Color(0xFFF8FAFC)))
-    else -> Brush.verticalGradient(listOf(Color(0xFFF8FAFC), Color(0xFFF8FAFC)))
+    eventColors.size > 1 -> Brush.horizontalGradient(eventColors.map { it.copy(alpha = 0.14f) } + listOf(SoftPanel))
+    eventColors.size == 1 -> Brush.verticalGradient(listOf(eventColors.first().copy(alpha = 0.16f), SoftPanel))
+    else -> Brush.verticalGradient(listOf(SoftPanel, SoftPanel))
   }
 }
 
@@ -1831,14 +1869,16 @@ private fun eventContainsDate(
   return !selectedDate.isBefore(start) && !selectedDate.isAfter(end)
 }
 
-private fun buildCalendarEventMeta(event: CalendarEvent): String {
+private fun buildCalendarEventMeta(
+  event: CalendarEvent,
+  language: com.mim.guruapp.ui.i18n.AppLanguage
+): String {
   val start = parseEventStart(event)
   val end = parseEventEnd(event)
-  val formatter = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale("id", "ID"))
   val range = if (start == end) {
-    formatter.format(start)
+    formatDateForLanguage(start, "dd MMM yyyy", language)
   } else {
-    "${formatter.format(start)} - ${formatter.format(end)}"
+    "${formatDateForLanguage(start, "dd MMM yyyy", language)} - ${formatDateForLanguage(end, "dd MMM yyyy", language)}"
   }
   return if (event.timeLabel.isBlank()) range else "$range | ${event.timeLabel}"
 }

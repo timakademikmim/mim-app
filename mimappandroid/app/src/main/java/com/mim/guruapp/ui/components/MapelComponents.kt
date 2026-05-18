@@ -95,6 +95,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -126,17 +127,20 @@ import com.mim.guruapp.data.model.SubjectOverview
 import com.mim.guruapp.data.model.SyncBannerState
 import com.mim.guruapp.export.MapelQuestionExportData
 import com.mim.guruapp.export.MapelQuestionExporter
+import com.mim.guruapp.ui.i18n.LocalAppLanguage
+import com.mim.guruapp.ui.i18n.formatDateForLanguage
+import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.AppBackground
 import com.mim.guruapp.ui.theme.CardBorder
+import com.mim.guruapp.ui.theme.CardBackground
 import com.mim.guruapp.ui.theme.HighlightCard
 import com.mim.guruapp.ui.theme.PrimaryBlue
 import com.mim.guruapp.ui.theme.PrimaryBlueDark
+import com.mim.guruapp.ui.theme.SoftPanel
 import com.mim.guruapp.ui.theme.SubtleInk
 import com.mim.guruapp.ui.theme.SuccessTint
 import com.mim.guruapp.ui.theme.WarmAccent
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -320,7 +324,7 @@ private fun MapelUnavailableInfoBox(
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(22.dp))
-      .background(Color.White.copy(alpha = 0.92f))
+      .background(CardBackground.copy(alpha = 0.92f))
       .border(1.dp, WarmAccent.copy(alpha = 0.26f), RoundedCornerShape(22.dp))
       .padding(horizontal = 16.dp, vertical = 14.dp),
     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -345,7 +349,7 @@ private fun MapelUnavailableInfoBox(
       verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
       Text(
-        text = "Mapel Tidak Tersedia",
+        text = t("Mapel Tidak Tersedia"),
         style = MaterialTheme.typography.titleSmall,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.ExtraBold
@@ -359,14 +363,14 @@ private fun MapelUnavailableInfoBox(
     Box(
       modifier = Modifier
         .clip(RoundedCornerShape(999.dp))
-        .background(Color.White.copy(alpha = 0.8f))
+        .background(SoftPanel.copy(alpha = 0.8f))
         .border(1.dp, CardBorder.copy(alpha = 0.9f), RoundedCornerShape(999.dp))
         .clickable(onClick = onDismiss)
         .padding(horizontal = 14.dp, vertical = 8.dp),
       contentAlignment = Alignment.Center
     ) {
       Text(
-        text = "Tutup",
+        text = t("Tutup"),
         style = MaterialTheme.typography.labelLarge,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.SemiBold
@@ -388,14 +392,14 @@ private fun MapelActionBar(
     Box(
       modifier = Modifier
         .clip(RoundedCornerShape(999.dp))
-        .background(Color.White.copy(alpha = 0.90f))
+        .background(CardBackground.copy(alpha = 0.90f))
         .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(999.dp))
         .clickable(onClick = onToggleClaimSection)
         .padding(horizontal = 18.dp, vertical = 11.dp),
       contentAlignment = Alignment.Center
     ) {
       Text(
-        text = if (isClaimSectionVisible) "Tutup" else "Tambah Mapel",
+        text = if (isClaimSectionVisible) t("Tutup") else t("Tambah Mapel"),
         style = MaterialTheme.typography.labelLarge,
         color = if (hasAvailableSubjects) PrimaryBlueDark else SubtleInk,
         fontWeight = FontWeight.SemiBold
@@ -416,8 +420,16 @@ private fun SubjectGridCard(
       .fillMaxWidth()
       .shadow(12.dp, RoundedCornerShape(20.dp), ambientColor = Color(0x120F172A), spotColor = Color(0x120F172A))
       .clip(RoundedCornerShape(20.dp))
-      .background(visual.background.copy(alpha = 0.92f))
-      .border(1.dp, Color.White.copy(alpha = 0.54f), RoundedCornerShape(20.dp))
+      .background(
+        Brush.verticalGradient(
+          listOf(
+            CardBackground.copy(alpha = 0.96f),
+            visual.background.copy(alpha = 0.16f),
+            SoftPanel.copy(alpha = 0.94f)
+          )
+        )
+      )
+      .border(1.dp, CardBorder.copy(alpha = 0.72f), RoundedCornerShape(20.dp))
       .clickable(onClick = onClick)
       .padding(14.dp),
     verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -459,14 +471,14 @@ private fun SubjectGridCard(
       modifier = Modifier
         .fillMaxWidth()
         .clip(RoundedCornerShape(999.dp))
-        .background(Color.White.copy(alpha = 0.84f))
+        .background(SoftPanel.copy(alpha = 0.92f))
         .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(999.dp))
         .clickable(onClick = onClick)
         .padding(vertical = 10.dp),
       contentAlignment = Alignment.Center
     ) {
       Text(
-        text = "Lihat detail",
+        text = t("Lihat detail"),
         style = MaterialTheme.typography.labelLarge,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.SemiBold
@@ -1120,7 +1132,7 @@ private fun SoalToolbar(
     verticalAlignment = Alignment.CenterVertically
   ) {
     Text(
-      text = "$totalSoal dokumen soal",
+      text = "$totalSoal ${t("dokumen soal")}",
       style = MaterialTheme.typography.labelLarge,
       color = SubtleInk,
       fontWeight = FontWeight.SemiBold
@@ -1151,7 +1163,7 @@ private fun SoalPillButton(
   Row(
     modifier = Modifier
       .clip(RoundedCornerShape(999.dp))
-      .background(if (enabled) Color.White.copy(alpha = 0.92f) else Color.White.copy(alpha = 0.58f))
+      .background(if (enabled) CardBackground.copy(alpha = 0.92f) else SoftPanel.copy(alpha = 0.58f))
       .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(999.dp))
       .clickable(enabled = enabled, onClick = onClick)
       .padding(horizontal = 14.dp, vertical = 10.dp),
@@ -1160,12 +1172,12 @@ private fun SoalPillButton(
   ) {
     Icon(
       imageVector = icon,
-      contentDescription = label,
+      contentDescription = t(label),
       tint = if (enabled) PrimaryBlue else SubtleInk.copy(alpha = 0.58f),
       modifier = Modifier.size(18.dp)
     )
     Text(
-      text = label,
+      text = t(label),
       style = MaterialTheme.typography.labelLarge,
       color = if (enabled) PrimaryBlueDark else SubtleInk.copy(alpha = 0.68f),
       fontWeight = FontWeight.SemiBold
@@ -1185,7 +1197,7 @@ private fun SoalCard(
       .fillMaxWidth()
       .shadow(12.dp, RoundedCornerShape(22.dp), ambientColor = Color(0x100F172A), spotColor = Color(0x100F172A))
       .clip(RoundedCornerShape(22.dp))
-      .background(Color.White.copy(alpha = 0.94f))
+      .background(CardBackground.copy(alpha = 0.94f))
       .border(1.dp, CardBorder.copy(alpha = 0.86f), RoundedCornerShape(22.dp))
       .clickable(onClick = onEdit)
       .padding(16.dp),
@@ -1303,7 +1315,7 @@ private fun SoalCreateDialog(
       modifier = Modifier
         .fillMaxWidth()
         .clip(RoundedCornerShape(26.dp))
-        .background(Color.White.copy(alpha = 0.98f))
+        .background(CardBackground.copy(alpha = 0.98f))
         .border(1.dp, CardBorder.copy(alpha = 0.9f), RoundedCornerShape(26.dp))
         .padding(18.dp),
       verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -1315,13 +1327,13 @@ private fun SoalCreateDialog(
       ) {
         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
           Text(
-            text = "Buat Soal",
+            text = t("Buat Soal"),
             style = MaterialTheme.typography.titleMedium,
             color = PrimaryBlueDark,
             fontWeight = FontWeight.ExtraBold
           )
           Text(
-            text = "Isi data awal dulu, detailnya diedit setelah file dibuat.",
+            text = t("Isi data awal dulu, detailnya diedit setelah file dibuat."),
             style = MaterialTheme.typography.bodySmall,
             color = SubtleInk
           )
@@ -1330,11 +1342,11 @@ private fun SoalCreateDialog(
           modifier = Modifier
             .size(38.dp)
             .clip(CircleShape)
-            .background(Color(0xFFF8FAFC))
+            .background(SoftPanel)
             .clickable(onClick = onDismiss),
           contentAlignment = Alignment.Center
         ) {
-          Icon(Icons.Outlined.Close, contentDescription = "Tutup", tint = PrimaryBlueDark)
+          Icon(Icons.Outlined.Close, contentDescription = t("Tutup"), tint = PrimaryBlueDark)
         }
       }
 
@@ -1357,13 +1369,13 @@ private fun SoalCreateDialog(
           modifier = Modifier
             .weight(1f)
             .clip(RoundedCornerShape(999.dp))
-            .background(Color(0xFFF8FAFC))
+            .background(SoftPanel)
             .border(1.dp, CardBorder.copy(alpha = 0.9f), RoundedCornerShape(999.dp))
             .clickable(onClick = onDismiss)
             .padding(vertical = 12.dp),
           contentAlignment = Alignment.Center
         ) {
-          Text("Batal", color = SubtleInk, fontWeight = FontWeight.SemiBold)
+          Text(t("Batal"), color = SubtleInk, fontWeight = FontWeight.SemiBold)
         }
         Box(
           modifier = Modifier
@@ -1385,7 +1397,7 @@ private fun SoalCreateDialog(
             .padding(vertical = 12.dp),
           contentAlignment = Alignment.Center
         ) {
-          Text("Simpan", color = Color.White, fontWeight = FontWeight.Bold)
+          Text(t("Simpan"), color = Color.White, fontWeight = FontWeight.Bold)
         }
       }
     }
@@ -1676,7 +1688,7 @@ private fun SoalEditorFabMenu(
     ) {
       Icon(
         imageVector = Icons.Outlined.Add,
-        contentDescription = "Aksi soal",
+        contentDescription = t("Aksi soal"),
         tint = Color.White,
         modifier = Modifier.size(28.dp)
       )
@@ -1688,7 +1700,7 @@ private fun SoalEditorFabMenu(
       DropdownMenuItem(
         text = {
           Text(
-            text = "Tambah model soal",
+            text = t("Tambah model soal"),
             color = PrimaryBlueDark,
             fontWeight = FontWeight.SemiBold
           )
@@ -1734,7 +1746,7 @@ private fun SoalAddModelDialog(
       modifier = Modifier
         .fillMaxWidth()
         .clip(RoundedCornerShape(26.dp))
-        .background(Color.White.copy(alpha = 0.98f))
+        .background(CardBackground.copy(alpha = 0.98f))
         .border(1.dp, CardBorder.copy(alpha = 0.9f), RoundedCornerShape(26.dp))
         .padding(18.dp),
       verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -1746,13 +1758,13 @@ private fun SoalAddModelDialog(
       ) {
         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
           Text(
-            text = "Tambah Model Soal",
+            text = t("Tambah Model Soal"),
             style = MaterialTheme.typography.titleMedium,
             color = PrimaryBlueDark,
             fontWeight = FontWeight.ExtraBold
           )
           Text(
-            text = "Pilih model, lalu isi soal satu per satu.",
+            text = t("Pilih model, lalu isi soal satu per satu."),
             style = MaterialTheme.typography.bodySmall,
             color = SubtleInk
           )
@@ -1761,11 +1773,11 @@ private fun SoalAddModelDialog(
           modifier = Modifier
             .size(38.dp)
             .clip(CircleShape)
-            .background(Color(0xFFF8FAFC))
+            .background(SoftPanel)
             .clickable(onClick = onDismiss),
           contentAlignment = Alignment.Center
         ) {
-          Icon(Icons.Outlined.Close, contentDescription = "Tutup", tint = PrimaryBlueDark)
+          Icon(Icons.Outlined.Close, contentDescription = t("Tutup"), tint = PrimaryBlueDark)
         }
       }
 
@@ -1794,7 +1806,7 @@ private fun SoalAddModelCard(
     verticalArrangement = Arrangement.spacedBy(12.dp)
   ) {
     Text(
-      text = "Tambah Model Soal",
+      text = t("Tambah Model Soal"),
       style = MaterialTheme.typography.titleSmall,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.ExtraBold
@@ -1812,7 +1824,7 @@ private fun SoalAddModelCard(
         .padding(horizontal = 16.dp, vertical = 14.dp),
       contentAlignment = Alignment.Center
     ) {
-      Text("Tambah Model", color = Color.White, fontWeight = FontWeight.Bold)
+      Text(t("Tambah Model"), color = Color.White, fontWeight = FontWeight.Bold)
     }
   }
 }
@@ -1874,7 +1886,7 @@ private fun SoalGeneralInstructionCard(
       .fillMaxWidth()
       .shadow(12.dp, RoundedCornerShape(24.dp), ambientColor = Color(0x160F172A), spotColor = Color(0x160F172A))
       .clip(RoundedCornerShape(24.dp))
-      .background(Color.White.copy(alpha = 0.94f))
+      .background(CardBackground.copy(alpha = 0.94f))
       .border(1.dp, CardBorder.copy(alpha = 0.9f), RoundedCornerShape(24.dp))
       .padding(15.dp),
     verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -1895,13 +1907,13 @@ private fun SoalGeneralInstructionCard(
       }
       Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
-          text = "Instruksi Umum",
+          text = t("Instruksi Umum"),
           style = MaterialTheme.typography.titleMedium,
           color = PrimaryBlueDark,
           fontWeight = FontWeight.ExtraBold
         )
         Text(
-          text = "Bagian ini dicetak sekali di awal dokumen.",
+          text = t("Bagian ini dicetak sekali di awal dokumen."),
           style = MaterialTheme.typography.bodySmall,
           color = SubtleInk
         )
@@ -1927,10 +1939,10 @@ private fun SoalDropdownField(
   var expanded by remember { mutableStateOf(false) }
   Box(modifier = modifier.fillMaxWidth()) {
     OutlinedTextField(
-      value = selectedLabel,
+      value = t(selectedLabel),
       onValueChange = {},
       readOnly = true,
-      label = { Text(label) },
+      label = { Text(t(label)) },
       trailingIcon = {
         Text(
           text = "v",
@@ -1958,7 +1970,7 @@ private fun SoalDropdownField(
         DropdownMenuItem(
           text = {
             Text(
-              text = option,
+              text = t(option),
               style = MaterialTheme.typography.bodyMedium,
               color = PrimaryBlueDark,
               fontWeight = if (option == selectedLabel) FontWeight.Bold else FontWeight.Normal
@@ -2006,7 +2018,7 @@ private fun SoalChoiceQuestionEditor(
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(18.dp))
-      .background(Color.White.copy(alpha = 0.78f))
+      .background(CardBackground.copy(alpha = 0.78f))
       .border(1.dp, palette.border.copy(alpha = 0.78f), RoundedCornerShape(18.dp))
       .combinedClickable(
         onClick = { if (showDeleteAction) showDeleteAction = false },
@@ -2036,7 +2048,7 @@ private fun SoalChoiceQuestionEditor(
       }
       Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
         Text(
-          text = questionTitle,
+          text = t(questionTitle),
           style = MaterialTheme.typography.labelLarge,
           color = palette.text,
           fontWeight = FontWeight.ExtraBold
@@ -2093,7 +2105,7 @@ private fun SoalChoiceQuestionEditor(
                   .normalizedChoiceOptions()
                 onChange(question.copy(options = nextOptions))
               },
-              label = { Text("Pilihan jawaban") },
+              label = { Text(t("Pilihan jawaban")) },
               modifier = Modifier.weight(1f),
               shape = RoundedCornerShape(16.dp)
             )
@@ -2113,7 +2125,7 @@ private fun SoalSelectableChip(
   Box(
     modifier = Modifier
       .clip(RoundedCornerShape(999.dp))
-      .background(if (selected) PrimaryBlue else Color.White.copy(alpha = 0.86f))
+      .background(if (selected) PrimaryBlue else CardBackground.copy(alpha = 0.86f))
       .border(
         1.dp,
         if (selected) PrimaryBlue else CardBorder.copy(alpha = 0.9f),
@@ -2124,7 +2136,7 @@ private fun SoalSelectableChip(
     contentAlignment = Alignment.Center
   ) {
     Text(
-      text = label,
+      text = t(label),
       style = MaterialTheme.typography.labelMedium,
       color = if (selected) Color.White else PrimaryBlueDark,
       fontWeight = FontWeight.SemiBold
@@ -2144,7 +2156,7 @@ private fun SoalTextField(
   OutlinedTextField(
     value = value,
     onValueChange = onValueChange,
-    label = { Text(label) },
+    label = { Text(t(label)) },
     modifier = modifier.fillMaxWidth(),
     minLines = minLines,
     keyboardOptions = KeyboardOptions(keyboardType = keyboardType)
@@ -2163,7 +2175,7 @@ private fun PatronMateriToolbar(
     verticalAlignment = Alignment.CenterVertically
   ) {
     Text(
-      text = "$totalMateri materi",
+      text = "$totalMateri ${t("materi")}",
       style = MaterialTheme.typography.labelLarge,
       color = SubtleInk,
       fontWeight = FontWeight.SemiBold
@@ -2171,7 +2183,7 @@ private fun PatronMateriToolbar(
     Row(
       modifier = Modifier
         .clip(RoundedCornerShape(999.dp))
-        .background(Color.White.copy(alpha = 0.90f))
+        .background(CardBackground.copy(alpha = 0.90f))
         .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(999.dp))
         .clickable(onClick = onAddMateri)
         .padding(horizontal = 16.dp, vertical = 10.dp),
@@ -2185,7 +2197,7 @@ private fun PatronMateriToolbar(
         modifier = Modifier.size(18.dp)
       )
       Text(
-        text = "Tambah Materi",
+        text = t("Tambah Materi"),
         style = MaterialTheme.typography.labelLarge,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.SemiBold
@@ -2221,7 +2233,7 @@ private fun PatronMateriCard(
         .offset { IntOffset(animatedOffsetX.roundToInt(), 0) }
         .shadow(9.dp, RoundedCornerShape(20.dp), ambientColor = Color(0x100F172A), spotColor = Color(0x100F172A))
         .clip(RoundedCornerShape(20.dp))
-        .background(Color.White.copy(alpha = 0.88f))
+        .background(CardBackground.copy(alpha = 0.88f))
         .border(1.dp, CardBorder.copy(alpha = 0.90f), RoundedCornerShape(20.dp))
         .pointerInput(item.id) {
           detectHorizontalDragGestures(
@@ -2276,7 +2288,7 @@ private fun PatronMateriCard(
         OutlinedTextField(
           value = item.text,
           onValueChange = onTextChange,
-          placeholder = { Text("Tulis materi...") },
+          placeholder = { Text(t("Tulis materi...")) },
           singleLine = true,
           modifier = Modifier.weight(1f)
         )
@@ -2313,7 +2325,7 @@ private fun PatronMateriCard(
         ) {
           Icon(
             imageVector = Icons.Outlined.Check,
-            contentDescription = "Simpan materi",
+            contentDescription = t("Simpan materi"),
             tint = SuccessTint
           )
         }
@@ -2331,7 +2343,7 @@ private fun PatronMateriCard(
         ) {
           Icon(
             imageVector = Icons.Outlined.Close,
-            contentDescription = "Hapus materi",
+            contentDescription = t("Hapus materi"),
             tint = Color(0xFFDC2626)
           )
         }
@@ -2367,7 +2379,7 @@ private fun AttendanceSortToggle(
     modifier = modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(999.dp))
-      .background(Color.White.copy(alpha = 0.88f))
+      .background(CardBackground.copy(alpha = 0.88f))
       .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(999.dp))
       .padding(4.dp),
     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -2389,7 +2401,7 @@ private fun AttendanceSortToggle(
         contentAlignment = Alignment.Center
       ) {
         Text(
-          text = mode.label,
+          text = t(mode.label),
           style = MaterialTheme.typography.labelLarge,
           color = if (selected) PrimaryBlueDark else SubtleInk,
           fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
@@ -2409,7 +2421,7 @@ private fun ScoreSortToggle(
     modifier = modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(999.dp))
-      .background(Color.White.copy(alpha = 0.88f))
+      .background(CardBackground.copy(alpha = 0.88f))
       .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(999.dp))
       .padding(4.dp),
     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -2431,7 +2443,7 @@ private fun ScoreSortToggle(
         contentAlignment = Alignment.Center
       ) {
         Text(
-          text = mode.label,
+          text = t(mode.label),
           style = MaterialTheme.typography.labelLarge,
           color = if (selected) PrimaryBlueDark else SubtleInk,
           fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
@@ -2450,7 +2462,7 @@ private fun AbsensiMapelHeaderCard(
     modifier = modifier
       .fillMaxWidth()
       .shadow(12.dp, RoundedCornerShape(22.dp), ambientColor = Color(0x120F172A), spotColor = Color(0x120F172A))
-      .background(Color.White.copy(alpha = 0.96f), RoundedCornerShape(22.dp))
+      .background(CardBackground.copy(alpha = 0.96f), RoundedCornerShape(22.dp))
       .border(1.dp, CardBorder, RoundedCornerShape(22.dp))
       .padding(18.dp),
     verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -2507,7 +2519,7 @@ private fun AttendanceCard(
       .fillMaxWidth()
       .shadow(10.dp, RoundedCornerShape(20.dp), ambientColor = Color(0x100F172A), spotColor = Color(0x100F172A))
       .clip(RoundedCornerShape(20.dp))
-      .background(Color.White.copy(alpha = 0.94f))
+      .background(CardBackground.copy(alpha = 0.94f))
       .border(1.dp, CardBorder.copy(alpha = 0.94f), RoundedCornerShape(20.dp))
       .combinedClickable(
         onClick = {
@@ -2547,7 +2559,7 @@ private fun AttendanceCard(
         )
         if (visibleStats.isEmpty()) {
           Text(
-            text = "Belum ada data kehadiran untuk mapel ini.",
+            text = t("Belum ada data kehadiran untuk mapel ini."),
             style = MaterialTheme.typography.bodySmall,
             color = SubtleInk
           )
@@ -2669,7 +2681,7 @@ private fun AttendanceCardHint(
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(16.dp))
-      .background(Color(0xFFF8FAFC))
+      .background(SoftPanel)
       .border(1.dp, CardBorder.copy(alpha = 0.8f), RoundedCornerShape(16.dp))
       .padding(horizontal = 12.dp, vertical = 10.dp),
     verticalAlignment = Alignment.CenterVertically
@@ -2761,7 +2773,7 @@ private fun AttendanceTimelineItem(
         modifier = Modifier
           .weight(1f)
           .clip(RoundedCornerShape(18.dp))
-          .background(Color.White.copy(alpha = 0.86f))
+          .background(CardBackground.copy(alpha = 0.86f))
           .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(18.dp))
           .combinedClickable(
             onClick = {
@@ -2808,7 +2820,7 @@ private fun AttendanceTimelineItem(
                 modifier = Modifier
                   .clip(RoundedCornerShape(999.dp))
                   .background(
-                    if (isSelected) optionPalette.background else Color.White.copy(alpha = 0.9f)
+                    if (isSelected) optionPalette.background else CardBackground.copy(alpha = 0.9f)
                   )
                   .border(
                     1.dp,
@@ -2843,7 +2855,7 @@ private fun AttendanceTimelineItem(
     ) {
       AttendanceDeleteActionButton(
         isBusy = isDeleting,
-        contentDescription = "Hapus absensi",
+        contentDescription = t("Hapus absensi"),
         onClick = onDelete
       )
     }
@@ -2874,7 +2886,7 @@ private fun AttendanceDeleteActionButton(
     } else {
       Icon(
         imageVector = Icons.Outlined.Close,
-        contentDescription = contentDescription,
+        contentDescription = t(contentDescription),
         tint = Color(0xFFDC2626)
       )
     }
@@ -2896,14 +2908,14 @@ private fun AttendanceInlineEditActions(
       modifier = Modifier
         .weight(1f)
         .clip(RoundedCornerShape(999.dp))
-        .background(Color.White.copy(alpha = 0.88f))
+        .background(CardBackground.copy(alpha = 0.88f))
         .border(1.dp, CardBorder.copy(alpha = 0.94f), RoundedCornerShape(999.dp))
         .clickable(enabled = !isSaving) { onCancel() }
         .padding(vertical = 9.dp),
       contentAlignment = Alignment.Center
     ) {
       Text(
-        text = "Batal",
+        text = t("Batal"),
         style = MaterialTheme.typography.labelMedium,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.SemiBold
@@ -2913,7 +2925,7 @@ private fun AttendanceInlineEditActions(
       modifier = Modifier
         .weight(1f)
         .clip(RoundedCornerShape(999.dp))
-        .background(if (hasChange) SuccessTint.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.66f))
+        .background(if (hasChange) SuccessTint.copy(alpha = 0.18f) else SoftPanel.copy(alpha = 0.66f))
         .border(
           1.dp,
           if (hasChange) SuccessTint.copy(alpha = 0.42f) else CardBorder.copy(alpha = 0.8f),
@@ -2940,7 +2952,7 @@ private fun AttendanceInlineEditActions(
             tint = if (hasChange) SuccessTint else SubtleInk
           )
           Text(
-            text = if (hasChange) "Simpan" else "Belum berubah",
+            text = if (hasChange) t("Simpan") else t("Belum berubah"),
             style = MaterialTheme.typography.labelMedium,
             color = if (hasChange) SuccessTint else SubtleInk,
             fontWeight = FontWeight.SemiBold
@@ -3030,7 +3042,7 @@ private fun AttendanceDateCard(
         .offset { IntOffset(animatedOffsetX.roundToInt(), 0) }
         .shadow(10.dp, RoundedCornerShape(20.dp), ambientColor = Color(0x100F172A), spotColor = Color(0x100F172A))
         .clip(RoundedCornerShape(20.dp))
-        .background(Color.White.copy(alpha = 0.94f))
+        .background(CardBackground.copy(alpha = 0.94f))
         .border(1.dp, CardBorder.copy(alpha = 0.94f), RoundedCornerShape(20.dp))
         .pointerInput(overview.dateIso, editingStudentId, savingStudentId, isDeletingDate) {
           if (editingStudentId == null && savingStudentId == null && !isDeletingDate) {
@@ -3111,7 +3123,7 @@ private fun AttendanceDateCard(
             if (isDeleteActionVisible) {
               AttendanceDeleteActionButton(
                 isBusy = isDeletingDate,
-                contentDescription = "Hapus absensi tanggal ini",
+                contentDescription = t("Hapus absensi tanggal ini"),
                 onClick = {
                   coroutineScope.launch {
                     isDeletingDate = true
@@ -3252,7 +3264,7 @@ private fun AttendanceDateStudentItem(
       modifier = Modifier
         .weight(1f)
         .clip(RoundedCornerShape(18.dp))
-        .background(Color.White.copy(alpha = 0.86f))
+        .background(CardBackground.copy(alpha = 0.86f))
         .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(18.dp))
         .combinedClickable(
           onClick = {},
@@ -3293,7 +3305,7 @@ private fun AttendanceDateStudentItem(
             Box(
               modifier = Modifier
                 .clip(RoundedCornerShape(999.dp))
-                .background(if (isSelected) optionPalette.background else Color.White.copy(alpha = 0.9f))
+                .background(if (isSelected) optionPalette.background else CardBackground.copy(alpha = 0.9f))
                 .border(
                   1.dp,
                   if (isSelected) optionPalette.border else CardBorder.copy(alpha = 0.84f),
@@ -3370,7 +3382,7 @@ private fun ScoreCard(
       .fillMaxWidth()
       .shadow(10.dp, RoundedCornerShape(20.dp), ambientColor = Color(0x100F172A), spotColor = Color(0x100F172A))
       .clip(RoundedCornerShape(20.dp))
-      .background(Color.White.copy(alpha = 0.94f))
+      .background(CardBackground.copy(alpha = 0.94f))
       .border(1.dp, CardBorder.copy(alpha = 0.94f), RoundedCornerShape(20.dp))
       .combinedClickable(
         onClick = {
@@ -3395,7 +3407,7 @@ private fun ScoreCard(
         overflow = TextOverflow.Ellipsis
       )
       Text(
-        text = "${metrics.count { it.value != null }} jenis nilai tersedia",
+        text = "${metrics.count { it.value != null }} ${t("jenis nilai tersedia")}",
         style = MaterialTheme.typography.bodySmall,
         color = SubtleInk
       )
@@ -3487,7 +3499,7 @@ private fun ScoreTypeCard(
       .fillMaxWidth()
       .shadow(10.dp, RoundedCornerShape(20.dp), ambientColor = Color(0x100F172A), spotColor = Color(0x100F172A))
       .clip(RoundedCornerShape(20.dp))
-      .background(Color.White.copy(alpha = 0.94f))
+      .background(CardBackground.copy(alpha = 0.94f))
       .border(1.dp, CardBorder.copy(alpha = 0.94f), RoundedCornerShape(20.dp))
       .combinedClickable(
         onClick = {
@@ -3510,7 +3522,7 @@ private fun ScoreTypeCard(
         fontWeight = FontWeight.SemiBold
       )
       Text(
-        text = "Rata-rata ${overview.averageLabel} • ${overview.entries.size} santri",
+        text = "${t("Rata-rata")} ${overview.averageLabel} • ${overview.entries.size} ${t("santri")}",
         style = MaterialTheme.typography.bodySmall,
         color = SubtleInk
       )
@@ -3578,7 +3590,7 @@ private fun ScoreDateCard(
         .offset { IntOffset(animatedOffsetX.roundToInt(), 0) }
         .shadow(10.dp, RoundedCornerShape(20.dp), ambientColor = Color(0x100F172A), spotColor = Color(0x100F172A))
         .clip(RoundedCornerShape(20.dp))
-        .background(Color.White.copy(alpha = 0.94f))
+        .background(CardBackground.copy(alpha = 0.94f))
         .border(1.dp, CardBorder.copy(alpha = 0.94f), RoundedCornerShape(20.dp))
         .pointerInput(overview.key, isDeletingDate) {
           if (!isDeletingDate) {
@@ -3631,7 +3643,7 @@ private fun ScoreDateCard(
             overflow = TextOverflow.Ellipsis
           )
           Text(
-            text = "${overview.metric.label} - rata-rata ${overview.averageLabel} - ${overview.entries.size} nilai",
+            text = "${t(overview.metric.label)} - ${t("rata-rata")} ${overview.averageLabel} - ${overview.entries.size} ${t("nilai")}",
             style = MaterialTheme.typography.bodySmall,
             color = SubtleInk
           )
@@ -3655,7 +3667,7 @@ private fun ScoreDateCard(
             if (isDeleteActionVisible) {
               AttendanceDeleteActionButton(
                 isBusy = isDeletingDate,
-                contentDescription = "Hapus nilai tanggal ini",
+                contentDescription = t("Hapus nilai tanggal ini"),
                 onClick = {
                   coroutineScope.launch {
                     isDeletingDate = true
@@ -3743,7 +3755,7 @@ private fun ScoreDateEntryRow(entry: ScoreDateEntry) {
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(16.dp))
-      .background(Color(0xFFF8FAFC))
+      .background(SoftPanel)
       .border(1.dp, CardBorder.copy(alpha = 0.86f), RoundedCornerShape(16.dp))
       .padding(horizontal = 12.dp, vertical = 10.dp),
     verticalAlignment = Alignment.CenterVertically,
@@ -3792,7 +3804,7 @@ private fun ScoreMetricRow(
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(16.dp))
-      .background(Color(0xFFF8FAFC))
+      .background(SoftPanel)
       .border(1.dp, CardBorder.copy(alpha = 0.86f), RoundedCornerShape(16.dp))
       .clickable(enabled = metric.editable, onClick = onClick)
       .padding(horizontal = 12.dp, vertical = 10.dp),
@@ -3850,7 +3862,7 @@ private fun ScoreTypeStudentRow(
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(16.dp))
-      .background(Color(0xFFF8FAFC))
+      .background(SoftPanel)
       .border(1.dp, CardBorder.copy(alpha = 0.86f), RoundedCornerShape(16.dp))
       .clickable(enabled = entry.metric.editable, onClick = onClick)
       .padding(horizontal = 12.dp, vertical = 10.dp),
@@ -3907,7 +3919,7 @@ private fun ScoreDetailDialog(
         .heightIn(max = 620.dp)
         .shadow(18.dp, RoundedCornerShape(26.dp), ambientColor = Color(0x220F172A), spotColor = Color(0x220F172A))
         .clip(RoundedCornerShape(26.dp))
-        .background(Color.White.copy(alpha = 0.98f))
+        .background(CardBackground.copy(alpha = 0.98f))
         .border(1.dp, CardBorder.copy(alpha = 0.94f), RoundedCornerShape(26.dp))
         .padding(16.dp),
       verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -3922,7 +3934,7 @@ private fun ScoreDetailDialog(
           verticalArrangement = Arrangement.spacedBy(3.dp)
         ) {
           Text(
-            text = "Rincian ${metric.label}",
+            text = "${t("Rincian")} ${t(metric.label)}",
             style = MaterialTheme.typography.titleMedium,
             color = PrimaryBlueDark,
             fontWeight = FontWeight.ExtraBold
@@ -3935,7 +3947,7 @@ private fun ScoreDetailDialog(
             overflow = TextOverflow.Ellipsis
           )
           Text(
-            text = "Rata-rata: ${average?.let(::formatScoreNumber) ?: "-"}",
+            text = "${t("Rata-rata")}: ${average?.let(::formatScoreNumber) ?: "-"}",
             style = MaterialTheme.typography.labelLarge,
             color = PrimaryBlue,
             fontWeight = FontWeight.Bold
@@ -3945,14 +3957,14 @@ private fun ScoreDetailDialog(
           modifier = Modifier
             .size(38.dp)
             .clip(CircleShape)
-            .background(Color(0xFFF8FAFC))
+            .background(SoftPanel)
             .border(1.dp, CardBorder.copy(alpha = 0.86f), CircleShape)
             .clickable(enabled = !isSaving, onClick = onDismiss),
           contentAlignment = Alignment.Center
         ) {
           Icon(
             imageVector = Icons.Outlined.Close,
-            contentDescription = "Tutup",
+            contentDescription = t("Tutup"),
             tint = PrimaryBlueDark,
             modifier = Modifier.size(19.dp)
           )
@@ -4007,7 +4019,7 @@ private fun ScoreDetailDialog(
           modifier = Modifier
             .weight(1f)
             .clip(RoundedCornerShape(999.dp))
-            .background(Color.White.copy(alpha = 0.9f))
+            .background(CardBackground.copy(alpha = 0.9f))
             .border(1.dp, CardBorder.copy(alpha = 0.94f), RoundedCornerShape(999.dp))
             .clickable(enabled = !isSaving) {
               rows = rows + ScoreDetailDraftRow(
@@ -4021,7 +4033,7 @@ private fun ScoreDetailDialog(
           contentAlignment = Alignment.Center
         ) {
           Text(
-            text = "Tambah Baris",
+            text = t("Tambah Baris"),
             style = MaterialTheme.typography.labelLarge,
             color = PrimaryBlueDark,
             fontWeight = FontWeight.SemiBold
@@ -4065,7 +4077,7 @@ private fun ScoreDetailDialog(
             )
           } else {
             Text(
-              text = "Simpan",
+              text = t("Simpan"),
               style = MaterialTheme.typography.labelLarge,
               color = SuccessTint,
               fontWeight = FontWeight.ExtraBold
@@ -4089,7 +4101,7 @@ private fun ScoreDetailRowEditor(
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(18.dp))
-      .background(Color(0xFFF8FAFC))
+      .background(SoftPanel)
       .border(1.dp, CardBorder.copy(alpha = 0.9f), RoundedCornerShape(18.dp))
       .padding(12.dp),
     verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -4109,7 +4121,7 @@ private fun ScoreDetailRowEditor(
         value = row.dateIso,
         onValueChange = { onRowChange(row.copy(dateIso = it)) },
         singleLine = true,
-        label = { Text("Tanggal") },
+        label = { Text(t("Tanggal")) },
         modifier = Modifier.weight(1.25f),
         shape = RoundedCornerShape(14.dp)
       )
@@ -4121,7 +4133,7 @@ private fun ScoreDetailRowEditor(
           }
         },
         singleLine = true,
-        label = { Text(if (maxValue != null) "Nilai /$maxValue" else "Nilai") },
+        label = { Text(if (maxValue != null) "${t("Nilai")} /$maxValue" else t("Nilai")) },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         modifier = Modifier.weight(0.9f),
         shape = RoundedCornerShape(14.dp)
@@ -4137,7 +4149,7 @@ private fun ScoreDetailRowEditor(
       ) {
         Icon(
           imageVector = Icons.Outlined.Close,
-          contentDescription = "Hapus rincian",
+          contentDescription = t("Hapus rincian"),
           tint = Color(0xFFB91C1C),
           modifier = Modifier.size(18.dp)
         )
@@ -4147,7 +4159,7 @@ private fun ScoreDetailRowEditor(
       value = row.material,
       onValueChange = { onRowChange(row.copy(material = it)) },
       singleLine = true,
-      label = { Text("Materi / keterangan") },
+      label = { Text(t("Materi / keterangan")) },
       modifier = Modifier.fillMaxWidth(),
       shape = RoundedCornerShape(14.dp)
     )
@@ -4168,14 +4180,14 @@ private fun ScoreSaveRow(
       modifier = Modifier
         .weight(1f)
         .clip(RoundedCornerShape(999.dp))
-        .background(Color.White.copy(alpha = 0.88f))
+        .background(CardBackground.copy(alpha = 0.88f))
         .border(1.dp, CardBorder.copy(alpha = 0.94f), RoundedCornerShape(999.dp))
         .clickable(enabled = !isSaving, onClick = onCancel)
         .padding(vertical = 10.dp),
       contentAlignment = Alignment.Center
     ) {
       Text(
-        text = "Batal",
+        text = t("Batal"),
         style = MaterialTheme.typography.labelLarge,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.SemiBold
@@ -4208,7 +4220,7 @@ private fun ScoreSaveRow(
             tint = SuccessTint
           )
           Text(
-            text = "Simpan perubahan",
+            text = t("Simpan perubahan"),
             style = MaterialTheme.typography.labelLarge,
             color = SuccessTint,
             fontWeight = FontWeight.SemiBold
@@ -4244,7 +4256,7 @@ private fun MapelDetailBottomNav(
         .width(356.dp)
         .shadow(18.dp, RoundedCornerShape(32.dp), ambientColor = Color(0x180F172A), spotColor = Color(0x180F172A))
         .clip(RoundedCornerShape(32.dp))
-        .background(Color.White.copy(alpha = 0.96f))
+        .background(CardBackground.copy(alpha = 0.96f))
         .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(32.dp))
         .padding(horizontal = 10.dp, vertical = 8.dp),
       horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -4274,12 +4286,12 @@ private fun MapelDetailBottomNav(
         ) {
           Icon(
             imageVector = section.icon,
-            contentDescription = section.label,
+            contentDescription = t(section.label),
             tint = if (selected) PrimaryBlue else SubtleInk.copy(alpha = 0.82f),
             modifier = Modifier.size(21.dp)
           )
           Text(
-            text = section.label,
+            text = t(section.label),
             style = MaterialTheme.typography.labelSmall,
             color = if (selected) PrimaryBlueDark else SubtleInk.copy(alpha = 0.82f),
             fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
@@ -4354,7 +4366,7 @@ private fun AttendanceChart(stats: List<AttendanceChartStat>) {
       modifier = Modifier
         .size(chartSize)
         .clip(CircleShape)
-        .background(Color.White.copy(alpha = 0.88f))
+        .background(CardBackground.copy(alpha = 0.88f))
         .border(1.dp, CardBorder.copy(alpha = 0.92f), CircleShape),
       contentAlignment = Alignment.Center
     ) {
@@ -4818,13 +4830,13 @@ private fun SoalMatchingPairsEditor(
       verticalAlignment = Alignment.CenterVertically
     ) {
       Text(
-        text = "Pasangan A - B",
+        text = t("Pasangan A - B"),
         style = MaterialTheme.typography.labelLarge,
         color = palette.text,
         fontWeight = FontWeight.ExtraBold
       )
       Text(
-        text = "Baris kosong baru muncul otomatis",
+        text = t("Baris kosong baru muncul otomatis"),
         style = MaterialTheme.typography.labelSmall,
         color = palette.accent
       )
@@ -4834,14 +4846,14 @@ private fun SoalMatchingPairsEditor(
       horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
       Text(
-        text = "Qoimah A",
+        text = t("Qoimah A"),
         modifier = Modifier.weight(1f),
         style = MaterialTheme.typography.labelMedium,
         color = palette.text,
         fontWeight = FontWeight.Bold
       )
       Text(
-        text = "Qoimah B",
+        text = t("Qoimah B"),
         modifier = Modifier.weight(1f),
         style = MaterialTheme.typography.labelMedium,
         color = palette.text,
@@ -4879,7 +4891,7 @@ private fun SoalMatchingPairsEditor(
                 .withTrailingBlankMatchingPair()
             )
           },
-          label = { Text("Pilihan A") },
+          label = { Text(t("Pilihan A")) },
           modifier = Modifier.weight(1f),
           shape = RoundedCornerShape(16.dp)
         )
@@ -4892,7 +4904,7 @@ private fun SoalMatchingPairsEditor(
                 .withTrailingBlankMatchingPair()
             )
           },
-          label = { Text("Pilihan B") },
+          label = { Text(t("Pilihan B")) },
           modifier = Modifier.weight(1f),
           shape = RoundedCornerShape(16.dp)
         )
@@ -4926,7 +4938,7 @@ private fun SoalWordSearchEditor(
       modifier = Modifier
         .fillMaxWidth()
         .clip(RoundedCornerShape(18.dp))
-        .background(Color.White.copy(alpha = 0.78f))
+        .background(CardBackground.copy(alpha = 0.78f))
         .border(1.dp, palette.border.copy(alpha = 0.78f), RoundedCornerShape(18.dp))
         .padding(12.dp),
       verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -4952,7 +4964,7 @@ private fun SoalWordSearchEditor(
         }
         Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
           Text(
-            text = "Puzzle Cari Kata",
+            text = t("Puzzle Cari Kata"),
             style = MaterialTheme.typography.labelLarge,
             color = palette.text,
             fontWeight = FontWeight.ExtraBold
@@ -4977,7 +4989,7 @@ private fun SoalWordSearchEditor(
               onChange(listOf(question.copy(rows = parsed)))
             }
           },
-          label = { Text("Baris") },
+          label = { Text(t("Baris")) },
           modifier = Modifier.weight(1f),
           singleLine = true,
           keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -4993,7 +5005,7 @@ private fun SoalWordSearchEditor(
               onChange(listOf(question.copy(cols = parsed)))
             }
           },
-          label = { Text("Kolom") },
+          label = { Text(t("Kolom")) },
           modifier = Modifier.weight(1f),
           singleLine = true,
           keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -5012,7 +5024,7 @@ private fun SoalWordSearchEditor(
 
       if (puzzle.words.isEmpty()) {
         Text(
-          text = "Isi daftar kata untuk melihat preview puzzle.",
+          text = t("Isi daftar kata untuk melihat preview puzzle."),
           style = MaterialTheme.typography.bodySmall,
           color = palette.text.copy(alpha = 0.72f)
         )
@@ -5091,7 +5103,7 @@ private fun SoalCrosswordEditor(
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(18.dp))
-      .background(Color.White.copy(alpha = 0.78f))
+      .background(CardBackground.copy(alpha = 0.78f))
       .border(1.dp, palette.border.copy(alpha = 0.78f), RoundedCornerShape(18.dp))
       .padding(12.dp),
     verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -5112,7 +5124,7 @@ private fun SoalCrosswordEditor(
       }
       Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
         Text(
-          text = "Puzzle Teka-Teki Silang",
+          text = t("Puzzle Teka-Teki Silang"),
           style = MaterialTheme.typography.labelLarge,
           color = palette.text,
           fontWeight = FontWeight.ExtraBold
@@ -5137,7 +5149,7 @@ private fun SoalCrosswordEditor(
             onChange(listOf(question.copy(rows = parsed)))
           }
         },
-        label = { Text("Baris") },
+        label = { Text(t("Baris")) },
         modifier = Modifier.weight(1f),
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -5153,7 +5165,7 @@ private fun SoalCrosswordEditor(
             onChange(listOf(question.copy(cols = parsed)))
           }
         },
-        label = { Text("Kolom") },
+        label = { Text(t("Kolom")) },
         modifier = Modifier.weight(1f),
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -5358,13 +5370,13 @@ private fun InteractiveCrosswordGridCard(
         verticalArrangement = Arrangement.spacedBy(2.dp)
       ) {
         Text(
-          text = "Grid Teka-Teki Silang",
+          text = t("Grid Teka-Teki Silang"),
           style = MaterialTheme.typography.labelLarge,
           color = palette.text,
           fontWeight = FontWeight.ExtraBold
         )
         Text(
-          text = "Pilih titik awal lalu titik akhir. Slot baru disimpan setelah dikonfirmasi.",
+          text = t("Pilih titik awal lalu titik akhir. Slot baru disimpan setelah dikonfirmasi."),
           style = MaterialTheme.typography.bodySmall,
           color = palette.text.copy(alpha = 0.72f)
         )
@@ -5372,7 +5384,7 @@ private fun InteractiveCrosswordGridCard(
       Box(
         modifier = Modifier
           .clip(RoundedCornerShape(999.dp))
-          .background(Color.White.copy(alpha = 0.9f))
+          .background(CardBackground.copy(alpha = 0.9f))
           .border(1.dp, Color(0xFFF5C2E7), RoundedCornerShape(999.dp))
           .clickable(onClick = onClearAll)
           .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -5384,7 +5396,7 @@ private fun InteractiveCrosswordGridCard(
         ) {
           Icon(Icons.Outlined.Delete, contentDescription = null, tint = Color(0xFF9D174D), modifier = Modifier.size(16.dp))
           Text(
-            text = "Hapus semua slot",
+            text = t("Hapus semua slot"),
             style = MaterialTheme.typography.labelMedium,
             color = Color(0xFF9D174D),
             fontWeight = FontWeight.Bold
@@ -5427,7 +5439,7 @@ private fun InteractiveCrosswordGridCard(
                       isDraft -> Color(0xFFDCFCE7)
                       isSelectableEnd -> Color(0xFFECFCCB)
                       isUsed -> palette.accent.copy(alpha = 0.14f)
-                      else -> Color.White.copy(alpha = 0.95f)
+                      else -> CardBackground.copy(alpha = 0.95f)
                     }
                   )
                   .border(
@@ -5482,7 +5494,7 @@ private fun InteractiveCrosswordGridCard(
         ) {
           Icon(Icons.Outlined.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
           Text(
-            text = "Konfirmasi slot",
+            text = t("Konfirmasi slot"),
             style = MaterialTheme.typography.labelMedium,
             color = Color.White,
             fontWeight = FontWeight.Bold
@@ -5492,7 +5504,7 @@ private fun InteractiveCrosswordGridCard(
     }
     if (anchorRow >= 0 && anchorCol >= 0 && pendingRow < 0 && pendingCol < 0) {
       Text(
-        text = "Pilih titik akhir pada baris atau kolom yang sama untuk melanjutkan draft.",
+        text = t("Pilih titik akhir pada baris atau kolom yang sama untuk melanjutkan draft."),
         style = MaterialTheme.typography.bodySmall,
         color = palette.text.copy(alpha = 0.72f)
       )
@@ -5510,14 +5522,14 @@ private fun CrosswordEntryGroup(
 ) {
   Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
     Text(
-      text = title,
+      text = t(title),
       style = MaterialTheme.typography.labelLarge,
       color = palette.text,
       fontWeight = FontWeight.ExtraBold
     )
     if (entries.isEmpty()) {
       Text(
-        text = "Belum ada slot. Buat dari grid di atas.",
+        text = t("Belum ada slot. Buat dari grid di atas."),
         style = MaterialTheme.typography.bodySmall,
         color = palette.text.copy(alpha = 0.72f)
       )
@@ -5545,13 +5557,13 @@ private fun CrosswordEntryGroup(
           }
           Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-              text = "Baris ${entry.row + 1}, Kolom ${entry.col + 1}",
+              text = "${t("Baris")} ${entry.row + 1}, ${t("Kolom")} ${entry.col + 1}",
               style = MaterialTheme.typography.labelMedium,
               color = palette.text,
               fontWeight = FontWeight.Bold
             )
             Text(
-              text = "${entry.length} kotak",
+              text = "${entry.length} ${t("kotak")}",
               style = MaterialTheme.typography.bodySmall,
               color = palette.text.copy(alpha = 0.72f)
             )
@@ -5559,13 +5571,13 @@ private fun CrosswordEntryGroup(
           Box(
             modifier = Modifier
               .clip(RoundedCornerShape(999.dp))
-              .background(Color.White.copy(alpha = 0.92f))
+              .background(CardBackground.copy(alpha = 0.92f))
               .border(1.dp, Color(0xFFF5C2E7), RoundedCornerShape(999.dp))
               .clickable(onClick = { onDeleteEntry(entry.id) })
               .padding(horizontal = 10.dp, vertical = 8.dp),
             contentAlignment = Alignment.Center
           ) {
-            Icon(Icons.Outlined.Close, contentDescription = "Hapus slot", tint = Color(0xFFBE123C), modifier = Modifier.size(16.dp))
+            Icon(Icons.Outlined.Close, contentDescription = t("Hapus slot"), tint = Color(0xFFBE123C), modifier = Modifier.size(16.dp))
           }
         }
         SoalTextField(
@@ -5606,7 +5618,7 @@ private fun CrosswordPreviewCard(
     verticalArrangement = Arrangement.spacedBy(10.dp)
   ) {
     Text(
-      text = "Preview puzzle",
+      text = t("Preview puzzle"),
       style = MaterialTheme.typography.labelLarge,
       color = palette.text,
       fontWeight = FontWeight.ExtraBold
@@ -5620,7 +5632,7 @@ private fun CrosswordPreviewCard(
             modifier = Modifier
               .size(24.dp)
               .clip(RoundedCornerShape(6.dp))
-              .background(if (isOpen) Color.White.copy(alpha = 0.94f) else palette.text.copy(alpha = 0.9f))
+              .background(if (isOpen) CardBackground.copy(alpha = 0.94f) else palette.text.copy(alpha = 0.9f))
               .border(1.dp, if (isOpen) palette.border.copy(alpha = 0.7f) else palette.text.copy(alpha = 0.9f), RoundedCornerShape(6.dp)),
             contentAlignment = Alignment.Center
           ) {
@@ -5654,7 +5666,7 @@ private fun WordSearchPreviewCard(
     verticalArrangement = Arrangement.spacedBy(10.dp)
   ) {
     Text(
-      text = "Preview puzzle",
+      text = t("Preview puzzle"),
       style = MaterialTheme.typography.labelLarge,
       color = palette.text,
       fontWeight = FontWeight.ExtraBold
@@ -5672,7 +5684,7 @@ private fun WordSearchPreviewCard(
                 modifier = Modifier
                   .size(28.dp)
                   .clip(RoundedCornerShape(5.dp))
-                  .background(Color.White.copy(alpha = 0.92f))
+                  .background(CardBackground.copy(alpha = 0.92f))
                   .border(1.dp, palette.border.copy(alpha = 0.7f), RoundedCornerShape(5.dp)),
                 contentAlignment = Alignment.Center
               ) {
@@ -5695,7 +5707,7 @@ private fun WordSearchPreviewCard(
     )
     if (puzzle.unplacedWords.isNotEmpty()) {
       Text(
-        text = "Kata belum muat: ${puzzle.unplacedWords.joinToString(", ")}",
+        text = "${t("Kata belum muat")}: ${puzzle.unplacedWords.joinToString(", ")}",
         style = MaterialTheme.typography.labelSmall,
         color = Color(0xFFB91C1C),
         fontWeight = FontWeight.SemiBold
@@ -7023,11 +7035,10 @@ private fun formatScoreNumber(value: Double): String {
 
 private val AttendanceStatusOptions = listOf("Hadir", "Terlambat", "Sakit", "Izin", "Alpa")
 
-private val AttendanceDateFormatter = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale("id", "ID"))
-
+@Composable
 private fun formatAttendanceDate(dateIso: String): String {
   return runCatching {
-    LocalDate.parse(dateIso).format(AttendanceDateFormatter)
+    formatDateForLanguage(LocalDate.parse(dateIso), "dd MMM yyyy", LocalAppLanguage.current)
   }.getOrDefault(dateIso)
 }
 
@@ -7045,11 +7056,11 @@ private fun MapelTopBar(
   ) {
     MapelTopButton(
       icon = Icons.Outlined.Menu,
-      contentDescription = "Buka sidebar",
+      contentDescription = t("Buka sidebar"),
       onClick = onMenuClick
     )
     Text(
-      text = title,
+      text = t(title),
       style = MaterialTheme.typography.titleMedium,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.ExtraBold,
@@ -7078,11 +7089,11 @@ private fun MapelDetailTopBar(
   ) {
     MapelTopButton(
       icon = Icons.AutoMirrored.Outlined.ArrowBack,
-      contentDescription = "Kembali ke daftar mapel",
+      contentDescription = t("Kembali ke daftar mapel"),
       onClick = onBackClick
     )
     Text(
-      text = title,
+      text = t(title),
       style = MaterialTheme.typography.titleMedium,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.ExtraBold,
@@ -7096,7 +7107,7 @@ private fun MapelDetailTopBar(
     if (showUndo) {
       MapelTopButton(
         icon = Icons.AutoMirrored.Outlined.Undo,
-        contentDescription = "Batalkan hapus",
+        contentDescription = t("Batalkan hapus"),
         onClick = onUndoClick
       )
     } else {
@@ -7114,14 +7125,14 @@ private fun MapelTopButton(
   Box(
     modifier = Modifier
       .size(42.dp)
-      .background(Color.White.copy(alpha = 0.86f), androidx.compose.foundation.shape.CircleShape)
+      .background(CardBackground.copy(alpha = 0.86f), androidx.compose.foundation.shape.CircleShape)
       .border(1.dp, CardBorder, androidx.compose.foundation.shape.CircleShape)
       .clickable(onClick = onClick),
     contentAlignment = Alignment.Center
   ) {
     Icon(
       imageVector = icon,
-      contentDescription = contentDescription,
+      contentDescription = t(contentDescription),
       tint = PrimaryBlueDark
     )
   }
@@ -7144,7 +7155,7 @@ private fun MapelStatChip(
     horizontalAlignment = Alignment.CenterHorizontally
   ) {
     Text(
-      text = label,
+      text = t(label),
       style = MaterialTheme.typography.labelMedium,
       color = SubtleInk
     )

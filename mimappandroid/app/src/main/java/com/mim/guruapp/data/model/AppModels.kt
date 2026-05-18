@@ -29,6 +29,7 @@ data class DashboardPayload(
   val waliSantriSnapshot: WaliSantriSnapshot = WaliSantriSnapshot(),
   val mutabaahSnapshot: MutabaahSnapshot = MutabaahSnapshot(),
   val leaveRequestSnapshot: LeaveRequestSnapshot = LeaveRequestSnapshot(),
+  val wakasekKurikulumSnapshot: WakasekKurikulumSnapshot = WakasekKurikulumSnapshot(),
   val monthlyReportSnapshot: MonthlyReportSnapshot = MonthlyReportSnapshot(),
   val utsReportSnapshot: UtsReportSnapshot = UtsReportSnapshot(),
   val pendingSyncCount: Int = 0,
@@ -102,7 +103,48 @@ data class LeaveRequestItem(
   val reviewerNote: String = "",
   val reviewedAt: String = "",
   val createdAt: String = "",
-  val updatedAt: String = ""
+  val updatedAt: String = "",
+  val teacherId: String = "",
+  val teacherName: String = ""
+)
+
+@Serializable
+data class WakasekKurikulumSnapshot(
+  val isWakasekKurikulum: Boolean = false,
+  val teacherRows: List<WakasekTeacherMonitoringRow> = emptyList(),
+  val studentRows: List<WakasekStudentMonitoringRow> = emptyList(),
+  val leaveRequests: List<LeaveRequestItem> = emptyList(),
+  val updatedAt: Long = 0L
+)
+
+@Serializable
+data class WakasekTeacherMonitoringRow(
+  val teacherId: String,
+  val teacherName: String,
+  val periodKey: String,
+  val periodLabel: String,
+  val className: String = "",
+  val subjectName: String = "",
+  val timeLabel: String = "",
+  val status: String = "",
+  val note: String = "",
+  val totalSessions: Int = 0,
+  val presentCount: Int = 0,
+  val substituteCount: Int = 0,
+  val leaveCount: Int = 0,
+  val absentCount: Int = 0
+)
+
+@Serializable
+data class WakasekStudentMonitoringRow(
+  val studentId: String,
+  val studentName: String,
+  val className: String = "",
+  val dateIso: String,
+  val status: String,
+  val subjectName: String = "",
+  val periodKey: String,
+  val periodLabel: String
 )
 
 @Serializable
@@ -190,6 +232,8 @@ data class WaliAttendanceDetailRow(
   val id: String = "",
   val dateIso: String = "",
   val subjectName: String = "",
+  val lessonLabel: String = "",
+  val lessonSortKey: String = "",
   val status: String = ""
 )
 

@@ -62,11 +62,14 @@ import androidx.compose.ui.unit.dp
 import com.mim.guruapp.LeaveRequestSaveOutcome
 import com.mim.guruapp.data.model.LeaveRequestItem
 import com.mim.guruapp.data.model.LeaveRequestSnapshot
+import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.AppBackground
 import com.mim.guruapp.ui.theme.CardBorder
+import com.mim.guruapp.ui.theme.CardBackground
 import com.mim.guruapp.ui.theme.HighlightCard
 import com.mim.guruapp.ui.theme.PrimaryBlue
 import com.mim.guruapp.ui.theme.PrimaryBlueDark
+import com.mim.guruapp.ui.theme.SoftPanel
 import com.mim.guruapp.ui.theme.SubtleInk
 import com.mim.guruapp.ui.theme.SuccessTint
 import com.mim.guruapp.ui.theme.WarmAccent
@@ -280,12 +283,12 @@ fun PerizinanScreen(
             datePickerTarget = null
           }
         ) {
-          Text("Pilih")
+          Text(t("Pilih"))
         }
       },
       dismissButton = {
         TextButton(onClick = { datePickerTarget = null }) {
-          Text("Batal")
+          Text(t("Batal"))
         }
       }
     ) {
@@ -297,13 +300,13 @@ fun PerizinanScreen(
     val deleteLabel = if (request.status == "menunggu") "Batalkan" else "Hapus"
     AlertDialog(
       onDismissRequest = { confirmDeleteTarget = null },
-      title = { Text("$deleteLabel pengajuan") },
+      title = { Text("${t(deleteLabel)} ${t("pengajuan")}") },
       text = {
         Text(
           if (request.status == "menunggu") {
-            "Pengajuan izin ini akan dibatalkan dari daftar."
+            t("Pengajuan izin ini akan dibatalkan dari daftar.")
           } else {
-            "Pengajuan izin ini akan dihapus dari daftar perizinan."
+            t("Pengajuan izin ini akan dihapus dari daftar perizinan.")
           }
         )
       },
@@ -319,12 +322,12 @@ fun PerizinanScreen(
             }
           }
         ) {
-          Text(deleteLabel)
+          Text(t(deleteLabel))
         }
       },
       dismissButton = {
         TextButton(onClick = { confirmDeleteTarget = null }) {
-          Text("Tutup")
+          Text(t("Tutup"))
         }
       }
     )
@@ -345,11 +348,11 @@ private fun PerizinanTopBar(
   ) {
     PerizinanCircleButton(
       icon = Icons.Outlined.Menu,
-      contentDescription = "Buka sidebar",
+      contentDescription = t("Buka sidebar"),
       onClick = onMenuClick
     )
     Text(
-      text = title,
+      text = t(title),
       style = MaterialTheme.typography.titleMedium,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.ExtraBold,
@@ -378,7 +381,7 @@ private fun PerizinanFormCard(
       .fillMaxWidth()
       .shadow(12.dp, RoundedCornerShape(26.dp), ambientColor = Color(0x120F172A), spotColor = Color(0x120F172A))
       .clip(RoundedCornerShape(26.dp))
-      .background(Color.White.copy(alpha = 0.95f))
+      .background(CardBackground.copy(alpha = 0.95f))
       .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(26.dp))
       .padding(18.dp),
     verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -406,13 +409,13 @@ private fun PerizinanFormCard(
         verticalArrangement = Arrangement.spacedBy(2.dp)
       ) {
         Text(
-          text = "Ajukan Perizinan",
+          text = t("Ajukan Perizinan"),
           style = MaterialTheme.typography.titleMedium,
           color = PrimaryBlueDark,
           fontWeight = FontWeight.ExtraBold
         )
         Text(
-          text = "Tentukan rentang tanggal izin dan isi keperluannya. Status persetujuan akan muncul di daftar bawah.",
+          text = t("Tentukan rentang tanggal izin dan isi keperluannya. Status persetujuan akan muncul di daftar bawah."),
           style = MaterialTheme.typography.bodySmall,
           color = SubtleInk
         )
@@ -458,13 +461,13 @@ private fun PerizinanFormCard(
         verticalArrangement = Arrangement.spacedBy(2.dp)
       ) {
         Text(
-          text = "Durasi izin",
+          text = t("Durasi izin"),
           style = MaterialTheme.typography.labelMedium,
           color = PrimaryBlueDark,
           fontWeight = FontWeight.ExtraBold
         )
         Text(
-          text = if (durationDays > 0) "$durationDays hari" else "Tanggal selesai harus sesudah tanggal mulai",
+          text = if (durationDays > 0) "$durationDays ${t("hari")}" else t("Tanggal selesai harus sesudah tanggal mulai"),
           style = MaterialTheme.typography.bodySmall,
           color = if (durationDays > 0) SubtleInk else WarmAccent,
           fontWeight = FontWeight.SemiBold
@@ -475,8 +478,8 @@ private fun PerizinanFormCard(
     OutlinedTextField(
       value = purpose,
       onValueChange = onPurposeChange,
-      label = { Text("Keperluan izin") },
-      placeholder = { Text("Contoh: menghadiri acara keluarga, kontrol kesehatan, dan seterusnya") },
+      label = { Text(t("Keperluan izin")) },
+      placeholder = { Text(t("Contoh: menghadiri acara keluarga, kontrol kesehatan, dan seterusnya")) },
       modifier = Modifier.fillMaxWidth(),
       minLines = 4,
       maxLines = 5,
@@ -503,7 +506,7 @@ private fun PerizinanFormCard(
           )
         } else {
           Text(
-            text = "Ajukan Izin",
+            text = t("Ajukan Izin"),
             style = MaterialTheme.typography.labelLarge,
             color = Color.White,
             fontWeight = FontWeight.ExtraBold
@@ -524,13 +527,13 @@ private fun PerizinanSectionHeader(
     verticalArrangement = Arrangement.spacedBy(3.dp)
   ) {
     Text(
-      text = title,
+      text = t(title),
       style = MaterialTheme.typography.titleMedium,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.ExtraBold
     )
     Text(
-      text = subtitle,
+      text = t(subtitle),
       style = MaterialTheme.typography.bodySmall,
       color = SubtleInk
     )
@@ -565,8 +568,8 @@ private fun LeaveRequestCard(
         modifier = Modifier
           .size(40.dp)
           .clip(RoundedCornerShape(14.dp))
-          .background(Color.White.copy(alpha = 0.78f))
-          .border(1.dp, Color.White.copy(alpha = 0.56f), RoundedCornerShape(14.dp)),
+          .background(CardBackground.copy(alpha = 0.78f))
+          .border(1.dp, CardBorder.copy(alpha = 0.56f), RoundedCornerShape(14.dp)),
         contentAlignment = Alignment.Center
       ) {
         Icon(
@@ -581,7 +584,7 @@ private fun LeaveRequestCard(
         verticalArrangement = Arrangement.spacedBy(5.dp)
       ) {
         Text(
-          text = request.purpose.ifBlank { "Keperluan izin" },
+          text = request.purpose.ifBlank { t("Keperluan izin") },
           style = MaterialTheme.typography.titleSmall,
           color = PrimaryBlueDark,
           fontWeight = FontWeight.ExtraBold,
@@ -620,13 +623,13 @@ private fun LeaveRequestCard(
         modifier = Modifier
           .fillMaxWidth()
           .clip(RoundedCornerShape(18.dp))
-          .background(Color.White.copy(alpha = 0.62f))
-          .border(1.dp, Color.White.copy(alpha = 0.58f), RoundedCornerShape(18.dp))
+          .background(CardBackground.copy(alpha = 0.62f))
+          .border(1.dp, CardBorder.copy(alpha = 0.58f), RoundedCornerShape(18.dp))
           .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
       ) {
         Text(
-          text = "Catatan Wakasek",
+          text = t("Catatan Wakasek"),
           style = MaterialTheme.typography.labelLarge,
           color = PrimaryBlueDark,
           fontWeight = FontWeight.ExtraBold
@@ -646,7 +649,7 @@ private fun LeaveRequestCard(
       Box(
         modifier = Modifier
           .clip(RoundedCornerShape(16.dp))
-          .background(Color.White.copy(alpha = 0.72f))
+          .background(CardBackground.copy(alpha = 0.72f))
           .border(1.dp, palette.accent.copy(alpha = 0.24f), RoundedCornerShape(16.dp))
           .clickable(enabled = !isDeleting, onClick = onDeleteClick)
           .padding(horizontal = 14.dp, vertical = 10.dp),
@@ -671,7 +674,7 @@ private fun LeaveRequestCard(
             )
           }
           Text(
-            text = if (isDeleting) "Memproses..." else actionLabel,
+            text = if (isDeleting) t("Memproses...") else t(actionLabel),
             style = MaterialTheme.typography.labelLarge,
             color = palette.accent,
             fontWeight = FontWeight.ExtraBold
@@ -688,12 +691,12 @@ private fun PerizinanEmptyCard(message: String) {
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(22.dp))
-      .background(Color.White.copy(alpha = 0.86f))
+      .background(CardBackground.copy(alpha = 0.86f))
       .border(1.dp, CardBorder.copy(alpha = 0.9f), RoundedCornerShape(22.dp))
       .padding(18.dp)
   ) {
     Text(
-      text = message,
+      text = t(message),
       style = MaterialTheme.typography.bodyMedium,
       color = SubtleInk
     )
@@ -708,12 +711,12 @@ private fun PerizinanStatusChip(
   Box(
     modifier = Modifier
       .clip(RoundedCornerShape(999.dp))
-      .background(Color.White.copy(alpha = 0.8f))
+      .background(CardBackground.copy(alpha = 0.8f))
       .border(1.dp, accent.copy(alpha = 0.2f), RoundedCornerShape(999.dp))
       .padding(horizontal = 10.dp, vertical = 6.dp)
   ) {
     Text(
-      text = statusLabel(status),
+      text = t(statusLabel(status)),
       style = MaterialTheme.typography.labelMedium,
       color = accent,
       fontWeight = FontWeight.ExtraBold
@@ -729,12 +732,12 @@ private fun PerizinanMetaPill(
   Box(
     modifier = Modifier
       .clip(RoundedCornerShape(999.dp))
-      .background(Color.White.copy(alpha = 0.68f))
+      .background(CardBackground.copy(alpha = 0.68f))
       .border(1.dp, accent.copy(alpha = 0.14f), RoundedCornerShape(999.dp))
       .padding(horizontal = 10.dp, vertical = 6.dp)
   ) {
     Text(
-      text = label,
+      text = t(label),
       style = MaterialTheme.typography.labelMedium,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.SemiBold
@@ -753,14 +756,14 @@ private fun PerizinanPickerField(
     modifier = modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(16.dp))
-      .background(Color.White.copy(alpha = 0.74f))
+      .background(CardBackground.copy(alpha = 0.74f))
       .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(16.dp))
       .clickable(onClick = onClick)
       .padding(horizontal = 14.dp, vertical = 10.dp),
     verticalArrangement = Arrangement.spacedBy(4.dp)
   ) {
     Text(
-      text = label,
+      text = t(label),
       style = MaterialTheme.typography.labelSmall,
       color = SubtleInk,
       fontWeight = FontWeight.SemiBold
@@ -794,14 +797,14 @@ private fun PerizinanCircleButton(
   Box(
     modifier = Modifier
       .size(42.dp)
-      .background(Color.White.copy(alpha = 0.86f), CircleShape)
+      .background(CardBackground.copy(alpha = 0.86f), CircleShape)
       .border(1.dp, CardBorder, CircleShape)
       .clickable(onClick = onClick),
     contentAlignment = Alignment.Center
   ) {
     Icon(
       imageVector = icon,
-      contentDescription = contentDescription,
+      contentDescription = t(contentDescription),
       tint = PrimaryBlueDark
     )
   }

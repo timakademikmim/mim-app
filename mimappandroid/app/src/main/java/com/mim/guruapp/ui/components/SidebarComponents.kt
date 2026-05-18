@@ -42,7 +42,6 @@ import androidx.compose.material.icons.outlined.NoteAlt
 import androidx.compose.material.icons.outlined.Quiz
 import androidx.compose.material.icons.outlined.Report
 import androidx.compose.material.icons.outlined.TaskAlt
-import androidx.compose.material.icons.outlined.Textsms
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -58,9 +57,12 @@ import androidx.compose.ui.unit.dp
 import com.mim.guruapp.GuruSidebarDestination
 import com.mim.guruapp.GuruSidebarParent
 import com.mim.guruapp.R
+import com.mim.guruapp.ui.i18n.t
+import com.mim.guruapp.ui.theme.CardBackground
 import com.mim.guruapp.ui.theme.CardBorder
 import com.mim.guruapp.ui.theme.PrimaryBlue
 import com.mim.guruapp.ui.theme.PrimaryBlueDark
+import com.mim.guruapp.ui.theme.SoftPanel
 import com.mim.guruapp.ui.theme.SubtleInk
 
 data class SidebarLeafItem(
@@ -110,8 +112,8 @@ fun Sidebar(
       .width(304.dp)
       .statusBarsPadding()
       .navigationBarsPadding()
-      .background(Color(0xFFF8FAFC), RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp))
-      .border(BorderStroke(1.dp, Color(0xFFE2E8F0)), RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp))
+      .background(SoftPanel, RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp))
+      .border(BorderStroke(1.dp, CardBorder), RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp))
       .padding(horizontal = 16.dp, vertical = 18.dp)
   ) {
     SidebarHeader(
@@ -168,7 +170,7 @@ fun Sidebar(
 
       Spacer(modifier = Modifier.height(18.dp))
 
-      HorizontalDivider(color = Color(0xFFE2E8F0), thickness = 1.dp)
+      HorizontalDivider(color = CardBorder, thickness = 1.dp)
 
       Spacer(modifier = Modifier.height(18.dp))
 
@@ -209,7 +211,7 @@ private fun SidebarHeader(
       Box(
         modifier = Modifier
           .size(46.dp)
-          .background(Color.White, RoundedCornerShape(16.dp))
+          .background(CardBackground, RoundedCornerShape(16.dp))
           .border(1.dp, CardBorder, RoundedCornerShape(16.dp)),
         contentAlignment = Alignment.Center
       ) {
@@ -228,7 +230,7 @@ private fun SidebarHeader(
           fontWeight = FontWeight.ExtraBold
         )
         Text(
-          text = "Guru Dashboard",
+          text = t("Guru Dashboard"),
           style = MaterialTheme.typography.bodySmall,
           color = SubtleInk
         )
@@ -238,7 +240,7 @@ private fun SidebarHeader(
     Box(
       modifier = Modifier
         .size(38.dp)
-        .background(Color.White, CircleShape)
+        .background(CardBackground, CircleShape)
         .border(1.dp, CardBorder, CircleShape)
         .clickable(onClick = onDismiss),
       contentAlignment = Alignment.Center
@@ -255,9 +257,9 @@ private fun SidebarHeader(
 @Composable
 private fun SidebarSectionTitle(title: String) {
   Text(
-    text = title,
+    text = t(title),
     style = MaterialTheme.typography.labelMedium,
-    color = Color(0xFF64748B),
+    color = SubtleInk,
     fontWeight = FontWeight.Bold,
     modifier = Modifier.padding(horizontal = 6.dp)
   )
@@ -291,7 +293,7 @@ private fun SidebarParentGroup(
           modifier = Modifier
             .width(2.dp)
             .height((item.children.size * 52).dp)
-            .background(Color(0xFFD9E3F1), RoundedCornerShape(999.dp))
+            .background(CardBorder, RoundedCornerShape(999.dp))
         )
         Column(
           modifier = Modifier
@@ -320,10 +322,10 @@ private fun SidebarParentRow(
   selected: Boolean,
   onClick: () -> Unit
 ) {
-  val background = if (selected) Color(0xFFE8F0FF) else Color.Transparent
-  val borderColor = if (selected) Color(0xFFD5E3FF) else Color.Transparent
-  val textColor = if (selected) PrimaryBlue else Color(0xFF475569)
-  val iconColor = if (selected) PrimaryBlue else Color(0xFF64748B)
+  val background = if (selected) PrimaryBlue.copy(alpha = 0.14f) else Color.Transparent
+  val borderColor = if (selected) PrimaryBlue.copy(alpha = 0.22f) else Color.Transparent
+  val textColor = if (selected) PrimaryBlue else SubtleInk
+  val iconColor = if (selected) PrimaryBlue else SubtleInk
 
   Row(
     modifier = Modifier
@@ -337,18 +339,18 @@ private fun SidebarParentRow(
     Box(
       modifier = Modifier
         .size(34.dp)
-        .background(if (selected) Color.White else Color(0xFFF1F5F9), RoundedCornerShape(12.dp)),
+        .background(if (selected) CardBackground else SoftPanel, RoundedCornerShape(12.dp)),
       contentAlignment = Alignment.Center
     ) {
       Icon(
         imageVector = item.icon,
-        contentDescription = item.label,
+        contentDescription = t(item.label),
         tint = iconColor,
         modifier = Modifier.size(18.dp)
       )
     }
     Text(
-      text = item.label,
+      text = t(item.label),
       style = MaterialTheme.typography.bodyMedium,
       color = textColor,
       fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
@@ -358,7 +360,7 @@ private fun SidebarParentRow(
     )
     Icon(
       imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
-      contentDescription = if (expanded) "Collapse" else "Expand",
+      contentDescription = if (expanded) t("Collapse") else t("Expand"),
       tint = iconColor,
       modifier = Modifier.size(18.dp)
     )
@@ -372,10 +374,10 @@ private fun SidebarLeafRow(
   onClick: () -> Unit,
   compact: Boolean = false
 ) {
-  val background = if (selected) Color(0xFFE8F0FF) else Color.Transparent
-  val borderColor = if (selected) Color(0xFFD5E3FF) else Color.Transparent
-  val textColor = if (selected) PrimaryBlue else Color(0xFF475569)
-  val iconColor = if (selected) PrimaryBlue else Color(0xFF64748B)
+  val background = if (selected) PrimaryBlue.copy(alpha = 0.14f) else Color.Transparent
+  val borderColor = if (selected) PrimaryBlue.copy(alpha = 0.22f) else Color.Transparent
+  val textColor = if (selected) PrimaryBlue else SubtleInk
+  val iconColor = if (selected) PrimaryBlue else SubtleInk
   val verticalPadding = if (compact) 10.dp else 11.dp
 
   Row(
@@ -390,18 +392,18 @@ private fun SidebarLeafRow(
     Box(
       modifier = Modifier
         .size(if (compact) 30.dp else 34.dp)
-        .background(if (selected) Color.White else Color(0xFFF1F5F9), RoundedCornerShape(12.dp)),
+        .background(if (selected) CardBackground else SoftPanel, RoundedCornerShape(12.dp)),
       contentAlignment = Alignment.Center
     ) {
       Icon(
         imageVector = item.icon,
-        contentDescription = item.label,
+        contentDescription = t(item.label),
         tint = iconColor,
         modifier = Modifier.size(18.dp)
       )
     }
     Text(
-      text = item.label,
+      text = t(item.label),
       style = MaterialTheme.typography.bodyMedium,
       color = textColor,
       fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
@@ -423,19 +425,19 @@ private fun SidebarProfileRow(
 ) {
   val isDanger = item.isLogout
   val background = when {
-    isDanger -> Color(0xFFFFF1F2)
-    selected -> Color(0xFFE8F0FF)
+    isDanger -> Color(0xFFFB7185).copy(alpha = 0.14f)
+    selected -> PrimaryBlue.copy(alpha = 0.14f)
     else -> Color.Transparent
   }
   val borderColor = when {
-    isDanger -> Color(0xFFFECDD3)
-    selected -> Color(0xFFD5E3FF)
+    isDanger -> Color(0xFFFB7185).copy(alpha = 0.28f)
+    selected -> PrimaryBlue.copy(alpha = 0.22f)
     else -> Color.Transparent
   }
   val textColor = when {
     isDanger -> Color(0xFFBE123C)
     selected -> PrimaryBlue
-    else -> Color(0xFF475569)
+    else -> SubtleInk
   }
 
   Row(
@@ -450,18 +452,18 @@ private fun SidebarProfileRow(
     Box(
       modifier = Modifier
         .size(34.dp)
-        .background(if (isDanger) Color(0xFFFFE4E6) else Color(0xFFF1F5F9), RoundedCornerShape(12.dp)),
+        .background(if (isDanger) Color(0xFFFB7185).copy(alpha = 0.16f) else SoftPanel, RoundedCornerShape(12.dp)),
       contentAlignment = Alignment.Center
     ) {
       Icon(
         imageVector = item.icon,
-        contentDescription = item.label,
+        contentDescription = t(item.label),
         tint = textColor,
         modifier = Modifier.size(18.dp)
       )
     }
     Text(
-      text = item.label,
+      text = t(item.label),
       style = MaterialTheme.typography.bodyMedium,
       color = textColor,
       fontWeight = if (selected || isDanger) FontWeight.Bold else FontWeight.Medium,
@@ -479,8 +481,8 @@ private fun SidebarProfileRow(
 fun Badge(value: Int) {
   Box(
     modifier = Modifier
-      .background(Color(0xFFDBEAFE), RoundedCornerShape(999.dp))
-      .border(1.dp, Color(0xFFBFDBFE), RoundedCornerShape(999.dp))
+      .background(PrimaryBlue.copy(alpha = 0.14f), RoundedCornerShape(999.dp))
+      .border(1.dp, PrimaryBlue.copy(alpha = 0.24f), RoundedCornerShape(999.dp))
       .padding(horizontal = 8.dp, vertical = 3.dp),
     contentAlignment = Alignment.Center
   ) {
@@ -509,57 +511,83 @@ fun SidebarScrim(
 
 fun buildGuruSidebarContent(
   pendingSyncCount: Int,
-  activeMapelCount: Int
+  activeMapelCount: Int,
+  isWaliKelas: Boolean,
+  isWakasekKurikulum: Boolean
 ): GuruSidebarContent {
   return GuruSidebarContent(
     topItems = listOf(
       SidebarLeafItem(GuruSidebarDestination.Dashboard, "Dashboard", Icons.Outlined.Dashboard)
     ),
-    parentItems = listOf(
-      SidebarParentItem(
-        parent = GuruSidebarParent.KinerjaGuru,
-        label = "Kinerja Guru",
-        icon = Icons.AutoMirrored.Outlined.Assignment,
-        children = listOf(
-          SidebarLeafItem(GuruSidebarDestination.Tugas, "Mutabaah", Icons.Outlined.TaskAlt)
-        )
-      ),
-      SidebarParentItem(
-        parent = GuruSidebarParent.Akademik,
-        label = "Akademik",
-        icon = Icons.Outlined.Book,
-        children = listOf(
-          SidebarLeafItem(GuruSidebarDestination.Jadwal, "Jadwal", Icons.Outlined.CalendarMonth),
-          SidebarLeafItem(GuruSidebarDestination.Mapel, "Mapel", Icons.Outlined.Book, activeMapelCount.takeIf { it > 0 }),
-          SidebarLeafItem(GuruSidebarDestination.Ujian, "Ujian", Icons.Outlined.Quiz)
-        )
-      ),
-      SidebarParentItem(
-        parent = GuruSidebarParent.AktivitasHarian,
-        label = "Aktivitas Harian",
-        icon = Icons.Outlined.NoteAlt,
-        children = listOf(
-          SidebarLeafItem(GuruSidebarDestination.InputAbsensi, "Input Absen", Icons.Outlined.AssignmentTurnedIn),
-          SidebarLeafItem(GuruSidebarDestination.InputNilai, "Input Nilai", Icons.Outlined.NoteAlt),
-          SidebarLeafItem(GuruSidebarDestination.Perizinan, "Perizinan", Icons.Outlined.TaskAlt)
-        )
-      ),
-      SidebarParentItem(
-        parent = GuruSidebarParent.KelasSaya,
-        label = "Kelas Saya",
-        icon = Icons.Outlined.Groups,
-        children = listOf(
-          SidebarLeafItem(GuruSidebarDestination.Santri, "Santri", Icons.Outlined.Groups),
-          SidebarLeafItem(GuruSidebarDestination.LaporanAbsensi, "Absensi", Icons.AutoMirrored.Outlined.FactCheck),
-          SidebarLeafItem(GuruSidebarDestination.LaporanUTS, "Laporan UTS", Icons.Outlined.Description),
-          SidebarLeafItem(GuruSidebarDestination.LaporanBulanan, "Laporan Bulanan", Icons.Outlined.Report, pendingSyncCount.takeIf { it > 0 }),
-          SidebarLeafItem(GuruSidebarDestination.Rapor, "Rapor", Icons.Outlined.Grade)
+    parentItems = buildList {
+      add(
+        SidebarParentItem(
+          parent = GuruSidebarParent.KinerjaGuru,
+          label = "Kinerja Guru",
+          icon = Icons.AutoMirrored.Outlined.Assignment,
+          children = listOf(
+            SidebarLeafItem(GuruSidebarDestination.Tugas, "Mutabaah", Icons.Outlined.TaskAlt)
+          )
         )
       )
-    ),
+      add(
+        SidebarParentItem(
+          parent = GuruSidebarParent.Akademik,
+          label = "Akademik",
+          icon = Icons.Outlined.Book,
+          children = listOf(
+            SidebarLeafItem(GuruSidebarDestination.Jadwal, "Jadwal", Icons.Outlined.CalendarMonth),
+            SidebarLeafItem(GuruSidebarDestination.Mapel, "Mapel", Icons.Outlined.Book, activeMapelCount.takeIf { it > 0 }),
+            SidebarLeafItem(GuruSidebarDestination.Ujian, "Ujian", Icons.Outlined.Quiz)
+          )
+        )
+      )
+      add(
+        SidebarParentItem(
+          parent = GuruSidebarParent.AktivitasHarian,
+          label = "Aktivitas Harian",
+          icon = Icons.Outlined.NoteAlt,
+          children = listOf(
+            SidebarLeafItem(GuruSidebarDestination.InputAbsensi, "Input Absen", Icons.Outlined.AssignmentTurnedIn),
+            SidebarLeafItem(GuruSidebarDestination.InputNilai, "Input Nilai", Icons.Outlined.NoteAlt),
+            SidebarLeafItem(GuruSidebarDestination.Perizinan, "Perizinan", Icons.Outlined.TaskAlt)
+          )
+        )
+      )
+      if (isWaliKelas) {
+        add(
+          SidebarParentItem(
+            parent = GuruSidebarParent.KelasSaya,
+            label = "Kelas Saya",
+            icon = Icons.Outlined.Groups,
+            children = listOf(
+              SidebarLeafItem(GuruSidebarDestination.Santri, "Santri", Icons.Outlined.Groups),
+              SidebarLeafItem(GuruSidebarDestination.LaporanAbsensi, "Absensi", Icons.AutoMirrored.Outlined.FactCheck),
+              SidebarLeafItem(GuruSidebarDestination.LaporanUTS, "Laporan UTS", Icons.Outlined.Description),
+              SidebarLeafItem(GuruSidebarDestination.LaporanBulanan, "Laporan Bulanan", Icons.Outlined.Report, pendingSyncCount.takeIf { it > 0 }),
+              SidebarLeafItem(GuruSidebarDestination.Rapor, "Rapor", Icons.Outlined.Grade)
+            )
+          )
+        )
+      }
+      if (isWakasekKurikulum) {
+        add(
+          SidebarParentItem(
+            parent = GuruSidebarParent.WakasekKurikulum,
+            label = "Wakasek Akademik",
+            icon = Icons.Outlined.AssignmentTurnedIn,
+            children = listOf(
+              SidebarLeafItem(GuruSidebarDestination.WakasekMonitoringGuru, "Monitoring Guru", Icons.Outlined.Dashboard),
+              SidebarLeafItem(GuruSidebarDestination.WakasekMonitoringSiswa, "Monitoring Siswa", Icons.Outlined.Groups),
+              SidebarLeafItem(GuruSidebarDestination.WakasekPerizinan, "Perizinan", Icons.Outlined.TaskAlt)
+            )
+          )
+        )
+      }
+    },
     bottomItems = emptyList(),
     profileItems = listOf(
-      SidebarProfileItem("Pesan", Icons.Outlined.Textsms, badge = 2, destination = GuruSidebarDestination.Pesan),
+      SidebarProfileItem("Profil", Icons.Outlined.AccountCircle, destination = GuruSidebarDestination.Profil),
       SidebarProfileItem("Logout", Icons.AutoMirrored.Outlined.Logout, isLogout = true)
     )
   )

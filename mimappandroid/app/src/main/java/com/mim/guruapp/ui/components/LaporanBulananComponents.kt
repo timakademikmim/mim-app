@@ -107,6 +107,8 @@ import com.mim.guruapp.export.MonthlyReportExportRow
 import com.mim.guruapp.export.MonthlyReportExportSection
 import com.mim.guruapp.export.MonthlyReportExporter
 import com.mim.guruapp.export.MonthlyReportWaTarget
+import com.mim.guruapp.ui.i18n.t
+import com.mim.guruapp.ui.i18n.ti
 import com.mim.guruapp.ui.theme.AppBackground
 import com.mim.guruapp.ui.theme.CardBackground
 import com.mim.guruapp.ui.theme.CardBorder
@@ -740,7 +742,7 @@ private fun LaporanBulananDetailContent(
           color = PrimaryBlue
         )
         Text(
-          text = "Menyimpan perubahan laporan...",
+          text = t("Menyimpan perubahan laporan..."),
           style = MaterialTheme.typography.bodySmall,
           color = PrimaryBlueDark,
           fontWeight = FontWeight.Bold
@@ -1151,7 +1153,7 @@ private fun MonthlyReportActionBar(
         .width(244.dp)
         .shadow(18.dp, RoundedCornerShape(32.dp), ambientColor = Color(0x180F172A), spotColor = Color(0x180F172A))
         .clip(RoundedCornerShape(32.dp))
-        .background(Color.White.copy(alpha = 0.96f))
+        .background(CardBackground.copy(alpha = 0.96f))
         .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(32.dp))
         .padding(horizontal = 10.dp, vertical = 8.dp),
       horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1240,7 +1242,7 @@ private fun WhatsAppTargetDialog(
     onDismissRequest = onDismiss,
     title = {
       Text(
-        text = "Kirim WhatsApp",
+        text = t("Kirim WhatsApp"),
         style = MaterialTheme.typography.titleMedium,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.ExtraBold
@@ -1252,7 +1254,7 @@ private fun WhatsAppTargetDialog(
         modifier = Modifier.verticalScroll(rememberScrollState())
       ) {
         Text(
-          text = "Pilih nomor tujuan, isi manual, atau ambil dari kontak HP. PDF laporan akan dibuka sebagai lampiran WhatsApp, dan caption otomatis disalin sebagai cadangan.",
+          text = t("Pilih nomor tujuan, isi manual, atau ambil dari kontak HP. PDF laporan akan dibuka sebagai lampiran WhatsApp, dan caption otomatis disalin sebagai cadangan."),
           style = MaterialTheme.typography.bodySmall,
           color = SubtleInk
         )
@@ -1261,7 +1263,7 @@ private fun WhatsAppTargetDialog(
             modifier = Modifier
               .fillMaxWidth()
               .clip(RoundedCornerShape(14.dp))
-              .background(Color.White.copy(alpha = 0.82f))
+              .background(CardBackground.copy(alpha = 0.82f))
               .border(1.dp, CardBorder, RoundedCornerShape(14.dp))
               .clickable { onTargetNumberChange(target.phone) }
               .padding(horizontal = 12.dp, vertical = 10.dp),
@@ -1309,20 +1311,20 @@ private fun WhatsAppTargetDialog(
             modifier = Modifier
               .size(34.dp)
               .clip(CircleShape)
-              .background(Color.White.copy(alpha = 0.92f)),
+              .background(CardBackground.copy(alpha = 0.92f)),
             contentAlignment = Alignment.Center
           ) {
-            Icon(Icons.Outlined.Phone, contentDescription = "Pilih kontak", tint = PrimaryBlue, modifier = Modifier.size(18.dp))
+            Icon(Icons.Outlined.Phone, contentDescription = t("Pilih kontak"), tint = PrimaryBlue, modifier = Modifier.size(18.dp))
           }
           Column(modifier = Modifier.weight(1f)) {
             Text(
-              text = "Pilih dari kontak HP",
+              text = t("Pilih dari kontak HP"),
               style = MaterialTheme.typography.labelLarge,
               color = PrimaryBlueDark,
               fontWeight = FontWeight.Bold
             )
             Text(
-              text = "Ambil nomor dari kontak yang tersimpan di perangkat.",
+              text = t("Ambil nomor dari kontak yang tersimpan di perangkat."),
               style = MaterialTheme.typography.bodySmall,
               color = SubtleInk
             )
@@ -1332,12 +1334,12 @@ private fun WhatsAppTargetDialog(
     },
     confirmButton = {
       Button(onClick = onSend, enabled = targetNumber.trim().isNotBlank()) {
-        Text("Kirim")
+        Text(t("Kirim"))
       }
     },
     dismissButton = {
       TextButton(onClick = onDismiss) {
-        Text("Batal")
+        Text(t("Batal"))
       }
     },
     containerColor = CardBackground
@@ -1384,8 +1386,8 @@ private fun ReportResetCard(
   Row(
     modifier = Modifier
       .fillMaxWidth()
-      .background(Color(0xFFEFF6FF), RoundedCornerShape(18.dp))
-      .border(1.dp, Color(0xFFBFDBFE), RoundedCornerShape(18.dp))
+      .background(PrimaryBlue.copy(alpha = 0.14f), RoundedCornerShape(18.dp))
+      .border(1.dp, PrimaryBlue.copy(alpha = 0.26f), RoundedCornerShape(18.dp))
       .padding(12.dp),
     horizontalArrangement = Arrangement.spacedBy(10.dp),
     verticalAlignment = Alignment.CenterVertically
@@ -1414,14 +1416,14 @@ private fun ReportResetCard(
       modifier = Modifier
         .size(40.dp)
         .clip(CircleShape)
-        .background(if (canReset) Color.White.copy(alpha = 0.92f) else Color.White.copy(alpha = 0.58f))
+        .background(if (canReset) CardBackground.copy(alpha = 0.92f) else SoftPanel.copy(alpha = 0.58f))
         .border(1.dp, CardBorder, CircleShape)
         .clickable(enabled = canReset, onClick = onResetClick),
       contentAlignment = Alignment.Center
     ) {
       Icon(
         imageVector = Icons.Outlined.RestartAlt,
-        contentDescription = "Reset ke data asli sistem",
+        contentDescription = t("Reset ke data asli sistem"),
         tint = if (canReset) PrimaryBlueDark else SubtleInk.copy(alpha = 0.55f),
         modifier = Modifier.size(20.dp)
       )
@@ -1458,12 +1460,12 @@ private fun LaporanBulananTopBar(
     ) {
       Icon(
         imageVector = leadingIcon,
-        contentDescription = leadingContentDescription,
+        contentDescription = t(leadingContentDescription),
         tint = PrimaryBlueDark
       )
     }
     Text(
-      text = title,
+      text = t(title),
       style = MaterialTheme.typography.titleLarge,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.ExtraBold,
@@ -1487,7 +1489,7 @@ private fun LaporanBulananTopBar(
       ) {
         Icon(
           imageVector = trailingIcon,
-          contentDescription = trailingContentDescription,
+          contentDescription = t(trailingContentDescription),
           tint = PrimaryBlueDark
         )
       }
@@ -1507,7 +1509,7 @@ private fun EditableMentorFields(
   Column(
     modifier = Modifier
       .fillMaxWidth()
-      .background(Color.White.copy(alpha = 0.72f), RoundedCornerShape(16.dp))
+      .background(CardBackground.copy(alpha = 0.72f), RoundedCornerShape(16.dp))
       .border(1.dp, CardBorder.copy(alpha = 0.74f), RoundedCornerShape(16.dp))
       .padding(12.dp),
     verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -1542,7 +1544,7 @@ private fun EditableAspectCard(
   Column(
     modifier = Modifier
       .fillMaxWidth()
-      .background(Color.White.copy(alpha = 0.72f), RoundedCornerShape(16.dp))
+      .background(CardBackground.copy(alpha = 0.72f), RoundedCornerShape(16.dp))
       .border(1.dp, CardBorder.copy(alpha = 0.74f), RoundedCornerShape(16.dp))
       .padding(12.dp),
     verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -1557,7 +1559,7 @@ private fun EditableAspectCard(
           .background(accentColor, RoundedCornerShape(999.dp))
       )
       Text(
-        text = title,
+        text = t(title),
         style = MaterialTheme.typography.labelLarge,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.ExtraBold
@@ -1598,7 +1600,7 @@ private fun EditableAttendanceAspectCard(
   Column(
     modifier = Modifier
       .fillMaxWidth()
-      .background(Color.White.copy(alpha = 0.72f), RoundedCornerShape(16.dp))
+      .background(CardBackground.copy(alpha = 0.72f), RoundedCornerShape(16.dp))
       .border(1.dp, CardBorder.copy(alpha = 0.74f), RoundedCornerShape(16.dp))
       .padding(12.dp),
     verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -1613,7 +1615,7 @@ private fun EditableAttendanceAspectCard(
           .background(accentColor, RoundedCornerShape(999.dp))
       )
       Text(
-        text = title,
+        text = t(title),
         style = MaterialTheme.typography.labelLarge,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.ExtraBold
@@ -1655,13 +1657,13 @@ private fun EditableLongTextCard(
   Column(
     modifier = Modifier
       .fillMaxWidth()
-      .background(Color.White.copy(alpha = 0.72f), RoundedCornerShape(16.dp))
+      .background(CardBackground.copy(alpha = 0.72f), RoundedCornerShape(16.dp))
       .border(1.dp, CardBorder.copy(alpha = 0.74f), RoundedCornerShape(16.dp))
       .padding(12.dp),
     verticalArrangement = Arrangement.spacedBy(8.dp)
   ) {
     Text(
-      text = title,
+      text = t(title),
       style = MaterialTheme.typography.labelLarge,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.ExtraBold
@@ -1691,11 +1693,11 @@ private fun EditTextField(
     readOnly = readOnly,
     minLines = minLines,
     maxLines = if (minLines > 1) 5 else 1,
-    label = { Text(label) },
+    label = { Text(t(label)) },
     shape = RoundedCornerShape(14.dp),
     colors = TextFieldDefaults.colors(
-      focusedContainerColor = Color.White.copy(alpha = 0.94f),
-      unfocusedContainerColor = Color.White.copy(alpha = 0.82f),
+      focusedContainerColor = CardBackground.copy(alpha = 0.94f),
+      unfocusedContainerColor = CardBackground.copy(alpha = 0.82f),
       focusedIndicatorColor = PrimaryBlue,
       unfocusedIndicatorColor = CardBorder,
       focusedTextColor = PrimaryBlueDark,
@@ -1742,25 +1744,25 @@ private fun MonthlyTemplateCard(
       }
       Column(modifier = Modifier.weight(1f)) {
         Text(
-          text = "Template Pesan",
+          text = t("Template Pesan"),
           style = MaterialTheme.typography.titleMedium,
           color = PrimaryBlueDark,
           fontWeight = FontWeight.ExtraBold
         )
         Text(
-          text = "Gunakan placeholder <nama santri> dan <link>.",
+          text = t("Gunakan placeholder <nama santri> dan <link>."),
           style = MaterialTheme.typography.bodySmall,
           color = SubtleInk
         )
       }
       IconActionButton(
         icon = if (isEditing) Icons.Outlined.CheckCircle else Icons.Outlined.Edit,
-        contentDescription = if (isEditing) "Selesai edit template" else "Edit template",
+        contentDescription = if (isEditing) t("Selesai edit template") else t("Edit template"),
         onClick = onToggleEdit
       )
       IconActionButton(
         icon = Icons.Outlined.RestartAlt,
-        contentDescription = "Reset template",
+        contentDescription = t("Reset template"),
         onClick = onReset
       )
     }
@@ -1773,9 +1775,9 @@ private fun MonthlyTemplateCard(
       maxLines = if (isEditing) 9 else 5,
       shape = RoundedCornerShape(18.dp),
       colors = TextFieldDefaults.colors(
-        focusedContainerColor = Color.White.copy(alpha = 0.94f),
-        unfocusedContainerColor = Color.White.copy(alpha = 0.76f),
-        disabledContainerColor = Color.White.copy(alpha = 0.76f),
+        focusedContainerColor = CardBackground.copy(alpha = 0.94f),
+        unfocusedContainerColor = CardBackground.copy(alpha = 0.76f),
+        disabledContainerColor = SoftPanel.copy(alpha = 0.76f),
         focusedIndicatorColor = PrimaryBlue,
         unfocusedIndicatorColor = CardBorder,
         focusedTextColor = PrimaryBlueDark,
@@ -1803,7 +1805,7 @@ private fun PeriodSelectorCard(
     verticalArrangement = Arrangement.spacedBy(8.dp)
   ) {
     Text(
-      text = "Periode",
+      text = t("Periode"),
       style = MaterialTheme.typography.labelLarge,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.Bold
@@ -1813,7 +1815,7 @@ private fun PeriodSelectorCard(
         modifier = Modifier
           .fillMaxWidth()
           .clip(RoundedCornerShape(18.dp))
-          .background(Color.White.copy(alpha = 0.88f))
+          .background(CardBackground.copy(alpha = 0.88f))
           .border(1.dp, CardBorder, RoundedCornerShape(18.dp))
           .clickable { expanded = true }
           .padding(horizontal = 14.dp, vertical = 13.dp),
@@ -1848,7 +1850,7 @@ private fun PeriodSelectorCard(
       }
     }
     Text(
-      text = "Bulan berjalan belum tersedia sampai bulan tersebut selesai.",
+      text = t("Bulan berjalan belum tersedia sampai bulan tersebut selesai."),
       style = MaterialTheme.typography.bodySmall,
       color = SubtleInk
     )
@@ -1863,8 +1865,8 @@ private fun MonthlyBulkImportCard(
   Row(
     modifier = Modifier
       .fillMaxWidth()
-      .background(Color(0xFFEFF6FF), RoundedCornerShape(22.dp))
-      .border(1.dp, Color(0xFFBFDBFE), RoundedCornerShape(22.dp))
+      .background(PrimaryBlue.copy(alpha = 0.14f), RoundedCornerShape(22.dp))
+      .border(1.dp, PrimaryBlue.copy(alpha = 0.26f), RoundedCornerShape(22.dp))
       .clip(RoundedCornerShape(22.dp))
       .clickable(enabled = enabled, onClick = onClick)
       .padding(14.dp),
@@ -1874,7 +1876,7 @@ private fun MonthlyBulkImportCard(
     Box(
       modifier = Modifier
         .size(44.dp)
-        .background(Color.White.copy(alpha = 0.86f), CircleShape),
+        .background(CardBackground.copy(alpha = 0.86f), CircleShape),
       contentAlignment = Alignment.Center
     ) {
       Icon(
@@ -1885,13 +1887,13 @@ private fun MonthlyBulkImportCard(
     }
     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
       Text(
-        text = "Import Massal dari Spreadsheet",
+        text = t("Import Massal dari Spreadsheet"),
         style = MaterialTheme.typography.titleSmall,
         color = if (enabled) PrimaryBlueDark else SubtleInk.copy(alpha = 0.62f),
         fontWeight = FontWeight.ExtraBold
       )
       Text(
-        text = "Masukkan link Google Sheet public, cek preview, lalu terapkan data yang cocok.",
+        text = t("Masukkan link Google Sheet public, cek preview, lalu terapkan data yang cocok."),
         style = MaterialTheme.typography.bodySmall,
         color = SubtleInk
       )
@@ -1919,7 +1921,7 @@ private fun MonthlyBulkResetCard(
     Box(
       modifier = Modifier
         .size(44.dp)
-        .background(Color.White.copy(alpha = 0.86f), CircleShape),
+        .background(CardBackground.copy(alpha = 0.86f), CircleShape),
       contentAlignment = Alignment.Center
     ) {
       if (isBusy) {
@@ -1934,13 +1936,13 @@ private fun MonthlyBulkResetCard(
     }
     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
       Text(
-        text = "Reset Data Periode Ini",
+        text = t("Reset Data Periode Ini"),
         style = MaterialTheme.typography.titleSmall,
         color = Color(0xFF9A3412),
         fontWeight = FontWeight.ExtraBold
       )
       Text(
-        text = "Kosongkan $count data edit/import agar laporan kembali memakai data asli sistem.",
+        text = "${t("Kosongkan")} $count ${t("data edit/import agar laporan kembali memakai data asli sistem.")}",
         style = MaterialTheme.typography.bodySmall,
         color = SubtleInk
       )
@@ -1972,7 +1974,7 @@ private fun MonthlyBulkImportDialog(
     onDismissRequest = { if (!isLoading) onDismiss() },
     title = {
       Text(
-        text = "Import Massal",
+        text = t("Import Massal"),
         style = MaterialTheme.typography.titleMedium,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.ExtraBold
@@ -1981,7 +1983,7 @@ private fun MonthlyBulkImportDialog(
     text = {
       Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
-          text = "Gunakan Google Sheet public/shareable. Sistem akan mencoba membaca tab sesuai kelas wali, lalu mencocokkan santri dari NISN atau nama.",
+          text = t("Gunakan Google Sheet public/shareable. Sistem akan mencoba membaca tab sesuai kelas wali, lalu mencocokkan santri dari NISN atau nama."),
           style = MaterialTheme.typography.bodySmall,
           color = SubtleInk
         )
@@ -2001,7 +2003,7 @@ private fun MonthlyBulkImportDialog(
             verticalAlignment = Alignment.CenterVertically
           ) {
             CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = PrimaryBlue)
-            Text("Memproses spreadsheet...", style = MaterialTheme.typography.bodySmall, color = SubtleInk)
+            Text(t("Memproses spreadsheet..."), style = MaterialTheme.typography.bodySmall, color = SubtleInk)
           }
         }
         if (errorMessage.isNotBlank()) {
@@ -2050,7 +2052,7 @@ private fun MonthlyBulkImportDialog(
             if (data.rows.size > 30) {
               item {
                 Text(
-                  text = "Menampilkan 30 dari ${data.rows.size} baris.",
+                  text = "${t("Menampilkan")} 30 ${t("dari")} ${data.rows.size} ${t("baris.")}",
                   style = MaterialTheme.typography.bodySmall,
                   color = SubtleInk
                 )
@@ -2071,7 +2073,7 @@ private fun MonthlyBulkImportDialog(
           }
         }
       ) {
-        Text("Terapkan ${applicableRows.size}")
+        Text("${t("Terapkan")} ${applicableRows.size}")
       }
     },
     dismissButton = {
@@ -2104,10 +2106,10 @@ private fun MonthlyBulkImportDialog(
             }
           }
         ) {
-          Text("Preview")
+          Text(t("Preview"))
         }
         TextButton(enabled = !isLoading, onClick = onDismiss) {
-          Text("Batal")
+          Text(t("Batal"))
         }
       }
     },
@@ -2123,25 +2125,25 @@ private fun MonthlyBulkPreviewSummary(preview: MonthlyBulkImportPreview) {
   Column(
     modifier = Modifier
       .fillMaxWidth()
-      .background(Color.White.copy(alpha = 0.76f), RoundedCornerShape(16.dp))
+      .background(CardBackground.copy(alpha = 0.76f), RoundedCornerShape(16.dp))
       .border(1.dp, CardBorder, RoundedCornerShape(16.dp))
       .padding(12.dp),
     verticalArrangement = Arrangement.spacedBy(4.dp)
   ) {
     Text(
-      text = "Preview ${preview.sheetLabel}",
+      text = "${t("Preview")} ${preview.sheetLabel}",
       style = MaterialTheme.typography.labelLarge,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.Bold
     )
     Text(
-      text = "Cocok: $matched | Perlu cek: $needsCheck | Tidak siap: $failed",
+      text = "${t("Cocok")}: $matched | ${t("Perlu cek")}: $needsCheck | ${t("Tidak siap")}: $failed",
       style = MaterialTheme.typography.bodySmall,
       color = SubtleInk
     )
     if (preview.unknownColumns.isNotEmpty()) {
       Text(
-        text = "Kolom belum dikenali: ${preview.unknownColumns.take(5).joinToString(", ")}",
+        text = "${t("Kolom belum dikenali")}: ${preview.unknownColumns.take(5).joinToString(", ")}",
         style = MaterialTheme.typography.bodySmall,
         color = Color(0xFFB45309)
       )
@@ -2165,7 +2167,7 @@ private fun MonthlyBulkPreviewRowCard(
   Column(
     modifier = Modifier
       .fillMaxWidth()
-      .background(Color.White.copy(alpha = 0.82f), RoundedCornerShape(16.dp))
+      .background(CardBackground.copy(alpha = 0.82f), RoundedCornerShape(16.dp))
       .border(1.dp, color.copy(alpha = 0.28f), RoundedCornerShape(16.dp))
       .padding(10.dp),
     verticalArrangement = Arrangement.spacedBy(3.dp)
@@ -2180,7 +2182,7 @@ private fun MonthlyBulkPreviewRowCard(
         modifier = Modifier.weight(1f)
       )
       Text(
-        text = row.status.label,
+        text = t(row.status.label),
         style = MaterialTheme.typography.labelSmall,
         color = color,
         fontWeight = FontWeight.Bold
@@ -2195,7 +2197,7 @@ private fun MonthlyBulkPreviewRowCard(
     )
     if (row.changedFields.isNotEmpty()) {
       Text(
-        text = "Diisi: ${row.changedFields.take(4).joinToString(", ")}",
+        text = "${t("Diisi")}: ${row.changedFields.take(4).joinToString(", ")}",
         style = MaterialTheme.typography.bodySmall,
         color = PrimaryBlueDark,
         maxLines = 2,
@@ -2209,10 +2211,10 @@ private fun MonthlyBulkPreviewRowCard(
         verticalAlignment = Alignment.CenterVertically
       ) {
         TextButton(onClick = onReject) {
-          Text("Tolak", color = Color(0xFFDC2626))
+          Text(t("Tolak"), color = Color(0xFFDC2626))
         }
         TextButton(onClick = onAccept) {
-          Text("Setujui", color = PrimaryBlue, fontWeight = FontWeight.Bold)
+          Text(t("Setujui"), color = PrimaryBlue, fontWeight = FontWeight.Bold)
         }
       }
     }
@@ -2235,7 +2237,7 @@ private fun LaporanBulananStudentCard(
       .fillMaxWidth()
       .shadow(8.dp, RoundedCornerShape(22.dp), clip = false)
       .clip(RoundedCornerShape(22.dp))
-      .background(if (selectedForQuickAction) Color(0xFFEFF6FF) else CardBackground.copy(alpha = 0.94f))
+      .background(if (selectedForQuickAction) PrimaryBlue.copy(alpha = 0.14f) else CardBackground.copy(alpha = 0.94f))
       .border(
         width = 1.dp,
         color = if (selectedForQuickAction) PrimaryBlue.copy(alpha = 0.58f) else CardBorder,
@@ -2352,14 +2354,14 @@ private fun DetailSectionCard(
   ) {
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
       Text(
-        text = title,
+        text = t(title),
         style = MaterialTheme.typography.titleMedium,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.ExtraBold
       )
       if (subtitle.isNotBlank()) {
         Text(
-          text = subtitle,
+          text = t(subtitle),
           style = MaterialTheme.typography.bodySmall,
           color = SubtleInk
         )
@@ -2379,13 +2381,13 @@ private fun AspectCard(
 ) {
   val valueLabel = value.takeIf { it.isNotBlank() && it != "-" }
   val valueColor = valueLabel?.let { scoreColorFor(it, accentColor) } ?: accentColor
-  val descriptionText = description.ifBlank { "-" }
-  val metaText = meta.takeIf { it.isNotBlank() && it != "-" }
+  val descriptionText = ti(description.ifBlank { "-" })
+  val metaText = meta.takeIf { it.isNotBlank() && it != "-" }?.let { ti(it) }
 
   Row(
     modifier = Modifier
       .fillMaxWidth()
-      .background(Color.White.copy(alpha = 0.74f), RoundedCornerShape(16.dp))
+      .background(CardBackground.copy(alpha = 0.74f), RoundedCornerShape(16.dp))
       .border(1.dp, CardBorder.copy(alpha = 0.74f), RoundedCornerShape(16.dp))
       .padding(horizontal = 12.dp, vertical = 10.dp),
     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -2396,7 +2398,7 @@ private fun AspectCard(
       verticalArrangement = Arrangement.spacedBy(5.dp)
     ) {
       Text(
-        text = title,
+        text = t(title),
         style = MaterialTheme.typography.bodyMedium,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.ExtraBold,
@@ -2455,7 +2457,7 @@ private fun CompactAspectCard(
   Column(
     modifier = modifier
       .clip(RoundedCornerShape(16.dp))
-      .background(Color.White.copy(alpha = 0.74f))
+      .background(CardBackground.copy(alpha = 0.74f))
       .border(1.dp, CardBorder.copy(alpha = 0.74f), RoundedCornerShape(16.dp))
       .padding(12.dp),
     verticalArrangement = Arrangement.spacedBy(7.dp)
@@ -2506,13 +2508,13 @@ private fun NoteCard(
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(16.dp))
-      .background(Color(0xFFF8FAFC))
+      .background(SoftPanel)
       .border(1.dp, CardBorder.copy(alpha = 0.74f), RoundedCornerShape(16.dp))
       .padding(12.dp),
     verticalArrangement = Arrangement.spacedBy(6.dp)
   ) {
     Text(
-      text = title,
+      text = t(title),
       style = MaterialTheme.typography.labelLarge,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.ExtraBold
@@ -2531,7 +2533,7 @@ private fun ExtracurricularReportCard(item: MonthlyExtracurricularReport) {
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(16.dp))
-      .background(Color.White.copy(alpha = 0.74f))
+      .background(CardBackground.copy(alpha = 0.74f))
       .border(1.dp, CardBorder.copy(alpha = 0.74f), RoundedCornerShape(16.dp))
       .padding(12.dp),
     verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -2546,14 +2548,14 @@ private fun ExtracurricularReportCard(item: MonthlyExtracurricularReport) {
         overflow = TextOverflow.Ellipsis
       )
       Text(
-        text = "PJ: ${item.pjName.ifBlank { "-" }}",
+        text = "${t("PJ")}: ${item.pjName.ifBlank { "-" }}",
         style = MaterialTheme.typography.bodySmall,
         color = SubtleInk,
         maxLines = 2,
         overflow = TextOverflow.Ellipsis
       )
       Text(
-        text = "HP: ${item.pjPhone.ifBlank { "-" }}",
+        text = "${t("HP")}: ${item.pjPhone.ifBlank { "-" }}",
         style = MaterialTheme.typography.bodySmall,
         color = SubtleInk,
         maxLines = 2,
@@ -2583,14 +2585,14 @@ private fun IconActionButton(
     modifier = Modifier
       .size(38.dp)
       .clip(CircleShape)
-      .background(Color.White.copy(alpha = 0.8f))
+      .background(CardBackground.copy(alpha = 0.8f))
       .border(1.dp, CardBorder, CircleShape)
       .clickable(onClick = onClick),
     contentAlignment = Alignment.Center
   ) {
     Icon(
       imageVector = icon,
-      contentDescription = contentDescription,
+      contentDescription = t(contentDescription),
       tint = PrimaryBlueDark,
       modifier = Modifier.size(20.dp)
     )
