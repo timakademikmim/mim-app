@@ -485,6 +485,7 @@ fun GuruHomeScreen(
     } else if (targetDestination == GuruSidebarDestination.Tugas) {
       MutabaahScreen(
         selectedDate = selectedCalendarDate,
+        teacherName = dashboard.teacherName,
         snapshot = dashboard.mutabaahSnapshot,
         teachingScheduleEvents = dashboard.teachingScheduleEvents,
         leaveRequests = dashboard.leaveRequestSnapshot.requests,

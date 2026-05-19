@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.mim.guruapp.alarm.LessonNotificationScheduler
 import com.mim.guruapp.alarm.TeachingReminderNotifier
 import com.mim.guruapp.alarm.TeachingReminderReceiver
 import com.mim.guruapp.alarm.TeachingReminderScheduler
@@ -83,6 +84,7 @@ import com.mim.guruapp.data.storage.AppLanguageStore
 import com.mim.guruapp.data.storage.AppThemeStore
 import com.mim.guruapp.data.storage.BottomNavShortcutStore
 import com.mim.guruapp.data.storage.GuruCacheStore
+import com.mim.guruapp.data.storage.LessonNotificationStore
 import com.mim.guruapp.data.storage.SessionStore
 import com.mim.guruapp.data.storage.TeachingReminderStore
 import kotlinx.coroutines.async
@@ -234,6 +236,8 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
   private val bottomNavShortcutStore = BottomNavShortcutStore(application.applicationContext)
   private val teachingReminderStore = TeachingReminderStore(application.applicationContext)
   private val teachingReminderScheduler = TeachingReminderScheduler(application.applicationContext, teachingReminderStore)
+  private val lessonNotificationStore = LessonNotificationStore(application.applicationContext)
+  private val lessonNotificationScheduler = LessonNotificationScheduler(application.applicationContext, lessonNotificationStore)
   private val authRemoteDataSource = GuruAuthRemoteDataSource()
   private val mapelRemoteDataSource = GuruMapelRemoteDataSource()
   private val mapelAttendanceRemoteDataSource = GuruMapelAttendanceRemoteDataSource()
@@ -1772,10 +1776,15 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     return PatronMateriSaveOutcome(true, "Patron materi berhasil diperbarui.")
   }
 
-  fun refreshFromServer(force: Boolean = false, showWelcome: Boolean = false) {
+  fun refreshFromServer(
+    force: Boolean = false,
+    showWelcome: Boolean = false,
+    startupLight: Boolean = false
+  ) {
     val currentDashboard = uiState.dashboard ?: return
     if (uiState.isBusy) return
     if (force) substituteTeacherContextCache.clear()
+    val useLightStartupSync = startupLight && !force && !showWelcome
     val shouldRefresh = force || isRefreshDue(currentDashboard.lastServerRefreshAt)
     if (!shouldRefresh) {
       uiState = uiState.copy(
@@ -1788,9 +1797,20 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     }
 
     viewModelScope.launch {
-      updateWelcomeSyncProgress(showWelcome, "Menyiapkan sinkronisasi awal...", 0.34f)
-      uiState = uiState.copy(syncBanner = SyncBannerState("Mengambil pembaruan dari server...", true))
-      delay(300)
+      updateWelcomeSyncProgress(
+        showWelcome,
+        if (useLightStartupSync) "Menyiapkan sinkronisasi ringan..." else "Menyiapkan sinkronisasi awal...",
+        0.34f
+      )
+      uiState = uiState.copy(
+        syncBanner = SyncBannerState(
+          if (useLightStartupSync) "Menyinkronkan data utama di background..." else "Mengambil pembaruan dari server...",
+          true
+        )
+      )
+      if (!useLightStartupSync) {
+        delay(300)
+      }
       updateWelcomeSyncProgress(showWelcome, "Mengirim antrean lokal yang belum tersinkron...", 0.40f)
       val mapelSyncOutcome = syncPendingMapelClaims(showFeedback = false)
       val offlineSyncOutcome = syncPendingOfflineChanges(showFeedback = false)
@@ -1855,13 +1875,17 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
           teacherKaryawanId = teacherKaryawanId
         )
       }
-      val wakasekKurikulumSnapshotDeferred = async {
-        wakasekKurikulumRemoteDataSource.fetchSnapshot(
-          teacherRowId = teacherRowId,
-          teacherKaryawanId = teacherKaryawanId,
-          teacherName = baseDashboard.teacherName.ifBlank { uiState.session.teacherName },
-          roles = uiState.session.roles
-        )
+      val wakasekKurikulumSnapshotDeferred = if (useLightStartupSync) {
+        null
+      } else {
+        async {
+          wakasekKurikulumRemoteDataSource.fetchSnapshot(
+            teacherRowId = teacherRowId,
+            teacherKaryawanId = teacherKaryawanId,
+            teacherName = baseDashboard.teacherName.ifBlank { uiState.session.teacherName },
+            roles = uiState.session.roles
+          )
+        }
       }
       val remoteProfile = remoteProfileDeferred.await()
       val calendarEvents = calendarEventsDeferred.await()
@@ -1872,7 +1896,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
       val sourceTeacherOptions = sourceTeacherOptionsDeferred.await()
       val waliSantriSnapshot = waliSantriSnapshotDeferred.await()
       updateWelcomeSyncProgress(showWelcome, "Menyiapkan data kelas, laporan, mutabaah, dan perizinan...", 0.72f)
-      val monthlyReportSnapshot = if (waliSantriSnapshot != null) {
+      val monthlyReportSnapshot = if (!useLightStartupSync && waliSantriSnapshot != null) {
         monthlyReportRemoteDataSource.fetchMonthlyReportSnapshot(
           teacherRowId = teacherRowId,
           teacherKaryawanId = teacherKaryawanId,
@@ -1881,7 +1905,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
       } else {
         null
       }
-      val utsReportSnapshot = if (waliSantriSnapshot != null) {
+      val utsReportSnapshot = if (!useLightStartupSync && waliSantriSnapshot != null) {
         utsReportRemoteDataSource.fetchUtsReportSnapshot(
           teacherRowId = teacherRowId,
           teacherKaryawanId = teacherKaryawanId,
@@ -1892,7 +1916,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
       }
       val mutabaahSnapshot = mutabaahSnapshotDeferred.await()
       val leaveRequestSnapshot = leaveRequestSnapshotDeferred.await()
-      val wakasekKurikulumSnapshot = wakasekKurikulumSnapshotDeferred.await()
+      val wakasekKurikulumSnapshot = wakasekKurikulumSnapshotDeferred?.await()
       val didReachServer = remoteProfile != null ||
         mapelPayload != null ||
         calendarEvents != null ||
@@ -1961,6 +1985,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
         settings = uiState.teachingReminderSettings,
         events = refreshed.teachingScheduleEvents
       )
+      syncLessonNotifications(refreshed.teachingScheduleEvents)
       val refreshedReminderSettings = teachingReminderStore.readSettings()
       val nextSession = sessionStore.readSession()
       val selectedAfterRefresh = uiState.selectedSidebarDestination
@@ -1983,7 +2008,11 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
         splashMessage = if (showWelcome) "Sinkronisasi selesai. Membuka dashboard..." else uiState.splashMessage,
         splashProgress = if (showWelcome) 1f else uiState.splashProgress,
         syncBanner = SyncBannerState(
-          buildRefreshSyncMessage(didReachServer, mapelSyncOutcome, offlineSyncOutcome),
+          if (useLightStartupSync) {
+            buildLightStartupSyncMessage(didReachServer, offlineSyncOutcome.syncedCount)
+          } else {
+            buildRefreshSyncMessage(didReachServer, mapelSyncOutcome, offlineSyncOutcome)
+          },
           false
         )
       )
@@ -2011,7 +2040,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
   private fun bootstrap() {
     viewModelScope.launch {
       uiState = uiState.copy(destination = GuruDestination.Splash, splashMessage = "Memeriksa sesi login...", splashProgress = 0.08f)
-      delay(900)
+      delay(250)
 
       val session = sessionStore.readSession()
       val reminderSettings = teachingReminderStore.readSettings()
@@ -2033,9 +2062,11 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
 
       uiState = uiState.copy(splashMessage = "Membuka data lokal dari perangkat...")
       uiState = uiState.copy(splashProgress = 0.22f)
-      delay(600)
       val cachedDashboard = cacheStore.readDashboard()
       val hasPersistentCache = cachedDashboard != null
+      if (!hasPersistentCache) {
+        delay(350)
+      }
       val localDashboard = cachedDashboard ?: SampleDataFactory.createDashboard(session.teacherName)
       val nextDashboard = localDashboard
         .copy(teacherName = session.teacherName)
@@ -2045,16 +2076,23 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
       cacheStore.writeDashboard(nextDashboard)
 
       uiState = uiState.copy(
-        destination = GuruDestination.Splash,
+        destination = if (hasPersistentCache) GuruDestination.Home else GuruDestination.Splash,
         session = session,
         dashboard = nextDashboard,
         splashMessage = if (hasPersistentCache) {
-          "Data lokal siap. Menyesuaikan pembaruan terakhir..."
+          "Data lokal siap. Membuka dashboard..."
         } else {
           "Cache awal belum ada. Mengunduh sumber data pertama..."
         },
-        splashProgress = 0.30f,
-        syncBanner = SyncBannerState("Data lokal siap dipakai. Memeriksa pembaruan...", false),
+        splashProgress = if (hasPersistentCache) 1f else 0.30f,
+        syncBanner = SyncBannerState(
+          if (hasPersistentCache) {
+            "Data lokal siap. Sinkronisasi ringan berjalan di background."
+          } else {
+            "Data lokal siap dipakai. Memeriksa pembaruan..."
+          },
+          hasPersistentCache
+        ),
         selectedSidebarDestination = GuruSidebarDestination.Dashboard,
         isCalendarScreenOpen = false,
         selectedCalendarDateIso = LocalDate.now().toString(),
@@ -2072,8 +2110,13 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
         settings = reminderSettings,
         events = nextDashboard.teachingScheduleEvents
       )
+      syncLessonNotifications(nextDashboard.teachingScheduleEvents)
 
-      refreshFromServer(force = !hasPersistentCache, showWelcome = true)
+      refreshFromServer(
+        force = !hasPersistentCache,
+        showWelcome = !hasPersistentCache,
+        startupLight = hasPersistentCache
+      )
     }
   }
 
@@ -2081,6 +2124,14 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     if (lastRefreshAt <= 0L) return true
     val fifteenMinutes = 15 * 60 * 1000L
     return (System.currentTimeMillis() - lastRefreshAt) >= fifteenMinutes
+  }
+
+  private suspend fun syncLessonNotifications(events: List<CalendarEvent>) {
+    val settings = lessonNotificationStore.readSettings()
+    lessonNotificationScheduler.syncNotifications(
+      settings = settings,
+      events = events
+    )
   }
 
   private suspend fun readBottomNavShortcuts(): List<GuruSidebarDestination> {
@@ -3033,6 +3084,19 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     const val CATEGORY_LIBUR_AKADEMIK = "libur_akademik"
     const val CATEGORY_LIBUR_KETAHFIZAN = "libur_ketahfizan"
     const val CATEGORY_LIBUR_SEMUA = "libur_semua_kegiatan"
+  }
+}
+
+private fun buildLightStartupSyncMessage(didReachServer: Boolean, syncedOfflineCount: Int): String {
+  val baseMessage = if (didReachServer) {
+    "Data utama sudah diperbarui. Laporan besar akan disinkronkan saat dibuka atau saat tarik refresh."
+  } else {
+    "Server belum terjangkau. Dashboard memakai data lokal terakhir."
+  }
+  return if (syncedOfflineCount > 0) {
+    "$baseMessage $syncedOfflineCount input lokal berhasil dikirim."
+  } else {
+    baseMessage
   }
 }
 

@@ -47,6 +47,10 @@
         android:enabled="true"
         android:exported="false" />
     <receiver
+        android:name=".alarm.LessonNotificationReceiver"
+        android:enabled="true"
+        android:exported="false" />
+    <receiver
         android:name=".alarm.TeachingReminderActionReceiver"
         android:enabled="true"
         android:exported="false" />

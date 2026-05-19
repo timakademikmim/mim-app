@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.mim.guruapp.data.storage.GuruCacheStore
+import com.mim.guruapp.data.storage.LessonNotificationStore
 import com.mim.guruapp.data.storage.TeachingReminderStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -16,11 +17,18 @@ class TeachingReminderRescheduleReceiver : BroadcastReceiver() {
       try {
         val reminderStore = TeachingReminderStore(context)
         val settings = reminderStore.readSettings()
-        if (!settings.enabled) return@launch
-
         val dashboard = GuruCacheStore(context).readDashboard() ?: return@launch
-        TeachingReminderScheduler(context, reminderStore).syncReminders(
-          settings = settings,
+        if (settings.enabled) {
+          TeachingReminderScheduler(context, reminderStore).syncReminders(
+            settings = settings,
+            events = dashboard.teachingScheduleEvents
+          )
+        }
+
+        val lessonNotificationStore = LessonNotificationStore(context)
+        val lessonNotificationSettings = lessonNotificationStore.readSettings()
+        LessonNotificationScheduler(context, lessonNotificationStore).syncNotifications(
+          settings = lessonNotificationSettings,
           events = dashboard.teachingScheduleEvents
         )
       } finally {
@@ -29,4 +37,3 @@ class TeachingReminderRescheduleReceiver : BroadcastReceiver() {
     }
   }
 }
-

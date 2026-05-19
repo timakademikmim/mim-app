@@ -622,6 +622,14 @@ data class TeachingReminderSettings(
   val updatedAt: Long = 0L
 )
 
+@Serializable
+data class LessonNotificationSettings(
+  val enabled: Boolean = true,
+  val minutesBefore: Int = 0,
+  val scheduledNotificationIds: List<String> = emptyList(),
+  val updatedAt: Long = 0L
+)
+
 data class SessionSnapshot(
   val isLoggedIn: Boolean = false,
   val teacherRowId: String = "",

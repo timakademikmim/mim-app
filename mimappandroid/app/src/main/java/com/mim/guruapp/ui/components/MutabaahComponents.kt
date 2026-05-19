@@ -31,14 +31,21 @@ import androidx.compose.material.icons.outlined.ChevronLeft
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.TaskAlt
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -56,6 +63,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -66,6 +74,7 @@ import com.mim.guruapp.data.model.LeaveRequestItem
 import com.mim.guruapp.data.model.MutabaahSnapshot
 import com.mim.guruapp.data.model.MutabaahSubmission
 import com.mim.guruapp.data.model.MutabaahTask
+import com.mim.guruapp.export.MutabaahExcelExporter
 import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.AppBackground
 import com.mim.guruapp.ui.theme.CardBackground
@@ -80,6 +89,7 @@ import com.mim.guruapp.ui.theme.WarmAccent
 import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
@@ -88,6 +98,7 @@ import java.util.Locale
 @Composable
 fun MutabaahScreen(
   selectedDate: LocalDate,
+  teacherName: String,
   snapshot: MutabaahSnapshot,
   teachingScheduleEvents: List<CalendarEvent>,
   leaveRequests: List<LeaveRequestItem>,
@@ -103,9 +114,14 @@ fun MutabaahScreen(
 ) {
   val snackbarHostState = remember { SnackbarHostState() }
   val scope = rememberCoroutineScope()
+  val context = LocalContext.current
   var isLoadingPeriod by rememberSaveable { mutableStateOf(false) }
   var savingTaskId by rememberSaveable { mutableStateOf<String?>(null) }
+  var isExporting by rememberSaveable { mutableStateOf(false) }
+  var exportShouldShare by rememberSaveable { mutableStateOf<Boolean?>(null) }
+  var exportMonthKeys by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
   val selectedPeriod = selectedDate.toString().take(7)
+  val selectedMonth = remember(selectedPeriod) { YearMonth.parse(selectedPeriod) }
 
   BackHandler(enabled = false) {}
 
@@ -191,7 +207,12 @@ fun MutabaahScreen(
         MutabaahHeader(
           selectedDate = selectedDate,
           onJumpToToday = onJumpToToday,
-          onMenuClick = onMenuClick
+          onMenuClick = onMenuClick,
+          isExporting = isExporting,
+          onExportClick = { shouldShare ->
+            exportMonthKeys = listOf(selectedMonth.toString())
+            exportShouldShare = shouldShare
+          }
         )
 
         MutabaahWeekSwitcher(
@@ -307,14 +328,252 @@ fun MutabaahScreen(
       }
     }
   }
+
+  exportShouldShare?.let { shouldShare ->
+    MutabaahExportPeriodDialog(
+      shouldShare = shouldShare,
+      currentMonth = selectedMonth,
+      selectedMonthKeys = exportMonthKeys,
+      isExporting = isExporting,
+      onSelectedMonthsChange = { exportMonthKeys = it },
+      onDismiss = {
+        if (!isExporting) exportShouldShare = null
+      },
+      onConfirm = {
+        val months = exportMonthKeys
+          .mapNotNull { runCatching { YearMonth.parse(it) }.getOrNull() }
+          .distinct()
+          .sorted()
+        if (months.isEmpty()) {
+          scope.launch { snackbarHostState.showSnackbar("Pilih minimal satu bulan.") }
+          return@MutabaahExportPeriodDialog
+        }
+        scope.launch {
+          isExporting = true
+          val result = runCatching {
+            val worksheets = months.map { month ->
+              val monthSnapshot = if (snapshot.period == month.toString()) {
+                snapshot
+              } else {
+                onLoadSnapshot(month.atDay(1)) ?: MutabaahSnapshot(period = month.toString())
+              }
+              MutabaahExcelExporter.MutabaahWorksheet(
+                period = month,
+                snapshot = monthSnapshot,
+                leaveRequests = leaveRequests
+              )
+            }
+            MutabaahExcelExporter.createWorkbook(
+              context = context,
+              teacherName = teacherName,
+              worksheets = worksheets
+            )
+          }
+          result.onSuccess { file ->
+            exportShouldShare = null
+            if (shouldShare) {
+              MutabaahExcelExporter.shareWorkbook(context, file)
+            } else {
+              MutabaahExcelExporter.openWorkbook(context, file)
+            }
+          }.onFailure { error ->
+            snackbarHostState.showSnackbar(error.message ?: "Gagal membuat file mutabaah.")
+          }
+          isExporting = false
+        }
+      }
+    )
+  }
+}
+
+@Composable
+private fun MutabaahExportPeriodDialog(
+  shouldShare: Boolean,
+  currentMonth: YearMonth,
+  selectedMonthKeys: List<String>,
+  isExporting: Boolean,
+  onSelectedMonthsChange: (List<String>) -> Unit,
+  onDismiss: () -> Unit,
+  onConfirm: () -> Unit
+) {
+  val monthOptions = remember(currentMonth) { currentMonth.academicYearMonths() }
+  val selectedSet = selectedMonthKeys.toSet()
+  val semesterMonths = remember(currentMonth) { currentMonth.semesterMonths() }
+  val title = if (shouldShare) "Kirim Mutabaah" else "Cetak Mutabaah"
+
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    containerColor = CardBackground,
+    title = {
+      Text(
+        text = t(title),
+        color = PrimaryBlueDark,
+        fontWeight = FontWeight.ExtraBold
+      )
+    },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text(
+          text = t("Pilih bulan yang ingin dimasukkan ke file Excel. Jika memilih lebih dari satu bulan, setiap bulan akan dibuat sebagai tab tersendiri."),
+          style = MaterialTheme.typography.bodySmall,
+          color = SubtleInk
+        )
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+          MutabaahPeriodShortcut(
+            label = "Bulan Ini",
+            selected = selectedSet == setOf(currentMonth.toString()),
+            onClick = { onSelectedMonthsChange(listOf(currentMonth.toString())) }
+          )
+          MutabaahPeriodShortcut(
+            label = "Semester",
+            selected = selectedSet == semesterMonths.map { it.toString() }.toSet(),
+            onClick = { onSelectedMonthsChange(semesterMonths.map { it.toString() }) }
+          )
+          MutabaahPeriodShortcut(
+            label = "Tahun",
+            selected = selectedSet == monthOptions.map { it.toString() }.toSet(),
+            onClick = { onSelectedMonthsChange(monthOptions.map { it.toString() }) }
+          )
+        }
+        LazyColumn(
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(280.dp),
+          verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+          items(monthOptions.size) { index ->
+            val month = monthOptions[index]
+            val monthKey = month.toString()
+            val checked = monthKey in selectedSet
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(if (checked) HighlightCard.copy(alpha = 0.14f) else SoftPanel.copy(alpha = 0.72f))
+                .border(
+                  width = 1.dp,
+                  color = if (checked) HighlightCard.copy(alpha = 0.35f) else CardBorder,
+                  shape = RoundedCornerShape(16.dp)
+                )
+                .clickable(enabled = !isExporting) {
+                  val next = if (checked) {
+                    selectedMonthKeys.filterNot { it == monthKey }
+                  } else {
+                    (selectedMonthKeys + monthKey).distinct().sorted()
+                  }
+                  onSelectedMonthsChange(next)
+                }
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Checkbox(
+                checked = checked,
+                enabled = !isExporting,
+                onCheckedChange = {
+                  val next = if (checked) {
+                    selectedMonthKeys.filterNot { key -> key == monthKey }
+                  } else {
+                    (selectedMonthKeys + monthKey).distinct().sorted()
+                  }
+                  onSelectedMonthsChange(next)
+                }
+              )
+              Column(modifier = Modifier.weight(1f)) {
+                Text(
+                  text = month.formatMonthTitle(),
+                  style = MaterialTheme.typography.titleSmall,
+                  color = PrimaryBlueDark,
+                  fontWeight = FontWeight.Bold
+                )
+                Text(
+                  text = t("Akan dibuat sebagai satu tab di file Excel."),
+                  style = MaterialTheme.typography.bodySmall,
+                  color = SubtleInk
+                )
+              }
+            }
+          }
+        }
+        if (isExporting) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+          ) {
+            CircularProgressIndicator(
+              modifier = Modifier.size(18.dp),
+              strokeWidth = 2.dp,
+              color = HighlightCard
+            )
+            Text(
+              text = t("Menyiapkan data dan file Excel..."),
+              style = MaterialTheme.typography.bodySmall,
+              color = SubtleInk
+            )
+          }
+        }
+      }
+    },
+    confirmButton = {
+      Button(
+        enabled = !isExporting && selectedMonthKeys.isNotEmpty(),
+        onClick = onConfirm
+      ) {
+        Text(t(if (shouldShare) "Kirim" else "Cetak"))
+      }
+    },
+    dismissButton = {
+      TextButton(
+        enabled = !isExporting,
+        onClick = onDismiss
+      ) {
+        Text(t("Batal"))
+      }
+    }
+  )
+}
+
+@Composable
+private fun MutabaahPeriodShortcut(
+  label: String,
+  selected: Boolean,
+  onClick: () -> Unit
+) {
+  Box(
+    modifier = Modifier
+      .clip(RoundedCornerShape(999.dp))
+      .background(if (selected) HighlightCard else SoftPanel.copy(alpha = 0.78f))
+      .border(
+        width = 1.dp,
+        color = if (selected) HighlightCard else CardBorder,
+        shape = RoundedCornerShape(999.dp)
+      )
+      .clickable(onClick = onClick)
+      .padding(horizontal = 11.dp, vertical = 8.dp)
+  ) {
+    Text(
+      text = t(label),
+      style = MaterialTheme.typography.labelMedium,
+      color = if (selected) Color.White else PrimaryBlueDark,
+      fontWeight = FontWeight.Bold,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis
+    )
+  }
 }
 
 @Composable
 private fun MutabaahHeader(
   selectedDate: LocalDate,
   onJumpToToday: () -> Unit,
-  onMenuClick: () -> Unit
+  onMenuClick: () -> Unit,
+  isExporting: Boolean,
+  onExportClick: (Boolean) -> Unit
 ) {
+  var actionMenuExpanded by rememberSaveable { mutableStateOf(false) }
   val dateFormatter = DateTimeFormatter.ofPattern("MMMM d, yyyy")
   val title = if (selectedDate == LocalDate.now()) {
     "Mutabaah Hari Ini"
@@ -337,7 +596,7 @@ private fun MutabaahHeader(
     Column(
       modifier = Modifier
         .weight(1f)
-        .padding(end = 44.dp),
+        .padding(horizontal = 8.dp),
       horizontalAlignment = Alignment.CenterHorizontally
     ) {
       Text(
@@ -354,6 +613,36 @@ private fun MutabaahHeader(
         textAlign = TextAlign.Center,
         modifier = Modifier.padding(top = 4.dp)
       )
+    }
+
+    Box {
+      MutabaahCircleButton(
+        icon = Icons.Outlined.MoreVert,
+        contentDescription = t("Menu mutabaah"),
+        onClick = { actionMenuExpanded = true }
+      )
+      DropdownMenu(
+        expanded = actionMenuExpanded,
+        onDismissRequest = { actionMenuExpanded = false },
+        modifier = Modifier.background(CardBackground)
+      ) {
+        DropdownMenuItem(
+          text = { Text(t("Cetak Mutabaah")) },
+          enabled = !isExporting,
+          onClick = {
+            actionMenuExpanded = false
+            onExportClick(false)
+          }
+        )
+        DropdownMenuItem(
+          text = { Text(t("Kirim Mutabaah")) },
+          enabled = !isExporting,
+          onClick = {
+            actionMenuExpanded = false
+            onExportClick(true)
+          }
+        )
+      }
     }
   }
 
@@ -778,6 +1067,22 @@ private fun LeaveRequestItem.isApprovedOn(date: LocalDate): Boolean {
 
 private fun parseMutabaahDate(value: String): LocalDate? {
   return runCatching { LocalDate.parse(value.trim().take(10)) }.getOrNull()
+}
+
+private fun YearMonth.academicYearMonths(): List<YearMonth> {
+  val startYear = if (monthValue >= 7) year else year - 1
+  val start = YearMonth.of(startYear, 7)
+  return (0 until 12).map { start.plusMonths(it.toLong()) }
+}
+
+private fun YearMonth.semesterMonths(): List<YearMonth> {
+  val start = if (monthValue >= 7) YearMonth.of(year, 7) else YearMonth.of(year, 1)
+  return (0 until 6).map { start.plusMonths(it.toLong()) }
+}
+
+private fun YearMonth.formatMonthTitle(): String {
+  val formatter = DateTimeFormatter.ofPattern("MMMM yyyy", Locale("id", "ID"))
+  return formatter.format(atDay(1))
 }
 
 @Composable

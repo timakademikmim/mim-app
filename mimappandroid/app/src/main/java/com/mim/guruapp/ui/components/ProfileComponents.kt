@@ -1,7 +1,9 @@
 package com.mim.guruapp.ui.components
 
 import android.graphics.BitmapFactory
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -29,6 +32,7 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Person
@@ -64,6 +68,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -74,6 +80,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mim.guruapp.R
 import com.mim.guruapp.data.model.GuruProfile
+import com.mim.guruapp.export.UserGuidePdfBlock
+import com.mim.guruapp.export.UserGuidePdfExporter
+import com.mim.guruapp.export.UserGuidePdfSection
 import com.mim.guruapp.ProfileSaveOutcome
 import com.mim.guruapp.ui.theme.AppBackground
 import com.mim.guruapp.ui.theme.CardBackground
@@ -92,7 +101,8 @@ import java.net.URL
 private enum class ProfileSection {
   Menu,
   Information,
-  Settings
+  Settings,
+  Guide
 }
 
 private data class ProfileLanguageOption(
@@ -105,6 +115,29 @@ private data class ProfileThemeOption(
   val code: String,
   val title: String,
   val subtitle: String
+)
+
+private data class UserGuideSection(
+  val title: String,
+  val summary: String,
+  val steps: List<String>,
+  val note: String = "",
+  val detailBlocks: List<UserGuideDetailBlock> = emptyList()
+)
+
+private enum class UserGuideBlockType {
+  Text,
+  Step,
+  Tip,
+  Warning
+}
+
+private data class UserGuideDetailBlock(
+  val type: UserGuideBlockType,
+  val title: String,
+  val body: String,
+  val imageResName: String = "",
+  val imageCaption: String = ""
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -129,10 +162,15 @@ fun EditProfileScreen(
   var showPassword by rememberSaveable { mutableStateOf(false) }
   var isSaving by rememberSaveable { mutableStateOf(false) }
   var activeSectionName by rememberSaveable { mutableStateOf(ProfileSection.Menu.name) }
+  var activeGuideTitle by rememberSaveable { mutableStateOf<String?>(null) }
   val snackbarHostState = remember { SnackbarHostState() }
   val scope = rememberCoroutineScope()
   val activeSection = runCatching { ProfileSection.valueOf(activeSectionName) }
     .getOrDefault(ProfileSection.Menu)
+  val guideSections = remember { buildUserGuideSections() }
+  val activeGuide = remember(activeGuideTitle, guideSections) {
+    guideSections.firstOrNull { it.title == activeGuideTitle }
+  }
   val resetDraftAndReturnToMenu = {
     name = profile.name
     address = profile.address
@@ -140,6 +178,7 @@ fun EditProfileScreen(
     password = profile.password
     phoneNumber = profile.phoneNumber
     showPassword = false
+    activeGuideTitle = null
     activeSectionName = ProfileSection.Menu.name
   }
 
@@ -157,8 +196,11 @@ fun EditProfileScreen(
   BackHandler(enabled = activeSection != ProfileSection.Menu) {
     if (isInformationDetail && isDirty) {
       resetDraftAndReturnToMenu()
+    } else if (activeSection == ProfileSection.Guide && activeGuideTitle != null) {
+      activeGuideTitle = null
     } else {
       activeSectionName = ProfileSection.Menu.name
+      activeGuideTitle = null
       showPassword = false
     }
   }
@@ -197,13 +239,19 @@ fun EditProfileScreen(
               ProfileSection.Menu -> "Profil"
               ProfileSection.Information -> "Informasi Umum"
               ProfileSection.Settings -> "Pengaturan"
+              ProfileSection.Guide -> activeGuide?.title ?: "Panduan Pengguna"
             }.let { t(it) },
             isDetail = activeSection != ProfileSection.Menu,
             isDirty = isInformationDetail && isDirty,
             isSaving = isSaving,
             onMenuClick = onMenuClick,
             onBackClick = {
-              activeSectionName = ProfileSection.Menu.name
+              if (activeSection == ProfileSection.Guide && activeGuideTitle != null) {
+                activeGuideTitle = null
+              } else {
+                activeSectionName = ProfileSection.Menu.name
+                activeGuideTitle = null
+              }
               showPassword = false
             },
             onCancelClick = resetDraftAndReturnToMenu,
@@ -240,6 +288,12 @@ fun EditProfileScreen(
                 description = t("Atur sinkronisasi, keamanan, dan preferensi aplikasi."),
                 icon = Icons.Outlined.Settings,
                 onClick = { activeSectionName = ProfileSection.Settings.name }
+              )
+              ProfileSectionCard(
+                title = t("Panduan Pengguna"),
+                description = t("Baca alur penggunaan tombol, fitur, input, laporan, dan notifikasi."),
+                icon = Icons.Outlined.Info,
+                onClick = { activeSectionName = ProfileSection.Guide.name }
               )
             }
 
@@ -315,6 +369,17 @@ fun EditProfileScreen(
                 onSelectThemeMode = onApplyThemeMode,
                 onRefresh = onRefresh
               )
+            }
+
+            ProfileSection.Guide -> {
+              if (activeGuide != null) {
+                UserGuideDetailPanel(section = activeGuide)
+              } else {
+                UserGuidePanel(
+                  guideSections = guideSections,
+                  onOpenDetail = { activeGuideTitle = it.title }
+                )
+              }
             }
           }
 
@@ -423,6 +488,918 @@ private fun ProfileSectionCard(
     )
   }
 }
+
+@Composable
+private fun UserGuidePanel(
+  guideSections: List<UserGuideSection>,
+  onOpenDetail: (UserGuideSection) -> Unit
+) {
+  val context = LocalContext.current
+  val scope = rememberCoroutineScope()
+  var isExportingPdf by rememberSaveable { mutableStateOf(false) }
+
+  Column(
+    modifier = Modifier.fillMaxWidth(),
+    verticalArrangement = Arrangement.spacedBy(14.dp)
+  ) {
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .shadow(12.dp, RoundedCornerShape(28.dp), ambientColor = Color(0x140F172A), spotColor = Color(0x140F172A))
+        .clip(RoundedCornerShape(28.dp))
+        .background(CardBackground.copy(alpha = 0.94f))
+        .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(28.dp))
+        .padding(18.dp),
+      verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+      Text(
+        text = t("Panduan Pengguna"),
+        style = MaterialTheme.typography.titleLarge,
+        color = PrimaryBlueDark,
+        fontWeight = FontWeight.ExtraBold
+      )
+      Text(
+        text = t("Panduan ini menjelaskan alur utama aplikasi. Bagian gambar akan kita tambahkan bertahap dari screenshot aplikasi agar guru mudah mengenali setiap tombol dan halaman."),
+        style = MaterialTheme.typography.bodySmall,
+        color = SubtleInk
+      )
+      Button(
+        enabled = !isExportingPdf,
+        onClick = {
+          scope.launch {
+            isExportingPdf = true
+            val result = runCatching {
+              UserGuidePdfExporter.createPdfFile(
+                context = context,
+                sections = guideSections.toPdfSections()
+              )
+            }
+            result.onSuccess { pdf ->
+              UserGuidePdfExporter.openPdf(context, pdf)
+            }.onFailure { error ->
+              Toast
+                .makeText(context, error.message ?: "Gagal membuat PDF panduan.", Toast.LENGTH_LONG)
+                .show()
+            }
+            isExportingPdf = false
+          }
+        }
+      ) {
+        Text(t(if (isExportingPdf) "Menyiapkan PDF..." else "Unduh PDF"))
+      }
+    }
+
+    guideSections.forEachIndexed { index, section ->
+      UserGuideSectionCard(
+        number = index + 1,
+        section = section,
+        onOpenDetail = { onOpenDetail(section) }
+      )
+    }
+  }
+}
+
+@Composable
+private fun UserGuideSectionCard(
+  number: Int,
+  section: UserGuideSection,
+  onOpenDetail: () -> Unit
+) {
+  var expanded by rememberSaveable(section.title) { mutableStateOf(number <= 2) }
+
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .shadow(10.dp, RoundedCornerShape(24.dp), ambientColor = Color(0x100F172A), spotColor = Color(0x100F172A))
+      .clip(RoundedCornerShape(24.dp))
+      .background(CardBackground.copy(alpha = 0.94f))
+      .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(24.dp))
+      .clickable { expanded = !expanded }
+      .animateContentSize()
+      .padding(16.dp),
+    verticalArrangement = Arrangement.spacedBy(12.dp)
+  ) {
+    Row(
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+      Box(
+        modifier = Modifier
+          .size(38.dp)
+          .clip(RoundedCornerShape(14.dp))
+          .background(PrimaryBlue.copy(alpha = 0.12f)),
+        contentAlignment = Alignment.Center
+      ) {
+        Text(
+          text = number.toString(),
+          style = MaterialTheme.typography.labelLarge,
+          color = PrimaryBlueDark,
+          fontWeight = FontWeight.ExtraBold
+        )
+      }
+      Column(
+        modifier = Modifier.weight(1f),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+      ) {
+        Text(
+          text = t(section.title),
+          style = MaterialTheme.typography.titleMedium,
+          color = PrimaryBlueDark,
+          fontWeight = FontWeight.ExtraBold
+        )
+        Text(
+          text = t(section.summary),
+          style = MaterialTheme.typography.bodySmall,
+          color = SubtleInk,
+          maxLines = if (expanded) Int.MAX_VALUE else 2,
+          overflow = TextOverflow.Ellipsis
+        )
+      }
+      Icon(
+        imageVector = Icons.Outlined.KeyboardArrowDown,
+        contentDescription = null,
+        tint = SubtleInk,
+        modifier = Modifier
+          .size(24.dp)
+          .graphicsLayer {
+            rotationZ = if (expanded) 180f else 0f
+          }
+      )
+    }
+
+    if (expanded) {
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .clip(RoundedCornerShape(18.dp))
+          .background(SoftPanel.copy(alpha = 0.66f))
+          .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+      ) {
+        section.steps.forEachIndexed { index, step ->
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+          ) {
+            Text(
+              text = "${index + 1}.",
+              style = MaterialTheme.typography.bodyMedium,
+              color = PrimaryBlueDark,
+              fontWeight = FontWeight.ExtraBold
+            )
+            Text(
+              text = t(step),
+              style = MaterialTheme.typography.bodyMedium,
+              color = PrimaryBlueDark,
+              modifier = Modifier.weight(1f)
+            )
+          }
+        }
+        if (section.note.isNotBlank()) {
+          Box(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(16.dp))
+              .background(PrimaryBlue.copy(alpha = 0.09f))
+              .border(1.dp, PrimaryBlue.copy(alpha = 0.12f), RoundedCornerShape(16.dp))
+              .padding(12.dp)
+          ) {
+            Text(
+              text = t(section.note),
+              style = MaterialTheme.typography.bodySmall,
+              color = SubtleInk
+            )
+          }
+        }
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.End
+        ) {
+          Button(onClick = onOpenDetail) {
+            Text(t("Lihat Detail"))
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun UserGuideDetailPanel(
+  section: UserGuideSection
+) {
+  val blocks = remember(section) {
+    section.detailBlocks.ifEmpty { section.toDefaultDetailBlocks() }
+  }
+
+  Column(
+    modifier = Modifier.fillMaxWidth(),
+    verticalArrangement = Arrangement.spacedBy(14.dp)
+  ) {
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .shadow(12.dp, RoundedCornerShape(28.dp), ambientColor = Color(0x140F172A), spotColor = Color(0x140F172A))
+        .clip(RoundedCornerShape(28.dp))
+        .background(CardBackground.copy(alpha = 0.94f))
+        .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(28.dp))
+        .padding(18.dp),
+      verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+      Text(
+        text = t(section.title),
+        style = MaterialTheme.typography.titleLarge,
+        color = PrimaryBlueDark,
+        fontWeight = FontWeight.ExtraBold
+      )
+      Text(
+        text = t(section.summary),
+        style = MaterialTheme.typography.bodyMedium,
+        color = SubtleInk
+      )
+      Text(
+        text = t("Detail panduan ini disiapkan sebagai tutorial lengkap. Gambar referensi akan kita tambahkan bertahap dari screenshot aplikasi."),
+        style = MaterialTheme.typography.bodySmall,
+        color = SubtleInk
+      )
+    }
+
+    blocks.forEachIndexed { index, block ->
+      UserGuideDetailBlockCard(
+        number = index + 1,
+        block = block
+      )
+    }
+  }
+}
+
+@Composable
+private fun UserGuideDetailBlockCard(
+  number: Int,
+  block: UserGuideDetailBlock
+) {
+  val context = LocalContext.current
+  val imageResId = remember(block.imageResName) {
+    block.imageResName
+      .takeIf { it.isNotBlank() }
+      ?.let { context.resources.getIdentifier(it, "drawable", context.packageName) }
+      ?: 0
+  }
+  val showImageSlot = block.type == UserGuideBlockType.Step || block.imageResName.isNotBlank()
+  val accent = when (block.type) {
+    UserGuideBlockType.Warning -> Color(0xFFB45309)
+    UserGuideBlockType.Tip -> PrimaryBlue
+    UserGuideBlockType.Step -> PrimaryBlueDark
+    UserGuideBlockType.Text -> PrimaryBlueDark
+  }
+  val label = when (block.type) {
+    UserGuideBlockType.Warning -> "Catatan Penting"
+    UserGuideBlockType.Tip -> "Tips"
+    UserGuideBlockType.Step -> "Langkah"
+    UserGuideBlockType.Text -> "Penjelasan"
+  }
+
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .shadow(8.dp, RoundedCornerShape(22.dp), ambientColor = Color(0x0F0F172A), spotColor = Color(0x0F0F172A))
+      .clip(RoundedCornerShape(22.dp))
+      .background(CardBackground.copy(alpha = 0.95f))
+      .border(1.dp, CardBorder.copy(alpha = 0.9f), RoundedCornerShape(22.dp))
+      .padding(16.dp),
+    verticalArrangement = Arrangement.spacedBy(10.dp)
+  ) {
+    Row(
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+      Box(
+        modifier = Modifier
+          .size(34.dp)
+          .clip(RoundedCornerShape(12.dp))
+          .background(accent.copy(alpha = 0.12f)),
+        contentAlignment = Alignment.Center
+      ) {
+        Text(
+          text = number.toString(),
+          style = MaterialTheme.typography.labelLarge,
+          color = accent,
+          fontWeight = FontWeight.ExtraBold
+        )
+      }
+      Column(modifier = Modifier.weight(1f)) {
+        Text(
+          text = t(label),
+          style = MaterialTheme.typography.labelSmall,
+          color = accent,
+          fontWeight = FontWeight.Bold
+        )
+        Text(
+          text = t(block.title),
+          style = MaterialTheme.typography.titleSmall,
+          color = PrimaryBlueDark,
+          fontWeight = FontWeight.ExtraBold
+        )
+      }
+    }
+
+    if (showImageSlot) {
+      Box(
+        modifier = Modifier
+          .fillMaxWidth()
+          .height(154.dp)
+          .clip(RoundedCornerShape(18.dp))
+          .background(SoftPanel.copy(alpha = 0.76f))
+          .border(1.dp, CardBorder, RoundedCornerShape(18.dp))
+          .padding(12.dp),
+        contentAlignment = Alignment.Center
+      ) {
+        if (imageResId != 0) {
+          Image(
+            painter = painterResource(id = imageResId),
+            contentDescription = t(block.imageCaption.ifBlank { block.title }),
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+              .fillMaxSize()
+              .clip(RoundedCornerShape(14.dp))
+          )
+        } else {
+          Text(
+            text = t(block.imageCaption.ifBlank { "Screenshot untuk langkah ini akan ditambahkan di sini." }),
+            style = MaterialTheme.typography.bodyMedium,
+            color = SubtleInk,
+            textAlign = TextAlign.Center
+          )
+        }
+      }
+    }
+
+    Text(
+      text = t(block.body),
+      style = MaterialTheme.typography.bodyMedium,
+      color = PrimaryBlueDark
+    )
+  }
+}
+
+private fun UserGuideSection.toDefaultDetailBlocks(): List<UserGuideDetailBlock> {
+  val specificBlocks = buildSpecificGuideDetailBlocks(title)
+  val blocks = mutableListOf(
+    UserGuideDetailBlock(
+      type = UserGuideBlockType.Text,
+      title = "Apa fungsi bagian ini?",
+      body = summary
+    )
+  )
+  if (specificBlocks.isNotEmpty()) {
+    blocks += specificBlocks
+  } else {
+    steps.forEachIndexed { index, step ->
+      blocks += UserGuideDetailBlock(
+        type = UserGuideBlockType.Step,
+        title = "Langkah ${index + 1}",
+        body = step
+      )
+    }
+  }
+  if (note.isNotBlank()) {
+    blocks += UserGuideDetailBlock(
+      type = UserGuideBlockType.Warning,
+      title = "Hal yang perlu diperhatikan",
+      body = note
+    )
+  }
+  blocks += UserGuideDetailBlock(
+    type = UserGuideBlockType.Tip,
+    title = "Tips penggunaan",
+    body = "Baca bagian ini sambil membuka halaman terkait agar posisi tombol dan alurnya lebih mudah dipahami."
+  )
+  return blocks
+}
+
+private fun List<UserGuideSection>.toPdfSections(): List<UserGuidePdfSection> =
+  map { section ->
+    val blocks = section.detailBlocks.ifEmpty { section.toDefaultDetailBlocks() }
+    UserGuidePdfSection(
+      title = section.title,
+      summary = section.summary,
+      blocks = blocks.map { it.toPdfBlock() }
+    )
+  }
+
+private fun UserGuideDetailBlock.toPdfBlock(): UserGuidePdfBlock {
+  val label = when (type) {
+    UserGuideBlockType.Warning -> "Catatan Penting"
+    UserGuideBlockType.Tip -> "Tips"
+    UserGuideBlockType.Step -> "Langkah"
+    UserGuideBlockType.Text -> "Penjelasan"
+  }
+  return UserGuidePdfBlock(
+    label = label,
+    title = title,
+    body = body,
+    hasImageSlot = type == UserGuideBlockType.Step || imageResName.isNotBlank(),
+    imageResName = imageResName,
+    imageCaption = imageCaption
+  )
+}
+
+private fun guideText(title: String, body: String) =
+  UserGuideDetailBlock(UserGuideBlockType.Text, title, body)
+
+private fun guideStep(
+  title: String,
+  body: String,
+  imageResName: String = "",
+  imageCaption: String = ""
+) = UserGuideDetailBlock(UserGuideBlockType.Step, title, body, imageResName, imageCaption)
+
+private fun guideTip(title: String, body: String) =
+  UserGuideDetailBlock(UserGuideBlockType.Tip, title, body)
+
+private fun guideWarning(title: String, body: String) =
+  UserGuideDetailBlock(UserGuideBlockType.Warning, title, body)
+
+private fun buildSpecificGuideDetailBlocks(title: String): List<UserGuideDetailBlock> = when (title) {
+  "Mulai Menggunakan Aplikasi" -> listOf(
+    guideStep(
+      "Halaman login",
+      "Halaman login berisi logo madrasah, judul aplikasi, kolom ID Karyawan, kolom Password, pilihan Remember me, dan tombol Masuk. ID Karyawan dipakai sebagai identitas akun guru. Password dipakai untuk memverifikasi akses. Tombol mata pada kolom password dipakai untuk melihat atau menyembunyikan password agar guru bisa memeriksa ketikan."
+    ),
+    guideStep(
+      "Remember me dan sesi login",
+      "Jika Remember me aktif, aplikasi menyimpan sesi login di perangkat. Setelah login berhasil, guru tidak perlu login ulang saat aplikasi dibuka lagi, kecuali logout manual, data aplikasi dihapus, atau sesi dinyatakan tidak valid."
+    ),
+    guideStep(
+      "Welcome screen dan progress data",
+      "Setelah login atau saat aplikasi dibuka, welcome screen menampilkan proses persiapan data. Bar progress menunjukkan tahapan sinkronisasi. Pada instalasi pertama, proses bisa lebih lama karena aplikasi mengunduh banyak data awal. Pada pembukaan berikutnya, aplikasi memakai cache lokal lalu hanya menyinkronkan perubahan."
+    ),
+    guideWarning(
+      "Jika server atau jaringan bermasalah",
+      "Jika muncul pesan tidak dapat terhubung ke server login, periksa jaringan perangkat dan status server. Jika guru sudah pernah login, data cache tetap dapat dipakai untuk beberapa fitur yang sudah tersedia lokal, kemudian disinkronkan kembali saat jaringan normal."
+    )
+  )
+
+  "Navigasi Utama" -> listOf(
+    guideStep(
+      "Tombol sidebar di kiri atas",
+      "Tombol bergambar garis menu di kiri atas membuka sidebar. Sidebar adalah daftar lengkap fitur aplikasi. Jika sedang berada di detail profil atau detail panduan, tombol kiri berubah menjadi tombol kembali agar guru bisa kembali satu level."
+    ),
+    guideStep(
+      "Isi sidebar",
+      "Sidebar dikelompokkan menjadi Dashboard, Kinerja Guru, Akademik, Aktivitas Harian, Kelas Saya, Wakasek Akademik, dan Profil. Beberapa grup hanya muncul jika guru punya hak akses, misalnya Kelas Saya untuk wali kelas dan Wakasek Akademik untuk akun wakasek akademik."
+    ),
+    guideStep(
+      "Bottom navigation",
+      "Bottom navigation berada di bawah layar sebagai shortcut. Label selalu terlihat agar guru tidak menebak fungsi ikon. Dashboard menjadi item tetap, sedangkan item lain dapat disesuaikan dari daftar fitur yang tersedia."
+    ),
+    guideStep(
+      "Popup atur shortcut",
+      "Tekan lama area bottom navigation atau salah satu tombolnya untuk membuka popup Atur Shortcut. Popup ini menampilkan daftar tab yang bisa dipilih. Item yang dicentang muncul di bagian atas. Gunakan tombol geser ke atas dan geser ke bawah untuk mengubah urutan. Urutan paling atas menjadi posisi paling kiri di bottom navigation."
+    ),
+    guideWarning(
+      "Batas shortcut",
+      "Jumlah shortcut dibatasi agar bottom navigation tetap rapi dan tidak terlalu padat. Jika pilihan sudah penuh, hapus salah satu item sebelum menambahkan item baru."
+    )
+  )
+
+  "Dashboard dan Agenda" -> listOf(
+    guideStep(
+      "Tombol menu dan notifikasi",
+      "Di bagian atas dashboard ada tombol sidebar di kiri, tanggal di tengah, dan tombol notifikasi di kanan. Tombol notifikasi memiliki badge jumlah notifikasi belum dibaca. Jika ditekan, muncul popup notifikasi."
+    ),
+    guideStep(
+      "Popup notifikasi",
+      "Popup notifikasi berisi judul Notifikasi, tombol Tandai semua dibaca, filter Hari ini, 3 Hari, dan 7 Hari, lalu daftar notifikasi. Item notifikasi bisa berisi jam mengajar, agenda, amanat penggantian, tugas pengganti, atau informasi sistem. Menekan item tertentu dapat membuka halaman terkait, misalnya input absen untuk amanat penggantian."
+    ),
+    guideStep(
+      "Kategori agenda",
+      "Bagian kategori menampilkan Semua Kategori, Kegiatan Umum, Libur Akademik, Libur Ketahfizan, dan kategori lain dari kalender akademik. Memilih kategori akan memfilter daftar Dashboard Agenda. Semua Kategori tidak memasukkan jadwal mengajar agar agenda tidak terlalu ramai."
+    ),
+    guideStep(
+      "Search agenda",
+      "Kolom pencarian dipakai untuk mencari agenda berdasarkan judul, keterangan, atau kategori. Ketik sebagian kata saja, daftar agenda akan menyesuaikan."
+    ),
+    guideStep(
+      "Tanggal di dashboard",
+      "Tanggal di header dapat ditekan untuk membuka halaman kalender. Halaman kalender menampilkan timeline kegiatan sesuai tanggal yang dipilih."
+    )
+  )
+
+  "Jadwal Mengajar" -> listOf(
+    guideStep(
+      "Pemilihan hari",
+      "Halaman Jadwal menampilkan pilihan hari dalam satu pekan. Geser horizontal untuk melihat hari lain. Hari ini diberi penanda khusus dan bisa dikembalikan dengan tombol Hari ini."
+    ),
+    guideStep(
+      "Timeline jadwal",
+      "Timeline menampilkan mapel, kelas, jam pelajaran, dan status jadwal. Kartu jadwal disusun berdasarkan waktu. Jika tidak ada jadwal, halaman menampilkan keterangan kosong."
+    ),
+    guideStep(
+      "Ikon pengingat",
+      "Ikon pengingat di area judul timeline membuka popup pengaturan pengingat jam pelajaran. Popup ini berisi pilihan pengingat untuk semua mapel atau mapel tertentu, pilihan frekuensi, dan daftar pengingat yang sudah dibuat."
+    ),
+    guideStep(
+      "Alarm dan notifikasi jadwal",
+      "Notifikasi jadwal pelajaran dikirim melalui notifikasi HP. Alarm khusus dapat menampilkan halaman alarm di dalam aplikasi saat aplikasi aktif. Izin notifikasi diminta saat pertama kali aplikasi digunakan."
+    ),
+    guideWarning(
+      "Perbedaan notifikasi dan alarm",
+      "Notifikasi jadwal adalah pemberitahuan HP untuk jam pelajaran. Alarm adalah pengingat yang lebih menonjol dan memiliki pengaturan tersendiri. Keduanya dipisahkan agar guru bisa mengatur sesuai kebutuhan."
+    )
+  )
+
+  "Input Absensi" -> listOf(
+    guideStep(
+      "Header dan tab input",
+      "Halaman input memiliki header dengan tombol sidebar dan judul. Di bawahnya ada indikator tab untuk Input Absen dan Input Nilai. Geser horizontal untuk berpindah antara input absen dan input nilai tanpa menggeser header."
+    ),
+    guideStep(
+      "Card jadwal dan kelas",
+      "Card pertama berisi tanggal, kelas, mapel, dan jam pelajaran. Tanggal dipilih dari picker, bukan diketik. Setelah tanggal dipilih, aplikasi mencari jadwal guru pada tanggal tersebut lalu mengisi kelas, mapel, dan jam secara otomatis. Jika ada lebih dari satu jadwal, guru memilih dari dropdown."
+    ),
+    guideStep(
+      "Popup info pada card",
+      "Setiap card penting memiliki tombol info kecil bertanda i. Jika ditekan, muncul popup kecil yang menjelaskan cara memakai card tersebut. Contohnya card jadwal menjelaskan bahwa guru harus memilih tanggal dulu agar kelas dan mapel tersedia."
+    ),
+    guideStep(
+      "Card materi",
+      "Card materi berisi input materi yang diajarkan. Guru bisa mengetik manual atau memilih materi dari dropdown patron materi. Jika ada riwayat materi terakhir, kartu pengingat materi terakhir dapat ditekan untuk mengisi input materi otomatis."
+    ),
+    guideStep(
+      "Card guru pengganti",
+      "Card guru pengganti memiliki pilihan isi sebagai guru pengganti dan amanatkan guru pengganti. Jika guru mengisi sebagai pengganti tanpa amanat dari guru utama, data dikirim untuk review guru utama. Jika guru menerima amanat dari guru utama, hasil absen langsung masuk sistem."
+    ),
+    guideStep(
+      "Daftar santri",
+      "Setiap baris santri berisi nama dan dropdown status. Status yang tersedia mengikuti versi web, seperti Hadir, Terlambat, Izin, Sakit, dan Alpa. Setelah semua status sesuai, tekan Simpan untuk menyimpan absensi."
+    ),
+    guideWarning(
+      "Saat pilihan kelas atau mapel kosong",
+      "Jika kelas atau mapel tidak bisa dipilih, biasanya tanggal belum memiliki jadwal untuk guru tersebut atau data jadwal belum tersinkron. Coba tarik untuk refresh atau pilih mode guru pengganti jika memang sedang menggantikan guru lain."
+    )
+  )
+
+  "Input Nilai" -> listOf(
+    guideStep(
+      "Card jadwal nilai",
+      "Input nilai memakai tanggal, kelas, mapel, dan jenis nilai. Berbeda dengan absensi, input nilai tidak memakai jam pelajaran, guru pengganti, atau materi terakhir."
+    ),
+    guideStep(
+      "Jenis nilai",
+      "Jenis nilai dipilih dari dropdown, misalnya tugas, ulangan harian, UTS, UAS, atau jenis lain yang tersedia. Jenis nilai menentukan batas maksimal nilai dan cara nilai ditampilkan di detail mapel."
+    ),
+    guideStep(
+      "Kolom nilai santri",
+      "Setiap santri memiliki kolom nilai. Jika nilai tidak diisi, saat disimpan akan dihitung 0. Jika nilai melebihi batas maksimal, input dicegah agar data tetap sesuai ketentuan."
+    ),
+    guideStep(
+      "Simpan nilai",
+      "Tombol Simpan menyimpan nilai semua santri sekaligus. Setelah tersimpan, data muncul di detail mapel bagian Nilai sebagai rata-rata atau akumulasi sesuai jenis nilai."
+    ),
+    guideWarning(
+      "Nilai akumulasi",
+      "Nilai yang terlihat di depan detail mapel bisa berupa rata-rata dari banyak data. Untuk mengubah rincian, buka detail jenis nilai agar guru mengedit data sumbernya, bukan hanya angka rata-rata."
+    )
+  )
+
+  "Mapel dan Detail Mapel" -> listOf(
+    guideStep(
+      "Daftar mapel",
+      "Halaman Mapel menampilkan daftar mata pelajaran yang diampu guru. Tombol Tambah Mapel dipakai untuk mengambil mapel yang tersedia. Jika tidak ada mapel yang bisa ditambahkan, aplikasi menampilkan pesan bahwa tidak ada mapel tersedia."
+    ),
+    guideStep(
+      "Detail mapel",
+      "Menekan card mapel membuka detail mapel. Bottom navigation di detail berubah menjadi tab khusus seperti Absensi, Nilai, Patron Materi, dan Soal. Tombol back HP dari detail mapel kembali ke daftar Mapel."
+    ),
+    guideStep(
+      "Absensi di detail mapel",
+      "Tab Absensi bisa disortir per nama atau per tanggal. Card per nama menampilkan persentase status yang ada saja. Menekan card membuka riwayat tanggal dan status. Tekan lama item riwayat untuk mengubah status per item."
+    ),
+    guideStep(
+      "Nilai di detail mapel",
+      "Tab Nilai bisa disortir per nama, jenis nilai, atau tanggal. Menekan jenis nilai membuka popup rincian nilai sehingga nilai akumulasi dapat diedit dari data sumbernya."
+    ),
+    guideStep(
+      "Patron materi",
+      "Patron Materi berisi daftar materi rencana ajar. Tombol tambah menaruh kolom baru di atas agar mudah diisi. Tekan lama card untuk edit. Geser kiri secukupnya untuk memunculkan tombol hapus."
+    )
+  )
+
+  "Soal dan Cetak Soal" -> listOf(
+    guideStep(
+      "Daftar soal",
+      "Di tab Soal, guru bisa membuat file soal baru dengan tombol buat soal. Popup buat soal hanya berisi judul, kategori seperti Tugas atau UTS, dan tanggal. Setelah disimpan, card soal muncul di daftar."
+    ),
+    guideStep(
+      "Editor soal",
+      "Menekan card soal membuka editor. Bottom navigation disembunyikan agar ruang menulis lebih luas. Tombol back di topbar kembali ke daftar soal."
+    ),
+    guideStep(
+      "Tombol plus",
+      "Tombol plus bulat di kanan bawah membuka pilihan Tambah Model Soal dan Cetak. Tambah Model Soal menampilkan dropdown model seperti Pilihan Ganda, Esai, Isian, Benar/Salah, Pasangkan Kata, Cari Kata, dan Teka-teki Silang."
+    ),
+    guideStep(
+      "Model pilihan ganda dan esai",
+      "Pilihan ganda menyediakan nomor pertanyaan dan pilihan jawaban. Pilihan baru muncul otomatis saat pilihan terakhir diisi. Esai dan isian mengikuti gaya pertanyaan bernomor tanpa skor dan bobot."
+    ),
+    guideStep(
+      "Model puzzle",
+      "Cari Kata dan Teka-teki Silang memakai grid. Jika kolom banyak, grid dapat digeser horizontal. Pada Teka-teki Silang, petunjuk dicetak di bawah tabel."
+    ),
+    guideStep(
+      "Cetak soal",
+      "Cetak soal mengekspor file Word sesuai template web. Hasil cetak memakai data yang ada di editor saat itu, bukan hanya data lama. Jika file pernah dicetak, file berikutnya diperbarui agar perubahan terbaru ikut masuk."
+    )
+  )
+
+  "Mutabaah" -> listOf(
+    guideStep(
+      "Timeline mutabaah",
+      "Mutabaah menampilkan tugas harian dalam timeline. Setiap card memiliki titik indikator di samping timeline dan checkbox/tombol centang untuk menandai tugas selesai."
+    ),
+    guideStep(
+      "Hari tanpa jadwal mengajar",
+      "Jika guru tidak memiliki jadwal mengajar pada hari itu, hanya tugas Hadir tepat waktu dan Pulang tepat waktu yang ditampilkan. Saat Hadir dicentang, tugas latar belakang selain Pulang ikut ditandai. Saat Pulang dicentang, tugas latar belakang selain Hadir ikut ditandai."
+    ),
+    guideStep(
+      "Hari izin",
+      "Jika izin guru sudah disetujui, hari itu ditandai Izin. Mutabaah tidak dihitung sebagai tugas gagal. Di hasil Excel, Izin ditulis dengan background abu-abu."
+    ),
+    guideStep(
+      "Menu titik tiga",
+      "Titik tiga di topbar membuka pilihan Cetak Mutabaah dan Kirim Mutabaah. Keduanya membuka popup pilih periode terlebih dahulu."
+    ),
+    guideStep(
+      "Popup pilih periode mutabaah",
+      "Popup periode berisi pilihan Bulan Ini, Semester, Tahun, daftar bulan yang bisa dicentang, tombol Batal, dan tombol Cetak atau Kirim. Jika beberapa bulan dipilih, file Excel berisi beberapa tab, satu tab untuk setiap bulan."
+    )
+  )
+
+  "Perizinan" -> listOf(
+    guideStep(
+      "Card input izin",
+      "Card input izin berisi tanggal mulai, tanggal selesai, durasi, dan keperluan izin. Tanggal dipilih dari picker agar format tanggal konsisten."
+    ),
+    guideStep(
+      "Kirim pengajuan",
+      "Setelah data lengkap, tombol kirim membuat pengajuan izin. Status awal biasanya Menunggu. Jika proses sedang berjalan, card menampilkan animasi loading agar guru tahu data sedang diproses."
+    ),
+    guideStep(
+      "Daftar pengajuan",
+      "Daftar pengajuan menampilkan status Menunggu, Diterima, atau Ditolak. Jika masih bisa dibatalkan, tersedia aksi hapus atau batal pada card pengajuan."
+    ),
+    guideStep(
+      "Perizinan wakasek",
+      "Untuk wakasek akademik, card izin dapat dibuka untuk melihat detail. Tombol Setujui dan Tolak memproses izin. Setelah ditekan, popup menutup dan proses loading muncul pada card yang sedang diproses."
+    )
+  )
+
+  "Laporan Bulanan dan PTS" -> listOf(
+    guideStep(
+      "Daftar santri",
+      "Halaman laporan menampilkan periode dan daftar santri. Tekan card santri untuk masuk detail. Tekan lama card santri untuk memunculkan bottom bar Cetak dan Kirim tanpa masuk detail."
+    ),
+    guideStep(
+      "Detail laporan",
+      "Detail laporan memisahkan aspek penilaian dalam card agar mudah dibaca. Nilai berada di kanan jika berbentuk angka, sedangkan teks panjang tampil di area keterangan."
+    ),
+    guideStep(
+      "Edit laporan",
+      "Tombol edit membuat data laporan bisa diubah. Perubahan hanya untuk kebutuhan laporan dan tidak mengubah data asli sistem seperti absensi atau nilai sumber. Setelah disimpan, mode edit ditutup."
+    ),
+    guideStep(
+      "Reset data",
+      "Tombol reset mengembalikan data laporan bulan atau periode tersebut ke data sistem. Reset tetap tersedia meskipun data sudah pernah disimpan setelah edit atau import massal."
+    ),
+    guideStep(
+      "Input massal",
+      "Input massal memakai link spreadsheet. Aplikasi mencocokkan tab kelas dan nama santri dengan toleransi alias. Preview menampilkan data cocok, meragukan, atau tidak cocok. Data meragukan perlu dikonfirmasi sebelum diterapkan."
+    ),
+    guideStep(
+      "Cetak dan kirim WhatsApp",
+      "Cetak menghasilkan PDF sesuai template. Kirim WhatsApp membuka pilihan nomor orang tua atau input manual. Pilih dari kontak HP tersedia untuk mengambil nomor dari kontak, lalu file dikirim sebagai lampiran."
+    )
+  )
+
+  "Santri dan Wali Kelas" -> listOf(
+    guideStep(
+      "Akses wali kelas",
+      "Menu Santri, Laporan Absensi, Laporan Bulanan, dan Laporan UTS hanya muncul jika guru terdaftar sebagai wali kelas pada data kelas atau struktur sekolah."
+    ),
+    guideStep(
+      "Daftar santri",
+      "Daftar santri menampilkan santri di kelas wali. Keterangan di bawah nama menampilkan NISN. Card tidak memiliki tombol hapus karena pengelolaan santri utama tetap dari sistem admin."
+    ),
+    guideStep(
+      "Detail santri",
+      "Detail santri berisi nama, NISN, jenis kelamin, kontak santri, alamat, ayah, kontak ayah, ibu, kontak ibu, wali, kontak wali, dan catatan. Jenis kelamin dipilih dari dropdown agar tidak asal mengetik."
+    ),
+    guideStep(
+      "Simpan detail santri",
+      "Saat ada perubahan, tombol simpan muncul. Ketika disimpan, layar menampilkan loading agar guru tahu proses berjalan. Data dikirim ke server dan cache lokal diperbarui."
+    ),
+    guideStep(
+      "Laporan absensi kelas",
+      "Laporan absensi menghitung kehadiran santri per hari dari semua mapel. Detail menampilkan tanggal, mapel jika tersedia, jam pelajaran jika tersedia, dan status kehadiran."
+    )
+  )
+
+  "Wakasek Akademik" -> listOf(
+    guideStep(
+      "Akses menu wakasek",
+      "Menu Wakasek Akademik muncul untuk akun guru yang rolenya tercatat sebagai wakasek akademik. Menu ini memiliki sub menu Monitoring Guru, Monitoring Siswa, dan Perizinan."
+    ),
+    guideStep(
+      "Monitoring Guru",
+      "Monitoring Guru memiliki pilihan periode harian, pekanan, bulanan, dan semester. Pilihannya berbentuk pill seperti jadwal. Card diagram menunjukkan persentase hadir dan tidak hadir. Menekan guru membuka detail kelas, mapel, waktu, dan status."
+    ),
+    guideStep(
+      "Monitoring Siswa",
+      "Monitoring Siswa menampilkan grafik status siswa. Siswa yang hadir tidak dimunculkan di list agar daftar tidak terlalu panjang. Nama yang berulang disatukan, lalu detailnya muncul saat card ditekan."
+    ),
+    guideStep(
+      "Sort monitoring siswa",
+      "Tombol sort dapat mengurutkan atau memfilter list berdasarkan kelas, nama, atau status kehadiran. Ini membantu wakasek menemukan santri bermasalah lebih cepat."
+    ),
+    guideStep(
+      "Perizinan wakasek",
+      "Perizinan wakasek menampilkan pengajuan izin guru. Wakasek membuka detail, memberi catatan jika perlu, lalu memilih Setujui atau Tolak. Proses berjalan pada card terkait tanpa menyegarkan seluruh halaman."
+    )
+  )
+
+  "Bahasa, Tema, dan Sinkronisasi" -> listOf(
+    guideStep(
+      "Bahasa aplikasi",
+      "Card Bahasa menyediakan dropdown bahasa Indonesia, Inggris, dan Arab. Setelah memilih bahasa, tekan Terapkan agar label UI berubah. Beberapa istilah data seperti nama santri atau nama mapel tidak diterjemahkan karena berasal dari database."
+    ),
+    guideStep(
+      "Tema aplikasi",
+      "Card Tema menyediakan Ikuti Sistem, Terang, dan Gelap. Ikuti Sistem mengikuti pengaturan HP. Tema gelap mengubah background, card, sidebar, navbar, dan tombol agar tetap terbaca."
+    ),
+    guideStep(
+      "Sinkronisasi data",
+      "Tombol Sinkronisasi Data menarik data terbaru dari server dan memperbarui cache lokal. Tarik ke bawah pada halaman utama juga menjalankan refresh sesuai halaman tersebut."
+    ),
+    guideStep(
+      "Pembaruan aplikasi",
+      "Jika tersedia versi baru, aplikasi menampilkan popup pembaruan saat dibuka. Popup ini berisi informasi versi dan tombol untuk mengunduh APK terbaru."
+    ),
+    guideWarning(
+      "Cache dan data lokal",
+      "Cache membantu aplikasi terasa cepat. Jika user menghapus cache dari pengaturan HP, pembukaan berikutnya akan lebih lama karena aplikasi perlu mengunduh ulang data awal."
+    )
+  )
+
+  else -> emptyList()
+}
+
+private fun buildUserGuideSections(): List<UserGuideSection> = listOf(
+  UserGuideSection(
+    title = "Mulai Menggunakan Aplikasi",
+    summary = "Gunakan akun guru untuk masuk sekali, lalu aplikasi menyimpan sesi dan cache agar pembukaan berikutnya lebih cepat.",
+    steps = listOf(
+      "Masukkan ID karyawan dan password pada halaman login.",
+      "Tunggu welcome screen menyiapkan data awal sampai masuk ke dashboard.",
+      "Gunakan tarik ke bawah pada halaman utama untuk menyinkronkan data terbaru dari server.",
+      "Jika jaringan tidak stabil, gunakan data yang sudah tersimpan lebih dulu lalu sinkronkan saat jaringan kembali."
+    ),
+    note = "Login hanya tersedia untuk akun dengan akses guru. Beberapa menu seperti Kelas Saya dan Wakasek Akademik mengikuti amanah jabatan di data sekolah."
+  ),
+  UserGuideSection(
+    title = "Navigasi Utama",
+    summary = "Aplikasi memakai sidebar dan bottom navigation. Sidebar berisi semua fitur, sedangkan bottom navigation bisa menjadi shortcut harian.",
+    steps = listOf(
+      "Tekan tombol menu di kiri atas untuk membuka sidebar.",
+      "Pilih grup menu seperti Akademik, Aktivitas Harian, Kelas Saya, atau Wakasek Akademik.",
+      "Tekan lama bottom navigation untuk mengatur shortcut yang sering dipakai.",
+      "Tombol back dari halaman utama akan kembali ke dashboard, kecuali dashboard yang bisa menutup aplikasi."
+    )
+  ),
+  UserGuideSection(
+    title = "Dashboard dan Agenda",
+    summary = "Dashboard menampilkan kategori kalender akademik, agenda terdekat, notifikasi, dan akses cepat ke tanggal.",
+    steps = listOf(
+      "Pilih kategori untuk memfilter agenda yang tampil.",
+      "Gunakan kolom pencarian untuk mencari agenda tertentu.",
+      "Tekan tanggal di header untuk membuka kalender dan timeline kegiatan.",
+      "Tekan ikon notifikasi untuk melihat jam mengajar, amanat penggantian, agenda, dan status penting lainnya."
+    )
+  ),
+  UserGuideSection(
+    title = "Jadwal Mengajar",
+    summary = "Halaman jadwal menampilkan jam mengajar dalam bentuk timeline mingguan.",
+    steps = listOf(
+      "Geser daftar hari untuk memilih tanggal jadwal.",
+      "Tekan tombol hari ini untuk kembali ke tanggal sekarang.",
+      "Gunakan ikon pengingat untuk mengatur alarm atau notifikasi jam pelajaran.",
+      "Notifikasi jadwal dapat aktif walaupun aplikasi sedang tidak dibuka."
+    )
+  ),
+  UserGuideSection(
+    title = "Input Absensi",
+    summary = "Input absensi dipakai untuk mengisi kehadiran santri berdasarkan jadwal guru atau tugas pengganti.",
+    steps = listOf(
+      "Pilih tanggal terlebih dahulu agar kelas, mapel, dan jam pelajaran terisi sesuai jadwal.",
+      "Isi materi manual atau pilih dari patron materi.",
+      "Jika menjadi guru pengganti, pilih guru yang digantikan lalu pilih jadwal yang sesuai.",
+      "Ubah status santri melalui dropdown di samping nama, lalu simpan."
+    ),
+    note = "Amanat penggantian dari guru utama bisa langsung masuk ke input absen melalui notifikasi."
+  ),
+  UserGuideSection(
+    title = "Input Nilai",
+    summary = "Input nilai digunakan untuk mengisi nilai per jenis penilaian tanpa jam pelajaran dan tanpa guru pengganti.",
+    steps = listOf(
+      "Pilih tanggal, kelas, mapel, dan jenis nilai.",
+      "Masukkan nilai santri sesuai batas maksimal yang ditentukan.",
+      "Nilai kosong akan dihitung sebagai 0 saat disimpan.",
+      "Gunakan halaman detail nilai untuk melihat rata-rata dan rincian nilai per tanggal."
+    )
+  ),
+  UserGuideSection(
+    title = "Mapel dan Detail Mapel",
+    summary = "Mapel menampilkan daftar mata pelajaran yang diampu, lalu detailnya berisi absensi, nilai, patron materi, dan soal.",
+    steps = listOf(
+      "Tekan card mapel untuk membuka detail mapel.",
+      "Tab Absensi menampilkan rekap per nama atau per tanggal.",
+      "Tab Nilai menampilkan akumulasi per nama atau per tanggal beserta rincian nilai.",
+      "Tab Patron Materi dipakai untuk menyiapkan daftar materi yang bisa dipilih saat input absensi.",
+      "Tab Soal dipakai untuk membuat draft soal dan mengekspor hasilnya."
+    )
+  ),
+  UserGuideSection(
+    title = "Soal dan Cetak Soal",
+    summary = "Editor soal bebas dipakai untuk membuat tugas, UTS, UAS, atau latihan tanpa bergantung pada jadwal ujian admin.",
+    steps = listOf(
+      "Buat file soal dari daftar soal dengan mengisi judul, kategori, dan tanggal.",
+      "Masuk ke editor soal lalu tambah model soal dari tombol plus.",
+      "Isi instruksi umum, instruksi per model, pertanyaan, pilihan jawaban, pasangan kata, cari kata, atau teka-teki silang.",
+      "Gunakan tombol cetak untuk mengekspor soal sesuai template Word."
+    )
+  ),
+  UserGuideSection(
+    title = "Mutabaah",
+    summary = "Mutabaah berisi aktivitas harian guru dan bisa dicetak atau dikirim dalam format Excel.",
+    steps = listOf(
+      "Centang tugas yang sudah dilakukan pada tanggal terpilih.",
+      "Jika guru tidak memiliki jadwal mengajar, hanya tugas hadir dan pulang tepat waktu yang ditampilkan.",
+      "Hari izin yang disetujui akan ditandai sebagai izin dan tidak dihitung sebagai kegagalan tugas.",
+      "Gunakan titik tiga di topbar untuk cetak atau kirim mutabaah per bulan, semester, atau tahun pelajaran."
+    )
+  ),
+  UserGuideSection(
+    title = "Perizinan",
+    summary = "Perizinan dipakai untuk mengajukan izin guru dan memantau status pengajuan.",
+    steps = listOf(
+      "Isi rentang tanggal dan keperluan izin.",
+      "Kirim pengajuan lalu pantau status menunggu, diterima, atau ditolak.",
+      "Pengajuan yang belum selesai dapat dibatalkan atau dihapus.",
+      "Wakasek Akademik dapat menyetujui atau menolak izin dari menu Perizinan Wakasek."
+    )
+  ),
+  UserGuideSection(
+    title = "Laporan Bulanan dan PTS",
+    summary = "Laporan dapat dilihat, diedit sebagai data laporan, direset ke data sistem, dicetak, dan dikirim melalui WhatsApp.",
+    steps = listOf(
+      "Pilih periode laporan yang tersedia.",
+      "Tekan nama santri untuk melihat detail laporan.",
+      "Gunakan edit untuk mengubah data khusus laporan tanpa mengubah data asli sistem.",
+      "Gunakan reset jika ingin kembali ke data sistem.",
+      "Cetak atau kirim laporan dari detail, atau tekan lama nama santri dari daftar."
+    )
+  ),
+  UserGuideSection(
+    title = "Santri dan Wali Kelas",
+    summary = "Menu santri dan laporan kelas hanya muncul untuk guru yang menjadi wali kelas.",
+    steps = listOf(
+      "Buka menu Santri untuk melihat santri di kelas yang diampu sebagai wali kelas.",
+      "Tekan nama santri untuk mengubah detail santri, kontak, orang tua, wali, alamat, dan catatan.",
+      "Gunakan laporan absensi untuk melihat rekap kehadiran kelas dari semua mapel.",
+      "Menu Kelas Saya tidak ditampilkan untuk guru yang bukan wali kelas."
+    )
+  ),
+  UserGuideSection(
+    title = "Wakasek Akademik",
+    summary = "Menu Wakasek Akademik hanya muncul untuk akun yang tercatat sebagai wakasek akademik di data karyawan.",
+    steps = listOf(
+      "Monitoring Guru menampilkan kehadiran guru per hari, pekan, bulan, atau semester.",
+      "Monitoring Siswa menampilkan santri yang sakit, izin, terlambat, atau alpa dengan filter kelas, nama, dan status.",
+      "Perizinan Wakasek dipakai untuk menyetujui atau menolak pengajuan izin guru.",
+      "Data monitoring mengikuti data admin dan kalender akademik."
+    )
+  ),
+  UserGuideSection(
+    title = "Bahasa, Tema, dan Sinkronisasi",
+    summary = "Pengaturan berisi pilihan bahasa, tema terang atau gelap, serta sinkronisasi data manual.",
+    steps = listOf(
+      "Pilih bahasa Indonesia, Inggris, atau Arab lalu tekan Terapkan.",
+      "Pilih tema Ikuti Sistem, Terang, atau Gelap sesuai kebutuhan.",
+      "Gunakan Sinkronisasi Data untuk menarik ulang data terbaru dari server.",
+      "Jika ada pembaruan aplikasi, popup update akan muncul saat aplikasi dibuka."
+    )
+  )
+)
 
 @Composable
 private fun ProfileSettingsPanel(
