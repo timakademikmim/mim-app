@@ -314,13 +314,7 @@ private fun AppUpdateDialog(
           text = "MIM App versi ${updateInfo.versionName} sudah tersedia dan bisa langsung diunduh.",
           style = MaterialTheme.typography.bodyMedium
         )
-        if (updateInfo.releaseNotes.isNotBlank()) {
-          Text(
-            text = updateInfo.releaseNotes,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-          )
-        }
+        AppUpdateWhatIsNew(updateInfo = updateInfo)
         if (isDownloading) {
           Row(
             modifier = Modifier.fillMaxWidth(),
@@ -365,4 +359,62 @@ private fun AppUpdateDialog(
       }
     }
   )
+}
+
+@Composable
+private fun AppUpdateWhatIsNew(updateInfo: AppUpdateInfo) {
+  val fallbackNotes = updateInfo.releaseNotes
+    .split('\n', ';')
+    .map { it.trim().trim('-', '•', ' ') }
+    .filter { it.isNotBlank() }
+    .filterNot { it.equals("MIM App Android ${updateInfo.versionName}.", ignoreCase = true) }
+  val features = updateInfo.features.ifEmpty {
+    fallbackNotes.filter { note ->
+      val lower = note.lowercase()
+      "fitur" in lower || "tambah" in lower || "baru" in lower
+    }
+  }
+  val fixes = updateInfo.fixes.ifEmpty {
+    fallbackNotes.filterNot { note -> note in features }
+  }
+
+  Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Text(
+      text = "Apa yang baru:",
+      style = MaterialTheme.typography.titleSmall,
+      fontWeight = FontWeight.ExtraBold
+    )
+    if (features.isEmpty() && fixes.isEmpty()) {
+      Text(
+        text = updateInfo.releaseNotes.ifBlank { "Pembaruan fitur dan perbaikan stabilitas aplikasi." },
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+      )
+    } else {
+      AppUpdateChangeSection(title = "Fitur baru", items = features)
+      AppUpdateChangeSection(title = "Perbaikan", items = fixes)
+    }
+  }
+}
+
+@Composable
+private fun AppUpdateChangeSection(
+  title: String,
+  items: List<String>
+) {
+  if (items.isEmpty()) return
+  Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Text(
+      text = title,
+      style = MaterialTheme.typography.labelLarge,
+      fontWeight = FontWeight.Bold
+    )
+    items.forEachIndexed { index, item ->
+      Text(
+        text = "${index + 1}. $item",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+      )
+    }
+  }
 }

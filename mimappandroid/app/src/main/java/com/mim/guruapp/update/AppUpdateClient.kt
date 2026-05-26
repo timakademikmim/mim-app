@@ -13,6 +13,8 @@ data class AppUpdateInfo(
   val versionName: String,
   val apkUrl: String,
   val releaseNotes: String,
+  val features: List<String> = emptyList(),
+  val fixes: List<String> = emptyList(),
   val mandatory: Boolean
 )
 
@@ -37,6 +39,8 @@ class AppUpdateClient {
           versionName = json.optString("versionName").trim(),
           apkUrl = json.optString("apkUrl").trim(),
           releaseNotes = json.optString("releaseNotes").trim(),
+          features = json.optStringArray("features"),
+          fixes = json.optStringArray("fixes"),
           mandatory = json.optBoolean("mandatory", false)
         )
         info.takeIf { it.versionCode > BuildConfig.VERSION_CODE && it.apkUrl.isNotBlank() }
@@ -44,5 +48,15 @@ class AppUpdateClient {
         connection.disconnect()
       }
     }.getOrNull()
+  }
+}
+
+private fun JSONObject.optStringArray(key: String): List<String> {
+  val array = optJSONArray(key) ?: return emptyList()
+  return buildList {
+    for (index in 0 until array.length()) {
+      val value = array.optString(index).trim()
+      if (value.isNotBlank()) add(value)
+    }
   }
 }

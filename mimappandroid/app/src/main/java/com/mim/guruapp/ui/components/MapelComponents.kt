@@ -1,7 +1,15 @@
 package com.mim.guruapp.ui.components
 
 import android.content.Context
+import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.Intent
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
@@ -20,6 +28,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -37,6 +46,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -62,15 +72,23 @@ import androidx.compose.material.icons.outlined.Calculate
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.EditNote
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Print
 import androidx.compose.material.icons.outlined.Quiz
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.TaskAlt
+import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Translate
+import androidx.compose.material.icons.outlined.UploadFile
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -81,6 +99,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -98,19 +117,31 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.window.Dialog
 import android.widget.Toast
+import androidx.core.content.FileProvider
 import com.mim.guruapp.AttendanceSaveOutcome
 import com.mim.guruapp.PatronMateriSaveOutcome
 import com.mim.guruapp.ScoreSaveOutcome
@@ -125,6 +156,7 @@ import com.mim.guruapp.data.model.ScoreDetailRow
 import com.mim.guruapp.data.model.ScoreStudent
 import com.mim.guruapp.data.model.SubjectOverview
 import com.mim.guruapp.data.model.SyncBannerState
+import com.mim.guruapp.export.MapelAttendanceExcelExporter
 import com.mim.guruapp.export.MapelQuestionExportData
 import com.mim.guruapp.export.MapelQuestionExporter
 import com.mim.guruapp.ui.i18n.LocalAppLanguage
@@ -141,6 +173,10 @@ import com.mim.guruapp.ui.theme.SubtleInk
 import com.mim.guruapp.ui.theme.SuccessTint
 import com.mim.guruapp.ui.theme.WarmAccent
 import java.time.LocalDate
+import java.time.YearMonth
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+import java.io.File
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -510,9 +546,18 @@ private fun MapelDetailScreen(
   var scoreSnapshot by remember(subject.id) { mutableStateOf<MapelScoreSnapshot?>(null) }
   var patronMateriSnapshot by remember(subject.id) { mutableStateOf<MapelPatronMateriSnapshot?>(null) }
   var patronMateriItems by remember(subject.id) { mutableStateOf<List<PatronMateriItem>>(emptyList()) }
+  var patronLearningMaterials by remember(subject.id) {
+    mutableStateOf<Map<String, PatronLearningMaterial>>(emptyMap())
+  }
+  var activePatronLearningItemId by rememberSaveable(subject.id) { mutableStateOf<String?>(null) }
+  var isPatronLearningEditMode by rememberSaveable(subject.id) { mutableStateOf(false) }
+  var patronLearningUndoStack by remember(subject.id) { mutableStateOf<List<PatronLearningMaterial>>(emptyList()) }
   var questionItems by remember(subject.id) { mutableStateOf<List<MapelQuestionDraft>>(emptyList()) }
   var isCreatingQuestion by remember(subject.id) { mutableStateOf(false) }
   var isAddingQuestionModel by remember(subject.id) { mutableStateOf(false) }
+  var attendanceExportShouldShare by remember(subject.id) { mutableStateOf<Boolean?>(null) }
+  var attendanceExportMonthKeys by remember(subject.id) { mutableStateOf(listOf(YearMonth.now().toString())) }
+  var isExportingAttendance by remember(subject.id) { mutableStateOf(false) }
   var activeQuestionId by rememberSaveable(subject.id) { mutableStateOf<String?>(null) }
   var editorQuestionDraft by remember(subject.id) { mutableStateOf<MapelQuestionDraft?>(null) }
   var questionUndoStack by remember(subject.id) { mutableStateOf<List<MapelQuestionDraft>>(emptyList()) }
@@ -538,6 +583,12 @@ private fun MapelDetailScreen(
   val context = LocalContext.current
   val activeQuestion = editorQuestionDraft
   val isQuestionEditorOpen = selectedSection == MapelDetailSection.Soal && activeQuestion != null
+  val activePatronLearningItem = activePatronLearningItemId?.let { currentId ->
+    patronMateriItems.firstOrNull { it.id == currentId }
+  }
+  val attendanceExportBaseMonth = remember(attendanceSnapshot) {
+    attendanceSnapshot?.latestAttendanceMonth() ?: YearMonth.now()
+  }
 
   fun updateQuestionDraft(updated: MapelQuestionDraft) {
     val latestUpdated = updated.copy(updatedAt = System.currentTimeMillis())
@@ -660,6 +711,7 @@ private fun MapelDetailScreen(
     isLoadingPatronMateri = true
     val loadedQuestions = loadMapelQuestions(context, subject.id)
     questionItems = loadedQuestions
+    patronLearningMaterials = loadPatronLearningMaterials(context, subject.id)
     attendanceSnapshot = onLoadAttendance(subject.id, subject)
     scoreSnapshot = onLoadScores(subject.id, subject)
     patronMateriSnapshot = onLoadPatronMateri(subject.id, subject)
@@ -690,15 +742,33 @@ private fun MapelDetailScreen(
     if (selectedSection != MapelDetailSection.Soal || (activeQuestionId != null && editorQuestionDraft == null)) {
       activeQuestionId = null
     }
+    if (selectedSection != MapelDetailSection.PatronMateri) {
+      activePatronLearningItemId = null
+    }
   }
 
   LaunchedEffect(activeQuestionId) {
     questionUndoStack = emptyList()
   }
 
+  LaunchedEffect(activePatronLearningItemId) {
+    patronLearningUndoStack = emptyList()
+  }
+
+  LaunchedEffect(attendanceExportBaseMonth, subject.id) {
+    if (attendanceExportShouldShare == null) {
+      attendanceExportMonthKeys = listOf(attendanceExportBaseMonth.toString())
+    }
+  }
+
   BackHandler(enabled = selectedSection == MapelDetailSection.Soal && activeQuestionId != null) {
     activeQuestionId = null
     editorQuestionDraft = null
+  }
+
+  BackHandler(enabled = activePatronLearningItem != null) {
+    isPatronLearningEditMode = false
+    activePatronLearningItemId = null
   }
 
   Scaffold(
@@ -709,7 +779,7 @@ private fun MapelDetailScreen(
     contentWindowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
     topBar = {
       MapelDetailTopBar(
-        title = selectedSection.label,
+        title = if (activePatronLearningItem != null) "Materi Pembelajaran" else selectedSection.label,
         showUndo = isQuestionEditorOpen && questionUndoStack.isNotEmpty(),
         onUndoClick = {
           val restored = questionUndoStack.lastOrNull()
@@ -722,9 +792,76 @@ private fun MapelDetailScreen(
           if (isQuestionEditorOpen) {
             activeQuestionId = null
             editorQuestionDraft = null
+          } else if (activePatronLearningItem != null) {
+            isPatronLearningEditMode = false
+            activePatronLearningItemId = null
           } else {
             onBackClick()
           }
+        },
+        actions = if (activePatronLearningItem != null) {
+          {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              AnimatedVisibility(visible = isPatronLearningEditMode && patronLearningUndoStack.isNotEmpty()) {
+                MapelTopButton(
+                  icon = Icons.AutoMirrored.Outlined.Undo,
+                  contentDescription = t("Batalkan perubahan"),
+                  onClick = {
+                  val restored = patronLearningUndoStack.lastOrNull()
+                  val itemId = activePatronLearningItem.id
+                  if (restored != null) {
+                    patronLearningUndoStack = patronLearningUndoStack.dropLast(1)
+                      val nextMaterials = patronLearningMaterials.toMutableMap().apply {
+                        put(itemId, restored)
+                      }
+                      patronLearningMaterials = nextMaterials
+                      savePatronLearningMaterials(context, subject.id, nextMaterials)
+                  }
+                }
+              )
+              }
+              MapelTopButton(
+                icon = if (isPatronLearningEditMode) Icons.Outlined.Check else Icons.Outlined.EditNote,
+                contentDescription = t(if (isPatronLearningEditMode) "Selesai edit" else "Edit materi"),
+                onClick = { isPatronLearningEditMode = !isPatronLearningEditMode }
+              )
+            }
+          }
+        } else if (selectedSection == MapelDetailSection.Absensi && !isQuestionEditorOpen) {
+          {
+            var actionMenuExpanded by rememberSaveable { mutableStateOf(false) }
+            Box {
+              MapelTopButton(
+                icon = Icons.Outlined.MoreVert,
+                contentDescription = t("Menu absensi"),
+                onClick = { actionMenuExpanded = true }
+              )
+              DropdownMenu(
+                expanded = actionMenuExpanded,
+                onDismissRequest = { actionMenuExpanded = false },
+                modifier = Modifier.background(CardBackground)
+              ) {
+                DropdownMenuItem(
+                  text = { Text(t("Cetak Absensi")) },
+                  enabled = attendanceSnapshot != null && !isLoadingAttendance && !isExportingAttendance,
+                  onClick = {
+                    actionMenuExpanded = false
+                    attendanceExportShouldShare = false
+                  }
+                )
+                DropdownMenuItem(
+                  text = { Text(t("Kirim Absensi")) },
+                  enabled = attendanceSnapshot != null && !isLoadingAttendance && !isExportingAttendance,
+                  onClick = {
+                    actionMenuExpanded = false
+                    attendanceExportShouldShare = true
+                  }
+                )
+              }
+            }
+          }
+        } else {
+          null
         }
       )
     }
@@ -743,12 +880,32 @@ private fun MapelDetailScreen(
             .padding(horizontal = 16.dp)
             .padding(bottom = if (isQuestionEditorOpen) 18.dp else 0.dp)
         ) {
-          AbsensiMapelHeaderCard(
-            subject = subject,
-            modifier = Modifier.padding(top = 12.dp, bottom = 14.dp)
-          )
+          if (activePatronLearningItem != null) {
+            PatronLearningDocumentScreen(
+              subject = subject,
+              item = activePatronLearningItem,
+              material = patronLearningMaterials[activePatronLearningItem.id] ?: PatronLearningMaterial(),
+              isEditMode = isPatronLearningEditMode,
+              onMaterialChange = { updated ->
+                val previous = patronLearningMaterials[activePatronLearningItem.id] ?: PatronLearningMaterial()
+                if (previous != updated) {
+                  patronLearningUndoStack = (patronLearningUndoStack + previous).takeLast(30)
+                }
+                val nextMaterials = patronLearningMaterials.toMutableMap().apply {
+                  put(activePatronLearningItem.id, updated)
+                }
+                patronLearningMaterials = nextMaterials
+                savePatronLearningMaterials(context, subject.id, nextMaterials)
+              },
+              modifier = Modifier.weight(1f)
+            )
+          } else {
+            AbsensiMapelHeaderCard(
+              subject = subject,
+              modifier = Modifier.padding(top = 12.dp, bottom = 14.dp)
+            )
 
-          when (selectedSection) {
+            when (selectedSection) {
             MapelDetailSection.Absensi -> {
               AttendanceSortToggle(
                 selectedMode = attendanceSortMode,
@@ -810,7 +967,7 @@ private fun MapelDetailScreen(
             }
           }
 
-          LazyColumn(
+            LazyColumn(
             modifier = Modifier
               .fillMaxWidth()
               .weight(1f),
@@ -981,10 +1138,14 @@ private fun MapelDetailScreen(
                   ) { item ->
                     PatronMateriCard(
                       item = item,
+                      material = patronLearningMaterials[item.id],
                       onTextChange = { text ->
                         patronMateriItems = patronMateriItems.map { current ->
                           if (current.id == item.id) current.copy(text = text) else current
                         }
+                      },
+                      onOpenLearningMaterial = {
+                        activePatronLearningItemId = item.id
                       },
                       onSave = {
                         detailScope.launch {
@@ -997,6 +1158,11 @@ private fun MapelDetailScreen(
                       },
                       onDelete = {
                         detailScope.launch {
+                          patronLearningMaterials[item.id]?.pdfFileName?.takeIf { it.isNotBlank() }?.let { fileName ->
+                            deletePatronPdf(context, subject.id, item.id, fileName)
+                          }
+                          patronLearningMaterials = patronLearningMaterials - item.id
+                          savePatronLearningMaterials(context, subject.id, patronLearningMaterials)
                           val nextItems = patronMateriItems.filterNot { it.id == item.id }
                           patronMateriItems = nextItems
                           savePatronMateriChanges(nextItems)
@@ -1063,10 +1229,11 @@ private fun MapelDetailScreen(
                 }
               }
             }
+            }
           }
         }
 
-        if (!isQuestionEditorOpen) {
+        if (!isQuestionEditorOpen && activePatronLearningItem == null) {
           MapelDetailBottomNav(
             selectedSection = selectedSection,
             onSelectSection = onSectionChange,
@@ -1075,7 +1242,7 @@ private fun MapelDetailScreen(
               .navigationBarsPadding()
               .padding(horizontal = 18.dp, vertical = 10.dp)
           )
-        } else {
+        } else if (isQuestionEditorOpen) {
           SoalEditorFabMenu(
             isPrinting = isPrintingQuestion,
             onAddModel = { isAddingQuestionModel = true },
@@ -1113,8 +1280,243 @@ private fun MapelDetailScreen(
             }
           )
         }
+
+        attendanceExportShouldShare?.let { shouldShare ->
+          AttendanceExportPeriodDialog(
+            shouldShare = shouldShare,
+            currentMonth = attendanceExportBaseMonth,
+            selectedMonthKeys = attendanceExportMonthKeys,
+            isExporting = isExportingAttendance,
+            onSelectedMonthsChange = { attendanceExportMonthKeys = it },
+            onDismiss = {
+              if (!isExportingAttendance) attendanceExportShouldShare = null
+            },
+            onConfirm = {
+              val snapshot = attendanceSnapshot
+              val months = attendanceExportMonthKeys
+                .mapNotNull { runCatching { YearMonth.parse(it) }.getOrNull() }
+                .distinct()
+                .sorted()
+              when {
+                snapshot == null -> {
+                  Toast.makeText(context, "Data absensi belum tersedia.", Toast.LENGTH_LONG).show()
+                }
+                months.isEmpty() -> {
+                  Toast.makeText(context, "Pilih minimal satu bulan.", Toast.LENGTH_SHORT).show()
+                }
+                else -> {
+                  detailScope.launch {
+                    isExportingAttendance = true
+                    runCatching {
+                      val worksheets = months.map { month ->
+                        MapelAttendanceExcelExporter.AttendanceWorksheet(
+                          period = month,
+                          snapshot = snapshot
+                        )
+                      }
+                      MapelAttendanceExcelExporter.createWorkbook(context, worksheets)
+                    }.onSuccess { file ->
+                      attendanceExportShouldShare = null
+                      if (shouldShare) {
+                        MapelAttendanceExcelExporter.shareWorkbook(context, file)
+                      } else {
+                        MapelAttendanceExcelExporter.openWorkbook(context, file)
+                      }
+                    }.onFailure { error ->
+                      Toast.makeText(
+                        context,
+                        error.message ?: "Gagal membuat file absensi.",
+                        Toast.LENGTH_LONG
+                      ).show()
+                    }
+                    isExportingAttendance = false
+                  }
+                }
+              }
+            }
+          )
+        }
       }
     }
+  }
+}
+
+@Composable
+private fun AttendanceExportPeriodDialog(
+  shouldShare: Boolean,
+  currentMonth: YearMonth,
+  selectedMonthKeys: List<String>,
+  isExporting: Boolean,
+  onSelectedMonthsChange: (List<String>) -> Unit,
+  onDismiss: () -> Unit,
+  onConfirm: () -> Unit
+) {
+  val monthOptions = remember(currentMonth) { currentMonth.mapelExportAcademicYearMonths() }
+  val selectedSet = selectedMonthKeys.toSet()
+  val semesterMonths = remember(currentMonth) { currentMonth.mapelExportSemesterMonths() }
+  val title = if (shouldShare) "Kirim Absensi" else "Cetak Absensi"
+
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    containerColor = CardBackground,
+    title = {
+      Text(
+        text = t(title),
+        color = PrimaryBlueDark,
+        fontWeight = FontWeight.ExtraBold
+      )
+    },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text(
+          text = t("Pilih bulan yang ingin dimasukkan ke file Excel. Jika memilih lebih dari satu bulan, setiap bulan akan dibuat sebagai tab tersendiri."),
+          style = MaterialTheme.typography.bodySmall,
+          color = SubtleInk
+        )
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+          AttendancePeriodShortcut(
+            label = "Bulan Ini",
+            selected = selectedSet == setOf(currentMonth.toString()),
+            onClick = { onSelectedMonthsChange(listOf(currentMonth.toString())) }
+          )
+          AttendancePeriodShortcut(
+            label = "Semester",
+            selected = selectedSet == semesterMonths.map { it.toString() }.toSet(),
+            onClick = { onSelectedMonthsChange(semesterMonths.map { it.toString() }) }
+          )
+          AttendancePeriodShortcut(
+            label = "Tahun",
+            selected = selectedSet == monthOptions.map { it.toString() }.toSet(),
+            onClick = { onSelectedMonthsChange(monthOptions.map { it.toString() }) }
+          )
+        }
+        LazyColumn(
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(280.dp),
+          verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+          items(monthOptions.size) { index ->
+            val month = monthOptions[index]
+            val monthKey = month.toString()
+            val checked = monthKey in selectedSet
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(if (checked) HighlightCard.copy(alpha = 0.14f) else SoftPanel.copy(alpha = 0.72f))
+                .border(
+                  width = 1.dp,
+                  color = if (checked) HighlightCard.copy(alpha = 0.35f) else CardBorder,
+                  shape = RoundedCornerShape(16.dp)
+                )
+                .clickable(enabled = !isExporting) {
+                  val next = if (checked) {
+                    selectedMonthKeys.filterNot { it == monthKey }
+                  } else {
+                    (selectedMonthKeys + monthKey).distinct().sorted()
+                  }
+                  onSelectedMonthsChange(next)
+                }
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Checkbox(
+                checked = checked,
+                enabled = !isExporting,
+                onCheckedChange = {
+                  val next = if (checked) {
+                    selectedMonthKeys.filterNot { key -> key == monthKey }
+                  } else {
+                    (selectedMonthKeys + monthKey).distinct().sorted()
+                  }
+                  onSelectedMonthsChange(next)
+                }
+              )
+              Column(modifier = Modifier.weight(1f)) {
+                Text(
+                  text = month.mapelExportMonthTitle(),
+                  style = MaterialTheme.typography.titleSmall,
+                  color = PrimaryBlueDark,
+                  fontWeight = FontWeight.Bold
+                )
+                Text(
+                  text = t("Akan dibuat sebagai satu tab di file Excel."),
+                  style = MaterialTheme.typography.bodySmall,
+                  color = SubtleInk
+                )
+              }
+            }
+          }
+        }
+        if (isExporting) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+          ) {
+            CircularProgressIndicator(
+              modifier = Modifier.size(18.dp),
+              strokeWidth = 2.dp,
+              color = HighlightCard
+            )
+            Text(
+              text = t("Menyiapkan data dan file Excel..."),
+              style = MaterialTheme.typography.bodySmall,
+              color = SubtleInk
+            )
+          }
+        }
+      }
+    },
+    confirmButton = {
+      Button(
+        enabled = !isExporting && selectedMonthKeys.isNotEmpty(),
+        onClick = onConfirm
+      ) {
+        Text(t(if (shouldShare) "Kirim" else "Cetak"))
+      }
+    },
+    dismissButton = {
+      TextButton(
+        enabled = !isExporting,
+        onClick = onDismiss
+      ) {
+        Text(t("Batal"))
+      }
+    }
+  )
+}
+
+@Composable
+private fun AttendancePeriodShortcut(
+  label: String,
+  selected: Boolean,
+  onClick: () -> Unit
+) {
+  Box(
+    modifier = Modifier
+      .clip(RoundedCornerShape(999.dp))
+      .background(if (selected) HighlightCard else SoftPanel.copy(alpha = 0.78f))
+      .border(
+        width = 1.dp,
+        color = if (selected) HighlightCard else CardBorder,
+        shape = RoundedCornerShape(999.dp)
+      )
+      .clickable(onClick = onClick)
+      .padding(horizontal = 11.dp, vertical = 8.dp)
+  ) {
+    Text(
+      text = t(label),
+      style = MaterialTheme.typography.labelMedium,
+      color = if (selected) Color.White else PrimaryBlueDark,
+      fontWeight = FontWeight.Bold,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis
+    )
   }
 }
 
@@ -2210,7 +2612,9 @@ private fun PatronMateriToolbar(
 @Composable
 private fun PatronMateriCard(
   item: PatronMateriItem,
+  material: PatronLearningMaterial?,
   onTextChange: (String) -> Unit,
+  onOpenLearningMaterial: () -> Unit,
   onSave: () -> Unit,
   onDelete: () -> Unit
 ) {
@@ -2255,6 +2659,8 @@ private fun PatronMateriCard(
             if (showDeleteAction || offsetX < 0f) {
               showDeleteAction = false
               offsetX = 0f
+            } else if (!isEditing && item.text.isNotBlank()) {
+              onOpenLearningMaterial()
             }
           },
           onLongClick = {
@@ -2305,6 +2711,7 @@ private fun PatronMateriCard(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
           )
+          PatronLearningSummary(material = material)
         }
       }
 
@@ -2349,6 +2756,1342 @@ private fun PatronMateriCard(
         }
       }
     }
+  }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PatronLearningSummary(material: PatronLearningMaterial?) {
+  val blocks = material?.normalizedBlocks().orEmpty()
+  val hasText = blocks.any { it.type == PatronLearningBlockType.Text.key || it.type == PatronLearningBlockType.List.key }
+  val hasImage = blocks.any { it.type == PatronLearningBlockType.Image.key }
+  val hasPdf = blocks.any { it.type == PatronLearningBlockType.Pdf.key }
+  if (!hasText && !hasImage && !hasPdf) {
+    Text(
+      text = t("Ketuk untuk menyiapkan bahan ajar."),
+      style = MaterialTheme.typography.bodySmall,
+      color = SubtleInk,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis
+    )
+    return
+  }
+  FlowRow(
+    horizontalArrangement = Arrangement.spacedBy(7.dp),
+    verticalArrangement = Arrangement.spacedBy(5.dp)
+  ) {
+    if (hasText) {
+      PatronLearningChip(label = "Ada panduan", tone = SuccessTint)
+    }
+    if (hasImage) {
+      PatronLearningChip(label = "Ada gambar", tone = WarmAccent)
+    }
+    if (hasPdf) {
+      PatronLearningChip(label = "PDF bahan ajar", tone = HighlightCard)
+    }
+  }
+}
+
+@Composable
+private fun PatronLearningChip(
+  label: String,
+  tone: Color
+) {
+  Box(
+    modifier = Modifier
+      .clip(RoundedCornerShape(999.dp))
+      .background(tone.copy(alpha = 0.10f))
+      .border(1.dp, tone.copy(alpha = 0.22f), RoundedCornerShape(999.dp))
+      .padding(horizontal = 9.dp, vertical = 5.dp)
+  ) {
+    Text(
+      text = t(label),
+      style = MaterialTheme.typography.labelSmall,
+      color = PrimaryBlueDark,
+      fontWeight = FontWeight.SemiBold
+    )
+  }
+}
+
+@Composable
+private fun PatronLearningDocumentScreen(
+  subject: SubjectOverview,
+  item: PatronMateriItem,
+  material: PatronLearningMaterial,
+  isEditMode: Boolean,
+  onMaterialChange: (PatronLearningMaterial) -> Unit,
+  modifier: Modifier = Modifier
+) {
+  val context = LocalContext.current
+  var feedbackMessage by remember(item.id, material) { mutableStateOf<String?>(null) }
+  var activeTextTarget by remember(item.id) { mutableStateOf<PatronTextEditTarget?>(null) }
+  val blocks = remember(material) { material.normalizedBlocks() }
+
+  fun updateMaterial(nextBlocks: List<PatronLearningBlock>) {
+    onMaterialChange(
+      material.copy(
+        note = "",
+        pdfFileName = "",
+        pdfOriginalName = "",
+        blocks = nextBlocks,
+        updatedAt = System.currentTimeMillis()
+      )
+    )
+  }
+
+  fun appendBlock(type: PatronLearningBlockType) {
+    updateMaterial(
+      blocks + PatronLearningBlock(
+        id = "block-${System.currentTimeMillis()}",
+        type = type.key
+      )
+    )
+  }
+
+  fun applyActiveTextFormat(format: PatronTextFormat) {
+    val target = activeTextTarget ?: return
+    updateMaterial(
+      blocks.map { block ->
+        if (block.id == target.blockId && block.isPatronTextBlock()) {
+          block.withAppliedTextFormat(target.selection, format)
+        } else {
+          block
+        }
+      }
+    )
+  }
+
+  val pdfPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    if (uri != null) {
+      runCatching {
+        copyPatronPdfToInternalStorage(context, subject.id, item.id, uri)
+      }.onSuccess { copied ->
+        updateMaterial(
+          blocks + PatronLearningBlock(
+            id = "block-${System.currentTimeMillis()}",
+            type = PatronLearningBlockType.Pdf.key,
+            fileName = copied.fileName,
+            originalName = copied.originalName
+          )
+        )
+        feedbackMessage = "PDF berhasil ditambahkan."
+      }.onFailure { error ->
+        feedbackMessage = error.message ?: "Gagal menambahkan PDF."
+      }
+    }
+  }
+
+  val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    if (uri != null) {
+      runCatching {
+        copyPatronImageToInternalStorage(context, subject.id, item.id, uri)
+      }.onSuccess { copied ->
+        updateMaterial(
+          blocks + PatronLearningBlock(
+            id = "block-${System.currentTimeMillis()}",
+            type = PatronLearningBlockType.Image.key,
+            fileName = copied.fileName,
+            originalName = copied.originalName
+          )
+        )
+        feedbackMessage = "Gambar berhasil ditambahkan."
+      }.onFailure { error ->
+        feedbackMessage = error.message ?: "Gagal menambahkan gambar."
+      }
+    }
+  }
+
+  Box(modifier = modifier.fillMaxWidth()) {
+    LazyColumn(
+      modifier = Modifier.fillMaxWidth(),
+      verticalArrangement = Arrangement.spacedBy(16.dp),
+      contentPadding = PaddingValues(top = 12.dp, bottom = if (isEditMode) 106.dp else 30.dp)
+    ) {
+      item {
+        Column(
+          modifier = Modifier.fillMaxWidth(),
+          verticalArrangement = Arrangement.spacedBy(6.dp),
+          horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+          Text(
+            text = item.text.ifBlank { "Materi pembelajaran" },
+            style = MaterialTheme.typography.headlineSmall,
+            color = PrimaryBlueDark,
+            fontWeight = FontWeight.ExtraBold,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+          )
+          Text(
+            text = "${subject.title} | ${subject.className}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = SubtleInk,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+          )
+        }
+      }
+
+      if (blocks.isEmpty()) {
+        item {
+          Text(
+            text = if (isEditMode) t("Tekan tombol + untuk mulai menyusun materi.") else t("Belum ada isi materi."),
+            style = MaterialTheme.typography.bodyLarge,
+            color = SubtleInk,
+            modifier = Modifier.padding(top = 22.dp)
+          )
+        }
+      } else {
+        items(
+          items = blocks,
+          key = { it.id }
+        ) { block ->
+          PatronLearningBlockView(
+            subjectId = subject.id,
+            itemId = item.id,
+            block = block,
+            isEditMode = isEditMode,
+            onBlockChange = { updated ->
+              updateMaterial(blocks.map { if (it.id == updated.id) updated else it })
+            },
+            onTextSelectionChange = { selection ->
+              activeTextTarget = PatronTextEditTarget(block.id, selection)
+            },
+            onDelete = {
+              if (activeTextTarget?.blockId == block.id) {
+                activeTextTarget = null
+              }
+              updateMaterial(blocks.filterNot { it.id == block.id })
+            },
+            onOpenPdf = { file ->
+              if (file.exists()) {
+                openPatronPdf(context, file)
+              } else {
+                feedbackMessage = "File PDF tidak ditemukan di perangkat ini."
+              }
+            }
+          )
+        }
+      }
+
+      feedbackMessage?.let { message ->
+        item {
+          AttendanceInfoBox(
+            message = message,
+            tone = if ("Gagal" in message || "tidak ditemukan" in message) WarmAccent else SuccessTint
+          )
+        }
+      }
+    }
+
+    if (isEditMode) {
+      PatronLearningEditToolBar(
+        canFormatText = activeTextTarget?.blockId?.let { activeId ->
+          blocks.any { it.id == activeId && it.isPatronTextBlock() }
+        } == true,
+        onAddText = { appendBlock(PatronLearningBlockType.Text) },
+        onAddImage = { imagePicker.launch(arrayOf("image/*")) },
+        onAddPdf = { pdfPicker.launch(arrayOf("application/pdf")) },
+        onFormat = ::applyActiveTextFormat,
+        modifier = Modifier
+          .align(Alignment.BottomCenter)
+          .navigationBarsPadding()
+          .imePadding()
+          .padding(horizontal = 10.dp, vertical = 10.dp)
+      )
+    }
+  }
+}
+
+private data class PatronTextEditTarget(
+  val blockId: String,
+  val selection: TextRange
+)
+
+@Composable
+private fun PatronLearningBlockView(
+  subjectId: String,
+  itemId: String,
+  block: PatronLearningBlock,
+  isEditMode: Boolean,
+  onBlockChange: (PatronLearningBlock) -> Unit,
+  onTextSelectionChange: (TextRange) -> Unit,
+  onDelete: () -> Unit,
+  onOpenPdf: (File) -> Unit
+) {
+  var showDeleteConfirmation by rememberSaveable(block.id) { mutableStateOf(false) }
+  var textFieldValue by remember(block.id) {
+    mutableStateOf(TextFieldValue(block.text, selection = TextRange(block.text.length)))
+  }
+  LaunchedEffect(block.id, block.text) {
+    if (block.text != textFieldValue.text) {
+      val cursor = textFieldValue.selection.min.coerceIn(0, block.text.length)
+      textFieldValue = TextFieldValue(block.text, selection = TextRange(cursor))
+      onTextSelectionChange(TextRange(cursor))
+    }
+  }
+  Column(
+    modifier = (if (isEditMode) {
+      Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(18.dp))
+        .background(CardBackground.copy(alpha = 0.88f))
+        .border(1.dp, CardBorder.copy(alpha = 0.78f), RoundedCornerShape(18.dp))
+        .padding(12.dp)
+    } else {
+      Modifier.fillMaxWidth()
+    }).animateContentSize(),
+    verticalArrangement = Arrangement.spacedBy(8.dp)
+  ) {
+    if (isEditMode) {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        Box(
+          modifier = Modifier
+            .size(34.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFFDC2626).copy(alpha = 0.10f))
+            .border(1.dp, Color(0xFFDC2626).copy(alpha = 0.24f), RoundedCornerShape(12.dp))
+            .clickable { showDeleteConfirmation = true },
+          contentAlignment = Alignment.Center
+        ) {
+          Icon(
+            imageVector = Icons.Outlined.Close,
+            contentDescription = t("Hapus blok"),
+            tint = Color(0xFFDC2626),
+            modifier = Modifier.size(19.dp)
+          )
+        }
+      }
+    }
+
+    when (block.type) {
+      PatronLearningBlockType.List.key -> {
+        if (isEditMode) {
+          OutlinedTextField(
+            value = textFieldValue,
+            onValueChange = {
+              val change = resolvePatronEditorTextChange(block, textFieldValue, it)
+              textFieldValue = change.value
+              onTextSelectionChange(change.value.selection)
+              onBlockChange(block.copy(text = change.value.text, spans = change.spans))
+            },
+            visualTransformation = PatronRichTextVisualTransformation(block.spans),
+            placeholder = { Text(t("Satu poin per baris")) },
+            minLines = 4,
+            modifier = Modifier.fillMaxWidth()
+          )
+        } else {
+          val rows = block.text.lines().map { it.trim() }.filter { it.isNotBlank() }
+          if (rows.isEmpty()) {
+            Text(t("Daftar kosong"), color = SubtleInk, style = MaterialTheme.typography.bodyMedium)
+          } else {
+            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+              rows.forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.Top) {
+                  Text("•", color = PrimaryBlueDark, fontWeight = FontWeight.Bold)
+                  Text(
+                    text = buildPatronRichText(row, block.spansForDisplayRow(row)),
+                    color = PrimaryBlueDark,
+                    style = MaterialTheme.typography.bodyLarge
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
+
+      PatronLearningBlockType.Image.key -> {
+        val file = patronLearningBlockFile(LocalContext.current, subjectId, itemId, block)
+        val bitmap = remember(file.absolutePath, file.lastModified()) {
+          runCatching { BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap() }.getOrNull()
+        }
+        if (bitmap != null) {
+          Image(
+            bitmap = bitmap,
+            contentDescription = block.originalName.ifBlank { "Gambar bahan ajar" },
+            modifier = Modifier
+              .fillMaxWidth()
+              .heightIn(min = 160.dp, max = 280.dp)
+              .clip(RoundedCornerShape(18.dp)),
+            contentScale = ContentScale.Crop
+          )
+        } else {
+          PatronLearningFileRow(
+            icon = Icons.Outlined.Description,
+            title = block.originalName.ifBlank { "Gambar tidak ditemukan" },
+            subtitle = "File gambar tidak ditemukan di perangkat ini.",
+            onClick = {}
+          )
+        }
+      }
+
+      PatronLearningBlockType.Pdf.key -> {
+        val file = patronLearningBlockFile(LocalContext.current, subjectId, itemId, block)
+        PatronLearningFileRow(
+          icon = Icons.Outlined.Description,
+          title = block.originalName.ifBlank { "PDF bahan ajar" },
+          subtitle = "Ketuk untuk membuka PDF.",
+          onClick = { onOpenPdf(file) }
+        )
+      }
+
+      else -> {
+        if (isEditMode) {
+          OutlinedTextField(
+            value = textFieldValue,
+            onValueChange = {
+              val change = resolvePatronEditorTextChange(block, textFieldValue, it)
+              textFieldValue = change.value
+              onTextSelectionChange(change.value.selection)
+              onBlockChange(block.copy(text = change.value.text, spans = change.spans))
+            },
+            visualTransformation = PatronRichTextVisualTransformation(block.spans),
+            placeholder = { Text(t("Tulis materi...")) },
+            minLines = 5,
+            modifier = Modifier.fillMaxWidth()
+          )
+        } else {
+          Text(
+            text = if (block.text.isBlank()) AnnotatedString(t("Teks kosong")) else buildPatronRichText(block.text, block.spans),
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (block.text.isBlank()) SubtleInk else PrimaryBlueDark,
+            lineHeight = MaterialTheme.typography.bodyLarge.lineHeight
+          )
+        }
+      }
+    }
+
+  }
+
+  if (showDeleteConfirmation) {
+    AlertDialog(
+      onDismissRequest = { showDeleteConfirmation = false },
+      containerColor = CardBackground,
+      title = {
+        Text(
+          text = t("Hapus bagian materi?"),
+          color = PrimaryBlueDark,
+          fontWeight = FontWeight.ExtraBold
+        )
+      },
+      text = {
+        Text(
+          text = t("Bagian ini akan dihapus dari materi pembelajaran. Tindakan ini bisa dibatalkan dengan tombol undo selama masih di mode edit."),
+          color = SubtleInk,
+          style = MaterialTheme.typography.bodyMedium
+        )
+      },
+      confirmButton = {
+        Button(
+          onClick = {
+            showDeleteConfirmation = false
+            onDelete()
+          }
+        ) {
+          Text(t("Hapus"))
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { showDeleteConfirmation = false }) {
+          Text(t("Batal"))
+        }
+      }
+    )
+  }
+}
+
+@Composable
+private fun PatronTextFormatButton(
+  label: String,
+  fontWeight: FontWeight = FontWeight.Bold,
+  fontStyle: FontStyle = FontStyle.Normal,
+  textDecoration: TextDecoration? = null,
+  enabled: Boolean = true,
+  onClick: () -> Unit
+) {
+  Box(
+    modifier = Modifier
+      .size(34.dp)
+      .clip(RoundedCornerShape(12.dp))
+      .background(if (enabled) SoftPanel.copy(alpha = 0.78f) else SoftPanel.copy(alpha = 0.36f))
+      .border(1.dp, CardBorder.copy(alpha = if (enabled) 0.82f else 0.36f), RoundedCornerShape(12.dp))
+      .clickable(enabled = enabled, onClick = onClick),
+    contentAlignment = Alignment.Center
+  ) {
+    Text(
+      text = label,
+      style = MaterialTheme.typography.labelLarge,
+      color = if (enabled) PrimaryBlueDark else SubtleInk.copy(alpha = 0.55f),
+      fontWeight = fontWeight,
+      fontStyle = fontStyle,
+      textDecoration = textDecoration
+    )
+  }
+}
+
+@Composable
+private fun PatronLearningEditToolBar(
+  canFormatText: Boolean,
+  onAddText: () -> Unit,
+  onAddImage: () -> Unit,
+  onAddPdf: () -> Unit,
+  onFormat: (PatronTextFormat) -> Unit,
+  modifier: Modifier = Modifier
+) {
+  Row(
+    modifier = modifier
+      .fillMaxWidth()
+      .shadow(16.dp, RoundedCornerShape(26.dp), ambientColor = PrimaryBlue.copy(alpha = 0.12f), spotColor = PrimaryBlue.copy(alpha = 0.12f))
+      .clip(RoundedCornerShape(26.dp))
+      .background(CardBackground.copy(alpha = 0.96f))
+      .border(1.dp, CardBorder.copy(alpha = 0.86f), RoundedCornerShape(26.dp))
+      .horizontalScroll(rememberScrollState())
+      .padding(horizontal = 12.dp, vertical = 10.dp),
+    horizontalArrangement = Arrangement.spacedBy(8.dp),
+    verticalAlignment = Alignment.CenterVertically
+  ) {
+    PatronLearningToolIcon(
+      icon = Icons.Outlined.TextFields,
+      contentDescription = t("Tambah teks"),
+      onClick = onAddText
+    )
+    PatronLearningToolIcon(
+      icon = Icons.Outlined.Image,
+      contentDescription = t("Tambah gambar"),
+      onClick = onAddImage
+    )
+    PatronLearningToolIcon(
+      icon = Icons.Outlined.Description,
+      contentDescription = t("Tambah PDF"),
+      onClick = onAddPdf
+    )
+    Box(
+      modifier = Modifier
+        .height(28.dp)
+        .width(1.dp)
+        .background(CardBorder.copy(alpha = 0.72f))
+    )
+    PatronTextFormatButton(
+      label = "B",
+      fontWeight = FontWeight.ExtraBold,
+      enabled = canFormatText,
+      onClick = { onFormat(PatronTextFormat.Bold) }
+    )
+    PatronTextFormatButton(
+      label = "I",
+      fontStyle = FontStyle.Italic,
+      enabled = canFormatText,
+      onClick = { onFormat(PatronTextFormat.Italic) }
+    )
+    PatronTextFormatButton(
+      label = "U",
+      textDecoration = TextDecoration.Underline,
+      enabled = canFormatText,
+      onClick = { onFormat(PatronTextFormat.Underline) }
+    )
+    PatronTextFormatButton(
+      label = "\u2022",
+      enabled = canFormatText,
+      onClick = { onFormat(PatronTextFormat.List) }
+    )
+  }
+}
+
+@Composable
+private fun PatronLearningToolIcon(
+  icon: ImageVector,
+  contentDescription: String,
+  onClick: () -> Unit
+) {
+  Box(
+    modifier = Modifier
+      .size(38.dp)
+      .clip(RoundedCornerShape(14.dp))
+      .background(HighlightCard.copy(alpha = 0.12f))
+      .border(1.dp, HighlightCard.copy(alpha = 0.20f), RoundedCornerShape(14.dp))
+      .clickable(onClick = onClick),
+    contentAlignment = Alignment.Center
+  ) {
+    Icon(
+      imageVector = icon,
+      contentDescription = contentDescription,
+      tint = HighlightCard,
+      modifier = Modifier.size(20.dp)
+    )
+  }
+}
+
+private enum class PatronTextFormat {
+  Bold,
+  Italic,
+  Underline,
+  List
+}
+
+private fun PatronLearningBlock.withAppliedTextFormat(
+  selection: TextRange,
+  format: PatronTextFormat
+): PatronLearningBlock {
+  val rawStart = selection.min.coerceIn(0, text.length)
+  val rawEnd = selection.max.coerceIn(0, text.length)
+  val (start, end) = if (format == PatronTextFormat.List) {
+    selectedPatronLineRange(text, rawStart, rawEnd)
+  } else {
+    rawStart to rawEnd
+  }
+  if (start == end && format != PatronTextFormat.List) return this
+
+  val normalized = spans.normalizedPatronTextSpans(text.length)
+  val shouldRemove = normalized.isPatronFormatFullyCovered(text, start, end, format)
+  val nextSpans = if (shouldRemove) {
+    normalized.removePatronFormat(text, start, end, format)
+  } else {
+    normalized.addPatronFormat(text, start, end, format)
+  }
+  return copy(spans = nextSpans.normalizedPatronTextSpans(text.length))
+}
+
+private fun PatronLearningBlock.isPatronTextBlock(): Boolean =
+  type == PatronLearningBlockType.Text.key || type == PatronLearningBlockType.List.key
+
+private fun selectedPatronLineRange(
+  text: String,
+  selectionStart: Int,
+  selectionEnd: Int
+): Pair<Int, Int> {
+  if (text.isEmpty()) return 0 to 0
+  val safeStart = selectionStart.coerceIn(0, text.length)
+  val safeEnd = selectionEnd.coerceIn(0, text.length)
+  val start = if (safeStart <= 0) {
+    0
+  } else {
+    text.lastIndexOf('\n', safeStart - 1).let { if (it < 0) 0 else it + 1 }
+  }
+  val endAnchor = if (safeEnd > safeStart) safeEnd - 1 else safeEnd
+  val end = if (endAnchor >= text.length) {
+    text.length
+  } else {
+    text.indexOf('\n', endAnchor.coerceAtLeast(0)).let { if (it < 0) text.length else it }
+  }
+  return start to end
+}
+
+private fun PatronLearningBlock.spansForDisplayRow(row: String): List<PatronTextSpan> {
+  val rowStart = text.indexOf(row)
+  if (rowStart < 0) return emptyList()
+  val rowEnd = rowStart + row.length
+  return spans.mapNotNull { span ->
+    val start = maxOf(span.start, rowStart)
+    val end = minOf(span.end, rowEnd)
+    if (end <= start) {
+      null
+    } else {
+      span.copy(start = start - rowStart, end = end - rowStart)
+    }
+  }.normalizedPatronTextSpans(row.length)
+}
+
+private fun adjustPatronTextSpans(
+  oldText: String,
+  newText: String,
+  spans: List<PatronTextSpan>
+): List<PatronTextSpan> {
+  if (oldText == newText || spans.isEmpty()) return spans.normalizedPatronTextSpans(newText.length)
+
+  var prefix = 0
+  val maxPrefix = minOf(oldText.length, newText.length)
+  while (prefix < maxPrefix && oldText[prefix] == newText[prefix]) prefix += 1
+
+  var suffix = 0
+  val oldRemaining = oldText.length - prefix
+  val newRemaining = newText.length - prefix
+  while (
+    suffix < oldRemaining &&
+    suffix < newRemaining &&
+    oldText[oldText.length - 1 - suffix] == newText[newText.length - 1 - suffix]
+  ) {
+    suffix += 1
+  }
+
+  val oldChangeEnd = oldText.length - suffix
+  val newChangeEnd = newText.length - suffix
+  val delta = newText.length - oldText.length
+  return spans.mapNotNull { span ->
+    val shifted = when {
+      span.list && span.start == span.end && span.start == prefix && newChangeEnd > prefix ->
+        span.copy(end = newChangeEnd)
+      span.end <= prefix -> span
+      span.start >= oldChangeEnd -> span.copy(start = span.start + delta, end = span.end + delta)
+      else -> {
+        val nextStart = if (span.start <= prefix) span.start else newChangeEnd
+        val nextEnd = if (span.end >= oldChangeEnd) span.end + delta else prefix
+        span.copy(start = nextStart, end = nextEnd)
+      }
+    }
+    shifted.takeIf { it.end > it.start || (it.list && it.end == it.start) }
+  }.normalizedPatronTextSpans(newText.length)
+}
+
+private fun List<PatronTextSpan>.isPatronFormatFullyCovered(
+  text: String,
+  start: Int,
+  end: Int,
+  format: PatronTextFormat
+): Boolean {
+  if (format == PatronTextFormat.List) {
+    val lineRanges = patronSelectedLineRanges(text, start, end)
+    if (lineRanges.isEmpty()) return false
+    return lineRanges.all { (lineStart, lineEnd) ->
+      this.any { span ->
+        span.list && if (lineStart == lineEnd) {
+          span.start == lineStart && span.end == lineEnd
+        } else {
+          span.start <= lineStart && span.end >= lineEnd
+        }
+      }
+    }
+  }
+  if (end <= start) return false
+  val covered = BooleanArray(end - start)
+  filter { it.hasPatronFormat(format) }.forEach { span ->
+    val from = maxOf(span.start, start)
+    val until = minOf(span.end, end)
+    for (index in from until until) {
+      covered[index - start] = true
+    }
+  }
+  return covered.all { it }
+}
+
+private fun List<PatronTextSpan>.addPatronFormat(
+  text: String,
+  start: Int,
+  end: Int,
+  format: PatronTextFormat
+): List<PatronTextSpan> {
+  if (format == PatronTextFormat.List) {
+    val lines = patronSelectedLineRanges(text, start, end)
+    val withoutCurrentLineList = lines.fold(this) { current, (lineStart, lineEnd) ->
+      current.removePatronFormatRange(lineStart, lineEnd, format)
+    }
+    return withoutCurrentLineList + lines.map { (lineStart, lineEnd) ->
+      PatronTextSpan(start = lineStart, end = lineEnd, list = true)
+    }
+  }
+  if (end <= start) return this
+  return this + PatronTextSpan(
+    start = start,
+    end = end,
+    bold = format == PatronTextFormat.Bold,
+    italic = format == PatronTextFormat.Italic,
+    underline = format == PatronTextFormat.Underline
+  )
+}
+
+private fun List<PatronTextSpan>.removePatronFormat(
+  text: String,
+  start: Int,
+  end: Int,
+  format: PatronTextFormat
+): List<PatronTextSpan> {
+  if (format == PatronTextFormat.List) {
+    return patronSelectedLineRanges(text, start, end).fold(this) { current, (lineStart, lineEnd) ->
+      current.removePatronFormatRange(lineStart, lineEnd, format)
+    }
+  }
+  return removePatronFormatRange(start, end, format)
+}
+
+private fun List<PatronTextSpan>.removePatronFormatRange(
+  start: Int,
+  end: Int,
+  format: PatronTextFormat
+): List<PatronTextSpan> {
+  return flatMap { span ->
+    if (!span.hasPatronFormat(format)) return@flatMap listOf(span)
+    if (format == PatronTextFormat.List && start == end) {
+      return@flatMap if (span.start == start && span.end == end) emptyList() else listOf(span)
+    }
+    if (end <= start || span.end <= start || span.start >= end) return@flatMap listOf(span)
+
+    buildList {
+      if (span.start < start) {
+        add(span.copy(end = start))
+      }
+      val middleStart = maxOf(span.start, start)
+      val middleEnd = minOf(span.end, end)
+      val withoutFormat = span.withPatronFormat(format, enabled = false)
+      if (middleEnd > middleStart && withoutFormat.hasAnyPatronFormat()) {
+        add(withoutFormat.copy(start = middleStart, end = middleEnd))
+      }
+      if (span.end > end) {
+        add(span.copy(start = end))
+      }
+    }
+  }
+}
+
+private fun patronSelectedLineRanges(
+  text: String,
+  start: Int,
+  end: Int
+): List<Pair<Int, Int>> {
+  val expanded = selectedPatronLineRange(text, start, end)
+  val lineRanges = mutableListOf<Pair<Int, Int>>()
+  var cursor = expanded.first
+  while (cursor <= expanded.second) {
+    val nextNewline = text.indexOf('\n', cursor).let { if (it < 0) text.length else it }
+    val lineEnd = minOf(nextNewline, expanded.second)
+    lineRanges += cursor to lineEnd
+    if (nextNewline >= expanded.second || nextNewline >= text.length) break
+    cursor = nextNewline + 1
+  }
+  return lineRanges.ifEmpty { listOf(expanded) }
+}
+
+private fun PatronTextSpan.hasPatronFormat(format: PatronTextFormat): Boolean =
+  when (format) {
+    PatronTextFormat.Bold -> bold
+    PatronTextFormat.Italic -> italic
+    PatronTextFormat.Underline -> underline
+    PatronTextFormat.List -> list
+  }
+
+private fun PatronTextSpan.withPatronFormat(
+  format: PatronTextFormat,
+  enabled: Boolean
+): PatronTextSpan =
+  when (format) {
+    PatronTextFormat.Bold -> copy(bold = enabled)
+    PatronTextFormat.Italic -> copy(italic = enabled)
+    PatronTextFormat.Underline -> copy(underline = enabled)
+    PatronTextFormat.List -> copy(list = enabled)
+  }
+
+private fun PatronTextSpan.hasAnyPatronFormat(): Boolean =
+  bold || italic || underline || list
+
+private fun List<PatronTextSpan>.normalizedPatronTextSpans(textLength: Int): List<PatronTextSpan> =
+  mapNotNull { span ->
+    val start = span.start.coerceIn(0, textLength)
+    val end = span.end.coerceIn(0, textLength)
+    when {
+      end < start -> null
+      !span.hasAnyPatronFormat() -> null
+      end == start && !span.list -> null
+      end == start -> span.copy(
+        start = start,
+        end = end,
+        bold = false,
+        italic = false,
+        underline = false,
+        list = true
+      )
+      else -> span.copy(start = start, end = end)
+    }
+  }.distinct()
+
+private fun buildPatronRichText(
+  text: String,
+  spans: List<PatronTextSpan>
+): AnnotatedString {
+  val render = renderPatronRichText(text, spans)
+  return render.text
+}
+
+private data class PatronRichTextRender(
+  val text: AnnotatedString,
+  val originalToTransformed: IntArray,
+  val transformedToOriginal: IntArray
+)
+
+private fun renderPatronRichText(
+  text: String,
+  spans: List<PatronTextSpan>
+): PatronRichTextRender {
+  val normalizedSpans = spans.normalizedPatronTextSpans(text.length)
+  val listSpans = normalizedSpans.filter { it.list }
+  val builder = AnnotatedString.Builder()
+  val originalToTransformed = IntArray(text.length + 1)
+  val transformedToOriginal = mutableListOf<Int>()
+
+  fun appendMapped(value: String, originalOffset: Int) {
+    value.forEach { char ->
+      transformedToOriginal += originalOffset.coerceIn(0, text.length)
+      builder.append(char)
+    }
+  }
+
+  var lineStart = 0
+  while (lineStart <= text.length) {
+    val newlineIndex = text.indexOf('\n', lineStart).let { if (it < 0) text.length else it }
+    val lineEnd = newlineIndex
+    val lineText = text.substring(lineStart, lineEnd)
+    val hasListMarker = listSpans.any { span ->
+      if (lineStart == lineEnd) {
+        span.start == lineStart && span.end == lineEnd
+      } else {
+        lineText.isNotBlank() && span.end > lineStart && span.start < lineEnd
+      }
+    }
+    if (hasListMarker) {
+      appendMapped("\u2022 ", lineStart)
+    }
+    originalToTransformed[lineStart] = builder.length
+    for (index in lineStart until lineEnd) {
+      originalToTransformed[index] = builder.length
+      appendMapped(text[index].toString(), index)
+    }
+    if (newlineIndex < text.length) {
+      originalToTransformed[newlineIndex] = builder.length
+      appendMapped("\n", newlineIndex)
+      lineStart = newlineIndex + 1
+    } else {
+      break
+    }
+  }
+  originalToTransformed[text.length] = builder.length
+  transformedToOriginal += text.length
+
+  normalizedSpans.filterNot { it.list }.forEach { span ->
+    val start = originalToTransformed[span.start.coerceIn(0, text.length)]
+    val end = originalToTransformed[span.end.coerceIn(0, text.length)]
+    if (end <= start) return@forEach
+    builder.addStyle(
+      SpanStyle(
+        fontWeight = if (span.bold) FontWeight.Bold else null,
+        fontStyle = if (span.italic) FontStyle.Italic else null,
+        textDecoration = if (span.underline) TextDecoration.Underline else null
+      ),
+      start,
+      end
+    )
+  }
+  return PatronRichTextRender(
+    text = builder.toAnnotatedString(),
+    originalToTransformed = originalToTransformed,
+    transformedToOriginal = transformedToOriginal.toIntArray()
+  )
+}
+
+private class PatronRichTextVisualTransformation(
+  private val spans: List<PatronTextSpan>
+) : VisualTransformation {
+  override fun filter(text: AnnotatedString): TransformedText {
+    val render = renderPatronRichText(text.text, spans)
+    return TransformedText(
+      text = render.text,
+      offsetMapping = object : OffsetMapping {
+        override fun originalToTransformed(offset: Int): Int =
+          render.originalToTransformed[offset.coerceIn(render.originalToTransformed.indices)]
+
+        override fun transformedToOriginal(offset: Int): Int =
+          render.transformedToOriginal[offset.coerceIn(render.transformedToOriginal.indices)]
+      }
+    )
+  }
+}
+
+private data class PatronEditorTextChange(
+  val value: TextFieldValue,
+  val spans: List<PatronTextSpan>
+)
+
+private fun resolvePatronEditorTextChange(
+  block: PatronLearningBlock,
+  previous: TextFieldValue,
+  next: TextFieldValue
+): PatronEditorTextChange {
+  val listBackspace = resolvePatronListBackspace(block, previous, next)
+  if (listBackspace != null) return listBackspace
+  return PatronEditorTextChange(
+    value = next,
+    spans = adjustPatronTextSpans(block.text, next.text, block.spans)
+  )
+}
+
+private fun resolvePatronListBackspace(
+  block: PatronLearningBlock,
+  previous: TextFieldValue,
+  next: TextFieldValue
+): PatronEditorTextChange? {
+  if (previous.text.length != next.text.length + 1) return null
+  val prefix = previous.text.commonPrefixWith(next.text).length
+  if (prefix !in previous.text.indices || previous.text[prefix] != '\n') return null
+
+  val lineStart = prefix + 1
+  val lineEnd = previous.text.indexOf('\n', lineStart).let { if (it < 0) previous.text.length else it }
+  val hadList = block.spans.normalizedPatronTextSpans(previous.text.length).any { span ->
+    span.list && if (lineStart == lineEnd) {
+      span.start == lineStart && span.end == lineEnd
+    } else {
+      span.start <= lineStart && span.end >= lineEnd
+    }
+  }
+  if (!hadList) return null
+
+  val nextSpans = block.spans
+    .normalizedPatronTextSpans(previous.text.length)
+    .removePatronFormatRange(lineStart, lineEnd, PatronTextFormat.List)
+  return PatronEditorTextChange(
+    value = previous.copy(selection = TextRange(lineStart)),
+    spans = nextSpans
+  )
+}
+
+@Composable
+private fun PatronLearningFileRow(
+  icon: ImageVector,
+  title: String,
+  subtitle: String,
+  onClick: () -> Unit
+) {
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(18.dp))
+      .background(SoftPanel.copy(alpha = 0.62f))
+      .border(1.dp, CardBorder.copy(alpha = 0.78f), RoundedCornerShape(18.dp))
+      .clickable(onClick = onClick)
+      .padding(13.dp),
+    horizontalArrangement = Arrangement.spacedBy(12.dp),
+    verticalAlignment = Alignment.CenterVertically
+  ) {
+    Icon(icon, contentDescription = null, tint = HighlightCard)
+    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+      Text(
+        text = title,
+        style = MaterialTheme.typography.titleSmall,
+        color = PrimaryBlueDark,
+        fontWeight = FontWeight.Bold,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+      )
+      Text(
+        text = t(subtitle),
+        style = MaterialTheme.typography.bodySmall,
+        color = SubtleInk
+      )
+    }
+  }
+}
+
+@Composable
+private fun PatronLearningAddFab(
+  onAddText: () -> Unit,
+  onAddImage: () -> Unit,
+  onAddPdf: () -> Unit,
+  modifier: Modifier = Modifier
+) {
+  var expanded by rememberSaveable { mutableStateOf(false) }
+  Box(modifier = modifier) {
+    Box(
+      modifier = Modifier
+        .size(58.dp)
+        .shadow(14.dp, CircleShape, ambientColor = HighlightCard.copy(alpha = 0.18f), spotColor = HighlightCard.copy(alpha = 0.18f))
+        .clip(CircleShape)
+        .background(HighlightCard)
+        .clickable { expanded = true },
+      contentAlignment = Alignment.Center
+    ) {
+      Icon(Icons.Outlined.Add, contentDescription = t("Tambah blok"), tint = Color.White)
+    }
+    DropdownMenu(
+      expanded = expanded,
+      onDismissRequest = { expanded = false },
+      modifier = Modifier.background(CardBackground)
+    ) {
+      DropdownMenuItem(
+        text = { Text(t("Teks")) },
+        onClick = {
+          expanded = false
+          onAddText()
+        }
+      )
+      DropdownMenuItem(
+        text = { Text(t("Gambar")) },
+        onClick = {
+          expanded = false
+          onAddImage()
+        }
+      )
+      DropdownMenuItem(
+        text = { Text(t("PDF")) },
+        onClick = {
+          expanded = false
+          onAddPdf()
+        }
+      )
+    }
+  }
+}
+
+@Composable
+private fun PatronLearningMaterialScreen(
+  subject: SubjectOverview,
+  item: PatronMateriItem,
+  material: PatronLearningMaterial,
+  onMaterialChange: (PatronLearningMaterial) -> Unit,
+  modifier: Modifier = Modifier
+) {
+  val context = LocalContext.current
+  var noteDraft by remember(item.id, material.note) { mutableStateOf(material.note) }
+  var feedbackMessage by remember(item.id, material) { mutableStateOf<String?>(null) }
+  val hasNoteChange = noteDraft != material.note
+  val pdfPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    if (uri != null) {
+      runCatching {
+        copyPatronPdfToInternalStorage(
+          context = context,
+          subjectId = subject.id,
+          itemId = item.id,
+          uri = uri
+        )
+      }.onSuccess { copied ->
+        onMaterialChange(
+          material.copy(
+            pdfFileName = copied.fileName,
+            pdfOriginalName = copied.originalName,
+            updatedAt = System.currentTimeMillis()
+          )
+        )
+        feedbackMessage = "PDF bahan ajar berhasil dilampirkan."
+      }.onFailure { error ->
+        feedbackMessage = error.message ?: "Gagal melampirkan PDF."
+      }
+    }
+  }
+
+  LazyColumn(
+    modifier = modifier.fillMaxWidth(),
+    verticalArrangement = Arrangement.spacedBy(18.dp),
+    contentPadding = PaddingValues(top = 12.dp, bottom = 30.dp)
+  ) {
+    item {
+      Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+      ) {
+        Text(
+          text = item.text.ifBlank { "Materi pembelajaran" },
+          style = MaterialTheme.typography.headlineSmall,
+          color = PrimaryBlueDark,
+          fontWeight = FontWeight.ExtraBold
+        )
+        Text(
+          text = "${subject.title} • ${subject.className}",
+          style = MaterialTheme.typography.bodyMedium,
+          color = SubtleInk
+        )
+      }
+    }
+
+    item {
+      Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+              text = t("Panduan Mengajar"),
+              style = MaterialTheme.typography.titleMedium,
+              color = PrimaryBlueDark,
+              fontWeight = FontWeight.ExtraBold
+            )
+            Text(
+              text = t("Tulis catatan, alur, atau poin penting untuk mengajar materi ini."),
+              style = MaterialTheme.typography.bodySmall,
+              color = SubtleInk
+            )
+          }
+        }
+
+        OutlinedTextField(
+          value = noteDraft,
+          onValueChange = { noteDraft = it },
+          placeholder = { Text(t("Contoh: awali dengan murojaah, jelaskan contoh, lalu beri latihan.")) },
+          minLines = 8,
+          maxLines = 14,
+          modifier = Modifier.fillMaxWidth()
+        )
+
+        Box(
+          modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(if (hasNoteChange) SuccessTint.copy(alpha = 0.15f) else SoftPanel.copy(alpha = 0.70f))
+            .border(
+              1.dp,
+              if (hasNoteChange) SuccessTint.copy(alpha = 0.34f) else CardBorder.copy(alpha = 0.88f),
+              RoundedCornerShape(18.dp)
+            )
+            .clickable(enabled = hasNoteChange) {
+              onMaterialChange(material.copy(note = noteDraft, updatedAt = System.currentTimeMillis()))
+              feedbackMessage = "Panduan mengajar disimpan di perangkat."
+            }
+            .padding(vertical = 12.dp),
+          contentAlignment = Alignment.Center
+        ) {
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+              imageVector = Icons.Outlined.Check,
+              contentDescription = null,
+              tint = if (hasNoteChange) SuccessTint else SubtleInk,
+              modifier = Modifier.size(18.dp)
+            )
+            Text(
+              text = t(if (hasNoteChange) "Simpan Materi" else "Materi tersimpan"),
+              style = MaterialTheme.typography.labelLarge,
+              color = if (hasNoteChange) SuccessTint else SubtleInk,
+              fontWeight = FontWeight.ExtraBold
+            )
+          }
+        }
+      }
+    }
+
+    item {
+      Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+      ) {
+        Text(
+          text = t("PDF Bahan Ajar"),
+          style = MaterialTheme.typography.titleMedium,
+          color = PrimaryBlueDark,
+          fontWeight = FontWeight.ExtraBold
+        )
+        Text(
+          text = t("PDF disimpan di perangkat ini agar bisa dipakai offline dan tidak membebani database."),
+          style = MaterialTheme.typography.bodySmall,
+          color = SubtleInk
+        )
+
+        if (material.pdfFileName.isBlank()) {
+          PatronLearningActionRow(
+            icon = Icons.Outlined.UploadFile,
+            title = "Lampirkan PDF",
+            subtitle = "Pilih file bahan ajar dari perangkat.",
+            onClick = { pdfPicker.launch(arrayOf("application/pdf")) }
+          )
+        } else {
+          PatronLearningActionRow(
+            icon = Icons.Outlined.Description,
+            title = material.pdfOriginalName.ifBlank { "Bahan ajar PDF" },
+            subtitle = "Ketuk untuk membuka file PDF.",
+            onClick = {
+              val file = patronPdfFile(context, subject.id, item.id, material.pdfFileName)
+              if (file.exists()) {
+                openPatronPdf(context, file)
+              } else {
+                feedbackMessage = "File PDF tidak ditemukan di perangkat ini."
+              }
+            }
+          )
+          Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            PatronLearningSmallButton(
+              label = "Ganti PDF",
+              tone = HighlightCard,
+              onClick = { pdfPicker.launch(arrayOf("application/pdf")) }
+            )
+            PatronLearningSmallButton(
+              label = "Hapus PDF",
+              tone = Color(0xFFDC2626),
+              onClick = {
+                deletePatronPdf(context, subject.id, item.id, material.pdfFileName)
+                onMaterialChange(material.copy(pdfFileName = "", pdfOriginalName = "", updatedAt = System.currentTimeMillis()))
+                feedbackMessage = "Lampiran PDF dihapus."
+              }
+            )
+          }
+        }
+
+        feedbackMessage?.let { message ->
+          AttendanceInfoBox(
+            message = message,
+            tone = if ("Gagal" in message || "tidak ditemukan" in message) WarmAccent else SuccessTint
+          )
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun PatronLearningActionRow(
+  icon: ImageVector,
+  title: String,
+  subtitle: String,
+  onClick: () -> Unit
+) {
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(18.dp))
+      .background(SoftPanel.copy(alpha = 0.72f))
+      .border(1.dp, CardBorder.copy(alpha = 0.90f), RoundedCornerShape(18.dp))
+      .clickable(onClick = onClick)
+      .padding(14.dp),
+    horizontalArrangement = Arrangement.spacedBy(12.dp),
+    verticalAlignment = Alignment.CenterVertically
+  ) {
+    Box(
+      modifier = Modifier
+        .size(42.dp)
+        .clip(RoundedCornerShape(15.dp))
+        .background(HighlightCard.copy(alpha = 0.13f)),
+      contentAlignment = Alignment.Center
+    ) {
+      Icon(icon, contentDescription = null, tint = HighlightCard)
+    }
+    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+      Text(
+        text = t(title),
+        style = MaterialTheme.typography.titleSmall,
+        color = PrimaryBlueDark,
+        fontWeight = FontWeight.Bold,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+      )
+      Text(
+        text = t(subtitle),
+        style = MaterialTheme.typography.bodySmall,
+        color = SubtleInk
+      )
+    }
+  }
+}
+
+@Composable
+private fun PatronLearningSmallButton(
+  label: String,
+  tone: Color,
+  onClick: () -> Unit
+) {
+  Box(
+    modifier = Modifier
+      .clip(RoundedCornerShape(999.dp))
+      .background(tone.copy(alpha = 0.12f))
+      .border(1.dp, tone.copy(alpha = 0.28f), RoundedCornerShape(999.dp))
+      .clickable(onClick = onClick)
+      .padding(horizontal = 13.dp, vertical = 9.dp),
+    contentAlignment = Alignment.Center
+  ) {
+    Text(
+      text = t(label),
+      style = MaterialTheme.typography.labelMedium,
+      color = tone,
+      fontWeight = FontWeight.Bold
+    )
   }
 }
 
@@ -6657,6 +8400,44 @@ private data class ScoreDetailDraftRow(
   val material: String = ""
 )
 
+private data class PatronLearningMaterial(
+  val note: String = "",
+  val pdfFileName: String = "",
+  val pdfOriginalName: String = "",
+  val blocks: List<PatronLearningBlock> = emptyList(),
+  val updatedAt: Long = 0L
+)
+
+private data class PatronLearningBlock(
+  val id: String,
+  val type: String,
+  val text: String = "",
+  val fileName: String = "",
+  val originalName: String = "",
+  val spans: List<PatronTextSpan> = emptyList()
+)
+
+private data class PatronTextSpan(
+  val start: Int,
+  val end: Int,
+  val bold: Boolean = false,
+  val italic: Boolean = false,
+  val underline: Boolean = false,
+  val list: Boolean = false
+)
+
+private enum class PatronLearningBlockType(val key: String) {
+  Text("text"),
+  List("list"),
+  Image("image"),
+  Pdf("pdf")
+}
+
+private data class CopiedPatronPdf(
+  val fileName: String,
+  val originalName: String
+)
+
 private fun resolveAttendancePalette(status: String): AttendancePalette {
   return when (status.trim()) {
     "Hadir" -> AttendancePalette(
@@ -6742,6 +8523,315 @@ private fun buildAttendanceDateOverviews(students: List<AttendanceStudent>): Lis
         stats = stats
       )
     }
+}
+
+private fun MapelAttendanceSnapshot.latestAttendanceMonth(): YearMonth? =
+  students
+    .asSequence()
+    .flatMap { it.history.asSequence() }
+    .mapNotNull { entry -> runCatching { LocalDate.parse(entry.dateIso.take(10)) }.getOrNull() }
+    .maxOrNull()
+    ?.let { YearMonth.from(it) }
+
+private fun YearMonth.mapelExportSemesterMonths(): List<YearMonth> {
+  val firstMonth = if (monthValue in 7..12) 7 else 1
+  return (0 until 6).map { plusMonths((firstMonth - monthValue + it).toLong()) }
+}
+
+private fun YearMonth.mapelExportAcademicYearMonths(): List<YearMonth> {
+  val first = if (monthValue >= 7) YearMonth.of(year, 7) else YearMonth.of(year - 1, 7)
+  return (0 until 12).map { first.plusMonths(it.toLong()) }
+}
+
+private fun YearMonth.mapelExportMonthTitle(): String =
+  DateTimeFormatter.ofPattern("MMMM yyyy", Locale("id", "ID")).format(atDay(1))
+
+private fun PatronLearningMaterial.normalizedBlocks(): List<PatronLearningBlock> {
+  if (blocks.isNotEmpty()) return blocks.map { it.asUnifiedTextBlock() }
+  val migrated = mutableListOf<PatronLearningBlock>()
+  if (note.isNotBlank()) {
+    migrated += PatronLearningBlock(
+      id = "legacy-note",
+      type = PatronLearningBlockType.Text.key,
+      text = note
+    )
+  }
+  if (pdfFileName.isNotBlank()) {
+    migrated += PatronLearningBlock(
+      id = "legacy-pdf",
+      type = PatronLearningBlockType.Pdf.key,
+      fileName = pdfFileName,
+      originalName = pdfOriginalName
+    )
+  }
+  return migrated
+}
+
+private fun PatronLearningBlock.asUnifiedTextBlock(): PatronLearningBlock {
+  if (type != PatronLearningBlockType.List.key) return this
+  val hasListSpan = spans.any { it.list }
+  return copy(
+    type = PatronLearningBlockType.Text.key,
+    spans = if (hasListSpan || text.isBlank()) {
+      spans
+    } else {
+      spans + PatronTextSpan(start = 0, end = text.length, list = true)
+    }
+  )
+}
+
+private fun loadPatronLearningBlocks(array: JSONArray?): List<PatronLearningBlock> {
+  if (array == null) return emptyList()
+  return buildList {
+    for (index in 0 until array.length()) {
+      val row = array.optJSONObject(index) ?: continue
+      val type = row.optString("type").ifBlank { PatronLearningBlockType.Text.key }
+      add(
+        PatronLearningBlock(
+          id = row.optString("id").ifBlank { "block-$index" },
+          type = type,
+          text = row.optString("text"),
+          fileName = row.optString("fileName"),
+          originalName = row.optString("originalName"),
+          spans = loadPatronTextSpans(row.optJSONArray("spans"), row.optString("text").length)
+        )
+      )
+    }
+  }
+}
+
+private fun loadPatronTextSpans(
+  array: JSONArray?,
+  textLength: Int
+): List<PatronTextSpan> {
+  if (array == null) return emptyList()
+  return buildList {
+    for (index in 0 until array.length()) {
+      val row = array.optJSONObject(index) ?: continue
+      add(
+        PatronTextSpan(
+          start = row.optInt("start", 0),
+          end = row.optInt("end", 0),
+          bold = row.optBoolean("bold", false),
+          italic = row.optBoolean("italic", false),
+          underline = row.optBoolean("underline", false),
+          list = row.optBoolean("list", false)
+        )
+      )
+    }
+  }.normalizedPatronTextSpans(textLength)
+}
+
+private fun loadPatronLearningMaterials(
+  context: Context,
+  subjectId: String
+): Map<String, PatronLearningMaterial> {
+  val rawJson = context.getSharedPreferences("patron_learning_materials", Context.MODE_PRIVATE)
+    .getString(subjectId, "{}")
+    .orEmpty()
+  return runCatching {
+    val root = JSONObject(rawJson.ifBlank { "{}" })
+    buildMap {
+      val keys = root.keys()
+      while (keys.hasNext()) {
+        val key = keys.next()
+        val row = root.optJSONObject(key) ?: continue
+        put(
+          key,
+          PatronLearningMaterial(
+            note = row.optString("note"),
+            pdfFileName = row.optString("pdfFileName"),
+            pdfOriginalName = row.optString("pdfOriginalName"),
+            blocks = loadPatronLearningBlocks(row.optJSONArray("blocks")),
+            updatedAt = row.optLong("updatedAt", 0L)
+          )
+        )
+      }
+    }
+  }.getOrDefault(emptyMap())
+}
+
+private fun savePatronLearningMaterials(
+  context: Context,
+  subjectId: String,
+  materials: Map<String, PatronLearningMaterial>
+) {
+  val root = JSONObject()
+  materials
+    .filterValues { it.note.isNotBlank() || it.pdfFileName.isNotBlank() || it.normalizedBlocks().isNotEmpty() }
+    .forEach { (itemId, material) ->
+      root.put(
+        itemId,
+        JSONObject().apply {
+          put("note", material.note)
+          put("pdfFileName", material.pdfFileName)
+          put("pdfOriginalName", material.pdfOriginalName)
+          put(
+            "blocks",
+            JSONArray().apply {
+              material.normalizedBlocks().forEach { block ->
+                put(
+                  JSONObject().apply {
+                    put("id", block.id)
+                    put("type", block.type)
+                    put("text", block.text)
+                    put("fileName", block.fileName)
+                    put("originalName", block.originalName)
+                    put(
+                      "spans",
+                      JSONArray().apply {
+                        block.spans.normalizedPatronTextSpans(block.text.length).forEach { span ->
+                          put(
+                            JSONObject().apply {
+                              put("start", span.start)
+                              put("end", span.end)
+                              put("bold", span.bold)
+                              put("italic", span.italic)
+                              put("underline", span.underline)
+                              put("list", span.list)
+                            }
+                          )
+                        }
+                      }
+                    )
+                  }
+                )
+              }
+            }
+          )
+          put("updatedAt", material.updatedAt)
+        }
+      )
+    }
+  context.getSharedPreferences("patron_learning_materials", Context.MODE_PRIVATE)
+    .edit()
+    .putString(subjectId, root.toString())
+    .apply()
+}
+
+private fun copyPatronPdfToInternalStorage(
+  context: Context,
+  subjectId: String,
+  itemId: String,
+  uri: Uri
+): CopiedPatronPdf {
+  val originalName = context.resolveDisplayName(uri).ifBlank { "bahan_ajar.pdf" }
+  val safeName = originalName
+    .replace(Regex("[^A-Za-z0-9._-]+"), "_")
+    .trim('_')
+    .ifBlank { "bahan_ajar.pdf" }
+    .let { if (it.endsWith(".pdf", ignoreCase = true)) it else "$it.pdf" }
+  val fileName = "${System.currentTimeMillis()}_$safeName"
+  val target = patronPdfFile(context, subjectId, itemId, fileName)
+  target.parentFile?.mkdirs()
+  context.contentResolver.openInputStream(uri)?.use { input ->
+    target.outputStream().use { output -> input.copyTo(output) }
+  } ?: error("File PDF tidak bisa dibuka.")
+  return CopiedPatronPdf(fileName = fileName, originalName = originalName)
+}
+
+private fun copyPatronImageToInternalStorage(
+  context: Context,
+  subjectId: String,
+  itemId: String,
+  uri: Uri
+): CopiedPatronPdf {
+  val originalName = context.resolveDisplayName(uri).ifBlank { "gambar_bahan_ajar" }
+  val safeName = originalName
+    .replace(Regex("[^A-Za-z0-9._-]+"), "_")
+    .trim('_')
+    .ifBlank { "gambar_bahan_ajar" }
+  val fileName = "${System.currentTimeMillis()}_$safeName"
+  val target = patronLearningFile(context, subjectId, itemId, "images", fileName)
+  target.parentFile?.mkdirs()
+  context.contentResolver.openInputStream(uri)?.use { input ->
+    target.outputStream().use { output -> input.copyTo(output) }
+  } ?: error("File gambar tidak bisa dibuka.")
+  return CopiedPatronPdf(fileName = fileName, originalName = originalName)
+}
+
+private fun Context.resolveDisplayName(uri: Uri): String {
+  return runCatching {
+    contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+      if (cursor.moveToFirst()) {
+        cursor.getString(cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME)).orEmpty()
+      } else {
+        ""
+      }
+    }.orEmpty()
+  }.getOrDefault("").ifBlank {
+    uri.lastPathSegment?.substringAfterLast('/').orEmpty()
+  }
+}
+
+private fun patronPdfFile(
+  context: Context,
+  subjectId: String,
+  itemId: String,
+  fileName: String
+): File {
+  val safeSubject = subjectId.replace(Regex("[^A-Za-z0-9._-]+"), "_").ifBlank { "subject" }
+  val safeItem = itemId.replace(Regex("[^A-Za-z0-9._-]+"), "_").ifBlank { "materi" }
+  return File(File(File(context.filesDir, "patron_learning_pdfs"), safeSubject), safeItem).resolve(fileName)
+}
+
+private fun patronLearningFile(
+  context: Context,
+  subjectId: String,
+  itemId: String,
+  folder: String,
+  fileName: String
+): File {
+  val safeSubject = subjectId.replace(Regex("[^A-Za-z0-9._-]+"), "_").ifBlank { "subject" }
+  val safeItem = itemId.replace(Regex("[^A-Za-z0-9._-]+"), "_").ifBlank { "materi" }
+  val safeFolder = folder.replace(Regex("[^A-Za-z0-9._-]+"), "_").ifBlank { "files" }
+  return File(File(File(File(context.filesDir, "patron_learning_files"), safeSubject), safeItem), safeFolder).resolve(fileName)
+}
+
+private fun patronLearningBlockFile(
+  context: Context,
+  subjectId: String,
+  itemId: String,
+  block: PatronLearningBlock
+): File =
+  if (block.type == PatronLearningBlockType.Pdf.key) {
+    patronPdfFile(context, subjectId, itemId, block.fileName)
+  } else {
+    patronLearningFile(context, subjectId, itemId, "images", block.fileName)
+  }
+
+private fun deletePatronLearningBlockFile(
+  context: Context,
+  subjectId: String,
+  itemId: String,
+  block: PatronLearningBlock
+) {
+  runCatching { patronLearningBlockFile(context, subjectId, itemId, block).delete() }
+}
+
+private fun openPatronPdf(context: Context, file: File) {
+  val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+  val intent = Intent(Intent.ACTION_VIEW).apply {
+    setDataAndType(uri, "application/pdf")
+    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+    clipData = ClipData.newUri(context.contentResolver, file.name, uri)
+  }
+  try {
+    context.startActivity(Intent.createChooser(intent, "Buka PDF bahan ajar").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+  } catch (_: ActivityNotFoundException) {
+    Toast.makeText(context, "Tidak ada aplikasi pembuka PDF di perangkat ini.", Toast.LENGTH_LONG).show()
+  } catch (error: Exception) {
+    Toast.makeText(context, error.message ?: "PDF belum bisa dibuka di perangkat ini.", Toast.LENGTH_LONG).show()
+  }
+}
+
+private fun deletePatronPdf(
+  context: Context,
+  subjectId: String,
+  itemId: String,
+  fileName: String
+) {
+  runCatching { patronPdfFile(context, subjectId, itemId, fileName).delete() }
 }
 
 private val ScoreMetricDefinitions = listOf(
@@ -7078,7 +9168,8 @@ private fun MapelDetailTopBar(
   title: String,
   onBackClick: () -> Unit,
   showUndo: Boolean = false,
-  onUndoClick: () -> Unit = {}
+  onUndoClick: () -> Unit = {},
+  actions: (@Composable () -> Unit)? = null
 ) {
   Row(
     modifier = Modifier
@@ -7104,7 +9195,9 @@ private fun MapelDetailTopBar(
         .padding(horizontal = 12.dp),
       textAlign = TextAlign.Center
     )
-    if (showUndo) {
+    if (actions != null) {
+      actions()
+    } else if (showUndo) {
       MapelTopButton(
         icon = Icons.AutoMirrored.Outlined.Undo,
         contentDescription = t("Batalkan hapus"),

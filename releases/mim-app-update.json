@@ -1,7 +1,17 @@
 {
-  "versionCode": 1010,
-  "versionName": "0.1.10",
-  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.10/MIM.APP.apk",
-  "releaseNotes": "MIM App Android 0.1.10. Pembaruan aplikasi dan perbaikan stabilitas.",
+  "versionCode": 1011,
+  "versionName": "0.1.11",
+  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.11/MIM.APP.apk",
+  "releaseNotes": "MIM App Android 0.1.11. Popup pembaruan kini menampilkan catatan rilis, dan laporan absensi mendukung export Excel kelas.",
+  "features": [
+    "Popup pembaruan menampilkan bagian Apa yang baru berisi fitur dan perbaikan.",
+    "Laporan absensi wali kelas bisa dicetak atau dikirim sebagai file Excel.",
+    "Pilihan export absensi mendukung bulan ini, semester, tahun, atau beberapa bulan sekaligus."
+  ],
+  "fixes": [
+    "Rekap harian absensi memperlakukan terlambat sebagai hadir saat dihitung per hari.",
+    "Manifest update mendukung catatan fitur dan perbaikan agar popup versi baru lebih informatif.",
+    "File export absensi dapat dibuka atau dibagikan melalui FileProvider aplikasi."
+  ],
   "mandatory": false
 }

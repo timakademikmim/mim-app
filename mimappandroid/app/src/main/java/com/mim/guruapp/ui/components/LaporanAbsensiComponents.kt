@@ -27,7 +27,11 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -38,6 +42,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -52,19 +57,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.mim.guruapp.data.model.AttendanceHistoryEntry
+import com.mim.guruapp.data.model.AttendanceStudent
+import com.mim.guruapp.data.model.MapelAttendanceSnapshot
 import com.mim.guruapp.data.model.MonthlyAttendanceSummary
 import com.mim.guruapp.data.model.MonthlyReportSnapshot
 import com.mim.guruapp.data.model.WaliAttendanceDetailSnapshot
 import com.mim.guruapp.data.model.WaliSantriProfile
 import com.mim.guruapp.data.model.WaliSantriSnapshot
+import com.mim.guruapp.export.MapelAttendanceExcelExporter
 import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.AppBackground
 import com.mim.guruapp.ui.theme.CardBackground
 import com.mim.guruapp.ui.theme.CardBorder
+import com.mim.guruapp.ui.theme.HighlightCard
 import com.mim.guruapp.ui.theme.PrimaryBlue
 import com.mim.guruapp.ui.theme.PrimaryBlueDark
 import com.mim.guruapp.ui.theme.SoftPanel
@@ -92,11 +103,16 @@ fun LaporanAbsensiScreen(
   var selectedPeriod by rememberSaveable { mutableStateOf(periods.firstOrNull().orEmpty()) }
   var selectedStudentId by rememberSaveable { mutableStateOf<String?>(null) }
   var isPeriodMenuOpen by remember { mutableStateOf(false) }
+  var isActionMenuOpen by remember { mutableStateOf(false) }
+  var exportShouldShare by rememberSaveable { mutableStateOf<Boolean?>(null) }
+  var exportPeriodKeys by rememberSaveable { mutableStateOf(listOf<String>()) }
+  var isExportingAttendance by rememberSaveable { mutableStateOf(false) }
   var loadingStudentId by rememberSaveable { mutableStateOf<String?>(null) }
   var isAttendanceLoading by rememberSaveable { mutableStateOf(false) }
   val detailCache = remember { mutableStateMapOf<String, WaliAttendanceDetailSnapshot>() }
   val snackbarHostState = remember { SnackbarHostState() }
   val scope = rememberCoroutineScope()
+  val context = LocalContext.current
   var liveAttendanceSummaries by remember(monthlyReportSnapshot.updatedAt) {
     mutableStateOf(monthlyReportSnapshot.attendanceSummaries)
   }
@@ -105,6 +121,9 @@ fun LaporanAbsensiScreen(
     if (selectedPeriod !in periods) {
       selectedPeriod = periods.firstOrNull().orEmpty()
       selectedStudentId = null
+    }
+    if (exportPeriodKeys.isEmpty()) {
+      exportPeriodKeys = listOfNotNull(periods.firstOrNull()).ifEmpty { listOf(selectedPeriod).filter { it.isNotBlank() } }
     }
   }
 
@@ -130,6 +149,64 @@ fun LaporanAbsensiScreen(
   }
   val selectedStudent = students.firstOrNull { it.id == selectedStudentId }
   val selectedDetail = selectedStudent?.let { detailCache["$selectedPeriod|${it.id}"] }
+
+  fun exportAttendanceReport(shouldShare: Boolean, periodKeys: List<String>) {
+    val cleanPeriods = periodKeys.filter { it.isNotBlank() }.distinct()
+    if (cleanPeriods.isEmpty()) {
+      scope.launch { snackbarHostState.showSnackbar("Pilih minimal satu periode.") }
+      return
+    }
+    scope.launch {
+      isExportingAttendance = true
+      runCatching {
+        val loadedSummaries = mutableListOf<MonthlyAttendanceSummary>()
+        val worksheets = cleanPeriods.mapNotNull { periodKey ->
+          val period = runCatching { YearMonth.parse(periodKey) }.getOrNull() ?: return@mapNotNull null
+          val remoteSummaries = onLoadAttendanceSummaries(periodKey)
+          loadedSummaries += remoteSummaries
+          val summariesForPeriod = (liveAttendanceSummaries + remoteSummaries)
+            .filter { it.period == periodKey }
+            .associateBy { it.studentId }
+          val detailByStudent = students.associate { student ->
+            val cacheKey = "$periodKey|${student.id}"
+            val detail = detailCache[cacheKey] ?: onLoadAttendanceDetail(periodKey, student)?.also { loaded ->
+              detailCache[cacheKey] = loaded
+            }
+            student.id to detail
+          }
+          MapelAttendanceExcelExporter.AttendanceWorksheet(
+            period = period,
+            snapshot = buildLaporanAbsensiExportSnapshot(
+              periodKey = periodKey,
+              students = students,
+              summaries = summariesForPeriod,
+              detailByStudent = detailByStudent,
+              classNames = waliSantriSnapshot.classes.map { it.name }
+            ),
+            reportTitle = "LAPORAN ABSENSI KELAS",
+            subjectLabel = "Cakupan"
+          )
+        }
+        if (worksheets.isEmpty()) error("Periode laporan tidak valid.")
+        if (loadedSummaries.isNotEmpty()) {
+          liveAttendanceSummaries = liveAttendanceSummaries
+            .filterNot { summary -> loadedSummaries.any { it.period == summary.period && it.studentId == summary.studentId } } +
+            loadedSummaries
+        }
+        val file = MapelAttendanceExcelExporter.createWorkbook(context, worksheets)
+        if (shouldShare) {
+          MapelAttendanceExcelExporter.shareWorkbook(context, file)
+        } else {
+          MapelAttendanceExcelExporter.openWorkbook(context, file)
+        }
+      }.onSuccess {
+        exportShouldShare = null
+      }.onFailure { error ->
+        snackbarHostState.showSnackbar(error.message ?: "Gagal membuat laporan absensi.")
+      }
+      isExportingAttendance = false
+    }
+  }
 
   BackHandler(enabled = selectedStudent != null) {
     selectedStudentId = null
@@ -164,6 +241,43 @@ fun LaporanAbsensiScreen(
           subtitle = if (selectedStudent == null) selectedPeriod.toPeriodLabel() else selectedStudent.name,
           onPrimaryClick = {
             if (selectedStudent == null) onMenuClick() else selectedStudentId = null
+          },
+          actions = if (selectedStudent == null && waliSantriSnapshot.isWaliKelas) {
+            {
+              Box {
+                LaporanAbsensiCircleButton(
+                  icon = Icons.Outlined.MoreVert,
+                  contentDescription = t("Menu laporan absensi"),
+                  onClick = { isActionMenuOpen = true }
+                )
+                DropdownMenu(
+                  expanded = isActionMenuOpen,
+                  onDismissRequest = { isActionMenuOpen = false },
+                  modifier = Modifier.background(CardBackground)
+                ) {
+                  DropdownMenuItem(
+                    text = { Text(t("Cetak Absensi")) },
+                    enabled = !isExportingAttendance && students.isNotEmpty(),
+                    onClick = {
+                      isActionMenuOpen = false
+                      exportPeriodKeys = listOf(selectedPeriod).filter { it.isNotBlank() }
+                      exportShouldShare = false
+                    }
+                  )
+                  DropdownMenuItem(
+                    text = { Text(t("Kirim Absensi")) },
+                    enabled = !isExportingAttendance && students.isNotEmpty(),
+                    onClick = {
+                      isActionMenuOpen = false
+                      exportPeriodKeys = listOf(selectedPeriod).filter { it.isNotBlank() }
+                      exportShouldShare = true
+                    }
+                  )
+                }
+              }
+            }
+          } else {
+            null
           }
         )
 
@@ -290,6 +404,21 @@ fun LaporanAbsensiScreen(
           }
         }
       }
+        exportShouldShare?.let { shouldShare ->
+          LaporanAbsensiExportPeriodDialog(
+            shouldShare = shouldShare,
+            currentMonth = runCatching { YearMonth.parse(selectedPeriod) }.getOrNull() ?: YearMonth.now(),
+            selectedPeriodKeys = exportPeriodKeys,
+            isExporting = isExportingAttendance,
+          onSelectedPeriodKeysChange = { exportPeriodKeys = it },
+          onDismiss = {
+            if (!isExportingAttendance) exportShouldShare = null
+          },
+          onConfirm = {
+            exportAttendanceReport(shouldShare, exportPeriodKeys)
+          }
+        )
+      }
     }
   }
 }
@@ -299,7 +428,8 @@ private fun LaporanAbsensiTopBar(
   isDetail: Boolean,
   title: String,
   subtitle: String,
-  onPrimaryClick: () -> Unit
+  onPrimaryClick: () -> Unit,
+  actions: (@Composable RowScope.() -> Unit)? = null
 ) {
   Row(
     modifier = Modifier
@@ -316,7 +446,7 @@ private fun LaporanAbsensiTopBar(
     Column(
       modifier = Modifier
         .weight(1f)
-        .padding(end = 44.dp),
+        .padding(horizontal = 8.dp),
       horizontalAlignment = Alignment.CenterHorizontally
     ) {
       Text(
@@ -333,6 +463,177 @@ private fun LaporanAbsensiTopBar(
         textAlign = TextAlign.Center
       )
     }
+    if (actions != null) {
+      Row(content = actions)
+    } else {
+      Box(modifier = Modifier.size(42.dp))
+    }
+  }
+}
+
+@Composable
+private fun LaporanAbsensiExportPeriodDialog(
+  shouldShare: Boolean,
+  currentMonth: YearMonth,
+  selectedPeriodKeys: List<String>,
+  isExporting: Boolean,
+  onSelectedPeriodKeysChange: (List<String>) -> Unit,
+  onDismiss: () -> Unit,
+  onConfirm: () -> Unit
+) {
+  val monthOptions = remember(currentMonth) { currentMonth.laporanAbsensiAcademicYearMonths() }
+  val semesterMonths = remember(currentMonth) { currentMonth.laporanAbsensiSemesterMonths() }
+  val selectedSet = selectedPeriodKeys.toSet()
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    containerColor = CardBackground,
+    title = {
+      Text(
+        text = t(if (shouldShare) "Kirim Absensi" else "Cetak Absensi"),
+        color = PrimaryBlueDark,
+        fontWeight = FontWeight.ExtraBold
+      )
+    },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text(
+          text = t("Pilih bulan yang ingin dimasukkan ke file Excel. Jika memilih lebih dari satu bulan, setiap bulan akan dibuat sebagai tab tersendiri."),
+          style = MaterialTheme.typography.bodySmall,
+          color = SubtleInk
+        )
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+          LaporanAbsensiPeriodShortcut(
+            label = "Bulan Ini",
+            selected = selectedSet == setOf(currentMonth.toString()),
+            enabled = !isExporting,
+            onClick = { onSelectedPeriodKeysChange(listOf(currentMonth.toString())) }
+          )
+          LaporanAbsensiPeriodShortcut(
+            label = "Semester",
+            selected = selectedSet == semesterMonths.map { it.toString() }.toSet(),
+            enabled = !isExporting,
+            onClick = { onSelectedPeriodKeysChange(semesterMonths.map { it.toString() }) }
+          )
+          LaporanAbsensiPeriodShortcut(
+            label = "Tahun",
+            selected = selectedSet == monthOptions.map { it.toString() }.toSet(),
+            enabled = !isExporting,
+            onClick = { onSelectedPeriodKeysChange(monthOptions.map { it.toString() }) }
+          )
+        }
+        LazyColumn(
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(280.dp),
+          verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+          items(monthOptions.size) { index ->
+            val month = monthOptions[index]
+            val period = month.toString()
+            val checked = period in selectedSet
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(if (checked) HighlightCard.copy(alpha = 0.14f) else SoftPanel.copy(alpha = 0.72f))
+                .border(
+                  width = 1.dp,
+                  color = if (checked) HighlightCard.copy(alpha = 0.35f) else CardBorder,
+                  shape = RoundedCornerShape(16.dp)
+                )
+                .clickable(enabled = !isExporting) {
+                  onSelectedPeriodKeysChange(
+                    if (checked) selectedPeriodKeys.filterNot { it == period } else (selectedPeriodKeys + period).distinct().sorted()
+                  )
+                }
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Checkbox(
+                checked = checked,
+                enabled = !isExporting,
+                onCheckedChange = { isChecked ->
+                  onSelectedPeriodKeysChange(
+                    if (isChecked) (selectedPeriodKeys + period).distinct().sorted() else selectedPeriodKeys.filterNot { it == period }
+                  )
+                }
+              )
+              Column(modifier = Modifier.weight(1f)) {
+                Text(
+                  text = month.laporanAbsensiMonthTitle(),
+                  style = MaterialTheme.typography.titleSmall,
+                  color = PrimaryBlueDark,
+                  fontWeight = FontWeight.Bold
+                )
+                Text(
+                  text = t("Akan dibuat sebagai satu tab di file Excel."),
+                  style = MaterialTheme.typography.bodySmall,
+                  color = SubtleInk
+                )
+              }
+            }
+          }
+        }
+        if (isExporting) {
+          Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+          ) {
+            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = PrimaryBlue)
+            Text(
+              text = t("Menyiapkan data dan file Excel..."),
+              color = SubtleInk,
+              style = MaterialTheme.typography.bodySmall
+            )
+          }
+        }
+      }
+    },
+    confirmButton = {
+      Button(
+        enabled = !isExporting && selectedPeriodKeys.isNotEmpty(),
+        onClick = onConfirm
+      ) {
+        Text(t(if (shouldShare) "Kirim" else "Cetak"))
+      }
+    },
+    dismissButton = {
+      TextButton(enabled = !isExporting, onClick = onDismiss) {
+        Text(t("Batal"))
+      }
+    }
+  )
+}
+
+@Composable
+private fun LaporanAbsensiPeriodShortcut(
+  label: String,
+  selected: Boolean,
+  enabled: Boolean,
+  onClick: () -> Unit
+) {
+  Box(
+    modifier = Modifier
+      .clip(RoundedCornerShape(999.dp))
+      .background(if (selected) HighlightCard else SoftPanel.copy(alpha = 0.78f))
+      .border(
+        width = 1.dp,
+        color = if (selected) HighlightCard else CardBorder,
+        shape = RoundedCornerShape(999.dp)
+      )
+      .clickable(enabled = enabled, onClick = onClick)
+      .padding(horizontal = 11.dp, vertical = 8.dp)
+  ) {
+    Text(
+      text = t(label),
+      style = MaterialTheme.typography.labelMedium,
+      color = if (selected) Color.White else PrimaryBlueDark,
+      fontWeight = FontWeight.Bold,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis
+    )
   }
 }
 
@@ -709,6 +1010,78 @@ private fun LaporanAbsensiCircleButton(
 private fun buildAttendancePeriods(): List<String> {
   val start = YearMonth.now().minusMonths(1)
   return (0 until 12).map { offset -> start.minusMonths(offset.toLong()).toString() }
+}
+
+private fun YearMonth.laporanAbsensiSemesterMonths(): List<YearMonth> {
+  val firstMonth = if (monthValue in 7..12) 7 else 1
+  return (0 until 6).map { plusMonths((firstMonth - monthValue + it).toLong()) }
+}
+
+private fun YearMonth.laporanAbsensiAcademicYearMonths(): List<YearMonth> {
+  val first = if (monthValue >= 7) YearMonth.of(year, 7) else YearMonth.of(year - 1, 7)
+  return (0 until 12).map { first.plusMonths(it.toLong()) }
+}
+
+private fun YearMonth.laporanAbsensiMonthTitle(): String {
+  val monthName = month.getDisplayName(TextStyle.FULL, Locale.forLanguageTag("id-ID"))
+  return "$monthName $year"
+}
+
+private fun buildLaporanAbsensiExportSnapshot(
+  periodKey: String,
+  students: List<WaliSantriProfile>,
+  summaries: Map<String, MonthlyAttendanceSummary>,
+  detailByStudent: Map<String, WaliAttendanceDetailSnapshot?>,
+  classNames: List<String>
+): MapelAttendanceSnapshot {
+  val classLabel = classNames
+    .map { it.trim() }
+    .filter { it.isNotBlank() }
+    .distinct()
+    .joinToString(", ")
+    .ifBlank { students.firstOrNull()?.className.orEmpty().ifBlank { "Kelas" } }
+  return MapelAttendanceSnapshot(
+    distribusiId = "wali-$periodKey",
+    subjectTitle = "Semua Mapel",
+    className = classLabel,
+    rangeLabel = periodKey.toPeriodLabel(),
+    students = students.sortedBy { it.name.lowercase(Locale.getDefault()) }.map { student ->
+      val summary = summaries[student.id]
+      val history = detailByStudent[student.id]?.rows.orEmpty().map { row ->
+        AttendanceHistoryEntry(
+          dateIso = row.dateIso,
+          status = row.status,
+          rowIds = listOf(row.id).filter { it.isNotBlank() },
+          lessonSlotId = row.lessonSortKey,
+          patronMateri = listOf(row.subjectName, row.lessonLabel)
+            .filter { it.isNotBlank() }
+            .joinToString(" - ")
+        )
+      }
+      AttendanceStudent(
+        id = student.id,
+        name = student.name,
+        hadirPercent = summary?.attendancePercent.toPercentInt(),
+        terlambatPercent = 0,
+        sakitPercent = summary?.sakitCount.toPercentInt(summary?.totalDays ?: 0),
+        izinPercent = summary?.izinCount.toPercentInt(summary?.totalDays ?: 0),
+        alpaPercent = summary?.alpaCount.toPercentInt(summary?.totalDays ?: 0),
+        history = history
+      )
+    },
+    updatedAt = System.currentTimeMillis()
+  )
+}
+
+private fun String?.toPercentInt(): Int {
+  val value = this?.trim().orEmpty().removeSuffix("%").replace(',', '.')
+  return value.toDoubleOrNull()?.toInt() ?: 0
+}
+
+private fun Int?.toPercentInt(total: Int): Int {
+  val count = this ?: 0
+  if (total <= 0) return 0
+  return ((count.toDouble() / total.toDouble()) * 100.0).toInt()
 }
 
 private fun String.toPeriodLabel(): String {
