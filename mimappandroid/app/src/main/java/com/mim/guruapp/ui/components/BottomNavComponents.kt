@@ -221,6 +221,7 @@ fun buildAvailableBottomNavShortcutItems(
     if (isWakasekKurikulum) {
       add(GuruSidebarDestination.WakasekMonitoringGuru)
       add(GuruSidebarDestination.WakasekMonitoringSiswa)
+      add(GuruSidebarDestination.WakasekNilaiSiswa)
       add(GuruSidebarDestination.WakasekPerizinan)
     }
     add(GuruSidebarDestination.Profil)
@@ -410,6 +411,7 @@ private fun bottomNavEntryForDestination(destination: GuruSidebarDestination): B
     GuruSidebarDestination.Santri -> BottomNavEntry(destination, "Santri", Icons.Outlined.Groups)
     GuruSidebarDestination.WakasekMonitoringGuru -> BottomNavEntry(destination, "Guru", Icons.Outlined.DashboardCustomize, "Monitoring Guru")
     GuruSidebarDestination.WakasekMonitoringSiswa -> BottomNavEntry(destination, "Siswa", Icons.Outlined.Groups, "Monitoring Siswa")
+    GuruSidebarDestination.WakasekNilaiSiswa -> BottomNavEntry(destination, "Nilai", Icons.Outlined.Grade, "Nilai Siswa")
     GuruSidebarDestination.WakasekPerizinan -> BottomNavEntry(destination, "W-Izin", Icons.Outlined.AssignmentTurnedIn, "Perizinan Wakasek")
     GuruSidebarDestination.Profil -> BottomNavEntry(destination, "Profil", Icons.Outlined.PersonOutline)
     GuruSidebarDestination.Pesan,

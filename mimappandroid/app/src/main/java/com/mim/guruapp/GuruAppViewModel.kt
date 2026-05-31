@@ -118,6 +118,7 @@ enum class GuruSidebarDestination(val title: String) {
   Santri("Santri"),
   WakasekMonitoringGuru("Monitoring Guru"),
   WakasekMonitoringSiswa("Monitoring Siswa"),
+  WakasekNilaiSiswa("Nilai Siswa"),
   WakasekPerizinan("Perizinan Wakasek"),
   Pesan("Pesan"),
   Notifikasi("Notifikasi"),
@@ -516,6 +517,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
 
         GuruSidebarDestination.WakasekMonitoringGuru,
         GuruSidebarDestination.WakasekMonitoringSiswa,
+        GuruSidebarDestination.WakasekNilaiSiswa,
         GuruSidebarDestination.WakasekPerizinan -> GuruSidebarParent.WakasekKurikulum
 
         else -> null
@@ -2263,6 +2265,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
   private fun GuruSidebarDestination.requiresWakasekKurikulumAccess(): Boolean {
     return this == GuruSidebarDestination.WakasekMonitoringGuru ||
       this == GuruSidebarDestination.WakasekMonitoringSiswa ||
+      this == GuruSidebarDestination.WakasekNilaiSiswa ||
       this == GuruSidebarDestination.WakasekPerizinan
   }
 

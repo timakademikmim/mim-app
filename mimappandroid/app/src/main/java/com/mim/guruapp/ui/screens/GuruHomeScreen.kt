@@ -168,6 +168,7 @@ private fun GuruHomeContentTarget.transitionOrder(): Int {
     GuruSidebarDestination.Notifikasi -> 5
     GuruSidebarDestination.WakasekMonitoringGuru,
     GuruSidebarDestination.WakasekMonitoringSiswa,
+    GuruSidebarDestination.WakasekNilaiSiswa,
     GuruSidebarDestination.WakasekPerizinan -> 6
     else -> 6
   }
@@ -635,18 +636,22 @@ fun GuruHomeScreen(
     } else if (
       targetDestination == GuruSidebarDestination.WakasekMonitoringGuru ||
       targetDestination == GuruSidebarDestination.WakasekMonitoringSiswa ||
+      targetDestination == GuruSidebarDestination.WakasekNilaiSiswa ||
       targetDestination == GuruSidebarDestination.WakasekPerizinan
     ) {
       WakasekKurikulumScreen(
         page = when (targetDestination) {
           GuruSidebarDestination.WakasekMonitoringSiswa -> WakasekKurikulumPage.Student
+          GuruSidebarDestination.WakasekNilaiSiswa -> WakasekKurikulumPage.StudentScores
           GuruSidebarDestination.WakasekPerizinan -> WakasekKurikulumPage.Permission
           else -> WakasekKurikulumPage.Teacher
         },
         snapshot = dashboard.wakasekKurikulumSnapshot,
+        scoreSnapshots = dashboard.scoreSnapshots,
         isRefreshing = syncBanner.isSyncing,
         onMenuClick = onToggleSidebar,
         onRefresh = onRefreshClick,
+        onLoadScores = onLoadMapelScores,
         onReviewLeaveRequest = onReviewWakasekLeaveRequest,
         modifier = Modifier.fillMaxSize()
       )

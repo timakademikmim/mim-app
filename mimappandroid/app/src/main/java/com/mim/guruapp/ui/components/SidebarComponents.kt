@@ -579,6 +579,7 @@ fun buildGuruSidebarContent(
             children = listOf(
               SidebarLeafItem(GuruSidebarDestination.WakasekMonitoringGuru, "Monitoring Guru", Icons.Outlined.Dashboard),
               SidebarLeafItem(GuruSidebarDestination.WakasekMonitoringSiswa, "Monitoring Siswa", Icons.Outlined.Groups),
+              SidebarLeafItem(GuruSidebarDestination.WakasekNilaiSiswa, "Nilai Siswa", Icons.Outlined.Grade),
               SidebarLeafItem(GuruSidebarDestination.WakasekPerizinan, "Perizinan", Icons.Outlined.TaskAlt)
             )
           )

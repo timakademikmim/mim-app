@@ -113,6 +113,7 @@ data class WakasekKurikulumSnapshot(
   val isWakasekKurikulum: Boolean = false,
   val teacherRows: List<WakasekTeacherMonitoringRow> = emptyList(),
   val studentRows: List<WakasekStudentMonitoringRow> = emptyList(),
+  val scoreSubjects: List<SubjectOverview> = emptyList(),
   val leaveRequests: List<LeaveRequestItem> = emptyList(),
   val updatedAt: Long = 0L
 )

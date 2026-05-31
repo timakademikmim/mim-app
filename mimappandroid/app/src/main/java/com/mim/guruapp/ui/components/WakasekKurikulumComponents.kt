@@ -26,8 +26,10 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ChevronLeft
@@ -35,12 +37,17 @@ import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Grade
 import androidx.compose.material.icons.outlined.Groups
+import androidx.compose.material.icons.outlined.Print
 import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PersonSearch
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.TaskAlt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -67,14 +74,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mim.guruapp.WakasekReviewOutcome
 import com.mim.guruapp.data.model.LeaveRequestItem
+import com.mim.guruapp.data.model.MapelScoreSnapshot
+import com.mim.guruapp.data.model.ScoreStudent
+import com.mim.guruapp.data.model.SubjectOverview
 import com.mim.guruapp.data.model.WakasekKurikulumSnapshot
 import com.mim.guruapp.data.model.WakasekStudentMonitoringRow
 import com.mim.guruapp.data.model.WakasekTeacherMonitoringRow
+import com.mim.guruapp.export.WakasekScoreExcelExporter
 import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.AppBackground
 import com.mim.guruapp.ui.theme.CardBorder
@@ -93,11 +105,13 @@ import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.time.temporal.WeekFields
 import java.util.Locale
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 enum class WakasekKurikulumPage(val title: String, val subtitle: String) {
   Teacher("Monitoring Guru", "Pantau kehadiran guru berdasarkan jadwal dan absensi"),
   Student("Monitoring Siswa", "Lihat santri sakit, izin, terlambat, dan alpa"),
+  StudentScores("Nilai Siswa", "Pantau nilai santri per kelas dan mapel"),
   Permission("Perizinan", "Tinjau pengajuan izin guru")
 }
 
@@ -112,6 +126,17 @@ private enum class StudentSortOption(val label: String) {
   Class("Per kelas"),
   Name("Nama"),
   Status("Status")
+}
+
+private enum class WakasekScoreSortMode(val label: String) {
+  ByStudent("Per siswa"),
+  ByType("Jenis nilai"),
+  ByDate("Tanggal")
+}
+
+private enum class WakasekScoreExportAction(val title: String, val confirmLabel: String) {
+  Open("Cetak Nilai Siswa", "Cetak"),
+  Share("Kirim Nilai Siswa", "Kirim")
 }
 
 private data class TeacherMonitorSummary(
@@ -138,6 +163,44 @@ private data class StudentMonitorSummary(
   val details: List<WakasekStudentMonitoringRow>
 )
 
+private data class WakasekScoreMetricDefinition(
+  val key: String,
+  val label: String,
+  val supportsDetailRows: Boolean = true
+)
+
+private data class WakasekScoreMetric(
+  val key: String,
+  val label: String,
+  val value: Double?,
+  val details: List<com.mim.guruapp.data.model.ScoreDetailRow>
+)
+
+private data class WakasekScoreTypeOverview(
+  val key: String,
+  val label: String,
+  val entries: List<Pair<ScoreStudent, Double?>>
+)
+
+private data class WakasekScoreDateEntry(
+  val studentName: String,
+  val value: Double?,
+  val material: String
+)
+
+private data class WakasekScoreDateOverview(
+  val key: String,
+  val dateIso: String,
+  val label: String,
+  val entries: List<WakasekScoreDateEntry>
+)
+
+private data class WakasekDropdownOption(
+  val key: String,
+  val label: String,
+  val supporting: String = ""
+)
+
 private data class WakasekSemesterOption(
   val key: String,
   val label: String,
@@ -162,17 +225,30 @@ private data class WakasekPeriodFilter(
     }
 }
 
+private val WakasekScoreMetricDefinitions = listOf(
+  WakasekScoreMetricDefinition("nilai_tugas", "Tugas"),
+  WakasekScoreMetricDefinition("nilai_ulangan_harian", "Ulangan Harian"),
+  WakasekScoreMetricDefinition("nilai_pts", "UTS"),
+  WakasekScoreMetricDefinition("nilai_pas", "UAS"),
+  WakasekScoreMetricDefinition("nilai_kehadiran", "Kehadiran", supportsDetailRows = false),
+  WakasekScoreMetricDefinition("nilai_akhir", "Pengetahuan", supportsDetailRows = false),
+  WakasekScoreMetricDefinition("nilai_keterampilan", "Keterampilan")
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WakasekKurikulumScreen(
   page: WakasekKurikulumPage,
   snapshot: WakasekKurikulumSnapshot,
+  scoreSnapshots: List<MapelScoreSnapshot> = emptyList(),
   isRefreshing: Boolean,
   onMenuClick: () -> Unit,
   onRefresh: () -> Unit,
+  onLoadScores: suspend (String, SubjectOverview) -> MapelScoreSnapshot? = { _, _ -> null },
   onReviewLeaveRequest: suspend (String, Boolean, String) -> WakasekReviewOutcome,
   modifier: Modifier = Modifier
 ) {
+  val context = LocalContext.current
   val snackbarHostState = remember { SnackbarHostState() }
   val scope = rememberCoroutineScope()
   var selectedPeriod by rememberSaveable { mutableStateOf(WakasekPeriod.Day) }
@@ -186,6 +262,16 @@ fun WakasekKurikulumScreen(
   var processingReviewId by rememberSaveable { mutableStateOf("") }
   var expandedTeacherId by rememberSaveable { mutableStateOf("") }
   var expandedStudentKey by rememberSaveable { mutableStateOf("") }
+  var selectedScoreClassName by rememberSaveable { mutableStateOf("") }
+  var selectedScoreSubjectId by rememberSaveable { mutableStateOf("") }
+  var selectedScoreSortKey by rememberSaveable { mutableStateOf(WakasekScoreSortMode.ByStudent.name) }
+  var scoreSnapshot by remember { mutableStateOf<MapelScoreSnapshot?>(null) }
+  var isLoadingScores by rememberSaveable { mutableStateOf(false) }
+  var isExportingScores by rememberSaveable { mutableStateOf(false) }
+  var scoreExportAction by remember { mutableStateOf<WakasekScoreExportAction?>(null) }
+  var expandedScoreStudentId by rememberSaveable { mutableStateOf("") }
+  var expandedScoreMetricKey by rememberSaveable { mutableStateOf("") }
+  var expandedScoreDateKey by rememberSaveable { mutableStateOf("") }
   val selectedDate = parseIsoDate(selectedDateIso) ?: LocalDate.now()
   val selectedWeekStart = parseIsoDate(selectedWeekStartIso) ?: startOfWeek(LocalDate.now())
   val selectedMonth = runCatching { YearMonth.parse(selectedMonthIso) }.getOrElse { YearMonth.now() }
@@ -210,6 +296,87 @@ fun WakasekKurikulumScreen(
   }
   val studentSummaries = remember(studentRows, selectedStudentSort) {
     sortStudentSummaries(summarizeStudentRows(studentRows), selectedStudentSort)
+  }
+  val scoreClassOptions = remember(snapshot.scoreSubjects) {
+    snapshot.scoreSubjects
+      .map { it.className }
+      .filter(String::isNotBlank)
+      .distinct()
+      .sortedWith(String.CASE_INSENSITIVE_ORDER)
+  }
+  val scoreSubjectsForClass = remember(snapshot.scoreSubjects, selectedScoreClassName) {
+    snapshot.scoreSubjects
+      .filter { selectedScoreClassName.isBlank() || it.className == selectedScoreClassName }
+      .sortedWith(compareBy<SubjectOverview> { it.title.lowercase(Locale.ROOT) }.thenBy { it.className.lowercase(Locale.ROOT) })
+  }
+  val selectedScoreSubject = remember(scoreSubjectsForClass, selectedScoreSubjectId) {
+    scoreSubjectsForClass.firstOrNull { it.id == selectedScoreSubjectId }
+  }
+  val selectedScoreSort = remember(selectedScoreSortKey) {
+    WakasekScoreSortMode.entries.firstOrNull { it.name == selectedScoreSortKey } ?: WakasekScoreSortMode.ByStudent
+  }
+
+  LaunchedEffect(page, scoreClassOptions) {
+    if (page == WakasekKurikulumPage.StudentScores && selectedScoreClassName !in scoreClassOptions) {
+      selectedScoreClassName = scoreClassOptions.firstOrNull().orEmpty()
+    }
+  }
+  LaunchedEffect(page, selectedScoreClassName, scoreSubjectsForClass) {
+    if (page == WakasekKurikulumPage.StudentScores && selectedScoreSubjectId !in scoreSubjectsForClass.map { it.id }) {
+      selectedScoreSubjectId = scoreSubjectsForClass.firstOrNull()?.id.orEmpty()
+    }
+  }
+  LaunchedEffect(page, selectedScoreSubjectId, scoreSnapshots) {
+    if (page != WakasekKurikulumPage.StudentScores || selectedScoreSubjectId.isBlank()) return@LaunchedEffect
+    val subject = snapshot.scoreSubjects.firstOrNull { it.id == selectedScoreSubjectId } ?: return@LaunchedEffect
+    val cachedSnapshot = scoreSnapshots.firstOrNull { it.distribusiId == selectedScoreSubjectId }
+    if (cachedSnapshot != null) {
+      scoreSnapshot = cachedSnapshot
+      return@LaunchedEffect
+    }
+    isLoadingScores = true
+    scoreSnapshot = onLoadScores(subject.id, subject)
+    isLoadingScores = false
+  }
+
+  fun exportScores(action: WakasekScoreExportAction, subjects: List<SubjectOverview>) {
+    scope.launch {
+      isExportingScores = true
+      runCatching {
+        val worksheets = subjects.mapNotNull { subject ->
+          val loadedSnapshot = scoreSnapshots.firstOrNull { it.distribusiId == subject.id }
+            ?: scoreSnapshot?.takeIf { it.distribusiId == subject.id }
+            ?: onLoadScores(subject.id, subject)
+          if (loadedSnapshot != null && subject.id == selectedScoreSubjectId) {
+            scoreSnapshot = loadedSnapshot
+          }
+          loadedSnapshot?.let { snapshot ->
+            WakasekScoreExcelExporter.ScoreWorksheet(
+              subject = subject,
+              snapshot = snapshot
+            )
+          }
+        }
+        if (worksheets.isEmpty()) {
+          snackbarHostState.showSnackbar("Data nilai belum bisa dimuat.")
+        } else {
+          val file = WakasekScoreExcelExporter.createWorkbook(
+            context = context,
+            worksheets = worksheets
+          )
+          if (action == WakasekScoreExportAction.Share) {
+            WakasekScoreExcelExporter.shareWorkbook(context, file)
+          } else {
+            WakasekScoreExcelExporter.openWorkbook(context, file)
+          }
+          snackbarHostState.showSnackbar("File Excel nilai siswa siap.")
+        }
+      }.onFailure {
+        snackbarHostState.showSnackbar("Gagal membuat file Excel nilai siswa.")
+      }.also {
+        isExportingScores = false
+      }
+    }
   }
 
   Scaffold(
@@ -236,8 +403,15 @@ fun WakasekKurikulumScreen(
             .navigationBarsPadding()
             .padding(horizontal = 18.dp)
         ) {
-          WakasekTopBar(page = page, onMenuClick = onMenuClick)
-          if (page != WakasekKurikulumPage.Permission) {
+          WakasekTopBar(
+            page = page,
+            onMenuClick = onMenuClick,
+            showScoreActions = page == WakasekKurikulumPage.StudentScores,
+            scoreActionsEnabled = snapshot.scoreSubjects.isNotEmpty() && !isLoadingScores,
+            scoreActionsProcessing = isExportingScores,
+            onScoreActionSelected = { scoreExportAction = it }
+          )
+          if (page == WakasekKurikulumPage.Teacher || page == WakasekKurikulumPage.Student) {
             WakasekPeriodContextSelector(
               filter = activeFilter,
               semesterOptions = semesterOptions,
@@ -321,6 +495,95 @@ fun WakasekKurikulumScreen(
                   }
                 }
 
+                WakasekKurikulumPage.StudentScores -> {
+                  item {
+                    WakasekScoreSelectorCard(
+                      classOptions = scoreClassOptions,
+                      selectedClassName = selectedScoreClassName,
+                      onClassSelected = { className ->
+                        selectedScoreClassName = className
+                        selectedScoreSubjectId = snapshot.scoreSubjects
+                          .filter { it.className == className }
+                          .sortedBy { it.title.lowercase(Locale.ROOT) }
+                          .firstOrNull()
+                          ?.id
+                          .orEmpty()
+                      },
+                      subjectOptions = scoreSubjectsForClass,
+                      selectedSubjectId = selectedScoreSubjectId,
+                      onSubjectSelected = { selectedScoreSubjectId = it },
+                      selectedSubject = selectedScoreSubject,
+                      isLoading = isLoadingScores || isExportingScores
+                    )
+                  }
+                  if (snapshot.scoreSubjects.isEmpty()) {
+                    item { EmptyPlaceholderCard("Belum ada distribusi kelas-mapel untuk ditampilkan.") }
+                  } else {
+                    item {
+                      WakasekScoreSortControl(
+                        selected = selectedScoreSort,
+                        onSelected = { selectedScoreSortKey = it.name }
+                      )
+                    }
+                    val activeScoreSnapshot = scoreSnapshot?.takeIf { it.distribusiId == selectedScoreSubjectId }
+                    when {
+                      isLoadingScores && activeScoreSnapshot == null -> {
+                        item { WakasekScoreLoadingCard() }
+                      }
+
+                      activeScoreSnapshot == null -> {
+                        item { EmptyPlaceholderCard("Pilih kelas dan mapel untuk melihat nilai siswa.") }
+                      }
+
+                      activeScoreSnapshot.students.isEmpty() -> {
+                        item { EmptyPlaceholderCard("Belum ada nilai siswa untuk kelas dan mapel ini.") }
+                      }
+
+                      selectedScoreSort == WakasekScoreSortMode.ByStudent -> {
+                        items(activeScoreSnapshot.students.sortedBy { it.name.lowercase(Locale.ROOT) }, key = { it.id }) { student ->
+                          WakasekScoreStudentCard(
+                            student = student,
+                            expanded = expandedScoreStudentId == student.id,
+                            onClick = {
+                              expandedScoreStudentId = if (expandedScoreStudentId == student.id) "" else student.id
+                            }
+                          )
+                        }
+                      }
+
+                      selectedScoreSort == WakasekScoreSortMode.ByType -> {
+                        val overviews = buildWakasekScoreTypeOverviews(activeScoreSnapshot.students)
+                        items(overviews, key = { it.key }) { item ->
+                          WakasekScoreTypeCard(
+                            item = item,
+                            expanded = expandedScoreMetricKey == item.key,
+                            onClick = {
+                              expandedScoreMetricKey = if (expandedScoreMetricKey == item.key) "" else item.key
+                            }
+                          )
+                        }
+                      }
+
+                      selectedScoreSort == WakasekScoreSortMode.ByDate -> {
+                        val overviews = buildWakasekScoreDateOverviews(activeScoreSnapshot.students)
+                        if (overviews.isEmpty()) {
+                          item { EmptyPlaceholderCard("Belum ada riwayat nilai bertanggal untuk mapel ini.") }
+                        } else {
+                          items(overviews, key = { it.key }) { item ->
+                            WakasekScoreDateCard(
+                              item = item,
+                              expanded = expandedScoreDateKey == item.key,
+                              onClick = {
+                                expandedScoreDateKey = if (expandedScoreDateKey == item.key) "" else item.key
+                              }
+                            )
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+
                 WakasekKurikulumPage.Permission -> {
                   val pending = snapshot.leaveRequests.filter { isPendingLeaveStatus(it.status) }
                   val reviewed = snapshot.leaveRequests.filterNot { isPendingLeaveStatus(it.status) }
@@ -354,6 +617,27 @@ fun WakasekKurikulumScreen(
         }
       }
     }
+  }
+
+  scoreExportAction?.let { action ->
+    WakasekScoreExportDialog(
+      action = action,
+      subjects = snapshot.scoreSubjects,
+      initialClassName = selectedScoreClassName,
+      initialSubjectId = selectedScoreSubjectId,
+      isProcessing = isExportingScores,
+      onDismiss = {
+        if (!isExportingScores) scoreExportAction = null
+      },
+      onConfirm = { selectedSubjects ->
+        scoreExportAction = null
+        selectedSubjects.firstOrNull()?.let { subject ->
+          selectedScoreClassName = subject.className
+          selectedScoreSubjectId = subject.id
+        }
+        exportScores(action, selectedSubjects)
+      }
+    )
   }
 
   reviewTarget?.let { (item, approved) ->
@@ -392,8 +676,13 @@ fun WakasekKurikulumScreen(
 @Composable
 private fun WakasekTopBar(
   page: WakasekKurikulumPage,
-  onMenuClick: () -> Unit
+  onMenuClick: () -> Unit,
+  showScoreActions: Boolean = false,
+  scoreActionsEnabled: Boolean = true,
+  scoreActionsProcessing: Boolean = false,
+  onScoreActionSelected: (WakasekScoreExportAction) -> Unit = {}
 ) {
+  var scoreMenuExpanded by remember { mutableStateOf(false) }
   Row(
     modifier = Modifier
       .fillMaxWidth()
@@ -425,7 +714,52 @@ private fun WakasekTopBar(
         fontWeight = FontWeight.ExtraBold
       )
     }
-    Spacer(modifier = Modifier.size(42.dp))
+    if (showScoreActions) {
+      Box {
+        Box(
+          modifier = Modifier
+            .size(42.dp)
+            .background(CardBackground.copy(alpha = 0.88f), CircleShape)
+            .border(1.dp, CardBorder, CircleShape)
+            .clickable(enabled = scoreActionsEnabled && !scoreActionsProcessing) {
+              scoreMenuExpanded = true
+            },
+          contentAlignment = Alignment.Center
+        ) {
+          if (scoreActionsProcessing) {
+            CircularProgressIndicator(modifier = Modifier.size(19.dp), strokeWidth = 2.dp)
+          } else {
+            Icon(
+              Icons.Outlined.MoreVert,
+              contentDescription = t("Aksi nilai siswa"),
+              tint = if (scoreActionsEnabled) PrimaryBlueDark else SubtleInk.copy(alpha = 0.5f)
+            )
+          }
+        }
+        DropdownMenu(expanded = scoreMenuExpanded, onDismissRequest = { scoreMenuExpanded = false }) {
+          DropdownMenuItem(
+            text = { Text(t("Cetak")) },
+            leadingIcon = { Icon(Icons.Outlined.Print, contentDescription = null) },
+            enabled = scoreActionsEnabled && !scoreActionsProcessing,
+            onClick = {
+              scoreMenuExpanded = false
+              onScoreActionSelected(WakasekScoreExportAction.Open)
+            }
+          )
+          DropdownMenuItem(
+            text = { Text(t("Kirim")) },
+            leadingIcon = { Icon(Icons.Outlined.Share, contentDescription = null) },
+            enabled = scoreActionsEnabled && !scoreActionsProcessing,
+            onClick = {
+              scoreMenuExpanded = false
+              onScoreActionSelected(WakasekScoreExportAction.Share)
+            }
+          )
+        }
+      }
+    } else {
+      Spacer(modifier = Modifier.size(42.dp))
+    }
   }
 }
 
@@ -1092,6 +1426,598 @@ private fun WakasekSectionSummary(title: String, subtitle: String) {
   }
 }
 
+@Composable
+private fun WakasekScoreSelectorCard(
+  classOptions: List<String>,
+  selectedClassName: String,
+  onClassSelected: (String) -> Unit,
+  subjectOptions: List<SubjectOverview>,
+  selectedSubjectId: String,
+  onSubjectSelected: (String) -> Unit,
+  selectedSubject: SubjectOverview?,
+  isLoading: Boolean
+) {
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(22.dp))
+      .background(CardBackground.copy(alpha = 0.92f))
+      .border(1.dp, CardBorder, RoundedCornerShape(22.dp))
+      .padding(16.dp),
+    verticalArrangement = Arrangement.spacedBy(12.dp)
+  ) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      Box(
+        modifier = Modifier
+          .size(42.dp)
+          .clip(CircleShape)
+          .background(PrimaryBlue.copy(alpha = 0.12f)),
+        contentAlignment = Alignment.Center
+      ) {
+        Icon(Icons.Outlined.Grade, contentDescription = null, tint = PrimaryBlue, modifier = Modifier.size(22.dp))
+      }
+      Column(
+        modifier = Modifier
+          .weight(1f)
+          .padding(start = 10.dp)
+      ) {
+        Text(
+          text = t("Nilai Siswa"),
+          style = MaterialTheme.typography.titleMedium,
+          color = PrimaryBlueDark,
+          fontWeight = FontWeight.ExtraBold
+        )
+        Text(
+          text = t("Pilih kelas dan mapel untuk melihat rekap nilai."),
+          style = MaterialTheme.typography.bodySmall,
+          color = SubtleInk
+        )
+      }
+      if (isLoading) {
+        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+      }
+    }
+
+    WakasekDropdownField(
+      label = "Kelas",
+      value = selectedClassName.ifBlank { "Pilih kelas" },
+      options = classOptions.map { WakasekDropdownOption(it, it) },
+      enabled = classOptions.isNotEmpty(),
+      onSelected = onClassSelected
+    )
+    WakasekDropdownField(
+      label = "Mapel",
+      value = subjectOptions.firstOrNull { it.id == selectedSubjectId }?.title ?: "Pilih mapel",
+      options = subjectOptions.map { subject ->
+        WakasekDropdownOption(
+          key = subject.id,
+          label = subject.title,
+          supporting = subject.semester
+        )
+      },
+      enabled = subjectOptions.isNotEmpty(),
+      onSelected = onSubjectSelected
+    )
+
+    selectedSubject?.let { subject ->
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .clip(RoundedCornerShape(16.dp))
+          .background(HighlightCard.copy(alpha = 0.12f))
+          .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        Column(modifier = Modifier.weight(1f)) {
+          Text(
+            text = subject.title,
+            style = MaterialTheme.typography.labelLarge,
+            color = PrimaryBlueDark,
+            fontWeight = FontWeight.ExtraBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+          )
+          Text(
+            text = "${subject.className} - Semester ${subject.semester}",
+            style = MaterialTheme.typography.labelSmall,
+            color = SubtleInk,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+          )
+        }
+      }
+    }
+
+  }
+}
+
+@Composable
+private fun WakasekDropdownField(
+  label: String,
+  value: String,
+  options: List<WakasekDropdownOption>,
+  enabled: Boolean,
+  onSelected: (String) -> Unit
+) {
+  var expanded by remember { mutableStateOf(false) }
+  Box {
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(16.dp))
+        .background(CardBackground.copy(alpha = 0.86f))
+        .border(1.dp, CardBorder.copy(alpha = 0.78f), RoundedCornerShape(16.dp))
+        .clickable(enabled = enabled) { expanded = true }
+        .padding(horizontal = 12.dp, vertical = 10.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Column(modifier = Modifier.weight(1f)) {
+        Text(
+          text = t(label),
+          style = MaterialTheme.typography.labelSmall,
+          color = SubtleInk,
+          fontWeight = FontWeight.SemiBold
+        )
+        Text(
+          text = t(value),
+          style = MaterialTheme.typography.bodyMedium,
+          color = if (enabled) PrimaryBlueDark else SubtleInk,
+          fontWeight = FontWeight.ExtraBold,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis
+        )
+      }
+      Icon(
+        imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+        contentDescription = null,
+        tint = if (enabled) PrimaryBlueDark else SubtleInk.copy(alpha = 0.5f)
+      )
+    }
+    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+      options.forEach { option ->
+        DropdownMenuItem(
+          text = {
+            Column {
+              Text(option.label, fontWeight = FontWeight.SemiBold)
+              if (option.supporting.isNotBlank()) {
+                Text(option.supporting, style = MaterialTheme.typography.labelSmall, color = SubtleInk)
+              }
+            }
+          },
+          onClick = {
+            onSelected(option.key)
+            expanded = false
+          }
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun WakasekScoreSortControl(
+  selected: WakasekScoreSortMode,
+  onSelected: (WakasekScoreSortMode) -> Unit
+) {
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(18.dp))
+      .background(CardBackground.copy(alpha = 0.82f))
+      .border(1.dp, CardBorder.copy(alpha = 0.76f), RoundedCornerShape(18.dp))
+      .padding(8.dp),
+    horizontalArrangement = Arrangement.spacedBy(8.dp)
+  ) {
+    WakasekScoreSortMode.entries.forEach { option ->
+      val isSelected = selected == option
+      Text(
+        text = t(option.label),
+        style = MaterialTheme.typography.labelMedium,
+        color = if (isSelected) Color.White else PrimaryBlueDark,
+        fontWeight = FontWeight.ExtraBold,
+        maxLines = 1,
+        modifier = Modifier
+          .weight(1f)
+          .clip(RoundedCornerShape(999.dp))
+          .background(if (isSelected) PrimaryBlue else Color.Transparent)
+          .clickable { onSelected(option) }
+          .padding(horizontal = 8.dp, vertical = 9.dp)
+      )
+    }
+  }
+}
+
+@Composable
+private fun WakasekScoreLoadingCard() {
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(18.dp))
+      .background(CardBackground.copy(alpha = 0.88f))
+      .border(1.dp, CardBorder, RoundedCornerShape(18.dp))
+      .padding(16.dp),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(10.dp)
+  ) {
+    CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+    Text(t("Memuat nilai siswa..."), style = MaterialTheme.typography.bodyMedium, color = PrimaryBlueDark, fontWeight = FontWeight.SemiBold)
+  }
+}
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun WakasekScoreStudentCard(
+  student: ScoreStudent,
+  expanded: Boolean,
+  onClick: () -> Unit
+) {
+  val metrics = remember(student) { buildWakasekScoreMetrics(student) }
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .shadow(8.dp, RoundedCornerShape(20.dp), ambientColor = Color(0x100F172A), spotColor = Color(0x100F172A))
+      .clip(RoundedCornerShape(20.dp))
+      .background(CardBackground.copy(alpha = 0.94f))
+      .border(1.dp, CardBorder.copy(alpha = 0.94f), RoundedCornerShape(20.dp))
+      .clickable(onClick = onClick)
+      .animateContentSize()
+      .padding(horizontal = 14.dp, vertical = 12.dp)
+  ) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      Column(modifier = Modifier.weight(1f)) {
+        Text(
+          text = student.name,
+          style = MaterialTheme.typography.titleSmall,
+          color = PrimaryBlueDark,
+          fontWeight = FontWeight.ExtraBold,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis
+        )
+      }
+      Icon(
+        imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+        contentDescription = null,
+        tint = SubtleInk
+      )
+    }
+    if (expanded) {
+      Column(
+        modifier = Modifier.padding(top = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp)
+      ) {
+        metrics.forEach { metric ->
+          WakasekScoreMetricDetailRow(metric)
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun WakasekScoreMetricPill(label: String, value: String) {
+  Row(
+    modifier = Modifier
+      .clip(RoundedCornerShape(999.dp))
+      .background(HighlightCard.copy(alpha = 0.14f))
+      .border(1.dp, CardBorder.copy(alpha = 0.55f), RoundedCornerShape(999.dp))
+      .padding(horizontal = 10.dp, vertical = 7.dp),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(6.dp)
+  ) {
+    Text(t(label), style = MaterialTheme.typography.labelSmall, color = SubtleInk, fontWeight = FontWeight.SemiBold)
+    Text(value, style = MaterialTheme.typography.labelMedium, color = PrimaryBlueDark, fontWeight = FontWeight.ExtraBold)
+  }
+}
+
+@Composable
+private fun WakasekScoreMetricDetailRow(metric: WakasekScoreMetric) {
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(14.dp))
+      .background(SoftPanel.copy(alpha = 0.72f))
+      .padding(10.dp)
+  ) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      Text(
+        text = t(metric.label),
+        style = MaterialTheme.typography.labelMedium,
+        color = PrimaryBlueDark,
+        fontWeight = FontWeight.ExtraBold,
+        modifier = Modifier.weight(1f)
+      )
+      Text(
+        text = formatWakasekScoreNumber(metric.value),
+        style = MaterialTheme.typography.labelMedium,
+        color = PrimaryBlue,
+        fontWeight = FontWeight.ExtraBold
+      )
+    }
+    if (metric.details.isNotEmpty()) {
+      Column(modifier = Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        metric.details.sortedByDescending { it.dateIso }.forEach { detail ->
+          Text(
+            text = "${formatWakasekScoreDate(detail.dateIso)} - ${formatWakasekScoreNumber(detail.value)}${detail.material.takeIf { it.isNotBlank() }?.let { " - $it" }.orEmpty()}",
+            style = MaterialTheme.typography.labelSmall,
+            color = SubtleInk
+          )
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun WakasekScoreTypeCard(
+  item: WakasekScoreTypeOverview,
+  expanded: Boolean,
+  onClick: () -> Unit
+) {
+  val values = item.entries.mapNotNull { it.second }
+  val average = values.takeIf { it.isNotEmpty() }?.average()
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(20.dp))
+      .background(CardBackground.copy(alpha = 0.94f))
+      .border(1.dp, CardBorder, RoundedCornerShape(20.dp))
+      .clickable(onClick = onClick)
+      .animateContentSize()
+      .padding(14.dp)
+  ) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      Column(modifier = Modifier.weight(1f)) {
+        Text(item.label, style = MaterialTheme.typography.titleSmall, color = PrimaryBlueDark, fontWeight = FontWeight.ExtraBold)
+        Text("${item.entries.size} siswa - Rata-rata ${formatWakasekScoreNumber(average)}", style = MaterialTheme.typography.labelSmall, color = SubtleInk)
+      }
+      Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, contentDescription = null, tint = SubtleInk)
+    }
+    if (expanded) {
+      Column(modifier = Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        item.entries.sortedBy { it.first.name.lowercase(Locale.ROOT) }.forEach { (student, value) ->
+          WakasekScoreNameValueRow(student.name, formatWakasekScoreNumber(value))
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun WakasekScoreDateCard(
+  item: WakasekScoreDateOverview,
+  expanded: Boolean,
+  onClick: () -> Unit
+) {
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(20.dp))
+      .background(CardBackground.copy(alpha = 0.94f))
+      .border(1.dp, CardBorder, RoundedCornerShape(20.dp))
+      .clickable(onClick = onClick)
+      .animateContentSize()
+      .padding(14.dp)
+  ) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      Column(modifier = Modifier.weight(1f)) {
+        Text(item.label, style = MaterialTheme.typography.titleSmall, color = PrimaryBlueDark, fontWeight = FontWeight.ExtraBold)
+        Text("${item.entries.size} nilai dicatat", style = MaterialTheme.typography.labelSmall, color = SubtleInk)
+      }
+      Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, contentDescription = null, tint = SubtleInk)
+    }
+    if (expanded) {
+      Column(modifier = Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        item.entries.sortedBy { it.studentName.lowercase(Locale.ROOT) }.forEach { entry ->
+          val value = buildString {
+            append(formatWakasekScoreNumber(entry.value))
+            if (entry.material.isNotBlank()) append(" - ${entry.material}")
+          }
+          WakasekScoreNameValueRow(entry.studentName, value)
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun WakasekScoreNameValueRow(name: String, value: String) {
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(12.dp))
+      .background(SoftPanel.copy(alpha = 0.68f))
+      .padding(horizontal = 10.dp, vertical = 8.dp),
+    verticalAlignment = Alignment.CenterVertically
+  ) {
+    Text(
+      text = name,
+      style = MaterialTheme.typography.labelMedium,
+      color = PrimaryBlueDark,
+      fontWeight = FontWeight.SemiBold,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+      modifier = Modifier.weight(1f)
+    )
+    Text(
+      text = value,
+      style = MaterialTheme.typography.labelMedium,
+      color = PrimaryBlue,
+      fontWeight = FontWeight.ExtraBold,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+      modifier = Modifier.padding(start = 8.dp)
+    )
+  }
+}
+
+@Composable
+private fun WakasekScoreExportDialog(
+  action: WakasekScoreExportAction,
+  subjects: List<SubjectOverview>,
+  initialClassName: String,
+  initialSubjectId: String,
+  isProcessing: Boolean,
+  onDismiss: () -> Unit,
+  onConfirm: (List<SubjectOverview>) -> Unit
+) {
+  val classOptions = remember(subjects) {
+    subjects.map { it.className }.filter(String::isNotBlank).distinct().sortedWith(String.CASE_INSENSITIVE_ORDER)
+  }
+  var selectedClassName by remember(action, subjects) {
+    mutableStateOf(initialClassName.takeIf { it in classOptions }.orEmpty().ifBlank { classOptions.firstOrNull().orEmpty() })
+  }
+  val subjectOptions = remember(subjects, selectedClassName) {
+    subjects
+      .filter { selectedClassName.isBlank() || it.className == selectedClassName }
+      .sortedWith(compareBy<SubjectOverview> { it.title.lowercase(Locale.ROOT) }.thenBy { it.semester })
+  }
+  var includeAllSubjects by remember(action, selectedClassName, subjects) { mutableStateOf(true) }
+  var selectedSubjectIds by remember(action, selectedClassName, subjects) {
+    mutableStateOf(
+      initialSubjectId
+        .takeIf { id -> subjectOptions.any { it.id == id } }
+        ?.let { setOf(it) }
+        ?: subjectOptions.firstOrNull()?.id?.let { setOf(it) }
+        ?: emptySet()
+    )
+  }
+  LaunchedEffect(selectedClassName, subjectOptions) {
+    val allowedIds = subjectOptions.map { it.id }.toSet()
+    if (selectedSubjectIds.none { it in allowedIds }) {
+      selectedSubjectIds = subjectOptions.firstOrNull()?.id?.let { setOf(it) } ?: emptySet()
+    } else {
+      selectedSubjectIds = selectedSubjectIds.intersect(allowedIds)
+    }
+  }
+  val selectedSubjects = if (includeAllSubjects) {
+    subjectOptions
+  } else {
+    subjectOptions.filter { it.id in selectedSubjectIds }
+  }
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text(t(action.title)) },
+    text = {
+      Column(
+        modifier = Modifier
+          .height(420.dp)
+          .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+      ) {
+        Text(
+          text = t("Pilih kelas, lalu cetak semua mapel atau centang mapel tertentu."),
+          style = MaterialTheme.typography.bodySmall,
+          color = SubtleInk
+        )
+        WakasekDropdownField(
+          label = "Kelas",
+          value = selectedClassName.ifBlank { "Pilih kelas" },
+          options = classOptions.map { WakasekDropdownOption(it, it) },
+          enabled = classOptions.isNotEmpty() && !isProcessing,
+          onSelected = { selectedClassName = it }
+        )
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(HighlightCard.copy(alpha = 0.12f))
+            .clickable(enabled = !isProcessing && subjectOptions.isNotEmpty()) {
+              includeAllSubjects = !includeAllSubjects
+            }
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Checkbox(
+            checked = includeAllSubjects,
+            enabled = !isProcessing && subjectOptions.isNotEmpty(),
+            onCheckedChange = { includeAllSubjects = it }
+          )
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = t("Semua mapel"),
+              style = MaterialTheme.typography.labelLarge,
+              color = PrimaryBlueDark,
+              fontWeight = FontWeight.ExtraBold
+            )
+            Text(
+              text = "${subjectOptions.size} ${t("mapel dalam kelas ini")}",
+              style = MaterialTheme.typography.labelSmall,
+              color = SubtleInk
+            )
+          }
+        }
+        if (!includeAllSubjects) {
+          subjectOptions.forEach { subject ->
+            val checked = subject.id in selectedSubjectIds
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(CardBackground.copy(alpha = 0.78f))
+                .border(1.dp, CardBorder.copy(alpha = 0.62f), RoundedCornerShape(14.dp))
+                .clickable(enabled = !isProcessing) {
+                  selectedSubjectIds = if (checked) {
+                    selectedSubjectIds - subject.id
+                  } else {
+                    selectedSubjectIds + subject.id
+                  }
+                }
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Checkbox(
+                checked = checked,
+                enabled = !isProcessing,
+                onCheckedChange = { nextChecked ->
+                  selectedSubjectIds = if (nextChecked) {
+                    selectedSubjectIds + subject.id
+                  } else {
+                    selectedSubjectIds - subject.id
+                  }
+                }
+              )
+              Column(modifier = Modifier.weight(1f)) {
+                Text(
+                  text = subject.title,
+                  style = MaterialTheme.typography.labelMedium,
+                  color = PrimaryBlueDark,
+                  fontWeight = FontWeight.ExtraBold,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                  text = subject.semester,
+                  style = MaterialTheme.typography.labelSmall,
+                  color = SubtleInk,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis
+                )
+              }
+            }
+          }
+        }
+      }
+    },
+    confirmButton = {
+      Button(
+        enabled = selectedSubjects.isNotEmpty() && !isProcessing,
+        onClick = { onConfirm(selectedSubjects) }
+      ) {
+        if (isProcessing) {
+          CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+          Spacer(Modifier.width(7.dp))
+        }
+        Text(t(action.confirmLabel))
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss, enabled = !isProcessing) {
+        Text(t("Batal"))
+      }
+    }
+  )
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TeacherMonitoringCard(
@@ -1655,6 +2581,91 @@ private fun sortStudentSummaries(
         .thenBy { it.studentName.lowercase() }
     )
   }
+}
+
+private fun buildWakasekScoreMetrics(student: ScoreStudent): List<WakasekScoreMetric> {
+  return WakasekScoreMetricDefinitions.map { definition ->
+    WakasekScoreMetric(
+      key = definition.key,
+      label = definition.label,
+      value = wakasekScoreValue(student, definition.key),
+      details = if (definition.supportsDetailRows) {
+        student.detailRowsByMetric[definition.key].orEmpty()
+      } else {
+        emptyList()
+      }
+    )
+  }
+}
+
+private fun buildWakasekScoreTypeOverviews(students: List<ScoreStudent>): List<WakasekScoreTypeOverview> {
+  return WakasekScoreMetricDefinitions.map { definition ->
+    WakasekScoreTypeOverview(
+      key = definition.key,
+      label = definition.label,
+      entries = students.map { student -> student to wakasekScoreValue(student, definition.key) }
+    )
+  }
+}
+
+private fun buildWakasekScoreDateOverviews(students: List<ScoreStudent>): List<WakasekScoreDateOverview> {
+  val grouped = linkedMapOf<String, MutableList<WakasekScoreDateEntry>>()
+  val labels = linkedMapOf<String, String>()
+  students.forEach { student ->
+    WakasekScoreMetricDefinitions
+      .filter { it.supportsDetailRows }
+      .forEach { definition ->
+        student.detailRowsByMetric[definition.key].orEmpty()
+          .filter { it.dateIso.isNotBlank() }
+          .forEach { detail ->
+            val dateIso = detail.dateIso.take(10)
+            val key = "${definition.key}|$dateIso"
+            labels[key] = "${formatWakasekScoreDate(dateIso)} - ${definition.label}"
+            grouped.getOrPut(key) { mutableListOf() } += WakasekScoreDateEntry(
+              studentName = student.name,
+              value = detail.value,
+              material = detail.material
+            )
+          }
+      }
+  }
+  return grouped.map { (key, entries) ->
+    val dateIso = key.substringAfter("|")
+    WakasekScoreDateOverview(
+      key = key,
+      dateIso = dateIso,
+      label = labels[key].orEmpty().ifBlank { formatWakasekScoreDate(dateIso) },
+      entries = entries
+    )
+  }.sortedWith(compareByDescending<WakasekScoreDateOverview> { it.dateIso }.thenBy { it.label })
+}
+
+private fun wakasekScoreValue(student: ScoreStudent, key: String): Double? {
+  return when (key) {
+    "nilai_tugas" -> student.nilaiTugas
+    "nilai_ulangan_harian" -> student.nilaiUlanganHarian
+    "nilai_pts" -> student.nilaiPts
+    "nilai_pas" -> student.nilaiPas
+    "nilai_kehadiran" -> student.nilaiKehadiran
+    "nilai_akhir" -> student.nilaiAkhir
+    "nilai_keterampilan" -> student.nilaiKeterampilan
+    else -> null
+  }
+}
+
+private fun formatWakasekScoreNumber(value: Double?): String {
+  val number = value ?: return "-"
+  val rounded = number.roundToInt()
+  return if (kotlin.math.abs(number - rounded) < 0.0001) {
+    rounded.toString()
+  } else {
+    "%.2f".format(Locale("id", "ID"), number)
+  }
+}
+
+private fun formatWakasekScoreDate(dateIso: String): String {
+  return parseIsoDate(dateIso)?.format(DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.forLanguageTag("id-ID")))
+    ?: dateIso.ifBlank { "-" }
 }
 
 private fun buildStudentSummaryChips(rows: List<WakasekStudentMonitoringRow>): List<TeacherSummaryChip> {

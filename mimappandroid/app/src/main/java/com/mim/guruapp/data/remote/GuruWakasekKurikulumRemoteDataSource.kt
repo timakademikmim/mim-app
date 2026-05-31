@@ -2,6 +2,7 @@ package com.mim.guruapp.data.remote
 
 import com.mim.guruapp.BuildConfig
 import com.mim.guruapp.data.model.LeaveRequestItem
+import com.mim.guruapp.data.model.SubjectOverview
 import com.mim.guruapp.data.model.WakasekKurikulumSnapshot
 import com.mim.guruapp.data.model.WakasekStudentMonitoringRow
 import com.mim.guruapp.data.model.WakasekTeacherMonitoringRow
@@ -77,11 +78,16 @@ class GuruWakasekKurikulumRemoteDataSource {
       val subjectIds = (attendanceRows.map { it.cleanString("mapel_id") } + distribusiRows.map { it.cleanString("mapel_id") })
         .filter(String::isNotBlank)
         .distinct()
+      val semesterIds = distribusiRows.map { it.cleanString("semester_id") }
+        .filter(String::isNotBlank)
+        .distinct()
 
       val teacherMap = fetchNameMap("karyawan", "nama", teacherIds)
       val studentMap = fetchNameMap("santri", "nama", studentIds)
       val classMap = fetchNameMap("kelas", "nama_kelas", classIds)
       val subjectMap = fetchNameMap("mapel", "nama", subjectIds)
+      val semesterMap = fetchSemesterMap(semesterIds)
+      val activeSemesterId = resolveActiveSemesterId()
       val calendarRows = fetchCalendarRows()
 
       WakasekKurikulumSnapshot(
@@ -100,6 +106,13 @@ class GuruWakasekKurikulumRemoteDataSource {
           endDate = referenceDate
         ),
         studentRows = buildStudentRows(attendanceRows, studentMap, classMap, subjectMap),
+        scoreSubjects = buildWakasekScoreSubjects(
+          distribusiRows = distribusiRows,
+          classMap = classMap,
+          subjectMap = subjectMap,
+          semesterMap = semesterMap,
+          activeSemesterId = activeSemesterId
+        ),
         leaveRequests = leaveRows.mapNotNull { parseLeaveRequestItem(it, teacherMap) },
         updatedAt = System.currentTimeMillis()
       )
@@ -482,6 +495,41 @@ class GuruWakasekKurikulumRemoteDataSource {
       .sortedWith(compareByDescending<WakasekStudentMonitoringRow> { it.dateIso }.thenBy { it.studentName })
   }
 
+  private fun buildWakasekScoreSubjects(
+    distribusiRows: List<JSONObject>,
+    classMap: Map<String, String>,
+    subjectMap: Map<String, String>,
+    semesterMap: Map<String, JSONObject>,
+    activeSemesterId: String
+  ): List<SubjectOverview> {
+    val rows = if (activeSemesterId.isNotBlank() && distribusiRows.any { it.cleanString("semester_id") == activeSemesterId }) {
+      distribusiRows.filter { it.cleanString("semester_id") == activeSemesterId }
+    } else {
+      distribusiRows
+    }
+    return rows
+      .mapNotNull { row ->
+        val id = row.cleanString("id")
+        val classId = row.cleanString("kelas_id")
+        val subjectId = row.cleanString("mapel_id")
+        if (id.isBlank() || classId.isBlank() || subjectId.isBlank()) return@mapNotNull null
+        val semesterId = row.cleanString("semester_id")
+        val semester = semesterMap[semesterId]
+        SubjectOverview(
+          id = id,
+          title = subjectMap[subjectId].orEmpty().ifBlank { "Mapel" },
+          className = classMap[classId].orEmpty().ifBlank { "Kelas" },
+          semester = semesterLabel(semester),
+          semesterActive = semesterId.isNotBlank() && (semesterId == activeSemesterId || isActiveSemester(semester)),
+          attendancePending = 0,
+          scorePending = 0,
+          materialCount = 0
+        )
+      }
+      .distinctBy { it.id }
+      .sortedWith(compareBy<SubjectOverview> { it.className.lowercase(Locale.ROOT) }.thenBy { it.title.lowercase(Locale.ROOT) })
+  }
+
   private fun parseLeaveRequestItem(item: JSONObject, teacherMap: Map<String, String>): LeaveRequestItem? {
     val id = item.cleanString("id")
     if (id.isBlank()) return null
@@ -650,6 +698,27 @@ class GuruWakasekKurikulumRemoteDataSource {
       .filterKeys(String::isNotBlank)
   }
 
+  private fun fetchSemesterMap(ids: List<String>): Map<String, JSONObject> {
+    if (ids.isEmpty()) return emptyMap()
+    return ids.distinct()
+      .chunked(100)
+      .flatMap { chunk ->
+        val inClause = chunk.joinToString(",") { "\"${it}\"" }
+        fetchRows("semester", "select=id,nama,aktif,tahun_ajaran_id&id=in.($inClause)")
+      }
+      .associateBy { row -> row.cleanString("id") }
+      .filterKeys(String::isNotBlank)
+  }
+
+  private fun resolveActiveSemesterId(): String {
+    return runCatching {
+      fetchRows(
+        table = "semester",
+        query = "select=id,nama,aktif,tahun_ajaran_id&aktif=eq.true&order=id.desc&limit=1"
+      ).firstOrNull()?.cleanString("id").orEmpty()
+    }.getOrDefault("")
+  }
+
   private fun fetchRows(table: String, query: String): List<JSONObject> {
     val requestUrl = "${BuildConfig.SUPABASE_URL}/rest/v1/$table?$query"
     val pageSize = 1_000
@@ -799,6 +868,15 @@ class GuruWakasekKurikulumRemoteDataSource {
   private fun formatDateLabel(dateIso: String): String {
     return parseDate(dateIso)?.format(DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.forLanguageTag("id-ID")))
       ?: dateIso
+  }
+
+  private fun semesterLabel(semester: JSONObject?): String {
+    return semester?.cleanString("nama").orEmpty().ifBlank { "-" }
+  }
+
+  private fun isActiveSemester(semester: JSONObject?): Boolean {
+    if (semester == null) return false
+    return semester.opt("aktif") == true || semester.cleanString("aktif").equals("true", ignoreCase = true)
   }
 
   private fun buildTimeLabel(start: String, end: String): String {

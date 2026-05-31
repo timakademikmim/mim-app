@@ -114,16 +114,16 @@ jobs:
             "versionCode": ${MIM_VERSION_CODE},
             "versionName": "${MIM_VERSION_NAME}",
             "apkUrl": "${APK_URL}",
-            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Popup pembaruan kini menampilkan catatan rilis, dan laporan absensi mendukung export Excel kelas.",
+            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Wakasek dapat memantau nilai siswa per kelas dan mapel serta mencetak atau mengirim rekap Excel multi-sheet.",
             "features": [
-              "Popup pembaruan menampilkan bagian Apa yang baru berisi fitur dan perbaikan.",
-              "Laporan absensi wali kelas bisa dicetak atau dikirim sebagai file Excel.",
-              "Pilihan export absensi mendukung bulan ini, semester, tahun, atau beberapa bulan sekaligus."
+              "Menu Wakasek Akademik memiliki tab Nilai Siswa untuk melihat detail nilai per kelas dan mapel.",
+              "Nilai siswa dapat dilihat per siswa, per jenis nilai, atau per tanggal input nilai.",
+              "Export nilai Wakasek mendukung cetak atau kirim semua mapel maupun mapel terpilih dalam file Excel multi-sheet."
             ],
             "fixes": [
-              "Rekap harian absensi memperlakukan terlambat sebagai hadir saat dihitung per hari.",
-              "Manifest update mendukung catatan fitur dan perbaikan agar popup versi baru lebih informatif.",
-              "File export absensi dapat dibuka atau dibagikan melalui FileProvider aplikasi."
+              "Card nilai per siswa dibuat lebih ringkas dengan nama siswa saja sebelum dibuka.",
+              "Format Excel nilai memakai header gabungan Nilai Pengetahuan dan kolom Total.",
+              "Kolom deskripsi pengetahuan dan keterampilan disiapkan kosong sesuai format cetak."
             ],
             "mandatory": ${MANDATORY}
           }
