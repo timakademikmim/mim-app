@@ -64,6 +64,7 @@ import com.mim.guruapp.GuruSidebarDestination
 import com.mim.guruapp.AttendanceSaveOutcome
 import com.mim.guruapp.LeaveRequestSaveOutcome
 import com.mim.guruapp.PatronMateriSaveOutcome
+import com.mim.guruapp.QuestionSaveOutcome
 import com.mim.guruapp.ScoreSaveOutcome
 import com.mim.guruapp.ProfileSaveOutcome
 import com.mim.guruapp.SantriSaveOutcome
@@ -120,6 +121,7 @@ import com.mim.guruapp.ui.components.PerizinanScreen
 import com.mim.guruapp.ui.components.PlaceholderPanel
 import com.mim.guruapp.ui.components.ProfileInfoRow
 import com.mim.guruapp.ui.components.QuickStatsRow
+import com.mim.guruapp.ui.components.RaporScreen
 import com.mim.guruapp.ui.components.SantriScreen
 import com.mim.guruapp.ui.components.Sidebar
 import com.mim.guruapp.ui.components.SidebarScrim
@@ -224,6 +226,8 @@ fun GuruHomeScreen(
   onSaveMapelScoresBatch: suspend (String, SubjectOverview, List<ScoreStudent>) -> ScoreSaveOutcome,
   onLoadMapelPatronMateri: suspend (String, SubjectOverview) -> MapelPatronMateriSnapshot?,
   onSaveMapelPatronMateri: suspend (String, SubjectOverview, List<PatronMateriItem>) -> PatronMateriSaveOutcome,
+  onLoadMapelQuestions: suspend (String, SubjectOverview) -> String?,
+  onSaveMapelQuestions: suspend (String, SubjectOverview, String) -> QuestionSaveOutcome,
   onSaveProfile: suspend (com.mim.guruapp.data.model.GuruProfile) -> ProfileSaveOutcome,
   onSaveSantri: suspend (WaliSantriProfile) -> SantriSaveOutcome,
   onSaveMonthlyReport: suspend (MonthlyReportItem) -> MonthlyReportSaveOutcome,
@@ -300,7 +304,8 @@ fun GuruHomeScreen(
     GuruSidebarDestination.LaporanBulanan,
     GuruSidebarDestination.LaporanUTS,
     GuruSidebarDestination.Profil,
-    GuruSidebarDestination.Santri -> true
+    GuruSidebarDestination.Santri,
+    GuruSidebarDestination.Rapor -> true
     GuruSidebarDestination.Mapel -> !isMapelDetailMode
     else -> false
   }
@@ -529,10 +534,23 @@ fun GuruHomeScreen(
     } else if (targetDestination == GuruSidebarDestination.Santri) {
       SantriScreen(
         waliSantriSnapshot = dashboard.waliSantriSnapshot,
+        monthlyReportSnapshot = dashboard.monthlyReportSnapshot,
+        utsReportSnapshot = dashboard.utsReportSnapshot,
+        scoreSnapshots = dashboard.scoreSnapshots,
         isRefreshing = syncBanner.isSyncing,
         onMenuClick = onToggleSidebar,
         onRefresh = onRefreshClick,
         onSaveSantri = onSaveSantri,
+        modifier = Modifier
+          .fillMaxSize()
+      )
+    } else if (targetDestination == GuruSidebarDestination.Rapor) {
+      RaporScreen(
+        waliSantriSnapshot = dashboard.waliSantriSnapshot,
+        utsReportSnapshot = dashboard.utsReportSnapshot,
+        isRefreshing = syncBanner.isSyncing,
+        onMenuClick = onToggleSidebar,
+        onRefresh = onRefreshClick,
         modifier = Modifier
           .fillMaxSize()
       )
@@ -626,6 +644,8 @@ fun GuruHomeScreen(
         onSaveScoresBatch = onSaveMapelScoresBatch,
         onLoadPatronMateri = onLoadMapelPatronMateri,
         onSavePatronMateri = onSaveMapelPatronMateri,
+        onLoadQuestions = onLoadMapelQuestions,
+        onSaveQuestions = onSaveMapelQuestions,
         isRefreshing = syncBanner.isSyncing,
         onRefresh = onRefreshClick,
         onDetailModeChange = { isMapelDetailMode = it },
@@ -1200,6 +1220,8 @@ private fun GuruHomeScreenPreview() {
       onSaveMapelScoresBatch = { _, _, _ -> ScoreSaveOutcome(true, "OK") },
       onLoadMapelPatronMateri = { _, _ -> null },
       onSaveMapelPatronMateri = { _, _, _ -> PatronMateriSaveOutcome(true, "OK") },
+      onLoadMapelQuestions = { _, _ -> null },
+      onSaveMapelQuestions = { _, _, _ -> QuestionSaveOutcome(true, "OK") },
       onSaveProfile = { ProfileSaveOutcome(true, "OK") },
       onSaveSantri = { SantriSaveOutcome(true, "OK") },
       onSaveMonthlyReport = { MonthlyReportSaveOutcome(true, "OK") },

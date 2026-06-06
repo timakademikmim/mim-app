@@ -1,6 +1,7 @@
 package com.mim.guruapp.data.remote
 
 import com.mim.guruapp.BuildConfig
+import com.mim.guruapp.data.model.ScoreDetailRow
 import com.mim.guruapp.data.model.UtsAttendanceSummary
 import com.mim.guruapp.data.model.UtsClassSubject
 import com.mim.guruapp.data.model.UtsReportOverride
@@ -60,8 +61,8 @@ class GuruUtsReportRemoteDataSource {
         )
       }
 
-      val scoreRows = fetchScoreRows(studentIds, semesterIds)
       val classSubjects = fetchClassSubjects(classIds, semesterIds)
+      val scoreRows = fetchScoreRows(studentIds, semesterIds, classSubjects)
       val overrideResult = fetchOverrides(guruId, semesterIds, studentIds)
       val scheduleRows = fetchExamScheduleRows(classIds, semesterIds)
       val attendanceRows = fetchAttendanceRows(studentIds, classIds, semesterIds)
@@ -168,6 +169,11 @@ class GuruUtsReportRemoteDataSource {
 
   private fun fetchSemesters(activeTahunAjaranId: String): List<UtsSemesterInfo> {
     val rows = fetchSemesterRows(activeTahunAjaranId)
+    val tahunAjaranLabels = fetchAcademicYearLabels(
+      rows.map { row -> pickFirst(row, "tahun_ajaran_id", "tahunAjaranId") }
+        .filter { it.isNotBlank() }
+        .distinct()
+    )
     return rows.mapNotNull { row ->
       val id = row.cleanString("id")
       if (id.isBlank()) return@mapNotNull null
@@ -179,11 +185,27 @@ class GuruUtsReportRemoteDataSource {
         id = id,
         label = label,
         tahunAjaranId = tahunAjaranId,
+        tahunAjaranLabel = tahunAjaranLabels[tahunAjaranId].orEmpty().ifBlank { formatAcademicYearLabel(row) },
         startDateIso = pickFirst(row, "tanggal_mulai", "mulai", "start_date").take(10),
         endDateIso = pickFirst(row, "tanggal_selesai", "selesai", "end_date").take(10),
         isActive = rowActive && (activeTahunAjaranId.isBlank() || tahunAjaranId == activeTahunAjaranId)
       )
     }.sortedWith(compareByDescending<UtsSemesterInfo> { it.isActive }.thenByDescending { it.startDateIso })
+  }
+
+  private fun fetchAcademicYearLabels(tahunAjaranIds: List<String>): Map<String, String> {
+    if (tahunAjaranIds.isEmpty()) return emptyMap()
+    return runCatching {
+      fetchRows(
+        table = "tahun_ajaran",
+        query = buildString {
+          append("select=*")
+          appendInFilter("id", tahunAjaranIds)
+        }
+      ).associate { row ->
+        row.cleanString("id") to formatAcademicYearLabel(row)
+      }
+    }.getOrDefault(emptyMap())
   }
 
   private fun fetchSemesterRows(activeTahunAjaranId: String): List<JSONObject> {
@@ -225,29 +247,188 @@ class GuruUtsReportRemoteDataSource {
 
   private fun fetchScoreRows(
     studentIds: List<String>,
-    semesterIds: List<String>
+    semesterIds: List<String>,
+    classSubjects: List<UtsClassSubject>
   ): List<UtsScoreRow> {
-    return fetchRows(
-      table = "nilai_akademik",
-      query = buildString {
-        append("select=santri_id,mapel_id,semester_id,nilai_pts")
-        appendInFilter("santri_id", studentIds)
-        appendInFilter("semester_id", semesterIds)
+    val summaryRows = fetchSummaryScoreRows(studentIds, semesterIds)
+    val inputRows = fetchInputScoreRows(studentIds, semesterIds)
+    val distributionsById = fetchScoreDistributions(
+      inputRows.map { it.cleanString("distribusi_id") }
+        .filter { it.isNotBlank() }
+        .distinct()
+    )
+    val detailEntriesByKey = inputRows
+      .mapNotNull { row ->
+        val key = row.scoreRowKeyOrNull(distributionsById, classSubjects) ?: return@mapNotNull null
+        val metricKey = scoreInputMetricKey(row.cleanString("jenis"))
+        val value = row.optDoubleOrNull("nilai")
+        if (metricKey.isBlank() || value == null) {
+          null
+        } else {
+          key to ScoreInputEntry(
+            metricKey = metricKey,
+            value = value,
+            row = ScoreDetailRow(
+              id = row.cleanString("id"),
+              dateIso = row.cleanString("tanggal").take(10),
+              value = value,
+              material = pickFirst(row, "materi", "patron_materi")
+            )
+          )
+        }
       }
-    ).mapNotNull { row ->
-      val studentId = row.cleanString("santri_id")
-      val semesterId = row.cleanString("semester_id")
-      val mapelId = row.cleanString("mapel_id")
-      if (studentId.isBlank() || semesterId.isBlank() || mapelId.isBlank()) return@mapNotNull null
-      val value = row.optDoubleOrNull("nilai_pts")
+      .groupBy({ it.first }, { it.second })
+    val summaryRowsByKey = summaryRows.mapNotNull { row ->
+      val key = row.scoreRowKeyOrNull() ?: return@mapNotNull null
+      key to row
+    }.associate { it }
+    val allowedKeys = classSubjects
+      .map { subject -> subject.semesterId to subject.mapelId }
+      .toSet()
+    val keys = (summaryRowsByKey.keys + detailEntriesByKey.keys)
+      .filter { key -> key.semesterId to key.mapelId in allowedKeys }
+      .distinct()
+
+    return keys.map { key ->
+      val summaryRow = summaryRowsByKey[key]
+      val detailRowsByMetric = detailEntriesByKey[key].orEmpty()
+        .groupBy({ it.metricKey }, { it.row })
+      fun detailAverage(metricKey: String): Double? {
+        val values = detailRowsByMetric[metricKey].orEmpty().mapNotNull { it.value }
+        if (values.isEmpty()) return null
+        return roundScore(values.sum() / values.size.toDouble())
+      }
+      fun calculatedMetric(metricKey: String, summaryColumn: String): Double? {
+        return detailAverage(metricKey) ?: summaryRow?.optDoubleOrNull(summaryColumn)
+      }
+
+      val tugasValue = calculatedMetric("nilai_tugas", "nilai_tugas")
+      val ulanganHarianValue = calculatedMetric("nilai_ulangan_harian", "nilai_ulangan_harian")
+      val ptsValue = calculatedMetric("nilai_pts", "nilai_pts")
+      val pasValue = calculatedMetric("nilai_pas", "nilai_pas")
+      val kehadiranValue = calculatedMetric("nilai_kehadiran", "nilai_kehadiran")
+      val rawKnowledgeValues = listOf(tugasValue, ulanganHarianValue, ptsValue, pasValue, kehadiranValue)
+      val knowledgeValue = if (rawKnowledgeValues.any { it != null }) {
+        calculateFinalScore(tugasValue, ulanganHarianValue, ptsValue, pasValue, kehadiranValue)
+      } else {
+        summaryRow?.optDoubleOrNull("nilai_akhir")
+      }
+      val skillValue = calculatedMetric("nilai_keterampilan", "nilai_keterampilan")
+
       UtsScoreRow(
-        studentId = studentId,
-        semesterId = semesterId,
-        mapelId = mapelId,
-        scoreText = value?.let(::formatScore).orEmpty(),
-        scoreValue = value
+        studentId = key.studentId,
+        semesterId = key.semesterId,
+        mapelId = key.mapelId,
+        scoreText = ptsValue?.let(::formatScore).orEmpty(),
+        scoreValue = ptsValue,
+        taskScoreText = tugasValue?.let(::formatScore).orEmpty(),
+        taskScoreValue = tugasValue,
+        dailyTestScoreText = ulanganHarianValue?.let(::formatScore).orEmpty(),
+        dailyTestScoreValue = ulanganHarianValue,
+        finalExamScoreText = pasValue?.let(::formatScore).orEmpty(),
+        finalExamScoreValue = pasValue,
+        attendanceScoreText = kehadiranValue?.let(::formatScore).orEmpty(),
+        attendanceScoreValue = kehadiranValue,
+        knowledgeScoreText = knowledgeValue?.let(::formatScore).orEmpty(),
+        knowledgeScoreValue = knowledgeValue,
+        skillScoreText = skillValue?.let(::formatScore).orEmpty(),
+        skillScoreValue = skillValue,
+        knowledgeDescription = summaryRow?.let {
+          pickFirst(it, "deskripsi_pengetahuan", "keterangan_pengetahuan", "deskripsi_nilai_pengetahuan")
+        }.orEmpty(),
+        skillDescription = summaryRow?.let {
+          pickFirst(it, "deskripsi_keterampilan", "keterangan_keterampilan", "deskripsi_nilai_keterampilan")
+        }.orEmpty(),
+        detailRowsByMetric = detailRowsByMetric
       )
     }
+  }
+
+  private fun fetchSummaryScoreRows(
+    studentIds: List<String>,
+    semesterIds: List<String>
+  ): List<JSONObject> {
+    return runCatching {
+      fetchRows(
+        table = "nilai_akademik",
+        query = buildString {
+          append("select=santri_id,mapel_id,semester_id,nilai_tugas,nilai_ulangan_harian,nilai_pts,nilai_pas,nilai_kehadiran,nilai_akhir,nilai_keterampilan,deskripsi_pengetahuan,deskripsi_keterampilan,keterangan_pengetahuan,keterangan_keterampilan")
+          appendInFilter("santri_id", studentIds)
+          appendInFilter("semester_id", semesterIds)
+        }
+      )
+    }.getOrElse {
+      fetchRows(
+        table = "nilai_akademik",
+        query = buildString {
+          append("select=santri_id,mapel_id,semester_id,nilai_tugas,nilai_ulangan_harian,nilai_pts,nilai_pas,nilai_kehadiran,nilai_akhir,nilai_keterampilan")
+          appendInFilter("santri_id", studentIds)
+          appendInFilter("semester_id", semesterIds)
+        }
+      )
+    }
+  }
+
+  private fun fetchInputScoreRows(
+    studentIds: List<String>,
+    semesterIds: List<String>
+  ): List<JSONObject> {
+    return mergeScoreInputRows(
+      fetchInputScoreRowsWithFilters(studentIds, semesterIds),
+      fetchInputScoreRowsWithFilters(studentIds, emptyList())
+    )
+  }
+
+  private fun fetchInputScoreRowsWithFilters(
+    studentIds: List<String>,
+    semesterIds: List<String>
+  ): List<JSONObject> {
+    fun queryWithSelect(select: String): String = buildString {
+      append("select=")
+      append(select)
+      appendInFilter("santri_id", studentIds)
+      appendInFilter("semester_id", semesterIds)
+    }
+    val richSelect = "id,tanggal,santri_id,kelas_id,mapel_id,semester_id,distribusi_id,jenis,nilai,materi"
+    val plainSelect = "id,tanggal,santri_id,kelas_id,mapel_id,semester_id,distribusi_id,jenis,nilai"
+    val minimalSelect = "id,tanggal,santri_id,mapel_id,semester_id,jenis,nilai"
+    return runCatching {
+      fetchRows("nilai_input_akademik", queryWithSelect(richSelect))
+    }.getOrElse {
+      runCatching {
+        fetchRows("nilai_input_akademik", queryWithSelect(plainSelect))
+      }.getOrElse {
+        runCatching {
+          fetchRows("nilai_input_akademik", queryWithSelect(minimalSelect))
+        }.getOrDefault(emptyList())
+      }
+    }
+  }
+
+  private fun fetchScoreDistributions(
+    distribusiIds: List<String>
+  ): Map<String, ScoreDistributionRef> {
+    if (distribusiIds.isEmpty()) return emptyMap()
+    return runCatching {
+      fetchRows(
+        table = "distribusi_mapel",
+        query = buildString {
+          append("select=id,kelas_id,mapel_id,semester_id")
+          appendInFilter("id", distribusiIds)
+        }
+      ).mapNotNull { row ->
+        val id = row.cleanString("id")
+        if (id.isBlank()) {
+          null
+        } else {
+          id to ScoreDistributionRef(
+            classId = row.cleanString("kelas_id"),
+            mapelId = row.cleanString("mapel_id"),
+            semesterId = row.cleanString("semester_id")
+          )
+        }
+      }.toMap()
+    }.getOrDefault(emptyMap())
   }
 
   private fun fetchClassSubjects(
@@ -257,7 +438,7 @@ class GuruUtsReportRemoteDataSource {
     val distribusiRows = fetchRows(
       table = "distribusi_mapel",
       query = buildString {
-        append("select=kelas_id,mapel_id,semester_id")
+        append("select=id,kelas_id,mapel_id,semester_id")
         appendInFilter("kelas_id", classIds)
         appendInFilter("semester_id", semesterIds)
       }
@@ -265,17 +446,20 @@ class GuruUtsReportRemoteDataSource {
     val mapelIds = distribusiRows.map { it.cleanString("mapel_id") }.filter { it.isNotBlank() }.distinct()
     val mapelById = fetchMapelRows(mapelIds).associateBy { it.cleanString("id") }
     return distribusiRows.mapNotNull { row ->
+      val distribusiId = row.cleanString("id")
       val classId = row.cleanString("kelas_id")
       val semesterId = row.cleanString("semester_id")
       val mapelId = row.cleanString("mapel_id")
       if (classId.isBlank() || semesterId.isBlank() || mapelId.isBlank()) return@mapNotNull null
       UtsClassSubject(
+        distribusiId = distribusiId,
         classId = classId,
         semesterId = semesterId,
         mapelId = mapelId,
-        name = mapelById[mapelId]?.subjectName().orEmpty().ifBlank { "-" }
+        name = mapelById[mapelId]?.subjectName().orEmpty().ifBlank { "-" },
+        kkmText = mapelById[mapelId]?.subjectKkmText().orEmpty().ifBlank { "17" }
       )
-    }.distinctBy { "${it.classId}|${it.semesterId}|${it.mapelId}" }
+    }.distinctBy { "${it.distribusiId}|${it.classId}|${it.semesterId}|${it.mapelId}" }
   }
 
   private fun fetchMapelRows(mapelIds: List<String>): List<JSONObject> {
@@ -621,6 +805,12 @@ private fun JSONObject.subjectName(): String {
     .trim()
 }
 
+private fun JSONObject.subjectKkmText(): String {
+  return pickFirst(this, "kkm", "nilai_kkm", "kkm_pengetahuan", "batas_nilai", "batas_remedial")
+    .replace(Regex("\\s+"), " ")
+    .trim()
+}
+
 private fun JSONObject.cleanString(key: String): String {
   val value = opt(key)
   if (value == null || value == JSONObject.NULL) return ""
@@ -653,6 +843,102 @@ private fun pickFirst(
   vararg keys: String
 ): String {
   return keys.firstNotNullOfOrNull { key -> row.cleanString(key).takeIf { it.isNotBlank() } }.orEmpty()
+}
+
+private data class ScoreRowKey(
+  val studentId: String,
+  val semesterId: String,
+  val mapelId: String
+)
+
+private data class ScoreDistributionRef(
+  val classId: String,
+  val mapelId: String,
+  val semesterId: String
+)
+
+private data class ScoreInputEntry(
+  val metricKey: String,
+  val value: Double,
+  val row: ScoreDetailRow
+)
+
+private fun JSONObject.scoreRowKeyOrNull(
+  distributionsById: Map<String, ScoreDistributionRef> = emptyMap(),
+  classSubjects: List<UtsClassSubject> = emptyList()
+): ScoreRowKey? {
+  val studentId = cleanString("santri_id")
+  val distribution = distributionsById[cleanString("distribusi_id")]
+  val classId = cleanString("kelas_id").ifBlank { distribution?.classId.orEmpty() }
+  val mapelId = cleanString("mapel_id").ifBlank { distribution?.mapelId.orEmpty() }
+  val semesterId = cleanString("semester_id").ifBlank {
+    distribution?.semesterId.orEmpty().ifBlank {
+      classSubjects
+        .filter { subject -> subject.classId == classId && subject.mapelId == mapelId }
+        .singleOrNull()
+        ?.semesterId
+        .orEmpty()
+    }
+  }
+  if (studentId.isBlank() || semesterId.isBlank() || mapelId.isBlank()) return null
+  return ScoreRowKey(
+    studentId = studentId,
+    semesterId = semesterId,
+    mapelId = mapelId
+  )
+}
+
+private fun mergeScoreInputRows(vararg groups: List<JSONObject>): List<JSONObject> {
+  val seen = mutableSetOf<String>()
+  return groups
+    .flatMap { it }
+    .filter { row ->
+      val key = row.cleanString("id").ifBlank {
+        listOf(
+          row.cleanString("santri_id"),
+          row.cleanString("kelas_id"),
+          row.cleanString("mapel_id"),
+          row.cleanString("semester_id"),
+          row.cleanString("distribusi_id"),
+          row.cleanString("tanggal").take(10),
+          row.cleanString("jenis"),
+          row.cleanString("nilai")
+        ).joinToString("|")
+      }
+      seen.add(key)
+    }
+}
+
+private fun scoreInputMetricKey(jenis: String): String {
+  return when (jenis.trim().lowercase(Locale.ROOT)) {
+    "tugas" -> "nilai_tugas"
+    "ulangan harian" -> "nilai_ulangan_harian"
+    "uts", "pts" -> "nilai_pts"
+    "uas", "pas" -> "nilai_pas"
+    "kehadiran" -> "nilai_kehadiran"
+    "keterampilan" -> "nilai_keterampilan"
+    else -> ""
+  }
+}
+
+private fun calculateFinalScore(
+  nilaiTugas: Double?,
+  nilaiUlanganHarian: Double?,
+  nilaiPts: Double?,
+  nilaiPas: Double?,
+  nilaiKehadiran: Double?
+): Double {
+  return listOf(
+    nilaiTugas ?: 0.0,
+    nilaiUlanganHarian ?: 0.0,
+    nilaiPts ?: 0.0,
+    nilaiPas ?: 0.0,
+    nilaiKehadiran ?: 0.0
+  ).sum()
+}
+
+private fun roundScore(value: Double): Double {
+  return kotlin.math.round(value * 100.0) / 100.0
 }
 
 private fun encodeValue(value: String): String {
@@ -728,6 +1014,16 @@ private fun academicYearNumbers(row: JSONObject): List<Int> {
     .findAll(text)
     .mapNotNull { it.value.toIntOrNull() }
     .toList()
+}
+
+private fun formatAcademicYearLabel(row: JSONObject): String {
+  val explicitLabel = pickFirst(row, "nama", "nama_tahun_ajaran", "tahun_ajaran", "label", "tahun")
+    .replace(Regex("\\s+"), " ")
+    .trim()
+  if (explicitLabel.isNotBlank()) return explicitLabel
+
+  val startYear = academicYearStartYear(row)
+  return if (startYear > 0) "$startYear/${startYear + 1}" else ""
 }
 
 private fun parseIsoDate(value: String): LocalDate? {

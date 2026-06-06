@@ -19,6 +19,8 @@ import com.mim.guruapp.data.remote.GuruLeaveRequestRemoteDataSource
 import com.mim.guruapp.data.remote.GuruLeaveRequestSaveResult
 import com.mim.guruapp.data.remote.GuruMapelPatronMateriRemoteDataSource
 import com.mim.guruapp.data.remote.GuruMapelPatronMateriSaveResult
+import com.mim.guruapp.data.remote.GuruMapelQuestionRemoteDataSource
+import com.mim.guruapp.data.remote.GuruMapelQuestionSaveResult
 import com.mim.guruapp.data.remote.GuruMapelScoreRemoteDataSource
 import com.mim.guruapp.data.remote.GuruMapelScoreSaveResult
 import com.mim.guruapp.data.remote.GuruMutabaahBatchSaveResult
@@ -209,6 +211,11 @@ data class PatronMateriSaveOutcome(
   val message: String
 )
 
+data class QuestionSaveOutcome(
+  val success: Boolean,
+  val message: String
+)
+
 data class MonthlyReportSaveOutcome(
   val success: Boolean,
   val message: String,
@@ -244,6 +251,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
   private val mapelAttendanceRemoteDataSource = GuruMapelAttendanceRemoteDataSource()
   private val mapelScoreRemoteDataSource = GuruMapelScoreRemoteDataSource()
   private val mapelPatronMateriRemoteDataSource = GuruMapelPatronMateriRemoteDataSource()
+  private val mapelQuestionRemoteDataSource = GuruMapelQuestionRemoteDataSource()
   private val mutabaahRemoteDataSource = GuruMutabaahRemoteDataSource()
   private val leaveRequestRemoteDataSource = GuruLeaveRequestRemoteDataSource()
   private val monthlyReportRemoteDataSource = GuruMonthlyReportRemoteDataSource()
@@ -1776,6 +1784,30 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     }
 
     return PatronMateriSaveOutcome(true, "Patron materi berhasil diperbarui.")
+  }
+
+  suspend fun loadMapelQuestionJson(
+    distribusiId: String,
+    subject: SubjectOverview
+  ): String? {
+    return mapelQuestionRemoteDataSource.fetchQuestionJson(distribusiId)
+  }
+
+  suspend fun saveMapelQuestionJson(
+    distribusiId: String,
+    subject: SubjectOverview,
+    questionsJson: String
+  ): QuestionSaveOutcome {
+    val result = mapelQuestionRemoteDataSource.saveQuestionJson(
+      distribusiId = distribusiId,
+      rawJson = questionsJson,
+      guruId = uiState.session.teacherRowId.ifBlank { uiState.session.teacherId },
+      guruName = uiState.dashboard?.teacherName.orEmpty()
+    )
+    return when (result) {
+      GuruMapelQuestionSaveResult.Success -> QuestionSaveOutcome(true, "Soal berhasil disimpan ke database.")
+      is GuruMapelQuestionSaveResult.Error -> QuestionSaveOutcome(false, result.message)
+    }
   }
 
   fun refreshFromServer(

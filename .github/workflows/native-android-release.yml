@@ -114,16 +114,18 @@ jobs:
             "versionCode": ${MIM_VERSION_CODE},
             "versionName": "${MIM_VERSION_NAME}",
             "apkUrl": "${APK_URL}",
-            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Wakasek dapat memantau nilai siswa per kelas dan mapel serta mencetak atau mengirim rekap Excel multi-sheet.",
+            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Editor soal kini bisa menyimpan soal ke database, rapor wali kelas mengambil nilai dari detail mapel, dan riwayat akademik santri lebih lengkap.",
             "features": [
-              "Menu Wakasek Akademik memiliki tab Nilai Siswa untuk melihat detail nilai per kelas dan mapel.",
-              "Nilai siswa dapat dilihat per siswa, per jenis nilai, atau per tanggal input nilai.",
-              "Export nilai Wakasek mendukung cetak atau kirim semua mapel maupun mapel terpilih dalam file Excel multi-sheet."
+              "Editor soal memiliki tombol Simpan agar soal tersimpan di database dan tetap ada setelah logout atau install ulang.",
+              "Daftar soal memakai menu titik tiga untuk edit detail, cetak, kirim, dan hapus, lengkap dengan tahun ajaran serta pilihan bahasa cetak.",
+              "Kelas Saya - Rapor menampilkan daftar santri dan detail rapor berisi nilai pengetahuan serta keterampilan dari nilai mapel.",
+              "Profil santri wali kelas dipisah menjadi Biodata dan Riwayat Akademik dengan akses ke rapor, laporan bulanan, dan riwayat nilai per kelas."
             ],
             "fixes": [
-              "Card nilai per siswa dibuat lebih ringkas dengan nama siswa saja sebelum dibuka.",
-              "Format Excel nilai memakai header gabungan Nilai Pengetahuan dan kolom Total.",
-              "Kolom deskripsi pengetahuan dan keterampilan disiapkan kosong sesuai format cetak."
+              "Nilai rapor dihitung ulang dari riwayat nilai mapel saat nilai akhir belum tersimpan, sehingga mapel yang sebelumnya kosong ikut tampil.",
+              "Riwayat nilai santri mengikuti pola detail mapel dengan daftar jenis nilai dan dropdown riwayat per mapel.",
+              "Detail laporan bulanan di riwayat akademik disesuaikan dengan tampilan wali kelas.",
+              "Editor soal dibuat lebih ringkas dengan input pertanyaan sejajar nomor soal, menu per soal, dan warna mode yang lebih ramah tema gelap."
             ],
             "mandatory": ${MANDATORY}
           }

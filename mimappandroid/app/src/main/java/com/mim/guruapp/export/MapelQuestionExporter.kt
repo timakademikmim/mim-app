@@ -101,6 +101,23 @@ object MapelQuestionExporter {
       clipData = ClipData.newUri(context.contentResolver, documentFile.name, uri)
       addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
     }
+    try {
+      context.startActivity(
+        Intent.createChooser(viewIntent, "Buka dokumen soal")
+          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      )
+    } catch (_: ActivityNotFoundException) {
+      shareDocument(context, documentFile, data)
+    }
+  }
+
+  fun shareDocument(
+    context: Context,
+    documentFile: File,
+    data: MapelQuestionExportData
+  ) {
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", documentFile)
     val shareIntent = Intent(Intent.ACTION_SEND).apply {
       type = DocxMime
       putExtra(Intent.EXTRA_STREAM, uri)
@@ -109,19 +126,11 @@ object MapelQuestionExporter {
       clipData = ClipData.newUri(context.contentResolver, documentFile.name, uri)
       addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
     }
-    try {
-      context.startActivity(
-        Intent.createChooser(viewIntent, "Buka dokumen soal")
-          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-          .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-      )
-    } catch (_: ActivityNotFoundException) {
-      context.startActivity(
-        Intent.createChooser(shareIntent, "Bagikan dokumen soal")
-          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-          .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-      )
-    }
+    context.startActivity(
+      Intent.createChooser(shareIntent, "Kirim dokumen soal")
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    )
   }
 
   private fun buildSoalJson(data: MapelQuestionExportData): JSONObject {
@@ -483,6 +492,7 @@ object MapelQuestionExporter {
   private fun resolveLanguageCode(data: MapelQuestionExportData): String {
     val requested = data.languageCode.trim().uppercase(Locale.ROOT)
     if (requested == "AR") return "AR"
+    if (requested == "ID") return "ID"
     val source = buildString {
       append(data.title)
       append('\n')

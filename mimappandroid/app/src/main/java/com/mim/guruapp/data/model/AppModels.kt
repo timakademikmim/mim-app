@@ -300,6 +300,7 @@ data class UtsSemesterInfo(
   val id: String = "",
   val label: String = "",
   val tahunAjaranId: String = "",
+  val tahunAjaranLabel: String = "",
   val startDateIso: String = "",
   val endDateIso: String = "",
   val isActive: Boolean = false
@@ -307,10 +308,12 @@ data class UtsSemesterInfo(
 
 @Serializable
 data class UtsClassSubject(
+  val distribusiId: String = "",
   val classId: String = "",
   val semesterId: String = "",
   val mapelId: String = "",
-  val name: String = ""
+  val name: String = "",
+  val kkmText: String = "17"
 )
 
 @Serializable
@@ -319,7 +322,22 @@ data class UtsScoreRow(
   val semesterId: String = "",
   val mapelId: String = "",
   val scoreText: String = "",
-  val scoreValue: Double? = null
+  val scoreValue: Double? = null,
+  val taskScoreText: String = "",
+  val taskScoreValue: Double? = null,
+  val dailyTestScoreText: String = "",
+  val dailyTestScoreValue: Double? = null,
+  val finalExamScoreText: String = "",
+  val finalExamScoreValue: Double? = null,
+  val attendanceScoreText: String = "",
+  val attendanceScoreValue: Double? = null,
+  val knowledgeScoreText: String = "",
+  val knowledgeScoreValue: Double? = null,
+  val skillScoreText: String = "",
+  val skillScoreValue: Double? = null,
+  val knowledgeDescription: String = "",
+  val skillDescription: String = "",
+  val detailRowsByMetric: Map<String, List<ScoreDetailRow>> = emptyMap()
 )
 
 @Serializable

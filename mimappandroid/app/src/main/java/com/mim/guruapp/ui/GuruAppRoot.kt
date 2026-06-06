@@ -14,6 +14,7 @@ import com.mim.guruapp.GuruSidebarDestination
 import com.mim.guruapp.AttendanceSaveOutcome
 import com.mim.guruapp.LeaveRequestSaveOutcome
 import com.mim.guruapp.PatronMateriSaveOutcome
+import com.mim.guruapp.QuestionSaveOutcome
 import com.mim.guruapp.ScoreSaveOutcome
 import com.mim.guruapp.ProfileSaveOutcome
 import com.mim.guruapp.SantriSaveOutcome
@@ -93,6 +94,8 @@ fun GuruAppRoot(
   onSaveMapelScoresBatch: suspend (String, SubjectOverview, List<ScoreStudent>) -> ScoreSaveOutcome,
   onLoadMapelPatronMateri: suspend (String, SubjectOverview) -> MapelPatronMateriSnapshot?,
   onSaveMapelPatronMateri: suspend (String, SubjectOverview, List<PatronMateriItem>) -> PatronMateriSaveOutcome,
+  onLoadMapelQuestions: suspend (String, SubjectOverview) -> String?,
+  onSaveMapelQuestions: suspend (String, SubjectOverview, String) -> QuestionSaveOutcome,
   onSaveProfile: suspend (GuruProfile) -> ProfileSaveOutcome,
   onSaveSantri: suspend (WaliSantriProfile) -> SantriSaveOutcome,
   onSaveMonthlyReport: suspend (MonthlyReportItem) -> MonthlyReportSaveOutcome,
@@ -191,6 +194,8 @@ fun GuruAppRoot(
             onSaveMapelScoresBatch = onSaveMapelScoresBatch,
             onLoadMapelPatronMateri = onLoadMapelPatronMateri,
             onSaveMapelPatronMateri = onSaveMapelPatronMateri,
+            onLoadMapelQuestions = onLoadMapelQuestions,
+            onSaveMapelQuestions = onSaveMapelQuestions,
             onSaveProfile = onSaveProfile,
             onSaveSantri = onSaveSantri,
             onSaveMonthlyReport = onSaveMonthlyReport,

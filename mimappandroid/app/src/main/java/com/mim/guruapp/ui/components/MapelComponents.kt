@@ -81,7 +81,9 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Print
 import androidx.compose.material.icons.outlined.Quiz
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Science
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.TaskAlt
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Translate
@@ -118,6 +120,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
@@ -144,6 +148,7 @@ import android.widget.Toast
 import androidx.core.content.FileProvider
 import com.mim.guruapp.AttendanceSaveOutcome
 import com.mim.guruapp.PatronMateriSaveOutcome
+import com.mim.guruapp.QuestionSaveOutcome
 import com.mim.guruapp.ScoreSaveOutcome
 import com.mim.guruapp.data.model.AttendanceHistoryEntry
 import com.mim.guruapp.data.model.AttendanceStudent
@@ -210,6 +215,8 @@ fun MapelScreen(
   onSaveScoresBatch: suspend (String, SubjectOverview, List<ScoreStudent>) -> ScoreSaveOutcome,
   onLoadPatronMateri: suspend (String, SubjectOverview) -> MapelPatronMateriSnapshot?,
   onSavePatronMateri: suspend (String, SubjectOverview, List<PatronMateriItem>) -> PatronMateriSaveOutcome,
+  onLoadQuestions: suspend (String, SubjectOverview) -> String?,
+  onSaveQuestions: suspend (String, SubjectOverview, String) -> QuestionSaveOutcome,
   isRefreshing: Boolean,
   onRefresh: () -> Unit,
   onDetailModeChange: (Boolean) -> Unit = {},
@@ -257,6 +264,8 @@ fun MapelScreen(
         onSaveScoresBatch = onSaveScoresBatch,
         onLoadPatronMateri = onLoadPatronMateri,
         onSavePatronMateri = onSavePatronMateri,
+        onLoadQuestions = onLoadQuestions,
+        onSaveQuestions = onSaveQuestions,
         selectedSection = selectedDetailSection,
         onSectionChange = { selectedDetailSectionKey = it.name },
         isRefreshing = isRefreshing,
@@ -535,6 +544,8 @@ private fun MapelDetailScreen(
   onSaveScoresBatch: suspend (String, SubjectOverview, List<ScoreStudent>) -> ScoreSaveOutcome,
   onLoadPatronMateri: suspend (String, SubjectOverview) -> MapelPatronMateriSnapshot?,
   onSavePatronMateri: suspend (String, SubjectOverview, List<PatronMateriItem>) -> PatronMateriSaveOutcome,
+  onLoadQuestions: suspend (String, SubjectOverview) -> String?,
+  onSaveQuestions: suspend (String, SubjectOverview, String) -> QuestionSaveOutcome,
   selectedSection: MapelDetailSection,
   onSectionChange: (MapelDetailSection) -> Unit,
   isRefreshing: Boolean,
@@ -555,6 +566,7 @@ private fun MapelDetailScreen(
   var questionItems by remember(subject.id) { mutableStateOf<List<MapelQuestionDraft>>(emptyList()) }
   var isCreatingQuestion by remember(subject.id) { mutableStateOf(false) }
   var isAddingQuestionModel by remember(subject.id) { mutableStateOf(false) }
+  var editingQuestionDetail by remember(subject.id) { mutableStateOf<MapelQuestionDraft?>(null) }
   var attendanceExportShouldShare by remember(subject.id) { mutableStateOf<Boolean?>(null) }
   var attendanceExportMonthKeys by remember(subject.id) { mutableStateOf(listOf(YearMonth.now().toString())) }
   var isExportingAttendance by remember(subject.id) { mutableStateOf(false) }
@@ -562,6 +574,7 @@ private fun MapelDetailScreen(
   var editorQuestionDraft by remember(subject.id) { mutableStateOf<MapelQuestionDraft?>(null) }
   var questionUndoStack by remember(subject.id) { mutableStateOf<List<MapelQuestionDraft>>(emptyList()) }
   var isPrintingQuestion by remember(subject.id) { mutableStateOf(false) }
+  var isSavingQuestionToServer by rememberSaveable(subject.id) { mutableStateOf(false) }
   var isLoadingAttendance by remember(subject.id) { mutableStateOf(true) }
   var isLoadingScores by remember(subject.id) { mutableStateOf(true) }
   var isLoadingPatronMateri by remember(subject.id) { mutableStateOf(true) }
@@ -590,8 +603,18 @@ private fun MapelDetailScreen(
     attendanceSnapshot?.latestAttendanceMonth() ?: YearMonth.now()
   }
 
+  fun persistQuestionItems(
+    items: List<MapelQuestionDraft>,
+    synchronous: Boolean = false
+  ): String {
+    return saveMapelQuestions(context, subject.id, items, synchronous = synchronous)
+  }
+
   fun updateQuestionDraft(updated: MapelQuestionDraft) {
-    val latestUpdated = updated.copy(updatedAt = System.currentTimeMillis())
+    val latestUpdated = updated.copy(
+      statusLabel = QuestionStatusDraft,
+      updatedAt = System.currentTimeMillis()
+    )
     if (activeQuestionId == latestUpdated.id) {
       editorQuestionDraft = latestUpdated
     }
@@ -599,7 +622,7 @@ private fun MapelDetailScreen(
       if (current.id == latestUpdated.id) latestUpdated else current
     }.sortedByDescending { it.updatedAt }
     questionItems = nextItems
-    saveMapelQuestions(context, subject.id, nextItems)
+    persistQuestionItems(nextItems)
   }
 
   fun flushLatestQuestionItems(): List<MapelQuestionDraft> {
@@ -611,7 +634,7 @@ private fun MapelDetailScreen(
       questionItems
     }
     questionItems = latestItems
-    saveMapelQuestions(context, subject.id, latestItems, synchronous = true)
+    persistQuestionItems(latestItems, synchronous = true)
     return loadMapelQuestions(context, subject.id)
   }
 
@@ -650,6 +673,92 @@ private fun MapelDetailScreen(
         }
         isPrintingQuestion = false
       }
+    }
+  }
+
+  fun shareQuestion(question: MapelQuestionDraft) {
+    if (!isPrintingQuestion) {
+      detailScope.launch {
+        isPrintingQuestion = true
+        runCatching {
+          val latestQuestion = if (activeQuestionId == question.id) {
+            editorQuestionDraft ?: question
+          } else {
+            val latestQuestions = flushLatestQuestionItems()
+            latestQuestions.firstOrNull { it.id == question.id } ?: question
+          }
+          val exportData = latestQuestion.toExportData()
+          val docx = MapelQuestionExporter.createDocxFile(context, subject, exportData)
+          MapelQuestionExporter.shareDocument(context, docx, exportData)
+        }.onFailure {
+          Toast.makeText(
+            context,
+            it.message ?: "Gagal menyiapkan dokumen Word.",
+            Toast.LENGTH_LONG
+          ).show()
+        }
+        isPrintingQuestion = false
+      }
+    }
+  }
+
+  fun saveActiveQuestionToServer() {
+    val question = editorQuestionDraft ?: return
+    if (isSavingQuestionToServer) return
+    detailScope.launch {
+      isSavingQuestionToServer = true
+      val savedQuestion = question.copy(
+        statusLabel = QuestionStatusSaved,
+        updatedAt = System.currentTimeMillis()
+      )
+      val hasQuestionInList = questionItems.any { it.id == savedQuestion.id }
+      val savingItems = if (hasQuestionInList) {
+        questionItems.map { current ->
+          if (current.id == savedQuestion.id) savedQuestion else current
+        }
+      } else {
+        questionItems + savedQuestion
+      }.sortedByDescending { it.updatedAt }
+      questionItems = savingItems
+      editorQuestionDraft = savedQuestion
+      val savedLocalJson = persistQuestionItems(savingItems, synchronous = true)
+      val serverQuestionJson = filterMapelQuestionJsonById(savedLocalJson, savedQuestion.id)
+      val outcome = runCatching {
+        if (serverQuestionJson == "[]") {
+          QuestionSaveOutcome(false, "Data soal belum siap disimpan. Soal tetap draft lokal.")
+        } else {
+          onSaveQuestions(subject.id, subject, serverQuestionJson)
+        }
+      }.getOrElse { error ->
+        QuestionSaveOutcome(
+          success = false,
+          message = error.message ?: "Gagal menyimpan soal ke database. Soal tetap draft lokal."
+        )
+      }
+      if (outcome.success) {
+        Toast.makeText(
+          context,
+          outcome.message.ifBlank { "Soal berhasil disimpan ke database." },
+          Toast.LENGTH_SHORT
+        ).show()
+      } else {
+        val draftQuestion = savedQuestion.copy(
+          statusLabel = QuestionStatusDraft,
+          updatedAt = System.currentTimeMillis()
+        )
+        val draftItems = savingItems.map { current ->
+          if (current.id == draftQuestion.id) draftQuestion else current
+        }.sortedByDescending { it.updatedAt }
+        questionItems = draftItems
+        editorQuestionDraft = draftQuestion
+        persistQuestionItems(draftItems, synchronous = true)
+        Toast.makeText(
+          context,
+          outcome.message.ifBlank { "Gagal menyimpan soal ke database. Soal tetap draft lokal." },
+          Toast.LENGTH_LONG
+        ).show()
+      }
+      isSavingQuestionToServer = false
     }
   }
 
@@ -709,7 +818,18 @@ private fun MapelDetailScreen(
     isLoadingAttendance = true
     isLoadingScores = true
     isLoadingPatronMateri = true
-    val loadedQuestions = loadMapelQuestions(context, subject.id)
+    val localQuestions = loadMapelQuestions(context, subject.id)
+    questionItems = localQuestions
+    val remoteQuestions = onLoadQuestions(subject.id, subject)
+      ?.let { decodeMapelQuestions(it) }
+    val loadedQuestions = when {
+      remoteQuestions == null -> localQuestions
+      else -> {
+        val mergedQuestions = mergeLocalAndRemoteMapelQuestions(localQuestions, remoteQuestions)
+        persistQuestionItems(mergedQuestions)
+        mergedQuestions
+      }
+    }
     questionItems = loadedQuestions
     patronLearningMaterials = loadPatronLearningMaterials(context, subject.id)
     attendanceSnapshot = onLoadAttendance(subject.id, subject)
@@ -799,7 +919,29 @@ private fun MapelDetailScreen(
             onBackClick()
           }
         },
-        actions = if (activePatronLearningItem != null) {
+        actions = if (isQuestionEditorOpen) {
+          {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              AnimatedVisibility(visible = questionUndoStack.isNotEmpty()) {
+                MapelTopButton(
+                  icon = Icons.AutoMirrored.Outlined.Undo,
+                  contentDescription = t("Batalkan hapus"),
+                  onClick = onUndoClick@{
+                    val restored = questionUndoStack.lastOrNull() ?: return@onUndoClick
+                    questionUndoStack = questionUndoStack.dropLast(1)
+                    updateQuestionDraft(restored)
+                  }
+                )
+              }
+              MapelTopButton(
+                icon = Icons.Outlined.Save,
+                contentDescription = t(if (isSavingQuestionToServer) "Menyimpan soal" else "Simpan soal"),
+                enabled = !isSavingQuestionToServer,
+                onClick = { saveActiveQuestionToServer() }
+              )
+            }
+          }
+        } else if (activePatronLearningItem != null) {
           {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
               AnimatedVisibility(visible = isPatronLearningEditMode && patronLearningUndoStack.isNotEmpty()) {
@@ -939,28 +1081,7 @@ private fun MapelDetailScreen(
               if (activeQuestion == null) {
                 SoalToolbar(
                   totalSoal = questionItems.size,
-                  isPrinting = isPrintingQuestion,
                   onAddSoal = { isCreatingQuestion = true },
-                  onPrintAll = {
-                    if (questionItems.isNotEmpty() && !isPrintingQuestion) {
-                      detailScope.launch {
-                        isPrintingQuestion = true
-                        runCatching {
-                          val latestQuestions = flushLatestQuestionItems()
-                          val combined = latestQuestions.toCombinedExportData(subject)
-                          val docx = MapelQuestionExporter.createDocxFile(context, subject, combined)
-                          MapelQuestionExporter.openDocument(context, docx, combined)
-                        }.onFailure {
-                          Toast.makeText(
-                            context,
-                            it.message ?: "Gagal menyiapkan dokumen Word.",
-                            Toast.LENGTH_LONG
-                          ).show()
-                        }
-                        isPrintingQuestion = false
-                      }
-                    }
-                  },
                   modifier = Modifier.padding(bottom = 14.dp)
                 )
               }
@@ -1199,6 +1320,9 @@ private fun MapelDetailScreen(
                       activeQuestionId = question.id
                       editorQuestionDraft = question
                     },
+                    onEditDetail = {
+                      editingQuestionDetail = question
+                    },
                     onPrint = {
                       if (!isPrintingQuestion) {
                         detailScope.launch {
@@ -1220,10 +1344,13 @@ private fun MapelDetailScreen(
                         }
                       }
                     },
+                    onShare = {
+                      shareQuestion(question)
+                    },
                     onDelete = {
                       val nextItems = questionItems.filterNot { it.id == question.id }
                       questionItems = nextItems
-                      saveMapelQuestions(context, subject.id, nextItems)
+                      persistQuestionItems(nextItems)
                     }
                   )
                 }
@@ -1255,17 +1382,29 @@ private fun MapelDetailScreen(
         }
 
         if (isCreatingQuestion) {
-          SoalCreateDialog(
+          SoalDetailDialog(
             subject = subject,
             onDismiss = { isCreatingQuestion = false },
             onSave = { created ->
               val nextItems = (questionItems + created)
                 .sortedByDescending { it.updatedAt }
               questionItems = nextItems
-              saveMapelQuestions(context, subject.id, nextItems)
+              persistQuestionItems(nextItems)
               isCreatingQuestion = false
               activeQuestionId = created.id
               editorQuestionDraft = created
+            }
+          )
+        }
+
+        editingQuestionDetail?.let { question ->
+          SoalDetailDialog(
+            subject = subject,
+            question = question,
+            onDismiss = { editingQuestionDetail = null },
+            onSave = { updated ->
+              updateQuestionDraft(updated)
+              editingQuestionDetail = null
             }
           )
         }
@@ -1523,9 +1662,7 @@ private fun AttendancePeriodShortcut(
 @Composable
 private fun SoalToolbar(
   totalSoal: Int,
-  isPrinting: Boolean,
   onAddSoal: () -> Unit,
-  onPrintAll: () -> Unit,
   modifier: Modifier = Modifier
 ) {
   Row(
@@ -1540,12 +1677,6 @@ private fun SoalToolbar(
       fontWeight = FontWeight.SemiBold
     )
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-      SoalPillButton(
-        label = if (isPrinting) "Menyiapkan..." else "Cetak Semua",
-        icon = Icons.Outlined.Print,
-        enabled = totalSoal > 0 && !isPrinting,
-        onClick = onPrintAll
-      )
       SoalPillButton(
         label = "Buat Soal",
         icon = Icons.Outlined.Add,
@@ -1591,9 +1722,12 @@ private fun SoalPillButton(
 private fun SoalCard(
   question: MapelQuestionDraft,
   onEdit: () -> Unit,
+  onEditDetail: () -> Unit,
   onPrint: () -> Unit,
+  onShare: () -> Unit,
   onDelete: () -> Unit
 ) {
+  var menuExpanded by remember { mutableStateOf(false) }
   Column(
     modifier = Modifier
       .fillMaxWidth()
@@ -1632,22 +1766,65 @@ private fun SoalCard(
           overflow = TextOverflow.Ellipsis
         )
         Text(
-          text = listOf(question.category, question.form, question.dateIso).filter { it.isNotBlank() }.joinToString(" | "),
+          text = listOf(question.category, question.form, question.dateIso, question.academicYearLabel)
+            .filter { it.isNotBlank() }
+            .joinToString(" | "),
           style = MaterialTheme.typography.bodySmall,
           color = SubtleInk,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis
         )
       }
+      Box {
+        Box(
+          modifier = Modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .background(SoftPanel.copy(alpha = 0.92f))
+            .clickable { menuExpanded = true },
+          contentAlignment = Alignment.Center
+        ) {
+          Icon(Icons.Outlined.MoreVert, contentDescription = t("Aksi soal"), tint = PrimaryBlueDark)
+        }
+        DropdownMenu(
+          expanded = menuExpanded,
+          onDismissRequest = { menuExpanded = false }
+        ) {
+          DropdownMenuItem(
+            text = { Text(t("Edit Detail")) },
+            leadingIcon = { Icon(Icons.Outlined.EditNote, contentDescription = null) },
+            onClick = {
+              menuExpanded = false
+              onEditDetail()
+            }
+          )
+          DropdownMenuItem(
+            text = { Text(t("Cetak")) },
+            leadingIcon = { Icon(Icons.Outlined.Print, contentDescription = null) },
+            onClick = {
+              menuExpanded = false
+              onPrint()
+            }
+          )
+          DropdownMenuItem(
+            text = { Text(t("Kirim")) },
+            leadingIcon = { Icon(Icons.Outlined.Share, contentDescription = null) },
+            onClick = {
+              menuExpanded = false
+              onShare()
+            }
+          )
+          DropdownMenuItem(
+            text = { Text(t("Hapus")) },
+            leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null, tint = Color(0xFFDC2626)) },
+            onClick = {
+              menuExpanded = false
+              onDelete()
+            }
+          )
+        }
+      }
     }
-
-    Text(
-      text = question.previewText(),
-      style = MaterialTheme.typography.bodySmall,
-      color = SubtleInk,
-      maxLines = 2,
-      overflow = TextOverflow.Ellipsis
-    )
 
     Row(
       horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1656,9 +1833,6 @@ private fun SoalCard(
       SoalMiniChip("${question.questionCount()} nomor")
       SoalMiniChip("${question.sections.size} model")
       SoalMiniChip(question.statusLabel)
-      Spacer(modifier = Modifier.weight(1f))
-      SoalIconAction(Icons.Outlined.Print, "Cetak", onPrint)
-      SoalIconAction(Icons.Outlined.Delete, "Hapus", onDelete, tint = Color(0xFFDC2626))
     }
   }
 }
@@ -1702,14 +1876,22 @@ private fun SoalIconAction(
 }
 
 @Composable
-private fun SoalCreateDialog(
+private fun SoalDetailDialog(
   subject: SubjectOverview,
   onDismiss: () -> Unit,
-  onSave: (MapelQuestionDraft) -> Unit
+  onSave: (MapelQuestionDraft) -> Unit,
+  question: MapelQuestionDraft? = null
 ) {
-  var title by remember { mutableStateOf("") }
-  var selectedCategory by remember { mutableStateOf(SoalCategoryOptions.first()) }
-  var dateIso by remember { mutableStateOf(LocalDate.now().toString()) }
+  var title by remember(question?.id) { mutableStateOf(question?.title.orEmpty()) }
+  var selectedCategory by remember(question?.id) {
+    mutableStateOf(
+      SoalCategoryOptions.firstOrNull { it == question?.category } ?: SoalCategoryOptions.first()
+    )
+  }
+  var dateIso by remember(question?.id) { mutableStateOf(question?.dateIso ?: LocalDate.now().toString()) }
+  var academicYearLabel by remember(question?.id) {
+    mutableStateOf(question?.academicYearLabel?.ifBlank { defaultAcademicYearLabel() } ?: defaultAcademicYearLabel())
+  }
   val canSave = title.trim().isNotBlank()
 
   Dialog(onDismissRequest = onDismiss) {
@@ -1729,13 +1911,13 @@ private fun SoalCreateDialog(
       ) {
         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
           Text(
-            text = t("Buat Soal"),
+            text = t(if (question == null) "Buat Soal" else "Edit Detail Soal"),
             style = MaterialTheme.typography.titleMedium,
             color = PrimaryBlueDark,
             fontWeight = FontWeight.ExtraBold
           )
           Text(
-            text = t("Isi data awal dulu, detailnya diedit setelah file dibuat."),
+            text = t("Atur judul, jenis, tanggal, dan tahun ajaran untuk header cetak."),
             style = MaterialTheme.typography.bodySmall,
             color = SubtleInk
           )
@@ -1765,6 +1947,11 @@ private fun SoalCreateDialog(
         label = "Tanggal",
         keyboardType = KeyboardType.Number
       )
+      SoalTextField(
+        value = academicYearLabel,
+        onValueChange = { academicYearLabel = it },
+        label = "Tahun ajaran"
+      )
 
       Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Box(
@@ -1785,13 +1972,20 @@ private fun SoalCreateDialog(
             .clip(RoundedCornerShape(999.dp))
             .background(if (canSave) PrimaryBlue else PrimaryBlue.copy(alpha = 0.36f))
             .clickable(enabled = canSave) {
+              val baseQuestion = question ?: MapelQuestionDraft(
+                id = "soal-${System.currentTimeMillis()}",
+                title = "Soal ${subject.title}",
+                category = selectedCategory,
+                form = "",
+                dateIso = LocalDate.now().toString(),
+                languageCode = "ID"
+              )
               onSave(
-                MapelQuestionDraft(
-                  id = "soal-${System.currentTimeMillis()}",
+                baseQuestion.copy(
                   title = title.trim().ifBlank { "Soal ${subject.title}" },
                   category = selectedCategory,
-                  form = "",
                   dateIso = dateIso.trim().ifBlank { LocalDate.now().toString() },
+                  academicYearLabel = academicYearLabel.trim().ifBlank { defaultAcademicYearLabel() },
                   updatedAt = System.currentTimeMillis()
                 )
               )
@@ -1816,6 +2010,12 @@ private fun SoalWorkspaceScreen(
     modifier = Modifier.fillMaxWidth(),
     verticalArrangement = Arrangement.spacedBy(14.dp)
   ) {
+    SoalPrintLanguageCard(
+      languageCode = question.resolvedPrintLanguageCode(),
+      onLanguageChange = { selectedCode ->
+        onQuestionChange(question.copy(languageCode = selectedCode))
+      }
+    )
     SoalGeneralInstructionCard(
       instruction = question.instruction,
       onInstructionChange = { nextInstruction ->
@@ -1891,7 +2091,8 @@ private fun SoalSectionEditorCard(
   onDeleteQuestion: (Int) -> Unit
 ) {
   val palette = section.modelPalette()
-  var showDeleteAction by rememberSaveable(section.id) { mutableStateOf(false) }
+  var actionMenuExpanded by rememberSaveable(section.id) { mutableStateOf(false) }
+  var showChangeModelDialog by rememberSaveable(section.id) { mutableStateOf(false) }
   val activeQuestionCount = section.effectiveQuestionCount()
 
   Column(
@@ -1901,10 +2102,6 @@ private fun SoalSectionEditorCard(
       .clip(RoundedCornerShape(24.dp))
       .background(palette.background)
       .border(1.dp, palette.border, RoundedCornerShape(24.dp))
-      .combinedClickable(
-        onClick = { if (showDeleteAction) showDeleteAction = false },
-        onLongClick = { showDeleteAction = true }
-      )
       .padding(15.dp),
     verticalArrangement = Arrangement.spacedBy(13.dp)
   ) {
@@ -1947,48 +2144,44 @@ private fun SoalSectionEditorCard(
           )
         }
       }
-      AnimatedVisibility(visible = showDeleteAction) {
-        SoalIconAction(Icons.Outlined.Delete, "Hapus model", onDelete, tint = Color(0xFFDC2626))
-      }
-    }
-
-    SoalTypeDropdown(
-      selectedTypeKey = section.typeKey,
-      onSelect = { option ->
-        onChange(
-          section.copy(
-            typeKey = option.key,
-            typeLabel = option.label,
-            count = when {
-              option.key.usesMatchingPairEditor() -> 1
-              option.key.usesWordSearchEditor() -> 0
-              option.key.usesCrosswordEditor() -> 0
-              else -> section.count
-            },
-            choiceQuestions = if (option.key.usesQuestionPromptEditor()) {
-              section.choiceQuestions.withTrailingBlankQuestion()
-            } else {
-              emptyList()
-            },
-            matchingPairs = if (option.key.usesMatchingPairEditor()) {
-              section.matchingPairs.withTrailingBlankMatchingPair()
-            } else {
-              emptyList()
-            },
-            wordSearchQuestions = if (option.key.usesWordSearchEditor()) {
-              listOf(section.wordSearchQuestions.firstOrNull() ?: MapelWordSearchQuestion(id = "ws-1"))
-            } else {
-              emptyList()
-            },
-            crosswordQuestions = if (option.key.usesCrosswordEditor()) {
-              listOf(section.crosswordQuestions.firstOrNull() ?: MapelCrosswordQuestion(id = "cw-1"))
-            } else {
-              emptyList()
+      Box {
+        Box(
+          modifier = Modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .background(CardBackground.copy(alpha = 0.78f))
+            .border(1.dp, palette.border.copy(alpha = 0.72f), CircleShape)
+            .clickable { actionMenuExpanded = true },
+          contentAlignment = Alignment.Center
+        ) {
+          Icon(Icons.Outlined.MoreVert, contentDescription = t("Aksi model soal"), tint = palette.text)
+        }
+        DropdownMenu(
+          expanded = actionMenuExpanded,
+          onDismissRequest = { actionMenuExpanded = false },
+          modifier = Modifier.background(CardBackground)
+        ) {
+          DropdownMenuItem(
+            text = { Text(t("Ubah model soal")) },
+            leadingIcon = { Icon(Icons.Outlined.EditNote, contentDescription = null) },
+            onClick = {
+              actionMenuExpanded = false
+              showChangeModelDialog = true
             }
           )
-        )
+          DropdownMenuItem(
+            text = { Text(t("Hapus")) },
+            leadingIcon = {
+              Icon(Icons.Outlined.Delete, contentDescription = null, tint = Color(0xFFDC2626))
+            },
+            onClick = {
+              actionMenuExpanded = false
+              onDelete()
+            }
+          )
+        }
       }
-    )
+    }
 
     SoalTextField(
       value = section.instruction,
@@ -2002,7 +2195,6 @@ private fun SoalSectionEditorCard(
           SoalChoiceQuestionEditor(
             question = choiceQuestion,
             questionIndex = questionIndex,
-            modelLabel = section.typeLabel,
             typeKey = section.typeKey,
             palette = palette,
             showOptions = section.typeKey == "pilihan-ganda",
@@ -2065,6 +2257,17 @@ private fun SoalSectionEditorCard(
         onValueChange = { onChange(section.copy(content = it)) },
         label = "Isi soal / catatan editor",
         minLines = 5
+      )
+    }
+
+    if (showChangeModelDialog) {
+      SoalChangeModelDialog(
+        selectedTypeKey = section.typeKey,
+        onDismiss = { showChangeModelDialog = false },
+        onSelect = { option ->
+          showChangeModelDialog = false
+          onChange(section.withQuestionType(option))
+        }
       )
     }
   }
@@ -2132,6 +2335,79 @@ private fun SoalEditorFabMenu(
           onPrint()
         }
       )
+    }
+  }
+}
+
+@Composable
+private fun SoalChangeModelDialog(
+  selectedTypeKey: String,
+  onDismiss: () -> Unit,
+  onSelect: (SoalTypeOption) -> Unit
+) {
+  Dialog(onDismissRequest = onDismiss) {
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(26.dp))
+        .background(CardBackground.copy(alpha = 0.98f))
+        .border(1.dp, CardBorder.copy(alpha = 0.9f), RoundedCornerShape(26.dp))
+        .padding(18.dp),
+      verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        Text(
+          text = t("Ubah Model Soal"),
+          style = MaterialTheme.typography.titleMedium,
+          color = PrimaryBlueDark,
+          fontWeight = FontWeight.ExtraBold
+        )
+        Box(
+          modifier = Modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .background(SoftPanel)
+            .clickable(onClick = onDismiss),
+          contentAlignment = Alignment.Center
+        ) {
+          Icon(Icons.Outlined.Close, contentDescription = t("Tutup"), tint = PrimaryBlueDark)
+        }
+      }
+
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SoalTypeOptions.forEach { option ->
+          val selected = option.key == selectedTypeKey
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(16.dp))
+              .background(if (selected) PrimaryBlue.copy(alpha = 0.12f) else SoftPanel.copy(alpha = 0.62f))
+              .border(
+                1.dp,
+                if (selected) PrimaryBlue.copy(alpha = 0.34f) else CardBorder.copy(alpha = 0.76f),
+                RoundedCornerShape(16.dp)
+              )
+              .clickable { onSelect(option) }
+              .padding(horizontal = 12.dp, vertical = 11.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Text(
+              text = t(option.label),
+              style = MaterialTheme.typography.labelLarge,
+              color = PrimaryBlueDark,
+              fontWeight = FontWeight.SemiBold
+            )
+            if (selected) {
+              Icon(Icons.Outlined.Check, contentDescription = null, tint = PrimaryBlue, modifier = Modifier.size(18.dp))
+            }
+          }
+        }
+      }
     }
   }
 }
@@ -2278,6 +2554,87 @@ private fun buildQuestionSectionDraft(selectedType: SoalTypeOption): MapelQuesti
   )
 }
 
+private fun MapelQuestionSection.withQuestionType(option: SoalTypeOption): MapelQuestionSection {
+  val nextChoiceQuestions = if (option.key.usesQuestionPromptEditor()) {
+    choiceQuestions.withTrailingBlankQuestion()
+  } else {
+    emptyList()
+  }
+  return copy(
+    typeKey = option.key,
+    typeLabel = option.label,
+    count = when {
+      option.key.usesMatchingPairEditor() -> 1
+      option.key.usesWordSearchEditor() -> 0
+      option.key.usesCrosswordEditor() -> 0
+      option.key.usesQuestionPromptEditor() -> nextChoiceQuestions.filledQuestionCount()
+      else -> count
+    },
+    choiceQuestions = nextChoiceQuestions,
+    matchingPairs = if (option.key.usesMatchingPairEditor()) {
+      matchingPairs.withTrailingBlankMatchingPair()
+    } else {
+      emptyList()
+    },
+    wordSearchQuestions = if (option.key.usesWordSearchEditor()) {
+      listOf(wordSearchQuestions.firstOrNull() ?: MapelWordSearchQuestion(id = "ws-1"))
+    } else {
+      emptyList()
+    },
+    crosswordQuestions = if (option.key.usesCrosswordEditor()) {
+      listOf(crosswordQuestions.firstOrNull() ?: MapelCrosswordQuestion(id = "cw-1"))
+    } else {
+      emptyList()
+    }
+  )
+}
+
+private data class SoalPrintLanguageOption(
+  val code: String,
+  val label: String
+)
+
+private val SoalPrintLanguageOptions = listOf(
+  SoalPrintLanguageOption(
+    code = "ID",
+    label = "Bahasa Indonesia"
+  ),
+  SoalPrintLanguageOption(
+    code = "AR",
+    label = "Bahasa Arab"
+  )
+)
+
+@Composable
+private fun SoalPrintLanguageCard(
+  languageCode: String,
+  onLanguageChange: (String) -> Unit
+) {
+  val selectedCode = normalizeSoalPrintLanguageCode(languageCode).ifBlank { "ID" }
+  val selectedOption = SoalPrintLanguageOptions.firstOrNull { it.code == selectedCode }
+    ?: SoalPrintLanguageOptions.first()
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .shadow(8.dp, RoundedCornerShape(18.dp), ambientColor = Color(0x120F172A), spotColor = Color(0x120F172A))
+      .clip(RoundedCornerShape(18.dp))
+      .background(CardBackground.copy(alpha = 0.94f))
+      .border(1.dp, CardBorder.copy(alpha = 0.9f), RoundedCornerShape(18.dp))
+      .padding(10.dp)
+  ) {
+    SoalDropdownField(
+      label = "Bahasa cetak",
+      selectedLabel = selectedOption.label,
+      options = SoalPrintLanguageOptions.map { it.label },
+      onSelect = { label ->
+        SoalPrintLanguageOptions.firstOrNull { it.label == label }?.let { option ->
+          onLanguageChange(option.code)
+        }
+      }
+    )
+  }
+}
+
 @Composable
 private fun SoalGeneralInstructionCard(
   instruction: String,
@@ -2313,11 +2670,6 @@ private fun SoalGeneralInstructionCard(
           style = MaterialTheme.typography.titleMedium,
           color = PrimaryBlueDark,
           fontWeight = FontWeight.ExtraBold
-        )
-        Text(
-          text = t("Bagian ini dicetak sekali di awal dokumen."),
-          style = MaterialTheme.typography.bodySmall,
-          color = SubtleInk
         )
       }
     }
@@ -2393,7 +2745,6 @@ private fun SoalDropdownField(
 private fun SoalChoiceQuestionEditor(
   question: MapelChoiceQuestion,
   questionIndex: Int,
-  modelLabel: String,
   typeKey: String,
   palette: SoalModelPalette,
   showOptions: Boolean,
@@ -2405,11 +2756,6 @@ private fun SoalChoiceQuestionEditor(
   val hasPrompt = question.prompt.isNotBlank()
   val hasFilledOptions = question.options.any { it.isNotBlank() }
   val shouldShowOptions = showOptions && (hasPrompt || hasFilledOptions)
-  val questionTitle = when (typeKey) {
-    "benar-salah" -> "Pernyataan"
-    "isi-titik" -> "Isian"
-    else -> "Pertanyaan"
-  }
   val promptLabel = when (typeKey) {
     "esai" -> "Teks pertanyaan esai"
     "isi-titik" -> "Teks soal isian"
@@ -2430,8 +2776,9 @@ private fun SoalChoiceQuestionEditor(
     verticalArrangement = Arrangement.spacedBy(10.dp)
   ) {
     Row(
+      modifier = Modifier.fillMaxWidth(),
       horizontalArrangement = Arrangement.spacedBy(10.dp),
-      verticalAlignment = Alignment.CenterVertically
+      verticalAlignment = Alignment.Top
     ) {
       Box(
         modifier = Modifier
@@ -2448,31 +2795,17 @@ private fun SoalChoiceQuestionEditor(
           fontWeight = FontWeight.ExtraBold
         )
       }
-      Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-        Text(
-          text = t(questionTitle),
-          style = MaterialTheme.typography.labelLarge,
-          color = palette.text,
-          fontWeight = FontWeight.ExtraBold
-        )
-        Text(
-          text = modelLabel,
-          style = MaterialTheme.typography.labelSmall,
-          color = palette.text.copy(alpha = 0.68f),
-          fontWeight = FontWeight.SemiBold
-        )
-      }
-      Spacer(modifier = Modifier.weight(1f))
+      SoalTextField(
+        value = question.prompt,
+        onValueChange = { onChange(question.copy(prompt = it)) },
+        label = promptLabel,
+        modifier = Modifier.weight(1f),
+        minLines = 1
+      )
       AnimatedVisibility(visible = showDeleteAction) {
         SoalIconAction(Icons.Outlined.Delete, "Hapus soal", onDelete, tint = Color(0xFFDC2626))
       }
     }
-    SoalTextField(
-      value = question.prompt,
-      onValueChange = { onChange(question.copy(prompt = it)) },
-      label = promptLabel,
-      minLines = 2
-    )
     AnimatedVisibility(visible = shouldShowOptions) {
       Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         question.options.normalizedChoiceOptions().forEachIndexed { optionIndex, optionText ->
@@ -2999,6 +3332,7 @@ private fun PatronLearningDocumentScreen(
           .padding(horizontal = 10.dp, vertical = 10.dp)
       )
     }
+
   }
 }
 
@@ -6187,16 +6521,21 @@ private enum class MapelDetailSection(
   Soal("Soal", Icons.Outlined.Quiz)
 }
 
+private const val QuestionStatusDraft = "Draft"
+private const val QuestionStatusSaved = "Tersimpan"
+
 private data class MapelQuestionDraft(
   val id: String,
   val title: String = "",
   val category: String = "Ujian",
   val form: String = "Pilihan Ganda",
   val dateIso: String = LocalDate.now().toString(),
+  val academicYearLabel: String = defaultAcademicYearLabel(),
   val instruction: String = "",
   val questionsText: String = "",
   val sections: List<MapelQuestionSection> = emptyList(),
-  val statusLabel: String = "Draft",
+  val languageCode: String = "ID",
+  val statusLabel: String = QuestionStatusDraft,
   val updatedAt: Long = System.currentTimeMillis()
 ) {
   fun questionCount(): Int {
@@ -6219,17 +6558,17 @@ private data class MapelQuestionDraft(
 
   fun toExportData(): MapelQuestionExportData {
     val payloadJson = buildDocxQuestionsPayloadJson()
-    val languageCode = detectQuestionLanguage()
     return MapelQuestionExportData(
       id = id,
       title = title,
       category = category,
       form = form,
       dateLabel = dateIso,
+      academicYearLabel = academicYearLabel.ifBlank { defaultAcademicYearLabel() },
       instruction = instruction.trim(),
       questionsText = exportQuestionText(),
       questionsPayloadJson = payloadJson,
-      languageCode = languageCode
+      languageCode = resolvedPrintLanguageCode()
     )
   }
 
@@ -6557,6 +6896,28 @@ private fun MapelQuestionDraft.detectQuestionLanguage(): String {
   } else {
     "ID"
   }
+}
+
+private fun normalizeSoalPrintLanguageCode(value: String): String {
+  val normalized = value.trim().uppercase(Locale.ROOT)
+  return when {
+    normalized == "AR" || normalized == "ARAB" || normalized == "ARABIC" || normalized.contains("ARAB") -> "AR"
+    normalized == "ID" || normalized == "INDONESIA" || normalized == "INDONESIAN" || normalized.contains("INDONES") -> "ID"
+    else -> ""
+  }
+}
+
+private fun normalizeQuestionStatusLabel(value: String): String {
+  val normalized = value.trim().lowercase(Locale.ROOT)
+  return when (normalized) {
+    "tersimpan", "saved", "sinkron", "synced" -> QuestionStatusSaved
+    "draft", "draf", "" -> QuestionStatusDraft
+    else -> value.trim().ifBlank { QuestionStatusDraft }
+  }
+}
+
+private fun MapelQuestionDraft.resolvedPrintLanguageCode(): String {
+  return normalizeSoalPrintLanguageCode(languageCode).ifBlank { detectQuestionLanguage() }
 }
 
 @Composable
@@ -7480,8 +7841,9 @@ private data class SoalModelPalette(
   val text: Color
 )
 
+@Composable
 private fun MapelQuestionSection.modelPalette(): SoalModelPalette {
-  return when (typeKey) {
+  val lightPalette = when (typeKey) {
     "pilihan-ganda" -> SoalModelPalette(Color(0xFFEFF6FF), Color(0xFFBFDBFE), Color(0xFF2563EB), Color(0xFF1E3A8A))
     "benar-salah" -> SoalModelPalette(Color(0xFFECFDF5), Color(0xFFA7F3D0), Color(0xFF059669), Color(0xFF065F46))
     "cari-kata" -> SoalModelPalette(Color(0xFFFFFBEB), Color(0xFFFDE68A), Color(0xFFD97706), Color(0xFF92400E))
@@ -7491,6 +7853,16 @@ private fun MapelQuestionSection.modelPalette(): SoalModelPalette {
     "isi-titik" -> SoalModelPalette(Color(0xFFF0FDFA), Color(0xFF99F6E4), Color(0xFF0D9488), Color(0xFF115E59))
     else -> SoalModelPalette(Color(0xFFFFFFFF), Color(0xFFE2E8F0), Color(0xFF2563EB), Color(0xFF1E3A8A))
   }
+  val isDarkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
+  if (!isDarkTheme) return lightPalette
+
+  val darkAccent = lerp(lightPalette.accent, Color.White, 0.18f)
+  return SoalModelPalette(
+    background = lerp(CardBackground, darkAccent, 0.10f),
+    border = lerp(CardBorder, darkAccent, 0.35f),
+    accent = darkAccent,
+    text = PrimaryBlueDark
+  )
 }
 
 private data class MapelChoiceQuestion(
@@ -7581,6 +7953,11 @@ private val SoalCategoryOptions = listOf(
   "Remedial",
   "Latihan"
 )
+
+private fun defaultAcademicYearLabel(date: LocalDate = LocalDate.now()): String {
+  val startYear = if (date.monthValue >= 7) date.year else date.year - 1
+  return "$startYear/${startYear + 1}"
+}
 
 private val SoalTypeOptions = listOf(
   SoalTypeOption("pilihan-ganda", "Pilihan Ganda"),
@@ -7985,13 +8362,15 @@ private fun List<MapelQuestionDraft>.toCombinedExportData(subject: SubjectOvervi
       combinedQuestionRows.put(row)
     }
   }
-  val languageCode = if (sorted.any { it.detectQuestionLanguage() == "AR" }) "AR" else "ID"
+  val languageCode = if (sorted.any { it.resolvedPrintLanguageCode() == "AR" }) "AR" else "ID"
   return MapelQuestionExportData(
     id = "combined-${subject.id}-${System.currentTimeMillis()}",
     title = "Kumpulan Soal ${subject.title}",
     category = "Kumpulan Soal",
     form = sorted.map { it.form }.filter { it.isNotBlank() }.distinct().joinToString(", "),
     dateLabel = LocalDate.now().toString(),
+    academicYearLabel = sorted.firstNotNullOfOrNull { it.academicYearLabel.takeIf(String::isNotBlank) }
+      ?: defaultAcademicYearLabel(),
     instruction = "Dokumen ini berisi ${sorted.size} paket soal yang dibuat guru.",
     questionsPayloadJson = JSONObject().apply {
       put("questions", combinedQuestionRows)
@@ -8011,6 +8390,43 @@ private fun List<MapelQuestionDraft>.toCombinedExportData(subject: SubjectOvervi
       }
     }
   )
+}
+
+private fun mergeLocalAndRemoteMapelQuestions(
+  localQuestions: List<MapelQuestionDraft>,
+  remoteQuestions: List<MapelQuestionDraft>
+): List<MapelQuestionDraft> {
+  if (localQuestions.isEmpty()) return remoteQuestions
+  if (remoteQuestions.isEmpty()) return localQuestions
+
+  val localById = localQuestions.associateBy { it.id }
+  val remoteById = remoteQuestions.associateBy { it.id }
+  return (localById.keys + remoteById.keys)
+    .mapNotNull { questionId ->
+      val localQuestion = localById[questionId]
+      val remoteQuestion = remoteById[questionId]
+      when {
+        localQuestion == null -> remoteQuestion
+        remoteQuestion == null -> localQuestion
+        shouldPreferLocalQuestion(localQuestion, remoteQuestion) -> localQuestion
+        else -> remoteQuestion
+      }
+    }
+    .sortedByDescending { it.updatedAt }
+}
+
+private fun shouldPreferLocalQuestion(
+  localQuestion: MapelQuestionDraft,
+  remoteQuestion: MapelQuestionDraft
+): Boolean {
+  val localStatus = normalizeQuestionStatusLabel(localQuestion.statusLabel)
+  val remoteStatus = normalizeQuestionStatusLabel(remoteQuestion.statusLabel)
+  return when {
+    localStatus == QuestionStatusDraft && localQuestion.updatedAt >= remoteQuestion.updatedAt -> true
+    localQuestion.updatedAt > remoteQuestion.updatedAt -> true
+    localStatus == QuestionStatusSaved && remoteStatus != QuestionStatusSaved -> true
+    else -> false
+  }
 }
 
 private fun loadChoiceQuestions(array: JSONArray?): List<MapelChoiceQuestion> {
@@ -8136,6 +8552,10 @@ private fun loadMapelQuestions(context: Context, subjectId: String): List<MapelQ
   val rawJson = context.getSharedPreferences("mapel_questions", Context.MODE_PRIVATE)
     .getString(subjectId, "[]")
     .orEmpty()
+  return decodeMapelQuestions(rawJson)
+}
+
+private fun decodeMapelQuestions(rawJson: String): List<MapelQuestionDraft> {
   return runCatching {
     val array = JSONArray(rawJson.ifBlank { "[]" })
     buildList {
@@ -8169,19 +8589,31 @@ private fun loadMapelQuestions(context: Context, subjectId: String): List<MapelQ
             }
           }
         }
+        val storedLanguageCode = row.optString("languageCode")
+          .ifBlank { row.optString("printLanguageCode") }
+          .ifBlank { row.optString("language_code") }
+        val draft = MapelQuestionDraft(
+          id = row.optString("id").ifBlank { "soal-${System.currentTimeMillis()}-$index" },
+          title = row.optString("title"),
+          category = row.optString("category").ifBlank { "Ujian" },
+          form = row.optString("form").ifBlank { sections.map { it.typeLabel }.distinct().joinToString(", ") },
+          dateIso = row.optString("dateIso").ifBlank { LocalDate.now().toString() },
+          academicYearLabel = row.optString("academicYearLabel")
+            .ifBlank { row.optString("academic_year_label") }
+            .ifBlank { defaultAcademicYearLabel() },
+          instruction = row.optString("instruction"),
+          questionsText = row.optString("questionsText"),
+          sections = sections,
+          languageCode = normalizeSoalPrintLanguageCode(storedLanguageCode).ifBlank { "ID" },
+          statusLabel = normalizeQuestionStatusLabel(row.optString("statusLabel")),
+          updatedAt = row.optLong("updatedAt", System.currentTimeMillis())
+        )
         add(
-          MapelQuestionDraft(
-            id = row.optString("id").ifBlank { "soal-${System.currentTimeMillis()}-$index" },
-            title = row.optString("title"),
-            category = row.optString("category").ifBlank { "Ujian" },
-            form = row.optString("form").ifBlank { sections.map { it.typeLabel }.distinct().joinToString(", ") },
-            dateIso = row.optString("dateIso").ifBlank { LocalDate.now().toString() },
-            instruction = row.optString("instruction"),
-            questionsText = row.optString("questionsText"),
-            sections = sections,
-            statusLabel = row.optString("statusLabel").ifBlank { "Draft" },
-            updatedAt = row.optLong("updatedAt", System.currentTimeMillis())
-          )
+          if (storedLanguageCode.isBlank()) {
+            draft.copy(languageCode = draft.detectQuestionLanguage())
+          } else {
+            draft
+          }
         )
       }
     }.sortedByDescending { it.updatedAt }
@@ -8193,7 +8625,7 @@ private fun saveMapelQuestions(
   subjectId: String,
   questions: List<MapelQuestionDraft>,
   synchronous: Boolean = false
-) {
+): String {
   val array = JSONArray()
   questions.forEach { item ->
     array.put(
@@ -8203,8 +8635,10 @@ private fun saveMapelQuestions(
         put("category", item.category)
         put("form", item.form)
         put("dateIso", item.dateIso)
+        put("academicYearLabel", item.academicYearLabel.ifBlank { defaultAcademicYearLabel() })
         put("instruction", item.instruction)
         put("questionsText", item.questionsText)
+        put("languageCode", item.resolvedPrintLanguageCode())
         put(
           "sections",
           JSONArray().apply {
@@ -8320,19 +8754,35 @@ private fun saveMapelQuestions(
             }
           }
         )
-        put("statusLabel", item.statusLabel)
+        put("statusLabel", normalizeQuestionStatusLabel(item.statusLabel))
         put("updatedAt", item.updatedAt)
       }
     )
   }
+  val encoded = array.toString()
   val editor = context.getSharedPreferences("mapel_questions", Context.MODE_PRIVATE)
     .edit()
-    .putString(subjectId, array.toString())
+    .putString(subjectId, encoded)
   if (synchronous) {
     editor.commit()
   } else {
     editor.apply()
   }
+  return encoded
+}
+
+private fun filterMapelQuestionJsonById(rawJson: String, questionId: String): String {
+  return runCatching {
+    val sourceArray = JSONArray(rawJson.ifBlank { "[]" })
+    JSONArray().apply {
+      for (index in 0 until sourceArray.length()) {
+        val row = sourceArray.optJSONObject(index) ?: continue
+        if (row.optString("id") == questionId) {
+          put(row)
+        }
+      }
+    }.toString()
+  }.getOrDefault("[]")
 }
 
 private data class AttendanceDateOverview(
@@ -9213,20 +9663,24 @@ private fun MapelDetailTopBar(
 private fun MapelTopButton(
   icon: ImageVector,
   contentDescription: String,
+  enabled: Boolean = true,
   onClick: () -> Unit
 ) {
   Box(
     modifier = Modifier
       .size(42.dp)
-      .background(CardBackground.copy(alpha = 0.86f), androidx.compose.foundation.shape.CircleShape)
+      .background(
+        if (enabled) CardBackground.copy(alpha = 0.86f) else SoftPanel.copy(alpha = 0.72f),
+        androidx.compose.foundation.shape.CircleShape
+      )
       .border(1.dp, CardBorder, androidx.compose.foundation.shape.CircleShape)
-      .clickable(onClick = onClick),
+      .clickable(enabled = enabled, onClick = onClick),
     contentAlignment = Alignment.Center
   ) {
     Icon(
       imageVector = icon,
       contentDescription = t(contentDescription),
-      tint = PrimaryBlueDark
+      tint = if (enabled) PrimaryBlueDark else SubtleInk.copy(alpha = 0.55f)
     )
   }
 }
