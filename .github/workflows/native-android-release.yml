@@ -90,13 +90,17 @@ jobs:
             echo "MIM_ANDROID_KEYSTORE_PASSWORD=${{ secrets.MIM_ANDROID_KEYSTORE_PASSWORD }}"
             echo "MIM_ANDROID_KEY_ALIAS=${{ secrets.MIM_ANDROID_KEY_ALIAS }}"
             echo "MIM_ANDROID_KEY_PASSWORD=${{ secrets.MIM_ANDROID_KEY_PASSWORD }}"
+            echo "ORG_GRADLE_PROJECT_MIM_ANDROID_KEYSTORE=$GITHUB_WORKSPACE/$APP_DIR/mim-release.keystore"
+            echo "ORG_GRADLE_PROJECT_MIM_ANDROID_KEYSTORE_PASSWORD=${{ secrets.MIM_ANDROID_KEYSTORE_PASSWORD }}"
+            echo "ORG_GRADLE_PROJECT_MIM_ANDROID_KEY_ALIAS=${{ secrets.MIM_ANDROID_KEY_ALIAS }}"
+            echo "ORG_GRADLE_PROJECT_MIM_ANDROID_KEY_PASSWORD=${{ secrets.MIM_ANDROID_KEY_PASSWORD }}"
           } >> "$GITHUB_ENV"
 
       - name: Build signed APK
         working-directory: ${{ env.APP_DIR }}
         run: |
           chmod +x ./gradlew
-          ./gradlew :app:assembleRelease \
+          ./gradlew --no-daemon --console=plain :app:assembleRelease \
             -PMIM_VERSION_CODE="${MIM_VERSION_CODE}" \
             -PMIM_VERSION_NAME="${MIM_VERSION_NAME}" \
             -PMIM_UPDATE_MANIFEST_URL="${UPDATE_MANIFEST_URL}"

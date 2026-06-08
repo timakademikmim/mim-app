@@ -17,6 +17,13 @@ val appVersionName = providers.gradleProperty("MIM_VERSION_NAME")
   .orElse("0.1.0")
   .get()
 
+fun releaseSigningValue(name: String): String {
+  return providers.gradleProperty(name)
+    .orElse(providers.environmentVariable(name))
+    .orElse("")
+    .get()
+}
+
 android {
   namespace = "com.mim.guruapp"
   compileSdk = 36
@@ -39,10 +46,10 @@ android {
 
   signingConfigs {
     create("release") {
-      val keystorePath = System.getenv("MIM_ANDROID_KEYSTORE").orEmpty()
-      val keystorePassword = System.getenv("MIM_ANDROID_KEYSTORE_PASSWORD").orEmpty()
-      val keyAliasValue = System.getenv("MIM_ANDROID_KEY_ALIAS").orEmpty()
-      val keyPasswordValue = System.getenv("MIM_ANDROID_KEY_PASSWORD").orEmpty()
+      val keystorePath = releaseSigningValue("MIM_ANDROID_KEYSTORE")
+      val keystorePassword = releaseSigningValue("MIM_ANDROID_KEYSTORE_PASSWORD")
+      val keyAliasValue = releaseSigningValue("MIM_ANDROID_KEY_ALIAS")
+      val keyPasswordValue = releaseSigningValue("MIM_ANDROID_KEY_PASSWORD")
 
       if (keystorePath.isNotBlank()) {
         storeFile = file(keystorePath)
