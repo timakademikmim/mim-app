@@ -161,6 +161,12 @@ import com.mim.guruapp.data.model.ScoreDetailRow
 import com.mim.guruapp.data.model.ScoreStudent
 import com.mim.guruapp.data.model.SubjectOverview
 import com.mim.guruapp.data.model.SyncBannerState
+import com.mim.guruapp.data.remote.GuruAiGenerateRequest
+import com.mim.guruapp.data.remote.GuruAiGenerateResult
+import com.mim.guruapp.data.remote.GuruAiMaterialItem
+import com.mim.guruapp.data.remote.GuruAiMaterialResult
+import com.mim.guruapp.data.remote.GuruAiQuestionResult
+import com.mim.guruapp.data.remote.GuruAiTokenWallet
 import com.mim.guruapp.export.MapelAttendanceExcelExporter
 import com.mim.guruapp.export.MapelQuestionExportData
 import com.mim.guruapp.export.MapelQuestionExporter
@@ -217,6 +223,8 @@ fun MapelScreen(
   onSavePatronMateri: suspend (String, SubjectOverview, List<PatronMateriItem>) -> PatronMateriSaveOutcome,
   onLoadQuestions: suspend (String, SubjectOverview) -> String?,
   onSaveQuestions: suspend (String, SubjectOverview, String) -> QuestionSaveOutcome,
+  onLoadAiTokenBalance: suspend () -> GuruAiTokenWallet?,
+  onGenerateAiContent: suspend (GuruAiGenerateRequest) -> GuruAiGenerateResult,
   isRefreshing: Boolean,
   onRefresh: () -> Unit,
   onDetailModeChange: (Boolean) -> Unit = {},
@@ -266,6 +274,8 @@ fun MapelScreen(
         onSavePatronMateri = onSavePatronMateri,
         onLoadQuestions = onLoadQuestions,
         onSaveQuestions = onSaveQuestions,
+        onLoadAiTokenBalance = onLoadAiTokenBalance,
+        onGenerateAiContent = onGenerateAiContent,
         selectedSection = selectedDetailSection,
         onSectionChange = { selectedDetailSectionKey = it.name },
         isRefreshing = isRefreshing,
@@ -546,6 +556,8 @@ private fun MapelDetailScreen(
   onSavePatronMateri: suspend (String, SubjectOverview, List<PatronMateriItem>) -> PatronMateriSaveOutcome,
   onLoadQuestions: suspend (String, SubjectOverview) -> String?,
   onSaveQuestions: suspend (String, SubjectOverview, String) -> QuestionSaveOutcome,
+  onLoadAiTokenBalance: suspend () -> GuruAiTokenWallet?,
+  onGenerateAiContent: suspend (GuruAiGenerateRequest) -> GuruAiGenerateResult,
   selectedSection: MapelDetailSection,
   onSectionChange: (MapelDetailSection) -> Unit,
   isRefreshing: Boolean,
@@ -575,6 +587,14 @@ private fun MapelDetailScreen(
   var questionUndoStack by remember(subject.id) { mutableStateOf<List<MapelQuestionDraft>>(emptyList()) }
   var isPrintingQuestion by remember(subject.id) { mutableStateOf(false) }
   var isSavingQuestionToServer by rememberSaveable(subject.id) { mutableStateOf(false) }
+  var aiDialogFeature by rememberSaveable(subject.id) { mutableStateOf<String?>(null) }
+  var aiPrompt by rememberSaveable(subject.id) { mutableStateOf("") }
+  var aiCountText by rememberSaveable(subject.id) { mutableStateOf("5") }
+  var aiQuestionTypeKey by rememberSaveable(subject.id) { mutableStateOf(SoalTypeOptions.first().key) }
+  var aiLanguageCode by rememberSaveable(subject.id) { mutableStateOf("ID") }
+  var aiWallet by remember(subject.id) { mutableStateOf<GuruAiTokenWallet?>(null) }
+  var isLoadingAiWallet by rememberSaveable(subject.id) { mutableStateOf(false) }
+  var isAiGenerating by rememberSaveable(subject.id) { mutableStateOf(false) }
   var isLoadingAttendance by remember(subject.id) { mutableStateOf(true) }
   var isLoadingScores by remember(subject.id) { mutableStateOf(true) }
   var isLoadingPatronMateri by remember(subject.id) { mutableStateOf(true) }
@@ -812,6 +832,129 @@ private fun MapelDetailScreen(
       patronMateriItems = patronMateriSnapshot?.items.orEmpty()
     }
     return outcome
+  }
+
+  fun refreshAiWallet() {
+    detailScope.launch {
+      isLoadingAiWallet = true
+      aiWallet = onLoadAiTokenBalance()
+      isLoadingAiWallet = false
+    }
+  }
+
+  fun openAiDialog(feature: String) {
+    aiDialogFeature = feature
+    aiCountText = if (feature == "soal") "5" else "3"
+    aiQuestionTypeKey = SoalTypeOptions.first().key
+    aiLanguageCode = if (feature == "soal") "ID" else "ID"
+    aiPrompt = when (feature) {
+      "soal" -> "Buat soal ${subject.title} untuk ${subject.className} ${subject.semester}."
+      else -> "Buat materi ${subject.title} untuk ${subject.className} ${subject.semester}."
+    }
+    refreshAiWallet()
+  }
+
+  suspend fun applyAiMaterialResult(
+    material: GuruAiMaterialResult,
+    wallet: GuruAiTokenWallet,
+    chargedTokens: Int
+  ) {
+    val generated = buildAiPatronMaterialPayload(
+      generatedMaterial = material,
+      currentItems = patronMateriItems,
+      currentMaterials = patronLearningMaterials
+    )
+    if (generated.items.isEmpty()) {
+      Toast.makeText(context, "AI belum menghasilkan materi yang bisa dipakai.", Toast.LENGTH_LONG).show()
+      return
+    }
+    patronMateriItems = generated.items
+    patronLearningMaterials = generated.materials
+    savePatronLearningMaterials(context, subject.id, generated.materials)
+    val outcome = savePatronMateriChanges(generated.items)
+    aiWallet = wallet
+    val tokenInfo = if (chargedTokens > 0) " Token terpakai: $chargedTokens." else ""
+    val message = if (outcome.success) {
+      outcome.message.ifBlank { "Materi AI berhasil dibuat." } + tokenInfo
+    } else {
+      outcome.message.ifBlank { "Materi AI tersimpan lokal, tapi belum tersimpan ke server." } + tokenInfo
+    }
+    Toast.makeText(
+      context,
+      message,
+      if (outcome.success) Toast.LENGTH_SHORT else Toast.LENGTH_LONG
+    ).show()
+  }
+
+  fun applyAiQuestionResult(
+    question: GuruAiQuestionResult,
+    wallet: GuruAiTokenWallet,
+    chargedTokens: Int
+  ) {
+    val draft = buildAiQuestionDraft(
+      subject = subject,
+      result = question,
+      fallbackTypeKey = aiQuestionTypeKey,
+      fallbackLanguageCode = aiLanguageCode,
+      academicYearLabel = defaultAcademicYearLabel()
+    )
+    val nextItems = (listOf(draft) + questionItems).sortedByDescending { it.updatedAt }
+    questionItems = nextItems
+    persistQuestionItems(nextItems, synchronous = true)
+    activeQuestionId = draft.id
+    editorQuestionDraft = draft
+    aiWallet = wallet
+    val tokenInfo = if (chargedTokens > 0) " Token terpakai: $chargedTokens." else ""
+    Toast.makeText(context, "Soal AI berhasil dibuat sebagai draft.$tokenInfo", Toast.LENGTH_SHORT).show()
+  }
+
+  fun generateAiContentFromDialog() {
+    val feature = aiDialogFeature ?: return
+    if (isAiGenerating) return
+    val safeCount = aiCountText.toIntOrNull()
+      ?.coerceIn(1, if (feature == "soal") 50 else 20)
+      ?: if (feature == "soal") 5 else 3
+    detailScope.launch {
+      isAiGenerating = true
+      val result = onGenerateAiContent(
+        GuruAiGenerateRequest(
+          feature = feature,
+          distribusiId = subject.id,
+          subjectTitle = subject.title,
+          className = subject.className,
+          semester = subject.semester,
+          languageCode = aiLanguageCode,
+          prompt = aiPrompt,
+          count = safeCount,
+          questionType = if (feature == "soal") aiQuestionTypeKey else "",
+          existingItems = if (feature == "soal") {
+            questionItems.map { it.title }
+          } else {
+            patronMateriItems.map { it.text }
+          },
+          academicYear = defaultAcademicYearLabel()
+        )
+      )
+      when (result) {
+        is GuruAiGenerateResult.MaterialSuccess -> {
+          applyAiMaterialResult(result.material, result.wallet, result.chargedTokens)
+          aiDialogFeature = null
+        }
+        is GuruAiGenerateResult.QuestionSuccess -> {
+          applyAiQuestionResult(result.question, result.wallet, result.chargedTokens)
+          aiDialogFeature = null
+        }
+        is GuruAiGenerateResult.Error -> {
+          aiWallet = result.wallet ?: aiWallet
+          Toast.makeText(
+            context,
+            result.message.ifBlank { "Gagal membuat konten AI." },
+            Toast.LENGTH_LONG
+          ).show()
+        }
+      }
+      isAiGenerating = false
+    }
   }
 
   LaunchedEffect(subject.id) {
@@ -1073,6 +1216,7 @@ private fun MapelDetailScreen(
                     text = ""
                   )) + patronMateriItems
                 },
+                onGenerateAiMateri = { openAiDialog("materi") },
                 modifier = Modifier.padding(bottom = 14.dp)
               )
             }
@@ -1082,6 +1226,7 @@ private fun MapelDetailScreen(
                 SoalToolbar(
                   totalSoal = questionItems.size,
                   onAddSoal = { isCreatingQuestion = true },
+                  onGenerateAiSoal = { openAiDialog("soal") },
                   modifier = Modifier.padding(bottom = 14.dp)
                 )
               }
@@ -1420,6 +1565,29 @@ private fun MapelDetailScreen(
           )
         }
 
+        aiDialogFeature?.let { feature ->
+          AiGenerateContentDialog(
+            feature = feature,
+            subject = subject,
+            wallet = aiWallet,
+            isLoadingWallet = isLoadingAiWallet,
+            prompt = aiPrompt,
+            onPromptChange = { aiPrompt = it },
+            countText = aiCountText,
+            onCountTextChange = { aiCountText = it.filter(Char::isDigit).take(2) },
+            questionTypeKey = aiQuestionTypeKey,
+            onQuestionTypeChange = { aiQuestionTypeKey = it },
+            languageCode = aiLanguageCode,
+            onLanguageChange = { aiLanguageCode = it },
+            isGenerating = isAiGenerating,
+            onRefreshWallet = ::refreshAiWallet,
+            onDismiss = {
+              if (!isAiGenerating) aiDialogFeature = null
+            },
+            onGenerate = ::generateAiContentFromDialog
+          )
+        }
+
         attendanceExportShouldShare?.let { shouldShare ->
           AttendanceExportPeriodDialog(
             shouldShare = shouldShare,
@@ -1478,6 +1646,148 @@ private fun MapelDetailScreen(
       }
     }
   }
+}
+
+@Composable
+private fun AiGenerateContentDialog(
+  feature: String,
+  subject: SubjectOverview,
+  wallet: GuruAiTokenWallet?,
+  isLoadingWallet: Boolean,
+  prompt: String,
+  onPromptChange: (String) -> Unit,
+  countText: String,
+  onCountTextChange: (String) -> Unit,
+  questionTypeKey: String,
+  onQuestionTypeChange: (String) -> Unit,
+  languageCode: String,
+  onLanguageChange: (String) -> Unit,
+  isGenerating: Boolean,
+  onRefreshWallet: () -> Unit,
+  onDismiss: () -> Unit,
+  onGenerate: () -> Unit
+) {
+  val isQuestion = feature == "soal"
+  val title = if (isQuestion) "Buat Soal dengan AI" else "Buat Materi dengan AI"
+  val selectedLanguageCode = normalizeSoalPrintLanguageCode(languageCode).ifBlank { "ID" }
+  val selectedLanguage = SoalPrintLanguageOptions.firstOrNull { it.code == selectedLanguageCode }
+    ?: SoalPrintLanguageOptions.first()
+  val walletLabel = when {
+    isLoadingWallet -> "Memuat saldo token..."
+    wallet != null -> "Saldo: ${wallet.balanceTokens} token"
+    else -> "Saldo token belum tersedia"
+  }
+  val questionTypeOptions = remember {
+    SoalTypeOptions.filter { option ->
+      option.key in setOf("pilihan-ganda", "esai", "isi-titik", "benar-salah")
+    }
+  }
+  val selectedType = questionTypeOptions.firstOrNull { it.key == questionTypeKey }
+    ?: questionTypeOptions.first()
+
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    containerColor = CardBackground,
+    title = {
+      Text(
+        text = t(title),
+        color = PrimaryBlueDark,
+        fontWeight = FontWeight.ExtraBold
+      )
+    },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+          text = "${subject.title} - ${subject.className} - ${subject.semester}",
+          style = MaterialTheme.typography.bodySmall,
+          color = SubtleInk
+        )
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Text(
+            text = walletLabel,
+            style = MaterialTheme.typography.labelLarge,
+            color = PrimaryBlueDark,
+            fontWeight = FontWeight.SemiBold
+          )
+          TextButton(
+            enabled = !isLoadingWallet && !isGenerating,
+            onClick = onRefreshWallet
+          ) {
+            Text(t("Refresh"))
+          }
+        }
+        OutlinedTextField(
+          value = prompt,
+          onValueChange = onPromptChange,
+          label = { Text(t("Instruksi AI")) },
+          minLines = 4,
+          modifier = Modifier.fillMaxWidth()
+        )
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+          SoalTextField(
+            value = countText,
+            onValueChange = onCountTextChange,
+            label = if (isQuestion) "Jumlah soal" else "Jumlah materi",
+            keyboardType = KeyboardType.Number,
+            modifier = Modifier.weight(0.9f)
+          )
+          SoalDropdownField(
+            label = "Bahasa",
+            selectedLabel = selectedLanguage.label,
+            options = SoalPrintLanguageOptions.map { it.label },
+            onSelect = { label ->
+              SoalPrintLanguageOptions.firstOrNull { it.label == label }?.let { option ->
+                onLanguageChange(option.code)
+              }
+            },
+            modifier = Modifier.weight(1.2f)
+          )
+        }
+        if (isQuestion) {
+          SoalDropdownField(
+            label = "Model soal",
+            selectedLabel = selectedType.label,
+            options = questionTypeOptions.map { it.label },
+            onSelect = { label ->
+              questionTypeOptions.firstOrNull { it.label == label }?.let { option ->
+                onQuestionTypeChange(option.key)
+              }
+            }
+          )
+        }
+      }
+    },
+    confirmButton = {
+      Button(
+        enabled = !isGenerating && prompt.trim().isNotBlank(),
+        onClick = onGenerate
+      ) {
+        if (isGenerating) {
+          CircularProgressIndicator(
+            modifier = Modifier.size(18.dp),
+            strokeWidth = 2.dp
+          )
+        } else {
+          Text(t("Buat"))
+        }
+      }
+    },
+    dismissButton = {
+      TextButton(
+        enabled = !isGenerating,
+        onClick = onDismiss
+      ) {
+        Text(t("Batal"))
+      }
+    }
+  )
 }
 
 @Composable
@@ -1663,6 +1973,7 @@ private fun AttendancePeriodShortcut(
 private fun SoalToolbar(
   totalSoal: Int,
   onAddSoal: () -> Unit,
+  onGenerateAiSoal: () -> Unit,
   modifier: Modifier = Modifier
 ) {
   Row(
@@ -1677,6 +1988,11 @@ private fun SoalToolbar(
       fontWeight = FontWeight.SemiBold
     )
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      SoalPillButton(
+        label = "AI",
+        icon = Icons.Outlined.Science,
+        onClick = onGenerateAiSoal
+      )
       SoalPillButton(
         label = "Buat Soal",
         icon = Icons.Outlined.Add,
@@ -2902,6 +3218,7 @@ private fun SoalTextField(
 private fun PatronMateriToolbar(
   totalMateri: Int,
   onAddMateri: () -> Unit,
+  onGenerateAiMateri: () -> Unit,
   modifier: Modifier = Modifier
 ) {
   Row(
@@ -2916,26 +3233,18 @@ private fun PatronMateriToolbar(
       fontWeight = FontWeight.SemiBold
     )
     Row(
-      modifier = Modifier
-        .clip(RoundedCornerShape(999.dp))
-        .background(CardBackground.copy(alpha = 0.90f))
-        .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(999.dp))
-        .clickable(onClick = onAddMateri)
-        .padding(horizontal = 16.dp, vertical = 10.dp),
       horizontalArrangement = Arrangement.spacedBy(8.dp),
       verticalAlignment = Alignment.CenterVertically
     ) {
-      Icon(
-        imageVector = Icons.Outlined.Add,
-        contentDescription = null,
-        tint = PrimaryBlue,
-        modifier = Modifier.size(18.dp)
+      SoalPillButton(
+        label = "AI",
+        icon = Icons.Outlined.Science,
+        onClick = onGenerateAiMateri
       )
-      Text(
-        text = t("Tambah Materi"),
-        style = MaterialTheme.typography.labelLarge,
-        color = PrimaryBlueDark,
-        fontWeight = FontWeight.SemiBold
+      SoalPillButton(
+        label = "Tambah Materi",
+        icon = Icons.Outlined.Add,
+        onClick = onAddMateri
       )
     }
   }
@@ -8422,10 +8731,22 @@ private fun shouldPreferLocalQuestion(
   val localStatus = normalizeQuestionStatusLabel(localQuestion.statusLabel)
   val remoteStatus = normalizeQuestionStatusLabel(remoteQuestion.statusLabel)
   return when {
+    localQuestion.hasQuestionEditorContent() && !remoteQuestion.hasQuestionEditorContent() -> true
     localStatus == QuestionStatusDraft && localQuestion.updatedAt >= remoteQuestion.updatedAt -> true
     localQuestion.updatedAt > remoteQuestion.updatedAt -> true
     localStatus == QuestionStatusSaved && remoteStatus != QuestionStatusSaved -> true
     else -> false
+  }
+}
+
+private fun MapelQuestionDraft.hasQuestionEditorContent(): Boolean {
+  if (questionsText.isNotBlank()) return true
+  return sections.any { section ->
+    section.content.isNotBlank() ||
+      section.choiceQuestions.any { it.hasQuestionContent() } ||
+      section.matchingPairs.any { it.hasContent() } ||
+      section.wordSearchQuestions.any { it.hasContent() } ||
+      section.crosswordQuestions.any { it.hasContent() }
   }
 }
 
@@ -8881,6 +9202,146 @@ private enum class PatronLearningBlockType(val key: String) {
   List("list"),
   Image("image"),
   Pdf("pdf")
+}
+
+private data class AiPatronMaterialPayload(
+  val items: List<PatronMateriItem>,
+  val materials: Map<String, PatronLearningMaterial>
+)
+
+private fun buildAiPatronMaterialPayload(
+  generatedMaterial: GuruAiMaterialResult,
+  currentItems: List<PatronMateriItem>,
+  currentMaterials: Map<String, PatronLearningMaterial>
+): AiPatronMaterialPayload {
+  val generatedItems = generatedMaterial.items.ifEmpty {
+    val fallbackTitle = generatedMaterial.title.ifBlank { "Materi AI" }
+    val fallbackBody = generatedMaterial.summary.ifBlank { fallbackTitle }
+    listOf(GuruAiMaterialItem(title = fallbackTitle, body = fallbackBody, bulletPoints = emptyList()))
+  }
+  val previousMaterialByTitle = currentItems.associate { item ->
+    item.text.aiContentKey() to currentMaterials[item.id]
+  }
+  val generatedByTitle = linkedMapOf<String, GuruAiMaterialItem>()
+  generatedItems.forEachIndexed { index, item ->
+    val title = item.title.trim().ifBlank { "Materi AI ${index + 1}" }
+    generatedByTitle.putIfAbsent(title.aiContentKey(), item.copy(title = title))
+  }
+
+  val orderedTitles = buildList {
+    generatedByTitle.values.forEach { add(it.title.trim()) }
+    currentItems.map { it.text.trim() }
+      .filter { it.isNotBlank() }
+      .forEach { add(it) }
+  }.distinctBy { it.aiContentKey() }
+
+  val normalizedItems = orderedTitles.mapIndexed { index, title ->
+    PatronMateriItem(
+      id = normalizedPatronMateriId(index, title),
+      text = title
+    )
+  }
+  val materials = linkedMapOf<String, PatronLearningMaterial>()
+  normalizedItems.forEachIndexed { index, item ->
+    val generated = generatedByTitle[item.text.aiContentKey()]
+    val previous = previousMaterialByTitle[item.text.aiContentKey()]
+    val material = when {
+      generated != null -> generated.toPatronLearningMaterial(index)
+      previous != null -> previous
+      else -> null
+    }
+    if (material != null) materials[item.id] = material
+  }
+  return AiPatronMaterialPayload(items = normalizedItems, materials = materials)
+}
+
+private fun GuruAiMaterialItem.toPatronLearningMaterial(index: Int): PatronLearningMaterial {
+  val bodyText = buildString {
+    if (body.isNotBlank()) appendLine(body.trim())
+    if (bulletPoints.isNotEmpty()) {
+      if (isNotBlank()) appendLine()
+      bulletPoints.forEach { point ->
+        val cleanPoint = point.trim()
+        if (cleanPoint.isNotBlank()) appendLine("- $cleanPoint")
+      }
+    }
+  }.trim().ifBlank { title.trim() }
+  return PatronLearningMaterial(
+    blocks = listOf(
+      PatronLearningBlock(
+        id = "ai-block-${System.currentTimeMillis()}-$index",
+        type = PatronLearningBlockType.Text.key,
+        text = bodyText
+      )
+    ),
+    updatedAt = System.currentTimeMillis()
+  )
+}
+
+private fun buildAiQuestionDraft(
+  subject: SubjectOverview,
+  result: GuruAiQuestionResult,
+  fallbackTypeKey: String,
+  fallbackLanguageCode: String,
+  academicYearLabel: String
+): MapelQuestionDraft {
+  val now = System.currentTimeMillis()
+  val typeKey = normalizeAiQuestionTypeKey(result.questionType, fallbackTypeKey)
+  val selectedType = SoalTypeOptions.firstOrNull { it.key == typeKey } ?: SoalTypeOptions.first()
+  val generatedQuestions = result.questions.take(50)
+  val choiceQuestions = generatedQuestions.mapIndexed { index, question ->
+    MapelChoiceQuestion(
+      id = "q-ai-$now-${index + 1}",
+      prompt = question.prompt,
+      options = if (typeKey == "pilihan-ganda") {
+        question.options.normalizedChoiceOptions()
+      } else {
+        emptyList()
+      }
+    )
+  }.withTrailingBlankQuestion()
+  val section = buildQuestionSectionDraft(selectedType).copy(
+    id = "model-ai-$now",
+    count = generatedQuestions.size,
+    instruction = result.instruction,
+    choiceQuestions = if (selectedType.key.usesQuestionPromptEditor()) choiceQuestions else emptyList()
+  )
+  return MapelQuestionDraft(
+    id = "soal-ai-$now",
+    title = result.title.ifBlank { "Soal ${subject.title}" },
+    category = "Ujian",
+    form = selectedType.label,
+    academicYearLabel = academicYearLabel.ifBlank { defaultAcademicYearLabel() },
+    instruction = result.instruction,
+    sections = listOf(section),
+    languageCode = normalizeSoalPrintLanguageCode(result.languageCode)
+      .ifBlank { normalizeSoalPrintLanguageCode(fallbackLanguageCode) }
+      .ifBlank { "ID" },
+    statusLabel = QuestionStatusDraft,
+    updatedAt = now
+  )
+}
+
+private fun normalizeAiQuestionTypeKey(value: String, fallbackTypeKey: String): String {
+  val clean = value.trim().lowercase(Locale.getDefault())
+    .replace("_", "-")
+    .replace(" ", "-")
+  return when {
+    clean.contains("pilihan") || clean.contains("multiple") -> "pilihan-ganda"
+    clean.contains("esai") || clean.contains("essay") -> "esai"
+    clean.contains("isi") || clean.contains("isian") || clean.contains("fill") -> "isi-titik"
+    clean.contains("benar") || clean.contains("salah") || clean.contains("true") || clean.contains("false") -> "benar-salah"
+    fallbackTypeKey in setOf("pilihan-ganda", "esai", "isi-titik", "benar-salah") -> fallbackTypeKey
+    else -> "pilihan-ganda"
+  }
+}
+
+private fun normalizedPatronMateriId(index: Int, title: String): String {
+  return "materi-${index + 1}-${title.trim().hashCode()}"
+}
+
+private fun String.aiContentKey(): String {
+  return trim().lowercase(Locale.getDefault())
 }
 
 private data class CopiedPatronPdf(

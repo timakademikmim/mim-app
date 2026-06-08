@@ -44,6 +44,9 @@ import com.mim.guruapp.data.model.TeachingReminderSettings
 import com.mim.guruapp.data.model.UtsReportOverride
 import com.mim.guruapp.data.model.WaliAttendanceDetailSnapshot
 import com.mim.guruapp.data.model.WaliSantriProfile
+import com.mim.guruapp.data.remote.GuruAiGenerateRequest
+import com.mim.guruapp.data.remote.GuruAiGenerateResult
+import com.mim.guruapp.data.remote.GuruAiTokenWallet
 import com.mim.guruapp.ui.components.clearFocusOnOutsideTap
 import com.mim.guruapp.ui.i18n.AppLanguage
 import com.mim.guruapp.ui.i18n.LocalAppLanguage
@@ -96,6 +99,8 @@ fun GuruAppRoot(
   onSaveMapelPatronMateri: suspend (String, SubjectOverview, List<PatronMateriItem>) -> PatronMateriSaveOutcome,
   onLoadMapelQuestions: suspend (String, SubjectOverview) -> String?,
   onSaveMapelQuestions: suspend (String, SubjectOverview, String) -> QuestionSaveOutcome,
+  onLoadAiTokenBalance: suspend () -> GuruAiTokenWallet?,
+  onGenerateAiContent: suspend (GuruAiGenerateRequest) -> GuruAiGenerateResult,
   onSaveProfile: suspend (GuruProfile) -> ProfileSaveOutcome,
   onSaveSantri: suspend (WaliSantriProfile) -> SantriSaveOutcome,
   onSaveMonthlyReport: suspend (MonthlyReportItem) -> MonthlyReportSaveOutcome,
@@ -196,6 +201,8 @@ fun GuruAppRoot(
             onSaveMapelPatronMateri = onSaveMapelPatronMateri,
             onLoadMapelQuestions = onLoadMapelQuestions,
             onSaveMapelQuestions = onSaveMapelQuestions,
+            onLoadAiTokenBalance = onLoadAiTokenBalance,
+            onGenerateAiContent = onGenerateAiContent,
             onSaveProfile = onSaveProfile,
             onSaveSantri = onSaveSantri,
             onSaveMonthlyReport = onSaveMonthlyReport,

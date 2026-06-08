@@ -12,6 +12,10 @@ import com.mim.guruapp.alarm.TeachingReminderNotifier
 import com.mim.guruapp.alarm.TeachingReminderReceiver
 import com.mim.guruapp.alarm.TeachingReminderScheduler
 import com.mim.guruapp.data.remote.GuruAuthRemoteDataSource
+import com.mim.guruapp.data.remote.GuruAiGenerateRequest
+import com.mim.guruapp.data.remote.GuruAiGenerateResult
+import com.mim.guruapp.data.remote.GuruAiRemoteDataSource
+import com.mim.guruapp.data.remote.GuruAiTokenWallet
 import com.mim.guruapp.data.remote.GuruMapelAttendanceRemoteDataSource
 import com.mim.guruapp.data.remote.GuruMapelAttendanceReviewResult
 import com.mim.guruapp.data.remote.GuruMapelAttendanceSaveResult
@@ -252,6 +256,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
   private val mapelScoreRemoteDataSource = GuruMapelScoreRemoteDataSource()
   private val mapelPatronMateriRemoteDataSource = GuruMapelPatronMateriRemoteDataSource()
   private val mapelQuestionRemoteDataSource = GuruMapelQuestionRemoteDataSource()
+  private val aiRemoteDataSource = GuruAiRemoteDataSource()
   private val mutabaahRemoteDataSource = GuruMutabaahRemoteDataSource()
   private val leaveRequestRemoteDataSource = GuruLeaveRequestRemoteDataSource()
   private val monthlyReportRemoteDataSource = GuruMonthlyReportRemoteDataSource()
@@ -1808,6 +1813,26 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
       GuruMapelQuestionSaveResult.Success -> QuestionSaveOutcome(true, "Soal berhasil disimpan ke database.")
       is GuruMapelQuestionSaveResult.Error -> QuestionSaveOutcome(false, result.message)
     }
+  }
+
+  suspend fun loadAiTokenBalance(): GuruAiTokenWallet? {
+    val guruId = uiState.session.teacherRowId.ifBlank { uiState.session.teacherId }
+    if (guruId.isBlank()) return null
+    return aiRemoteDataSource.fetchTokenBalance(guruId)
+  }
+
+  suspend fun generateAiContent(
+    request: GuruAiGenerateRequest
+  ): GuruAiGenerateResult {
+    val guruId = uiState.session.teacherRowId.ifBlank { uiState.session.teacherId }
+    if (guruId.isBlank()) {
+      return GuruAiGenerateResult.Error("Data guru belum lengkap.")
+    }
+    return aiRemoteDataSource.generateContent(
+      guruId = guruId,
+      guruName = uiState.dashboard?.teacherName.orEmpty().ifBlank { uiState.session.teacherName },
+      request = request
+    )
   }
 
   fun refreshFromServer(

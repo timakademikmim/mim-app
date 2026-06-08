@@ -97,6 +97,9 @@ import com.mim.guruapp.data.model.TeachingReminderSettings
 import com.mim.guruapp.data.model.UtsReportOverride
 import com.mim.guruapp.data.model.WaliAttendanceDetailSnapshot
 import com.mim.guruapp.data.model.WaliSantriProfile
+import com.mim.guruapp.data.remote.GuruAiGenerateRequest
+import com.mim.guruapp.data.remote.GuruAiGenerateResult
+import com.mim.guruapp.data.remote.GuruAiTokenWallet
 import com.mim.guruapp.ui.components.AgendaCard
 import com.mim.guruapp.ui.components.AttendanceApprovalPopup
 import com.mim.guruapp.ui.components.AvailableMapelPanel
@@ -228,6 +231,8 @@ fun GuruHomeScreen(
   onSaveMapelPatronMateri: suspend (String, SubjectOverview, List<PatronMateriItem>) -> PatronMateriSaveOutcome,
   onLoadMapelQuestions: suspend (String, SubjectOverview) -> String?,
   onSaveMapelQuestions: suspend (String, SubjectOverview, String) -> QuestionSaveOutcome,
+  onLoadAiTokenBalance: suspend () -> GuruAiTokenWallet?,
+  onGenerateAiContent: suspend (GuruAiGenerateRequest) -> GuruAiGenerateResult,
   onSaveProfile: suspend (com.mim.guruapp.data.model.GuruProfile) -> ProfileSaveOutcome,
   onSaveSantri: suspend (WaliSantriProfile) -> SantriSaveOutcome,
   onSaveMonthlyReport: suspend (MonthlyReportItem) -> MonthlyReportSaveOutcome,
@@ -646,6 +651,8 @@ fun GuruHomeScreen(
         onSavePatronMateri = onSaveMapelPatronMateri,
         onLoadQuestions = onLoadMapelQuestions,
         onSaveQuestions = onSaveMapelQuestions,
+        onLoadAiTokenBalance = onLoadAiTokenBalance,
+        onGenerateAiContent = onGenerateAiContent,
         isRefreshing = syncBanner.isSyncing,
         onRefresh = onRefreshClick,
         onDetailModeChange = { isMapelDetailMode = it },
@@ -1222,6 +1229,8 @@ private fun GuruHomeScreenPreview() {
       onSaveMapelPatronMateri = { _, _, _ -> PatronMateriSaveOutcome(true, "OK") },
       onLoadMapelQuestions = { _, _ -> null },
       onSaveMapelQuestions = { _, _, _ -> QuestionSaveOutcome(true, "OK") },
+      onLoadAiTokenBalance = { null },
+      onGenerateAiContent = { GuruAiGenerateResult.Error("AI tidak tersedia di preview.") },
       onSaveProfile = { ProfileSaveOutcome(true, "OK") },
       onSaveSantri = { SantriSaveOutcome(true, "OK") },
       onSaveMonthlyReport = { MonthlyReportSaveOutcome(true, "OK") },

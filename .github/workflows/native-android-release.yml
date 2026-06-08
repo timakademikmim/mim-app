@@ -114,18 +114,16 @@ jobs:
             "versionCode": ${MIM_VERSION_CODE},
             "versionName": "${MIM_VERSION_NAME}",
             "apkUrl": "${APK_URL}",
-            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Editor soal kini bisa menyimpan soal ke database, rapor wali kelas mengambil nilai dari detail mapel, dan riwayat akademik santri lebih lengkap.",
+            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Pondasi AI token mulai tersedia untuk membuat materi dan soal, serta sinkronisasi isi soal ke database diperbaiki agar bisa dibuka lengkap dari device lain.",
             "features": [
-              "Editor soal memiliki tombol Simpan agar soal tersimpan di database dan tetap ada setelah logout atau install ulang.",
-              "Daftar soal memakai menu titik tiga untuk edit detail, cetak, kirim, dan hapus, lengkap dengan tahun ajaran serta pilihan bahasa cetak.",
-              "Kelas Saya - Rapor menampilkan daftar santri dan detail rapor berisi nilai pengetahuan serta keterampilan dari nilai mapel.",
-              "Profil santri wali kelas dipisah menjadi Biodata dan Riwayat Akademik dengan akses ke rapor, laporan bulanan, dan riwayat nilai per kelas."
+              "Patron Materi dan Soal kini memiliki pintu awal AI untuk membantu guru membuat materi atau draft soal dari prompt.",
+              "Sistem token AI disiapkan dengan saldo guru, ledger pemakaian, dan pencatatan usage melalui Supabase Function.",
+              "Hasil AI soal masuk sebagai draft editor sehingga guru tetap bisa meninjau, mengedit, lalu menyimpan ke database."
             ],
             "fixes": [
-              "Nilai rapor dihitung ulang dari riwayat nilai mapel saat nilai akhir belum tersimpan, sehingga mapel yang sebelumnya kosong ikut tampil.",
-              "Riwayat nilai santri mengikuti pola detail mapel dengan daftar jenis nilai dan dropdown riwayat per mapel.",
-              "Detail laporan bulanan di riwayat akademik disesuaikan dengan tampilan wali kelas.",
-              "Editor soal dibuat lebih ringkas dengan input pertanyaan sejajar nomor soal, menu per soal, dan warna mode yang lebih ramah tema gelap."
+              "Simpan soal ke database kini mengirim isi editor lengkap, bukan hanya metadata kartu soal.",
+              "Device lain dapat membaca format soal native Android maupun format soal dari web yang memakai questions dan sections.",
+              "Draft lokal yang masih punya isi soal tidak lagi ditimpa oleh data server yang kosong atau belum lengkap."
             ],
             "mandatory": ${MANDATORY}
           }

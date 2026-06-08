@@ -108,6 +108,8 @@ class MainActivity : ComponentActivity() {
           onSaveMapelPatronMateri = viewModel::saveMapelPatronMateri,
           onLoadMapelQuestions = viewModel::loadMapelQuestionJson,
           onSaveMapelQuestions = viewModel::saveMapelQuestionJson,
+          onLoadAiTokenBalance = viewModel::loadAiTokenBalance,
+          onGenerateAiContent = viewModel::generateAiContent,
           onSaveProfile = viewModel::saveProfile,
           onSaveSantri = viewModel::saveWaliSantriProfile,
           onSaveMonthlyReport = viewModel::saveMonthlyReport,

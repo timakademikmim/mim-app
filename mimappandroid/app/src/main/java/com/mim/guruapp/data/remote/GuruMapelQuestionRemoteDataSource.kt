@@ -28,7 +28,7 @@ class GuruMapelQuestionRemoteDataSource {
       val rows = fetchRows(
         table = "mapel_soal_guru",
         query = buildString {
-          append("select=id,judul,kategori,tanggal,bentuk_soal,instruksi,questions_json,status,updated_at")
+          append("select=id,judul,kategori,tanggal,bentuk_soal,jumlah_nomor,instruksi,questions_json,status,updated_at")
           append("&distribusi_id=eq.")
           append(encodeValue(distribusiId))
           append("&order=updated_at.desc")
@@ -170,8 +170,336 @@ private fun parseDraftArray(rawJson: String): List<JSONObject> {
   }.getOrDefault(emptyList())
 }
 
+private fun parseQuestionPayload(value: Any?): JSONObject {
+  return when (value) {
+    is JSONObject -> JSONObject(value.toString())
+    is JSONArray -> JSONObject().put("questions", JSONArray(value.toString()))
+    else -> {
+      val raw = value?.toString().orEmpty().trim()
+      if (raw.isBlank() || raw == "null") return JSONObject()
+      runCatching { JSONObject(raw) }
+        .recoverCatching { JSONObject().put("questions", JSONArray(raw)) }
+        .getOrDefault(JSONObject())
+    }
+  }
+}
+
+private fun JSONObject.toAndroidDraftJson(row: JSONObject): JSONObject {
+  val explicitDraft = optJSONObject("draft")
+  val base = when {
+    explicitDraft != null -> JSONObject(explicitDraft.toString())
+    looksLikeAndroidDraft() -> JSONObject(toString())
+    else -> JSONObject()
+  }
+
+  if (base.optJSONArray("sections").isNullOrEmpty()) {
+    val convertedSections = buildAndroidSectionsFromLegacyPayload(this)
+    if (convertedSections.length() > 0) {
+      base.put("sections", convertedSections)
+    }
+  }
+
+  if (base.optString("questionsText").isBlank()) {
+    val questionText = buildQuestionsTextFromLegacyPayload(this)
+    if (questionText.isNotBlank()) base.put("questionsText", questionText)
+  }
+
+  if (base.optString("languageCode").isBlank()) {
+    base.put("languageCode", extractLanguageFromInstruction(row.optString("instruksi")))
+  }
+  return base
+}
+
+private fun JSONObject.looksLikeAndroidDraft(): Boolean {
+  if (has("title") || has("category") || has("dateIso") || has("languageCode") || has("questionsText")) {
+    return true
+  }
+  val sections = optJSONArray("sections") ?: return false
+  for (index in 0 until sections.length()) {
+    val section = sections.optJSONObject(index) ?: continue
+    if (
+      section.has("typeKey") ||
+      section.has("typeLabel") ||
+      section.has("choiceQuestions") ||
+      section.has("matchingPairs") ||
+      section.has("wordSearchQuestions") ||
+      section.has("crosswordQuestions")
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+private fun buildAndroidSectionsFromLegacyPayload(payload: JSONObject): JSONArray {
+  val questions = payload.optJSONArray("questions") ?: JSONArray()
+  val legacySections = payload.optJSONArray("sections")
+  val sectionSpecs = when {
+    legacySections != null && legacySections.length() > 0 -> legacySections
+    questions.length() > 0 -> buildLegacySectionsFromQuestions(questions)
+    else -> JSONArray()
+  }
+
+  return JSONArray().apply {
+    for (index in 0 until sectionSpecs.length()) {
+      val section = sectionSpecs.optJSONObject(index) ?: continue
+      val typeKey = normalizeLegacyQuestionType(section.optString("type").ifBlank { section.optString("typeKey") })
+      val start = section.optInt("start", 1).coerceAtLeast(1)
+      val end = section.optInt("end", start).coerceAtLeast(start)
+      val matchingQuestions = filterLegacyQuestionsForSection(questions, typeKey, start, end, index)
+      put(
+        JSONObject().apply {
+          put("id", "model-legacy-${index + 1}")
+          put("typeKey", typeKey)
+          put("typeLabel", legacyTypeLabel(typeKey))
+          put("count", legacySectionCount(typeKey, section, matchingQuestions))
+          put("instruction", section.optString("instruction").ifBlank { section.optString("instruksi") })
+          put("content", "")
+          put("scoreText", section.optString("score"))
+          put("choiceQuestions", buildAndroidChoiceQuestions(typeKey, matchingQuestions))
+          put("matchingPairs", buildAndroidMatchingPairs(matchingQuestions))
+          put("wordSearchQuestions", buildAndroidWordSearchQuestions(matchingQuestions))
+          put("crosswordQuestions", buildAndroidCrosswordQuestions(matchingQuestions))
+        }
+      )
+    }
+  }
+}
+
+private fun buildLegacySectionsFromQuestions(questions: JSONArray): JSONArray {
+  val orderedTypes = linkedSetOf<String>()
+  for (index in 0 until questions.length()) {
+    val question = questions.optJSONObject(index) ?: continue
+    orderedTypes.add(normalizeLegacyQuestionType(question.optString("type")))
+  }
+  if (orderedTypes.isEmpty()) orderedTypes.add("pilihan-ganda")
+  return JSONArray().apply {
+    orderedTypes.forEach { typeKey ->
+      val numbers = buildList {
+        for (index in 0 until questions.length()) {
+          val question = questions.optJSONObject(index) ?: continue
+          if (normalizeLegacyQuestionType(question.optString("type")) == typeKey) {
+            add(question.optInt("no", index + 1))
+          }
+        }
+      }
+      put(
+        JSONObject().apply {
+          put("type", typeKey)
+          put("start", numbers.minOrNull() ?: 1)
+          put("end", numbers.maxOrNull() ?: (numbers.minOrNull() ?: 1))
+          put("count", numbers.size.coerceAtLeast(1))
+        }
+      )
+    }
+  }
+}
+
+private fun filterLegacyQuestionsForSection(
+  questions: JSONArray,
+  typeKey: String,
+  start: Int,
+  end: Int,
+  sectionIndex: Int
+): JSONArray {
+  return JSONArray().apply {
+    for (index in 0 until questions.length()) {
+      val question = questions.optJSONObject(index) ?: continue
+      val questionType = normalizeLegacyQuestionType(question.optString("type"))
+      val questionNo = question.optInt("no", index + 1)
+      val sectionKey = question.optString("sectionKey").trim()
+      val matchesSectionKey = sectionKey.isNotBlank() && (
+        sectionKey == start.toString() ||
+          sectionKey == (sectionIndex + 1).toString()
+        )
+      val matchesRange = questionNo in start..end
+      if (questionType == typeKey && (matchesSectionKey || matchesRange)) {
+        put(question)
+      }
+    }
+  }
+}
+
+private fun buildAndroidChoiceQuestions(typeKey: String, questions: JSONArray): JSONArray {
+  if (typeKey !in setOf("pilihan-ganda", "esai", "isi-titik", "benar-salah")) return JSONArray()
+  return JSONArray().apply {
+    for (index in 0 until questions.length()) {
+      val question = questions.optJSONObject(index) ?: continue
+      val prompt = question.optString("prompt").ifBlank { question.optString("text") }.trim()
+      if (prompt.isBlank()) continue
+      put(
+        JSONObject().apply {
+          put("id", question.optString("id").ifBlank { "q-${index + 1}" })
+          put("prompt", prompt)
+          put("options", if (typeKey == "pilihan-ganda") legacyOptionsArray(question.opt("options")) else JSONArray())
+        }
+      )
+    }
+  }
+}
+
+private fun buildAndroidMatchingPairs(questions: JSONArray): JSONArray {
+  val question = questions.optJSONObject(0) ?: return JSONArray()
+  val columnA = question.optJSONArray("columnA") ?: JSONArray()
+  val columnB = question.optJSONArray("columnB") ?: JSONArray()
+  val maxSize = maxOf(columnA.length(), columnB.length())
+  return JSONArray().apply {
+    for (index in 0 until maxSize) {
+      val left = columnA.optString(index).trim()
+      val right = columnB.optString(index).trim()
+      if (left.isBlank() && right.isBlank()) continue
+      put(
+        JSONObject().apply {
+          put("id", "pair-${index + 1}")
+          put("leftText", left)
+          put("rightText", right)
+        }
+      )
+    }
+  }
+}
+
+private fun buildAndroidWordSearchQuestions(questions: JSONArray): JSONArray {
+  return JSONArray().apply {
+    for (index in 0 until questions.length()) {
+      val question = questions.optJSONObject(index) ?: continue
+      val words = question.optJSONArray("words")?.toTextList().orEmpty()
+      if (question.optString("text").isBlank() && words.isEmpty()) continue
+      put(
+        JSONObject().apply {
+          put("id", question.optString("id").ifBlank { "ws-${index + 1}" })
+          put("prompt", question.optString("text"))
+          put("rows", question.optInt("rows", 10))
+          put("cols", question.optInt("cols", 10))
+          put("wordsText", words.joinToString(", "))
+        }
+      )
+    }
+  }
+}
+
+private fun buildAndroidCrosswordQuestions(questions: JSONArray): JSONArray {
+  val question = questions.optJSONObject(0) ?: return JSONArray()
+  val entriesAcross = question.optJSONArray("entriesAcross") ?: JSONArray()
+  val entriesDown = question.optJSONArray("entriesDown") ?: JSONArray()
+  if (entriesAcross.length() == 0 && entriesDown.length() == 0) return JSONArray()
+  return JSONArray().put(
+    JSONObject().apply {
+      put("id", question.optString("id").ifBlank { "cw-1" })
+      put("rows", question.optInt("rows", 10))
+      put("cols", question.optInt("cols", 10))
+      put("entriesAcross", normalizeCrosswordEntries(entriesAcross, "across"))
+      put("entriesDown", normalizeCrosswordEntries(entriesDown, "down"))
+    }
+  )
+}
+
+private fun normalizeCrosswordEntries(entries: JSONArray, direction: String): JSONArray {
+  return JSONArray().apply {
+    for (index in 0 until entries.length()) {
+      val entry = entries.optJSONObject(index) ?: continue
+      put(
+        JSONObject().apply {
+          put("id", entry.optString("id").ifBlank { "$direction-${index + 1}" })
+          put("row", entry.optInt("row", 0) + 1)
+          put("col", entry.optInt("col", 0) + 1)
+          put("length", entry.optInt("length", 2))
+          put("clue", entry.optString("clue"))
+          put("answer", entry.optString("answer"))
+        }
+      )
+    }
+  }
+}
+
+private fun legacySectionCount(typeKey: String, section: JSONObject, questions: JSONArray): Int {
+  return when (typeKey) {
+    "pasangkan-kata" -> if (questions.length() > 0) 1 else 0
+    "cari-kata",
+    "teka-silang" -> questions.length()
+    else -> questions.length().takeIf { it > 0 }
+      ?: section.optInt("count", 0).takeIf { it > 0 }
+      ?: section.optInt("blankCount", 0).takeIf { it > 0 }
+      ?: 0
+  }
+}
+
+private fun legacyOptionsArray(value: Any?): JSONArray {
+  return when (value) {
+    is JSONArray -> JSONArray(value.toString())
+    is JSONObject -> JSONArray().apply {
+      listOf("A", "B", "C", "D", "E").forEach { key ->
+        val option = value.opt(key) ?: return@forEach
+        val text = when (option) {
+          is JSONObject -> option.optString("text").ifBlank { option.optString("label") }
+          else -> option.toString()
+        }.trim()
+        if (text.isNotBlank()) put(text)
+      }
+    }
+    else -> JSONArray()
+  }
+}
+
+private fun JSONArray.toTextList(): List<String> {
+  return buildList {
+    for (index in 0 until length()) {
+      val text = optString(index).trim()
+      if (text.isNotBlank()) add(text)
+    }
+  }
+}
+
+private fun buildQuestionsTextFromLegacyPayload(payload: JSONObject): String {
+  val questions = payload.optJSONArray("questions") ?: return ""
+  return buildString {
+    for (index in 0 until questions.length()) {
+      val question = questions.optJSONObject(index) ?: continue
+      val text = question.optString("text").ifBlank { question.optString("prompt") }.trim()
+      if (text.isBlank()) continue
+      if (isNotBlank()) appendLine()
+      append("${question.optInt("no", index + 1)}. ")
+      append(text)
+    }
+  }
+}
+
+private fun normalizeLegacyQuestionType(value: String): String {
+  val clean = value.trim().lowercase().replace("_", "-").replace(" ", "-")
+  return when {
+    clean.contains("pilihan") || clean.contains("multiple") -> "pilihan-ganda"
+    clean.contains("esai") || clean.contains("essay") -> "esai"
+    clean.contains("isi") || clean.contains("isian") || clean.contains("fill") -> "isi-titik"
+    clean.contains("benar") || clean.contains("salah") || clean.contains("true") || clean.contains("false") -> "benar-salah"
+    clean.contains("pasang") || clean.contains("matching") -> "pasangkan-kata"
+    clean.contains("cari") || clean.contains("word") -> "cari-kata"
+    clean.contains("teka") || clean.contains("crossword") -> "teka-silang"
+    else -> "pilihan-ganda"
+  }
+}
+
+private fun legacyTypeLabel(typeKey: String): String {
+  return when (typeKey) {
+    "pilihan-ganda" -> "Pilihan Ganda"
+    "esai" -> "Esai"
+    "isi-titik" -> "Isian"
+    "benar-salah" -> "Benar / Salah"
+    "pasangkan-kata" -> "Pasangkan Kata"
+    "cari-kata" -> "Cari Kata"
+    "teka-silang" -> "Teka-Teki Silang"
+    else -> "Pilihan Ganda"
+  }
+}
+
+private fun extractLanguageFromInstruction(value: String): String {
+  return if (value.contains("[[LANG:AR]]", ignoreCase = true)) "AR" else "ID"
+}
+
+private fun JSONArray?.isNullOrEmpty(): Boolean = this == null || length() == 0
+
 private fun JSONObject.toDraftJson(): JSONObject {
-  val storedDraft = runCatching { JSONObject(optString("questions_json")) }.getOrNull() ?: JSONObject()
+  val storedPayload = parseQuestionPayload(opt("questions_json"))
+  val storedDraft = storedPayload.toAndroidDraftJson(this)
   return JSONObject(storedDraft.toString()).apply {
     putIfBlank("id", optString("id").ifBlank { this@toDraftJson.optString("id") })
     putIfBlank("title", this@toDraftJson.optString("judul"))
@@ -188,11 +516,8 @@ private fun JSONObject.toDraftJson(): JSONObject {
 }
 
 private fun JSONObject.remoteDraftId(): String {
-  val storedDraftId = runCatching { JSONObject(optString("questions_json")) }
-    .getOrNull()
-    ?.optString("id")
-    .orEmpty()
-    .trim()
+  val storedPayload = parseQuestionPayload(opt("questions_json"))
+  val storedDraftId = storedPayload.toAndroidDraftJson(this).optString("id").trim()
   return storedDraftId.ifBlank { optString("id").trim() }
 }
 
@@ -207,6 +532,8 @@ private fun JSONObject.toServerPayload(
   val form = optString("form").trim()
   val instruction = optString("instruction").trim()
   val dateIso = optString("dateIso").trim().take(10)
+  val questionCount = draftQuestionCount()
+  val questionsJson = toServerQuestionsJsonString()
   return JSONObject().apply {
     put("distribusi_id", distribusiId)
     put("kelas_id", distribusiRow.optString("kelas_id").trim())
@@ -222,10 +549,207 @@ private fun JSONObject.toServerPayload(
     put("tanggal", dateIso.takeIf { it.matches(Regex("""\d{4}-\d{2}-\d{2}""")) } ?: JSONObject.NULL)
     put("keterangan", JSONObject.NULL)
     put("bentuk_soal", form.ifBlank { JSONObject.NULL })
-    put("jumlah_nomor", optInt("questionCount", 0).takeIf { it > 0 } ?: JSONObject.NULL)
+    put("jumlah_nomor", questionCount.takeIf { it > 0 } ?: JSONObject.NULL)
     put("instruksi", instruction.ifBlank { JSONObject.NULL })
-    put("questions_json", toString())
+    put("questions_json", questionsJson)
     put("status", optString("statusLabel").trim().lowercase().ifBlank { "draft" })
+  }
+}
+
+private fun JSONObject.toServerQuestionsJsonString(): String {
+  val draft = JSONObject(toString())
+  return JSONObject().apply {
+    put("draft", draft)
+    put("questions", buildLegacyQuestionsFromAndroidDraft(draft))
+    put("sections", buildLegacySectionsFromAndroidDraft(draft))
+    put("schema", "mim-native-mapel-question-v1")
+  }.toString()
+}
+
+private fun JSONObject.draftQuestionCount(): Int {
+  val sections = optJSONArray("sections")
+  if (sections != null && sections.length() > 0) {
+    var total = 0
+    for (index in 0 until sections.length()) {
+      val section = sections.optJSONObject(index) ?: continue
+      val typeKey = section.optString("typeKey").ifBlank { section.optString("type") }
+      total += when (normalizeLegacyQuestionType(typeKey)) {
+        "pasangkan-kata" -> if ((section.optJSONArray("matchingPairs")?.length() ?: 0) > 0) 1 else 0
+        "cari-kata" -> section.optJSONArray("wordSearchQuestions")?.length() ?: 0
+        "teka-silang" -> section.optJSONArray("crosswordQuestions")?.length() ?: 0
+        else -> countFilledChoiceQuestions(section.optJSONArray("choiceQuestions"))
+      }.takeIf { it > 0 } ?: section.optInt("count", 0)
+    }
+    if (total > 0) return total
+  }
+  val questionsTextCount = Regex("""(?m)^\s*\d+[\).]\s+""")
+    .findAll(optString("questionsText"))
+    .count()
+  return questionsTextCount.takeIf { it > 0 } ?: optString("questionsText")
+    .lines()
+    .count { it.trim().isNotBlank() }
+}
+
+private fun countFilledChoiceQuestions(questions: JSONArray?): Int {
+  if (questions == null) return 0
+  var count = 0
+  for (index in 0 until questions.length()) {
+    val question = questions.optJSONObject(index) ?: continue
+    val prompt = question.optString("prompt").trim()
+    val options = question.optJSONArray("options")
+    val hasOption = (0 until (options?.length() ?: 0)).any { optionIndex ->
+      options?.optString(optionIndex)?.trim()?.isNotBlank() == true
+    }
+    if (prompt.isNotBlank() || hasOption) count += 1
+  }
+  return count
+}
+
+private fun buildLegacySectionsFromAndroidDraft(draft: JSONObject): JSONArray {
+  val sections = draft.optJSONArray("sections") ?: return JSONArray()
+  var nextStart = 1
+  return JSONArray().apply {
+    for (index in 0 until sections.length()) {
+      val section = sections.optJSONObject(index) ?: continue
+      val typeKey = normalizeLegacyQuestionType(section.optString("typeKey"))
+      val count = when (typeKey) {
+        "pasangkan-kata" -> if ((section.optJSONArray("matchingPairs")?.length() ?: 0) > 0) 1 else 0
+        "cari-kata" -> section.optJSONArray("wordSearchQuestions")?.length() ?: 0
+        "teka-silang" -> section.optJSONArray("crosswordQuestions")?.length() ?: 0
+        else -> countFilledChoiceQuestions(section.optJSONArray("choiceQuestions"))
+      }.takeIf { it > 0 } ?: section.optInt("count", 0).coerceAtLeast(1)
+      val start = nextStart
+      val end = (start + count - 1).coerceAtLeast(start)
+      nextStart = end + 1
+      put(
+        JSONObject().apply {
+          put("type", typeKey)
+          put("start", start)
+          put("end", end)
+          put("count", count)
+          put("instruction", section.optString("instruction"))
+          put("score", section.optString("scoreText").ifBlank { JSONObject.NULL })
+        }
+      )
+    }
+  }
+}
+
+private fun buildLegacyQuestionsFromAndroidDraft(draft: JSONObject): JSONArray {
+  val sections = draft.optJSONArray("sections") ?: return JSONArray()
+  var questionNo = 1
+  return JSONArray().apply {
+    for (sectionIndex in 0 until sections.length()) {
+      val section = sections.optJSONObject(sectionIndex) ?: continue
+      val typeKey = normalizeLegacyQuestionType(section.optString("typeKey"))
+      val sectionKey = (sectionIndex + 1).toString()
+      when (typeKey) {
+        "pasangkan-kata" -> {
+          val pairs = section.optJSONArray("matchingPairs") ?: JSONArray()
+          if (pairs.length() > 0) {
+            put(
+              JSONObject().apply {
+                put("no", questionNo++)
+                put("type", typeKey)
+                put("text", "")
+                put("columnA", JSONArray().apply {
+                  for (index in 0 until pairs.length()) {
+                    val pair = pairs.optJSONObject(index) ?: continue
+                    val text = pair.optString("leftText").trim()
+                    if (text.isNotBlank()) put(text)
+                  }
+                })
+                put("columnB", JSONArray().apply {
+                  for (index in 0 until pairs.length()) {
+                    val pair = pairs.optJSONObject(index) ?: continue
+                    val text = pair.optString("rightText").trim()
+                    if (text.isNotBlank()) put(text)
+                  }
+                })
+                put("sectionKey", sectionKey)
+                put("sectionInstruction", section.optString("instruction"))
+              }
+            )
+          }
+        }
+        "cari-kata" -> {
+          val questions = section.optJSONArray("wordSearchQuestions") ?: JSONArray()
+          for (index in 0 until questions.length()) {
+            val question = questions.optJSONObject(index) ?: continue
+            put(
+              JSONObject().apply {
+                put("no", questionNo++)
+                put("type", typeKey)
+                put("text", question.optString("prompt"))
+                put("rows", question.optInt("rows", 10))
+                put("cols", question.optInt("cols", 10))
+                put("words", JSONArray().apply {
+                  question.optString("wordsText")
+                    .split(",", ";", "\n")
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
+                    .forEach { put(it) }
+                })
+                put("sectionKey", sectionKey)
+                put("sectionInstruction", section.optString("instruction"))
+              }
+            )
+          }
+        }
+        "teka-silang" -> {
+          val questions = section.optJSONArray("crosswordQuestions") ?: JSONArray()
+          for (index in 0 until questions.length()) {
+            val question = questions.optJSONObject(index) ?: continue
+            put(
+              JSONObject().apply {
+                put("no", questionNo++)
+                put("type", typeKey)
+                put("text", "")
+                put("rows", question.optInt("rows", 10))
+                put("cols", question.optInt("cols", 10))
+                put("entriesAcross", question.optJSONArray("entriesAcross") ?: JSONArray())
+                put("entriesDown", question.optJSONArray("entriesDown") ?: JSONArray())
+                put("sectionKey", sectionKey)
+                put("sectionInstruction", section.optString("instruction"))
+              }
+            )
+          }
+        }
+        else -> {
+          val questions = section.optJSONArray("choiceQuestions") ?: JSONArray()
+          for (index in 0 until questions.length()) {
+            val question = questions.optJSONObject(index) ?: continue
+            val prompt = question.optString("prompt").trim()
+            if (prompt.isBlank()) continue
+            put(
+              JSONObject().apply {
+                put("no", questionNo++)
+                put("type", typeKey)
+                put("text", prompt)
+                put("options", if (typeKey == "pilihan-ganda") legacyOptionsObject(question.optJSONArray("options")) else JSONObject())
+                put("answer", "")
+                put("sectionKey", sectionKey)
+                put("sectionInstruction", section.optString("instruction"))
+              }
+            )
+          }
+        }
+      }
+    }
+  }
+}
+
+private fun legacyOptionsObject(options: JSONArray?): JSONObject {
+  return JSONObject().apply {
+    if (options == null) return@apply
+    var keyIndex = 0
+    for (index in 0 until options.length()) {
+      val text = options.optString(index).trim()
+      if (text.isBlank()) continue
+      val key = ('A'.code + keyIndex).toChar().toString()
+      put(key, text)
+      keyIndex += 1
+    }
   }
 }
 
