@@ -36,6 +36,7 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Visibility
@@ -54,6 +55,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -122,7 +124,8 @@ private data class UserGuideSection(
   val summary: String,
   val steps: List<String>,
   val note: String = "",
-  val detailBlocks: List<UserGuideDetailBlock> = emptyList()
+  val detailBlocks: List<UserGuideDetailBlock> = emptyList(),
+  val interactiveGuideKey: String = ""
 )
 
 private enum class UserGuideBlockType {
@@ -152,6 +155,9 @@ fun EditProfileScreen(
   themeModeCode: String,
   onApplyThemeMode: (String) -> Unit,
   onSaveClick: suspend (GuruProfile) -> ProfileSaveOutcome,
+  onStartInteractiveGuide: (String) -> Unit = {},
+  openGuideRequest: Int = 0,
+  openSettingsRequest: Int = 0,
   modifier: Modifier = Modifier
 ) {
   var name by rememberSaveable(profile) { mutableStateOf(profile.name) }
@@ -193,6 +199,23 @@ fun EditProfileScreen(
   val isDirty = draft != profile
   val isInformationDetail = activeSection == ProfileSection.Information
   val avatarPickerMessage = t("Pemilih foto profil akan ditambahkan.")
+
+  LaunchedEffect(openGuideRequest) {
+    if (openGuideRequest > 0) {
+      activeSectionName = ProfileSection.Guide.name
+      activeGuideTitle = null
+      showPassword = false
+    }
+  }
+
+  LaunchedEffect(openSettingsRequest) {
+    if (openSettingsRequest > 0) {
+      activeSectionName = ProfileSection.Settings.name
+      activeGuideTitle = null
+      showPassword = false
+    }
+  }
+
   BackHandler(enabled = activeSection != ProfileSection.Menu) {
     if (isInformationDetail && isDirty) {
       resetDraftAndReturnToMenu()
@@ -377,7 +400,8 @@ fun EditProfileScreen(
               } else {
                 UserGuidePanel(
                   guideSections = guideSections,
-                  onOpenDetail = { activeGuideTitle = it.title }
+                  onOpenDetail = { activeGuideTitle = it.title },
+                  onStartInteractiveGuide = onStartInteractiveGuide
                 )
               }
             }
@@ -492,11 +516,13 @@ private fun ProfileSectionCard(
 @Composable
 private fun UserGuidePanel(
   guideSections: List<UserGuideSection>,
-  onOpenDetail: (UserGuideSection) -> Unit
+  onOpenDetail: (UserGuideSection) -> Unit,
+  onStartInteractiveGuide: (String) -> Unit
 ) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
   var isExportingPdf by rememberSaveable { mutableStateOf(false) }
+  var expandedGuideTitle by remember { mutableStateOf<String?>(null) }
 
   Column(
     modifier = Modifier.fillMaxWidth(),
@@ -553,7 +579,14 @@ private fun UserGuidePanel(
       UserGuideSectionCard(
         number = index + 1,
         section = section,
-        onOpenDetail = { onOpenDetail(section) }
+        expanded = expandedGuideTitle == section.title,
+        onToggleExpanded = {
+          expandedGuideTitle = if (expandedGuideTitle == section.title) null else section.title
+        },
+        onOpenDetail = { onOpenDetail(section) },
+        onStartInteractiveGuide = section.interactiveGuideKey
+          .takeIf { it.isNotBlank() }
+          ?.let { key -> { onStartInteractiveGuide(key) } }
       )
     }
   }
@@ -563,10 +596,11 @@ private fun UserGuidePanel(
 private fun UserGuideSectionCard(
   number: Int,
   section: UserGuideSection,
-  onOpenDetail: () -> Unit
+  expanded: Boolean,
+  onToggleExpanded: () -> Unit,
+  onOpenDetail: () -> Unit,
+  onStartInteractiveGuide: (() -> Unit)? = null
 ) {
-  var expanded by rememberSaveable(section.title) { mutableStateOf(number <= 2) }
-
   Column(
     modifier = Modifier
       .fillMaxWidth()
@@ -574,7 +608,7 @@ private fun UserGuideSectionCard(
       .clip(RoundedCornerShape(24.dp))
       .background(CardBackground.copy(alpha = 0.94f))
       .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(24.dp))
-      .clickable { expanded = !expanded }
+      .clickable { onToggleExpanded() }
       .animateContentSize()
       .padding(16.dp),
     verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -675,6 +709,22 @@ private fun UserGuideSectionCard(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.End
         ) {
+          if (onStartInteractiveGuide != null) {
+            Button(
+              onClick = onStartInteractiveGuide,
+              modifier = Modifier.padding(end = 8.dp)
+            ) {
+              Icon(
+                imageVector = Icons.Outlined.PlayArrow,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+              )
+              Text(
+                text = t("Play"),
+                modifier = Modifier.padding(start = 6.dp)
+              )
+            }
+          }
           Button(onClick = onOpenDetail) {
             Text(t("Lihat Detail"))
           }
@@ -1264,7 +1314,8 @@ private fun buildUserGuideSections(): List<UserGuideSection> = listOf(
       "Gunakan tarik ke bawah pada halaman utama untuk menyinkronkan data terbaru dari server.",
       "Jika jaringan tidak stabil, gunakan data yang sudah tersimpan lebih dulu lalu sinkronkan saat jaringan kembali."
     ),
-    note = "Login hanya tersedia untuk akun dengan akses guru. Beberapa menu seperti Kelas Saya dan Wakasek Akademik mengikuti amanah jabatan di data sekolah."
+    note = "Login hanya tersedia untuk akun dengan akses guru. Beberapa menu seperti Kelas Saya dan Wakasek Akademik mengikuti amanah jabatan di data sekolah.",
+    interactiveGuideKey = "start_app"
   ),
   UserGuideSection(
     title = "Navigasi Utama",
@@ -1274,7 +1325,8 @@ private fun buildUserGuideSections(): List<UserGuideSection> = listOf(
       "Pilih grup menu seperti Akademik, Aktivitas Harian, Kelas Saya, atau Wakasek Akademik.",
       "Tekan lama bottom navigation untuk mengatur shortcut yang sering dipakai.",
       "Tombol back dari halaman utama akan kembali ke dashboard, kecuali dashboard yang bisa menutup aplikasi."
-    )
+    ),
+    interactiveGuideKey = "main_navigation"
   ),
   UserGuideSection(
     title = "Dashboard dan Agenda",
@@ -1284,7 +1336,8 @@ private fun buildUserGuideSections(): List<UserGuideSection> = listOf(
       "Gunakan kolom pencarian untuk mencari agenda tertentu.",
       "Tekan tanggal di header untuk membuka kalender dan timeline kegiatan.",
       "Tekan ikon notifikasi untuk melihat jam mengajar, amanat penggantian, agenda, dan status penting lainnya."
-    )
+    ),
+    interactiveGuideKey = "dashboard_agenda"
   ),
   UserGuideSection(
     title = "Jadwal Mengajar",
@@ -1294,7 +1347,8 @@ private fun buildUserGuideSections(): List<UserGuideSection> = listOf(
       "Tekan tombol hari ini untuk kembali ke tanggal sekarang.",
       "Gunakan ikon pengingat untuk mengatur alarm atau notifikasi jam pelajaran.",
       "Notifikasi jadwal dapat aktif walaupun aplikasi sedang tidak dibuka."
-    )
+    ),
+    interactiveGuideKey = "teaching_schedule"
   ),
   UserGuideSection(
     title = "Input Absensi",
@@ -1305,7 +1359,8 @@ private fun buildUserGuideSections(): List<UserGuideSection> = listOf(
       "Jika menjadi guru pengganti, pilih guru yang digantikan lalu pilih jadwal yang sesuai.",
       "Ubah status santri melalui dropdown di samping nama, lalu simpan."
     ),
-    note = "Amanat penggantian dari guru utama bisa langsung masuk ke input absen melalui notifikasi."
+    note = "Amanat penggantian dari guru utama bisa langsung masuk ke input absen melalui notifikasi.",
+    interactiveGuideKey = "attendance_input"
   ),
   UserGuideSection(
     title = "Input Nilai",
@@ -1315,7 +1370,8 @@ private fun buildUserGuideSections(): List<UserGuideSection> = listOf(
       "Masukkan nilai santri sesuai batas maksimal yang ditentukan.",
       "Nilai kosong akan dihitung sebagai 0 saat disimpan.",
       "Gunakan halaman detail nilai untuk melihat rata-rata dan rincian nilai per tanggal."
-    )
+    ),
+    interactiveGuideKey = "score_input"
   ),
   UserGuideSection(
     title = "Mapel dan Detail Mapel",
@@ -1326,7 +1382,8 @@ private fun buildUserGuideSections(): List<UserGuideSection> = listOf(
       "Tab Nilai menampilkan akumulasi per nama atau per tanggal beserta rincian nilai.",
       "Tab Patron Materi dipakai untuk menyiapkan daftar materi yang bisa dipilih saat input absensi.",
       "Tab Soal dipakai untuk membuat draft soal dan mengekspor hasilnya."
-    )
+    ),
+    interactiveGuideKey = "subject_detail"
   ),
   UserGuideSection(
     title = "Soal dan Cetak Soal",
@@ -1336,7 +1393,8 @@ private fun buildUserGuideSections(): List<UserGuideSection> = listOf(
       "Masuk ke editor soal lalu tambah model soal dari tombol plus.",
       "Isi instruksi umum, instruksi per model, pertanyaan, pilihan jawaban, pasangan kata, cari kata, atau teka-teki silang.",
       "Gunakan tombol cetak untuk mengekspor soal sesuai template Word."
-    )
+    ),
+    interactiveGuideKey = "question_export"
   ),
   UserGuideSection(
     title = "Mutabaah",
@@ -1346,7 +1404,8 @@ private fun buildUserGuideSections(): List<UserGuideSection> = listOf(
       "Jika guru tidak memiliki jadwal mengajar, hanya tugas hadir dan pulang tepat waktu yang ditampilkan.",
       "Hari izin yang disetujui akan ditandai sebagai izin dan tidak dihitung sebagai kegagalan tugas.",
       "Gunakan titik tiga di topbar untuk cetak atau kirim mutabaah per bulan, semester, atau tahun pelajaran."
-    )
+    ),
+    interactiveGuideKey = "mutabaah"
   ),
   UserGuideSection(
     title = "Perizinan",
@@ -1356,7 +1415,8 @@ private fun buildUserGuideSections(): List<UserGuideSection> = listOf(
       "Kirim pengajuan lalu pantau status menunggu, diterima, atau ditolak.",
       "Pengajuan yang belum selesai dapat dibatalkan atau dihapus.",
       "Wakasek Akademik dapat menyetujui atau menolak izin dari menu Perizinan Wakasek."
-    )
+    ),
+    interactiveGuideKey = "permission"
   ),
   UserGuideSection(
     title = "Laporan Bulanan dan PTS",
@@ -1367,7 +1427,8 @@ private fun buildUserGuideSections(): List<UserGuideSection> = listOf(
       "Gunakan edit untuk mengubah data khusus laporan tanpa mengubah data asli sistem.",
       "Gunakan reset jika ingin kembali ke data sistem.",
       "Cetak atau kirim laporan dari detail, atau tekan lama nama santri dari daftar."
-    )
+    ),
+    interactiveGuideKey = "reports"
   ),
   UserGuideSection(
     title = "Santri dan Wali Kelas",
@@ -1377,7 +1438,8 @@ private fun buildUserGuideSections(): List<UserGuideSection> = listOf(
       "Tekan nama santri untuk mengubah detail santri, kontak, orang tua, wali, alamat, dan catatan.",
       "Gunakan laporan absensi untuk melihat rekap kehadiran kelas dari semua mapel.",
       "Menu Kelas Saya tidak ditampilkan untuk guru yang bukan wali kelas."
-    )
+    ),
+    interactiveGuideKey = "student_teacher"
   ),
   UserGuideSection(
     title = "Wakasek Akademik",
@@ -1387,7 +1449,8 @@ private fun buildUserGuideSections(): List<UserGuideSection> = listOf(
       "Monitoring Siswa menampilkan santri yang sakit, izin, terlambat, atau alpa dengan filter kelas, nama, dan status.",
       "Perizinan Wakasek dipakai untuk menyetujui atau menolak pengajuan izin guru.",
       "Data monitoring mengikuti data admin dan kalender akademik."
-    )
+    ),
+    interactiveGuideKey = "wakasek"
   ),
   UserGuideSection(
     title = "Bahasa, Tema, dan Sinkronisasi",
@@ -1397,7 +1460,8 @@ private fun buildUserGuideSections(): List<UserGuideSection> = listOf(
       "Pilih tema Ikuti Sistem, Terang, atau Gelap sesuai kebutuhan.",
       "Gunakan Sinkronisasi Data untuk menarik ulang data terbaru dari server.",
       "Jika ada pembaruan aplikasi, popup update akan muncul saat aplikasi dibuka."
-    )
+    ),
+    interactiveGuideKey = "settings_sync"
   )
 )
 

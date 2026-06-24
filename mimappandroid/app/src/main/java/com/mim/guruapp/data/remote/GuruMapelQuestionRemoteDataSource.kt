@@ -170,6 +170,8 @@ private fun parseDraftArray(rawJson: String): List<JSONObject> {
   }.getOrDefault(emptyList())
 }
 
+internal fun parseQuestionDraftArray(rawJson: String): List<JSONObject> = parseDraftArray(rawJson)
+
 private fun parseQuestionPayload(value: Any?): JSONObject {
   return when (value) {
     is JSONObject -> JSONObject(value.toString())
@@ -183,6 +185,8 @@ private fun parseQuestionPayload(value: Any?): JSONObject {
     }
   }
 }
+
+internal fun parseQuestionPayloadObject(value: Any?): JSONObject = parseQuestionPayload(value)
 
 private fun JSONObject.toAndroidDraftJson(row: JSONObject): JSONObject {
   val explicitDraft = optJSONObject("draft")
@@ -209,6 +213,8 @@ private fun JSONObject.toAndroidDraftJson(row: JSONObject): JSONObject {
   }
   return base
 }
+
+internal fun JSONObject.toQuestionDraftJson(row: JSONObject): JSONObject = toAndroidDraftJson(row)
 
 private fun JSONObject.looksLikeAndroidDraft(): Boolean {
   if (has("title") || has("category") || has("dateIso") || has("languageCode") || has("questionsText")) {
@@ -426,19 +432,48 @@ private fun legacySectionCount(typeKey: String, section: JSONObject, questions: 
 
 private fun legacyOptionsArray(value: Any?): JSONArray {
   return when (value) {
-    is JSONArray -> JSONArray(value.toString())
+    is JSONArray -> JSONArray().apply {
+      for (index in 0 until value.length()) {
+        val text = legacyOptionText(value.opt(index))
+        if (text.isNotBlank()) put(text)
+      }
+    }
     is JSONObject -> JSONArray().apply {
-      listOf("A", "B", "C", "D", "E").forEach { key ->
-        val option = value.opt(key) ?: return@forEach
-        val text = when (option) {
-          is JSONObject -> option.optString("text").ifBlank { option.optString("label") }
-          else -> option.toString()
-        }.trim()
+      val keys = buildList {
+        val iterator = value.keys()
+        while (iterator.hasNext()) {
+          val key = iterator.next().trim()
+          if (key.isNotBlank() && !key.startsWith("__")) add(key)
+        }
+      }.sortedWith(
+        compareBy<String> { legacyOptionKeyOrder(it) }
+          .thenBy { it.lowercase() }
+      )
+      keys.forEach { key ->
+        val text = legacyOptionText(value.opt(key))
         if (text.isNotBlank()) put(text)
       }
     }
     else -> JSONArray()
   }
+}
+
+private fun legacyOptionText(value: Any?): String {
+  if (value == null || value == JSONObject.NULL) return ""
+  return when (value) {
+    is JSONObject -> value.optString("text")
+      .ifBlank { value.optString("label") }
+      .ifBlank { value.optString("value") }
+    else -> value.toString()
+  }.trim()
+}
+
+private fun legacyOptionKeyOrder(key: String): Int {
+  val clean = key.trim().lowercase()
+  if (clean.isBlank()) return Int.MAX_VALUE
+  clean.toIntOrNull()?.let { return it }
+  if (!clean.all { it in 'a'..'z' }) return Int.MAX_VALUE
+  return clean.fold(0) { total, char -> (total * 26) + (char.code - 'a'.code + 1) }
 }
 
 private fun JSONArray.toTextList(): List<String> {
@@ -566,6 +601,8 @@ private fun JSONObject.toServerQuestionsJsonString(): String {
   }.toString()
 }
 
+internal fun JSONObject.toServerQuestionPayloadJsonString(): String = toServerQuestionsJsonString()
+
 private fun JSONObject.draftQuestionCount(): Int {
   val sections = optJSONArray("sections")
   if (sections != null && sections.length() > 0) {
@@ -589,6 +626,8 @@ private fun JSONObject.draftQuestionCount(): Int {
     .lines()
     .count { it.trim().isNotBlank() }
 }
+
+internal fun JSONObject.serverQuestionCount(): Int = draftQuestionCount()
 
 private fun countFilledChoiceQuestions(questions: JSONArray?): Int {
   if (questions == null) return 0

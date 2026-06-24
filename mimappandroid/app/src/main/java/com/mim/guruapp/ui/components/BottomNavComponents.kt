@@ -56,8 +56,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -88,6 +91,7 @@ fun BottomNavBar(
   selectedDestination: GuruSidebarDestination?,
   onSelect: (GuruSidebarDestination) -> Unit,
   onLongPress: () -> Unit = {},
+  onItemPositioned: (GuruSidebarDestination, Rect) -> Unit = { _, _ -> },
   modifier: Modifier = Modifier
 ) {
   var animatedSelectedDestination by rememberSaveable {
@@ -131,7 +135,9 @@ fun BottomNavBar(
             onSelect(item.destination)
           }
         },
-        modifier = Modifier.weight(1f)
+        modifier = Modifier
+          .weight(1f)
+          .onGloballyPositioned { onItemPositioned(item.destination, it.boundsInRoot()) }
       )
     }
   }
@@ -413,7 +419,18 @@ private fun bottomNavEntryForDestination(destination: GuruSidebarDestination): B
     GuruSidebarDestination.WakasekMonitoringSiswa -> BottomNavEntry(destination, "Siswa", Icons.Outlined.Groups, "Monitoring Siswa")
     GuruSidebarDestination.WakasekNilaiSiswa -> BottomNavEntry(destination, "Nilai", Icons.Outlined.Grade, "Nilai Siswa")
     GuruSidebarDestination.WakasekPerizinan -> BottomNavEntry(destination, "W-Izin", Icons.Outlined.AssignmentTurnedIn, "Perizinan Wakasek")
+    GuruSidebarDestination.AdminKaryawan -> BottomNavEntry(destination, "Karyawan", Icons.Outlined.Groups, "Data Karyawan")
     GuruSidebarDestination.Profil -> BottomNavEntry(destination, "Profil", Icons.Outlined.PersonOutline)
+    GuruSidebarDestination.AdminProfilSekolah,
+    GuruSidebarDestination.AdminKalenderTahunAjaran,
+    GuruSidebarDestination.AdminKelasMapel,
+    GuruSidebarDestination.AdminSantri,
+    GuruSidebarDestination.AdminJadwalUjian,
+    GuruSidebarDestination.AdminEkstrakurikuler,
+    GuruSidebarDestination.AdminTahfiz,
+    GuruSidebarDestination.AdminAsrama,
+    GuruSidebarDestination.AdminPresensiIzin,
+    GuruSidebarDestination.AdminMutabaahKaryawan,
     GuruSidebarDestination.Pesan,
     GuruSidebarDestination.Notifikasi -> null
   }

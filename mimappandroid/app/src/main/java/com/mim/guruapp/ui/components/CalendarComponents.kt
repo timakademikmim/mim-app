@@ -85,7 +85,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -266,6 +269,12 @@ fun TeachingScheduleScreen(
   onRefresh: () -> Unit,
   onMenuClick: () -> Unit,
   onReminderSettingsChange: (TeachingReminderSettings) -> Unit,
+  openReminderSettingsRequest: Int = 0,
+  onSelectedDayPositioned: (Rect) -> Unit = {},
+  onTodayButtonPositioned: (Rect) -> Unit = {},
+  onReminderButtonPositioned: (Rect) -> Unit = {},
+  onTimelinePositioned: (Rect) -> Unit = {},
+  onReminderSettingsPositioned: (Rect) -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   val selectedEvents = remember(events, selectedDate) {
@@ -337,6 +346,12 @@ fun TeachingScheduleScreen(
     }
   }
 
+  LaunchedEffect(openReminderSettingsRequest) {
+    if (openReminderSettingsRequest > 0) {
+      showReminderSettingsDialog = true
+    }
+  }
+
   DisposableEffect(lifecycleOwner, context) {
     val observer = LifecycleEventObserver { _, event ->
       if (event == Lifecycle.Event.ON_RESUME) {
@@ -388,7 +403,8 @@ fun TeachingScheduleScreen(
       },
       onRequestOverlayPermission = {
         overlayPermissionLauncher.launch(TeachingReminderNotifier.buildOverlayPermissionIntent(context))
-      }
+      },
+      modifier = Modifier.onGloballyPositioned { onReminderSettingsPositioned(it.boundsInRoot()) }
     )
   }
 
@@ -408,7 +424,8 @@ fun TeachingScheduleScreen(
       TeachingScheduleHeader(
         selectedDate = selectedDate,
         onJumpToToday = onJumpToToday,
-        onMenuClick = onMenuClick
+        onMenuClick = onMenuClick,
+        onTodayButtonPositioned = onTodayButtonPositioned
       )
 
       WeekSwitcherRow(
@@ -421,12 +438,14 @@ fun TeachingScheduleScreen(
         selectedDate = selectedDate,
         events = events,
         accentColor = accentColor,
-        onSelectDate = onSelectDate
+        onSelectDate = onSelectDate,
+        onSelectedDatePositioned = onSelectedDayPositioned
       )
 
       TimelineTitleWithAlarm(
         reminderEnabled = reminderSettings.enabled,
-        onAlarmClick = { showReminderSettingsDialog = true }
+        onAlarmClick = { showReminderSettingsDialog = true },
+        onAlarmPositioned = onReminderButtonPositioned
       )
 
       LazyColumn(
@@ -440,7 +459,8 @@ fun TeachingScheduleScreen(
           EventTimeline(
             events = selectedEvents,
             accentColor = accentColor,
-            emptyMessage = "Belum ada jadwal mengajar pada tanggal ini."
+            emptyMessage = "Belum ada jadwal mengajar pada tanggal ini.",
+            modifier = Modifier.onGloballyPositioned { onTimelinePositioned(it.boundsInRoot()) }
           )
         }
       }
@@ -507,7 +527,8 @@ fun CalendarHeader(
 private fun TeachingScheduleHeader(
   selectedDate: LocalDate,
   onJumpToToday: () -> Unit,
-  onMenuClick: () -> Unit
+  onMenuClick: () -> Unit,
+  onTodayButtonPositioned: (Rect) -> Unit = {}
 ) {
   val language = LocalAppLanguage.current
   val title = if (selectedDate == LocalDate.now()) {
@@ -553,14 +574,16 @@ private fun TeachingScheduleHeader(
 
   TodayShortcutRow(
     modifier = Modifier.padding(top = 12.dp),
-    onClick = onJumpToToday
+    onClick = onJumpToToday,
+    onPositioned = onTodayButtonPositioned
   )
 }
 
 @Composable
 private fun TimelineTitleWithAlarm(
   reminderEnabled: Boolean,
-  onAlarmClick: () -> Unit
+  onAlarmClick: () -> Unit,
+  onAlarmPositioned: (Rect) -> Unit = {}
 ) {
   Row(
     modifier = Modifier.fillMaxWidth(),
@@ -577,7 +600,8 @@ private fun TimelineTitleWithAlarm(
       GlassCircleButton(
         icon = Icons.Outlined.Alarm,
         contentDescription = t("Atur pengingat jadwal"),
-        onClick = onAlarmClick
+        onClick = onAlarmClick,
+        modifier = Modifier.onGloballyPositioned { onAlarmPositioned(it.boundsInRoot()) }
       )
       if (reminderEnabled) {
         Box(
@@ -605,11 +629,12 @@ private fun TeachingReminderSettingsDialog(
   onRequestNotifications: () -> Unit,
   onRequestExactAlarmPermission: () -> Unit,
   onRequestFullScreenIntentPermission: () -> Unit,
-  onRequestOverlayPermission: () -> Unit
+  onRequestOverlayPermission: () -> Unit,
+  modifier: Modifier = Modifier
 ) {
   Dialog(onDismissRequest = onDismiss) {
     Surface(
-      modifier = Modifier
+      modifier = modifier
         .fillMaxWidth()
         .heightIn(max = 660.dp)
         .border(1.dp, CardBorder, RoundedCornerShape(28.dp)),
@@ -1204,7 +1229,8 @@ private fun ReminderPermissionBanner(
 @Composable
 private fun TodayShortcutRow(
   onClick: () -> Unit,
-  modifier: Modifier = Modifier
+  modifier: Modifier = Modifier,
+  onPositioned: (Rect) -> Unit = {}
 ) {
   Row(
     modifier = modifier.fillMaxWidth(),
@@ -1213,6 +1239,7 @@ private fun TodayShortcutRow(
     Box(
       modifier = Modifier
         .clip(RoundedCornerShape(14.dp))
+        .onGloballyPositioned { onPositioned(it.boundsInRoot()) }
         .background(CardBackground.copy(alpha = 0.88f))
         .border(1.dp, CardBorder, RoundedCornerShape(14.dp))
         .clickable(onClick = onClick)
@@ -1327,7 +1354,8 @@ fun WeekCalendar(
   selectedDate: LocalDate,
   events: List<CalendarEvent>,
   accentColor: Color,
-  onSelectDate: (LocalDate) -> Unit
+  onSelectDate: (LocalDate) -> Unit,
+  onSelectedDatePositioned: (Rect) -> Unit = {}
 ) {
   val startOfWeek = selectedDate.minusDays((selectedDate.dayOfWeek.value - DayOfWeek.MONDAY.value).toLong())
   val today = LocalDate.now()
@@ -1357,7 +1385,12 @@ fun WeekCalendar(
           isToday = date == today,
           eventColors = eventColors,
           accentColor = accentColor,
-          onClick = { onSelectDate(date) }
+          onClick = { onSelectDate(date) },
+          modifier = if (date == selectedDate) {
+            Modifier.onGloballyPositioned { onSelectedDatePositioned(it.boundsInRoot()) }
+          } else {
+            Modifier
+          }
         )
       }
     }
@@ -1608,7 +1641,8 @@ private fun DayChip(
   isToday: Boolean,
   eventColors: List<Color>,
   accentColor: Color,
-  onClick: () -> Unit
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier
 ) {
   val backgroundAlpha by animateFloatAsState(
     targetValue = if (isSelected) 1f else 0f,
@@ -1617,7 +1651,7 @@ private fun DayChip(
   )
 
   Column(
-    modifier = Modifier
+    modifier = modifier
       .width(74.dp)
       .clip(RoundedCornerShape(22.dp))
       .background(dayCellBrush(isSelected, accentColor, eventColors), RoundedCornerShape(22.dp))
@@ -1794,10 +1828,11 @@ private fun BoxScope.CalendarGlassBackground(tint: Color) {
 private fun GlassCircleButton(
   icon: androidx.compose.ui.graphics.vector.ImageVector,
   contentDescription: String,
-  onClick: () -> Unit
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier
 ) {
   Box(
-    modifier = Modifier
+    modifier = modifier
       .size(42.dp)
       .background(CardBackground.copy(alpha = 0.86f), CircleShape)
       .border(1.dp, CardBorder, CircleShape)

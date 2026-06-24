@@ -1,6 +1,7 @@
 package com.mim.guruapp.data.remote
 
 import com.mim.guruapp.BuildConfig
+import com.mim.guruapp.availableAppRoles
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -56,8 +57,8 @@ class GuruAuthRemoteDataSource {
         }
 
         val roles = parseRoleList(item.optString("role"))
-        if (!roles.contains("guru") && roles.none(::isWakasekKurikulumRole)) {
-          return@withContext GuruAuthResult.Error("Akun ini tidak memiliki akses ke aplikasi guru.")
+        if (availableAppRoles(roles).isEmpty()) {
+          return@withContext GuruAuthResult.Error("Akun ini tidak memiliki akses ke aplikasi Android.")
         }
 
         val normalizedId = item.optString("id_karyawan").trim()
@@ -101,18 +102,6 @@ class GuruAuthRemoteDataSource {
     return text == "true" || text == "t" || text == "1" || text == "yes"
   }
 
-  private fun isWakasekKurikulumRole(value: String): Boolean {
-    val clean = value.trim().lowercase()
-      .replace("_", " ")
-      .replace("-", " ")
-      .replace(Regex("\\s+"), " ")
-    val compact = clean.replace(" ", "")
-    return compact == "wakasekakademik" ||
-      compact == "wakasekbidangakademik" ||
-      compact == "wakasekkurikulum" ||
-      compact == "wakasekbidangkurikulum" ||
-      (clean.contains("wakasek") && (clean.contains("akademik") || clean.contains("kurikulum")))
-  }
 }
 
 private inline fun <T> HttpURLConnection.useJsonArrayResponse(

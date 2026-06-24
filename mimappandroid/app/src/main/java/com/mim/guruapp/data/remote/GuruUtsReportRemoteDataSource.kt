@@ -62,7 +62,8 @@ class GuruUtsReportRemoteDataSource {
       }
 
       val classSubjects = fetchClassSubjects(classIds, semesterIds)
-      val scoreRows = fetchScoreRows(studentIds, semesterIds, classSubjects)
+      val studentClassById = students.associate { it.id.trim() to it.classId.trim() }
+      val scoreRows = fetchScoreRows(studentIds, semesterIds, classSubjects, studentClassById)
       val overrideResult = fetchOverrides(guruId, semesterIds, studentIds)
       val scheduleRows = fetchExamScheduleRows(classIds, semesterIds)
       val attendanceRows = fetchAttendanceRows(studentIds, classIds, semesterIds)
@@ -248,7 +249,8 @@ class GuruUtsReportRemoteDataSource {
   private fun fetchScoreRows(
     studentIds: List<String>,
     semesterIds: List<String>,
-    classSubjects: List<UtsClassSubject>
+    classSubjects: List<UtsClassSubject>,
+    studentClassById: Map<String, String>
   ): List<UtsScoreRow> {
     val summaryRows = fetchSummaryScoreRows(studentIds, semesterIds)
     val inputRows = fetchInputScoreRows(studentIds, semesterIds)
@@ -257,6 +259,7 @@ class GuruUtsReportRemoteDataSource {
         .filter { it.isNotBlank() }
         .distinct()
     )
+    val raporDescriptionsByKey = fetchRaporDescriptionRows(classSubjects)
     val detailEntriesByKey = inputRows
       .mapNotNull { row ->
         val key = row.scoreRowKeyOrNull(distributionsById, classSubjects) ?: return@mapNotNull null
@@ -314,6 +317,27 @@ class GuruUtsReportRemoteDataSource {
         summaryRow?.optDoubleOrNull("nilai_akhir")
       }
       val skillValue = calculatedMetric("nilai_keterampilan", "nilai_keterampilan")
+      val descriptionRef = raporDescriptionsByKey[
+        RaporDescriptionKey(
+          classId = studentClassById[key.studentId].orEmpty(),
+          semesterId = key.semesterId,
+          mapelId = key.mapelId
+        )
+      ] ?: raporDescriptionsByKey[
+        RaporDescriptionKey(
+          classId = "",
+          semesterId = key.semesterId,
+          mapelId = key.mapelId
+        )
+      ]
+      val knowledgePredicate = knowledgeValue?.let(::raporScorePredicate).orEmpty()
+      val skillPredicate = skillValue?.let(::raporScorePredicate).orEmpty()
+      val summaryKnowledgeDescription = summaryRow?.let {
+        pickFirst(it, "deskripsi_pengetahuan", "keterangan_pengetahuan", "deskripsi_nilai_pengetahuan")
+      }.orEmpty()
+      val summarySkillDescription = summaryRow?.let {
+        pickFirst(it, "deskripsi_keterampilan", "keterangan_keterampilan", "deskripsi_nilai_keterampilan")
+      }.orEmpty()
 
       UtsScoreRow(
         studentId = key.studentId,
@@ -333,12 +357,12 @@ class GuruUtsReportRemoteDataSource {
         knowledgeScoreValue = knowledgeValue,
         skillScoreText = skillValue?.let(::formatScore).orEmpty(),
         skillScoreValue = skillValue,
-        knowledgeDescription = summaryRow?.let {
-          pickFirst(it, "deskripsi_pengetahuan", "keterangan_pengetahuan", "deskripsi_nilai_pengetahuan")
-        }.orEmpty(),
-        skillDescription = summaryRow?.let {
-          pickFirst(it, "deskripsi_keterampilan", "keterangan_keterampilan", "deskripsi_nilai_keterampilan")
-        }.orEmpty(),
+        knowledgeDescription = summaryKnowledgeDescription.ifBlank {
+          descriptionRef?.knowledgeDescription(knowledgePredicate).orEmpty()
+        },
+        skillDescription = summarySkillDescription.ifBlank {
+          descriptionRef?.skillDescription(skillPredicate).orEmpty()
+        },
         detailRowsByMetric = detailRowsByMetric
       )
     }
@@ -428,6 +452,58 @@ class GuruUtsReportRemoteDataSource {
           )
         }
       }.toMap()
+    }.getOrDefault(emptyMap())
+  }
+
+  private fun fetchRaporDescriptionRows(
+    classSubjects: List<UtsClassSubject>
+  ): Map<RaporDescriptionKey, RaporMapelDescriptionRef> {
+    val subjectByDistribusiId = classSubjects
+      .filter { it.distribusiId.isNotBlank() }
+      .associateBy { it.distribusiId }
+    val distribusiIds = subjectByDistribusiId.keys.toList()
+    if (distribusiIds.isEmpty()) return emptyMap()
+
+    return runCatching {
+      val rows = fetchRows(
+        table = "rapor_deskripsi_mapel",
+        query = buildString {
+          append("select=*")
+          appendInFilter("distribusi_id", distribusiIds)
+        }
+      )
+      val mapped = linkedMapOf<RaporDescriptionKey, RaporMapelDescriptionRef>()
+      rows.forEach { row ->
+        val subject = subjectByDistribusiId[row.cleanString("distribusi_id")]
+        val semesterId = row.cleanString("semester_id").ifBlank { subject?.semesterId.orEmpty() }
+        val mapelId = row.cleanString("mapel_id").ifBlank { subject?.mapelId.orEmpty() }
+        if (semesterId.isBlank() || mapelId.isBlank()) return@forEach
+
+        val ref = RaporMapelDescriptionRef(
+          knowledgeDescriptions = row.raporDescriptionMap("pengetahuan"),
+          skillDescriptions = row.raporDescriptionMap("keterampilan")
+        )
+        val classKey = RaporDescriptionKey(
+          classId = subject?.classId.orEmpty(),
+          semesterId = semesterId,
+          mapelId = mapelId
+        )
+        val existingClassRef = mapped[classKey]
+        if (existingClassRef == null || (!existingClassRef.hasAnyDescription() && ref.hasAnyDescription())) {
+          mapped[classKey] = ref
+        }
+
+        val broadKey = RaporDescriptionKey(
+          classId = "",
+          semesterId = semesterId,
+          mapelId = mapelId
+        )
+        val existingBroadRef = mapped[broadKey]
+        if (existingBroadRef == null || (!existingBroadRef.hasAnyDescription() && ref.hasAnyDescription())) {
+          mapped[broadKey] = ref
+        }
+      }
+      mapped.toMap()
     }.getOrDefault(emptyMap())
   }
 
@@ -857,6 +933,30 @@ private data class ScoreDistributionRef(
   val semesterId: String
 )
 
+private data class RaporDescriptionKey(
+  val classId: String,
+  val semesterId: String,
+  val mapelId: String
+)
+
+private data class RaporMapelDescriptionRef(
+  val knowledgeDescriptions: Map<String, String>,
+  val skillDescriptions: Map<String, String>
+) {
+  fun knowledgeDescription(predicate: String): String {
+    return knowledgeDescriptions[predicate.uppercase(Locale.ROOT)].orEmpty()
+  }
+
+  fun skillDescription(predicate: String): String {
+    return skillDescriptions[predicate.uppercase(Locale.ROOT)].orEmpty()
+  }
+
+  fun hasAnyDescription(): Boolean {
+    return knowledgeDescriptions.values.any { it.isNotBlank() } ||
+      skillDescriptions.values.any { it.isNotBlank() }
+  }
+}
+
 private data class ScoreInputEntry(
   val metricKey: String,
   val value: Double,
@@ -937,8 +1037,26 @@ private fun calculateFinalScore(
   ).sum()
 }
 
+private fun raporScorePredicate(value: Double): String {
+  return when {
+    value >= 90.0 -> "A"
+    value >= 80.0 -> "B"
+    value >= 70.0 -> "C"
+    value >= 60.0 -> "D"
+    else -> "E"
+  }
+}
+
 private fun roundScore(value: Double): Double {
   return kotlin.math.round(value * 100.0) / 100.0
+}
+
+private val RaporDescriptionPredicates = listOf("A", "B", "C", "D", "E")
+
+private fun JSONObject.raporDescriptionMap(aspect: String): Map<String, String> {
+  return RaporDescriptionPredicates.associateWith { predicate ->
+    cleanString("deskripsi_${predicate.lowercase(Locale.ROOT)}_$aspect")
+  }
 }
 
 private fun encodeValue(value: String): String {

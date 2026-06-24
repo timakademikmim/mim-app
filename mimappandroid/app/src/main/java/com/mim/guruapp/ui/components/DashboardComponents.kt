@@ -51,11 +51,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.mim.guruapp.data.model.CalendarEvent
@@ -84,6 +87,12 @@ fun DashboardScreenScaffold(
   categories: List<DashboardCategory>,
   tasks: List<DashboardTask>,
   calendarEvents: List<CalendarEvent>,
+  onMenuButtonPositioned: (Rect) -> Unit = {},
+  onDatePositioned: (Rect) -> Unit = {},
+  onNotificationButtonPositioned: (Rect) -> Unit = {},
+  onSearchBarPositioned: (Rect) -> Unit = {},
+  onCategoriesPositioned: (Rect) -> Unit = {},
+  onAgendaPositioned: (Rect) -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   var searchQuery by remember { mutableStateOf("") }
@@ -118,7 +127,10 @@ fun DashboardScreenScaffold(
         notificationCount = notificationCount,
         onMenuClick = onMenuClick,
         onDateClick = onDateClick,
-        onNotificationClick = onNotificationClick
+        onNotificationClick = onNotificationClick,
+        onMenuButtonPositioned = onMenuButtonPositioned,
+        onDatePositioned = onDatePositioned,
+        onNotificationButtonPositioned = onNotificationButtonPositioned
       )
     }
   ) { innerPadding ->
@@ -139,7 +151,9 @@ fun DashboardScreenScaffold(
           value = searchQuery,
           onValueChange = { searchQuery = it },
           placeholder = "Cari agenda",
-          modifier = Modifier.padding(top = 12.dp)
+          modifier = Modifier
+            .padding(top = 12.dp)
+            .onGloballyPositioned { onSearchBarPositioned(it.boundsInRoot()) }
         )
 
         DashboardSectionHeader(
@@ -150,7 +164,8 @@ fun DashboardScreenScaffold(
         LazyRow(
           modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 12.dp),
+            .padding(top = 12.dp)
+            .onGloballyPositioned { onCategoriesPositioned(it.boundsInRoot()) },
           horizontalArrangement = Arrangement.spacedBy(12.dp),
           contentPadding = PaddingValues(end = 12.dp)
         ) {
@@ -171,7 +186,8 @@ fun DashboardScreenScaffold(
         LazyColumn(
           modifier = Modifier
             .fillMaxWidth()
-            .weight(1f),
+            .weight(1f)
+            .onGloballyPositioned { onAgendaPositioned(it.boundsInRoot()) },
           contentPadding = PaddingValues(bottom = 124.dp),
           verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -205,7 +221,10 @@ fun TopBarCustom(
   notificationCount: Int,
   onMenuClick: () -> Unit,
   onDateClick: () -> Unit,
-  onNotificationClick: () -> Unit
+  onNotificationClick: () -> Unit,
+  onMenuButtonPositioned: (Rect) -> Unit = {},
+  onDatePositioned: (Rect) -> Unit = {},
+  onNotificationButtonPositioned: (Rect) -> Unit = {}
 ) {
   val language = LocalAppLanguage.current
 
@@ -220,12 +239,14 @@ fun TopBarCustom(
       GlassActionButton(
         icon = Icons.Outlined.Menu,
         contentDescription = t("Buka sidebar"),
-        onClick = onMenuClick
+        onClick = onMenuClick,
+        modifier = Modifier.onGloballyPositioned { onMenuButtonPositioned(it.boundsInRoot()) }
       )
 
     Row(
       modifier = Modifier
         .clip(RoundedCornerShape(14.dp))
+        .onGloballyPositioned { onDatePositioned(it.boundsInRoot()) }
         .clickable(onClick = onDateClick)
         .padding(horizontal = 10.dp, vertical = 8.dp),
       verticalAlignment = Alignment.CenterVertically,
@@ -250,7 +271,8 @@ fun TopBarCustom(
       GlassActionButton(
         icon = Icons.Outlined.NotificationsNone,
         contentDescription = t("Notifikasi"),
-        onClick = onNotificationClick
+        onClick = onNotificationClick,
+        modifier = Modifier.onGloballyPositioned { onNotificationButtonPositioned(it.boundsInRoot()) }
       )
       if (notificationCount > 0) {
         Badge(
@@ -569,10 +591,11 @@ private fun BoxScope.GlassSurface() {
 private fun GlassActionButton(
   icon: androidx.compose.ui.graphics.vector.ImageVector,
   contentDescription: String,
-  onClick: () -> Unit
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier
 ) {
   Box(
-    modifier = Modifier
+    modifier = modifier
       .size(42.dp)
       .background(CardBackground.copy(alpha = 0.86f), CircleShape)
       .border(1.dp, CardBorder, CircleShape)

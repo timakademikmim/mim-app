@@ -29,6 +29,7 @@ import androidx.compose.material.icons.automirrored.outlined.FactCheck
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.automirrored.outlined.MenuOpen
 import androidx.compose.material.icons.outlined.AccountCircle
+import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.AssignmentTurnedIn
 import androidx.compose.material.icons.outlined.Book
 import androidx.compose.material.icons.outlined.CalendarMonth
@@ -41,6 +42,7 @@ import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.NoteAlt
 import androidx.compose.material.icons.outlined.Quiz
 import androidx.compose.material.icons.outlined.Report
+import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.TaskAlt
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -84,6 +86,7 @@ data class SidebarProfileItem(
   val icon: ImageVector,
   val badge: Int? = null,
   val destination: GuruSidebarDestination? = null,
+  val isRoleSwitch: Boolean = false,
   val isLogout: Boolean = false
 )
 
@@ -97,12 +100,14 @@ data class GuruSidebarContent(
 @Composable
 fun Sidebar(
   appName: String,
+  appSubtitle: String,
   content: GuruSidebarContent,
   selectedDestination: GuruSidebarDestination,
   expandedParent: GuruSidebarParent?,
   onDismiss: () -> Unit,
   onToggleParent: (GuruSidebarParent) -> Unit,
   onSelectItem: (GuruSidebarDestination) -> Unit,
+  onChangeRole: () -> Unit,
   onLogout: () -> Unit,
   modifier: Modifier = Modifier
 ) {
@@ -118,6 +123,7 @@ fun Sidebar(
   ) {
     SidebarHeader(
       appName = appName,
+      appSubtitle = appSubtitle,
       onDismiss = onDismiss
     )
 
@@ -187,6 +193,7 @@ fun Sidebar(
             onClick = {
               when {
                 item.isLogout -> onLogout()
+                item.isRoleSwitch -> onChangeRole()
                 item.destination != null -> onSelectItem(item.destination)
               }
             }
@@ -200,6 +207,7 @@ fun Sidebar(
 @Composable
 private fun SidebarHeader(
   appName: String,
+  appSubtitle: String,
   onDismiss: () -> Unit
 ) {
   Row(
@@ -230,7 +238,7 @@ private fun SidebarHeader(
           fontWeight = FontWeight.ExtraBold
         )
         Text(
-          text = t("Guru Dashboard"),
+          text = t(appSubtitle),
           style = MaterialTheme.typography.bodySmall,
           color = SubtleInk
         )
@@ -513,7 +521,8 @@ fun buildGuruSidebarContent(
   pendingSyncCount: Int,
   activeMapelCount: Int,
   isWaliKelas: Boolean,
-  isWakasekKurikulum: Boolean
+  isWakasekKurikulum: Boolean,
+  canChangeRole: Boolean = false
 ): GuruSidebarContent {
   return GuruSidebarContent(
     topItems = listOf(
@@ -587,9 +596,69 @@ fun buildGuruSidebarContent(
       }
     },
     bottomItems = emptyList(),
-    profileItems = listOf(
-      SidebarProfileItem("Profil", Icons.Outlined.AccountCircle, destination = GuruSidebarDestination.Profil),
-      SidebarProfileItem("Logout", Icons.AutoMirrored.Outlined.Logout, isLogout = true)
-    )
+    profileItems = buildProfileItems(canChangeRole)
   )
+}
+
+fun buildAdminSidebarContent(
+  canChangeRole: Boolean = false
+): GuruSidebarContent {
+  return GuruSidebarContent(
+    topItems = listOf(
+      SidebarLeafItem(GuruSidebarDestination.Dashboard, "Dashboard", Icons.Outlined.AdminPanelSettings)
+    ),
+    parentItems = listOf(
+      SidebarParentItem(
+        parent = GuruSidebarParent.AdminSekolah,
+        label = "Sekolah",
+        icon = Icons.Outlined.Book,
+        children = listOf(
+          SidebarLeafItem(GuruSidebarDestination.AdminProfilSekolah, "Profil Sekolah", Icons.Outlined.AccountCircle),
+          SidebarLeafItem(GuruSidebarDestination.AdminKalenderTahunAjaran, "Kalender & Tahun Ajaran", Icons.Outlined.CalendarMonth)
+        )
+      ),
+      SidebarParentItem(
+        parent = GuruSidebarParent.AdminAkademik,
+        label = "Akademik",
+        icon = Icons.Outlined.Book,
+        children = listOf(
+          SidebarLeafItem(GuruSidebarDestination.AdminKelasMapel, "Kelas & Mapel", Icons.Outlined.Dashboard),
+          SidebarLeafItem(GuruSidebarDestination.AdminSantri, "Santri", Icons.Outlined.Groups),
+          SidebarLeafItem(GuruSidebarDestination.AdminJadwalUjian, "Jadwal & Ujian", Icons.Outlined.Quiz),
+          SidebarLeafItem(GuruSidebarDestination.AdminEkstrakurikuler, "Ekstrakurikuler", Icons.Outlined.Grade)
+        )
+      ),
+      SidebarParentItem(
+        parent = GuruSidebarParent.AdminTahfizAsrama,
+        label = "Tahfiz & Asrama",
+        icon = Icons.Outlined.Book,
+        children = listOf(
+          SidebarLeafItem(GuruSidebarDestination.AdminTahfiz, "Tahfiz", Icons.Outlined.Book),
+          SidebarLeafItem(GuruSidebarDestination.AdminAsrama, "Asrama", Icons.Outlined.Groups)
+        )
+      ),
+      SidebarParentItem(
+        parent = GuruSidebarParent.AdminKaryawanSection,
+        label = "Karyawan",
+        icon = Icons.Outlined.Groups,
+        children = listOf(
+          SidebarLeafItem(GuruSidebarDestination.AdminKaryawan, "Data Karyawan", Icons.Outlined.Groups),
+          SidebarLeafItem(GuruSidebarDestination.AdminPresensiIzin, "Presensi & Izin", Icons.AutoMirrored.Outlined.FactCheck),
+          SidebarLeafItem(GuruSidebarDestination.AdminMutabaahKaryawan, "Mutabaah Karyawan", Icons.Outlined.TaskAlt)
+        )
+      )
+    ),
+    bottomItems = emptyList(),
+    profileItems = buildProfileItems(canChangeRole)
+  )
+}
+
+private fun buildProfileItems(canChangeRole: Boolean): List<SidebarProfileItem> {
+  return buildList {
+    add(SidebarProfileItem("Profil", Icons.Outlined.AccountCircle, destination = GuruSidebarDestination.Profil))
+    if (canChangeRole) {
+      add(SidebarProfileItem("Ganti Role", Icons.Outlined.SwapHoriz, isRoleSwitch = true))
+    }
+    add(SidebarProfileItem("Logout", Icons.AutoMirrored.Outlined.Logout, isLogout = true))
+  }
 }

@@ -118,16 +118,20 @@ jobs:
             "versionCode": ${MIM_VERSION_CODE},
             "versionName": "${MIM_VERSION_NAME}",
             "apkUrl": "${APK_URL}",
-            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Pondasi AI token mulai tersedia untuk membuat materi dan soal, serta sinkronisasi isi soal ke database diperbaiki agar bisa dibuka lengkap dari device lain.",
+            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Mode admin, ujian, rapor, import spreadsheet, dan export rapor diperkuat agar data sekolah lebih lengkap dipakai langsung dari aplikasi.",
             "features": [
-              "Patron Materi dan Soal kini memiliki pintu awal AI untuk membantu guru membuat materi atau draft soal dari prompt.",
-              "Sistem token AI disiapkan dengan saldo guru, ledger pemakaian, dan pencatatan usage melalui Supabase Function.",
-              "Hasil AI soal masuk sebagai draft editor sehingga guru tetap bisa meninjau, mengedit, lalu menyimpan ke database."
+              "Mode admin mulai tersedia di Android dengan pemilihan role, dashboard, profil, data karyawan, data santri, profil sekolah, kalender ujian, dan tahun ajaran.",
+              "Menu ujian guru kini membaca folder ujian dari server dan memakai editor soal yang sejalan dengan detail mapel.",
+              "Rapor wali kelas kini memakai navbar bagian Informasi, Akhlak, Alquran, Nilai, dan Lainnya, lengkap dengan cetak dan kirim dokumen.",
+              "Detail mapel memiliki menu Rapor untuk mengatur predikat dan deskripsi umum per mapel agar otomatis masuk ke rapor siswa.",
+              "Import spreadsheet rapor diperluas untuk Akhlak, Alquran per juz, Nilai, Prestasi, Kehadiran, dan Ekstrakurikuler per kelas."
             ],
             "fixes": [
-              "Simpan soal ke database kini mengirim isi editor lengkap, bukan hanya metadata kartu soal.",
-              "Device lain dapat membaca format soal native Android maupun format soal dari web yang memakai questions dan sections.",
-              "Draft lokal yang masih punya isi soal tidak lagi ditimpa oleh data server yang kosong atau belum lengkap."
+              "Isi soal, pilihan ganda, detail ujian, dan status simpan soal diperbaiki agar tetap tersedia dari device lain.",
+              "Export rapor DOCX diperbaiki agar nilai, deskripsi, semester, tanggal, tanda tangan, dan kehadiran masuk ke posisi template yang benar.",
+              "Import spreadsheet rapor lebih aman membaca sheet per kelas dan mencegah data ekstrakurikuler ikut masuk sebagai prestasi.",
+              "Perhitungan kehadiran kelas rapor diperbaiki agar satu tanggal hanya dihitung sekali dengan prioritas hadir/terlambat sebelum izin, sakit, dan alpa.",
+              "Data manual hasil import rapor disimpan lokal sebagai overlay sehingga tidak hilang saat aplikasi ditutup dan tidak mengubah data asli sistem."
             ],
             "mandatory": ${MANDATORY}
           }

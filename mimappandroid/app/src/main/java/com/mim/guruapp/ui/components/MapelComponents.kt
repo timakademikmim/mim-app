@@ -104,6 +104,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -167,6 +168,8 @@ import com.mim.guruapp.data.remote.GuruAiMaterialItem
 import com.mim.guruapp.data.remote.GuruAiMaterialResult
 import com.mim.guruapp.data.remote.GuruAiQuestionResult
 import com.mim.guruapp.data.remote.GuruAiTokenWallet
+import com.mim.guruapp.data.remote.GuruExamQuestionItem
+import com.mim.guruapp.data.remote.GuruExamQuestionSnapshot
 import com.mim.guruapp.export.MapelAttendanceExcelExporter
 import com.mim.guruapp.export.MapelQuestionExportData
 import com.mim.guruapp.export.MapelQuestionExporter
@@ -223,6 +226,8 @@ fun MapelScreen(
   onSavePatronMateri: suspend (String, SubjectOverview, List<PatronMateriItem>) -> PatronMateriSaveOutcome,
   onLoadQuestions: suspend (String, SubjectOverview) -> String?,
   onSaveQuestions: suspend (String, SubjectOverview, String) -> QuestionSaveOutcome,
+  onLoadRaporDescriptions: suspend (String, SubjectOverview) -> String?,
+  onSaveRaporDescriptions: suspend (String, SubjectOverview, String) -> QuestionSaveOutcome,
   onLoadAiTokenBalance: suspend () -> GuruAiTokenWallet?,
   onGenerateAiContent: suspend (GuruAiGenerateRequest) -> GuruAiGenerateResult,
   isRefreshing: Boolean,
@@ -274,6 +279,8 @@ fun MapelScreen(
         onSavePatronMateri = onSavePatronMateri,
         onLoadQuestions = onLoadQuestions,
         onSaveQuestions = onSaveQuestions,
+        onLoadRaporDescriptions = onLoadRaporDescriptions,
+        onSaveRaporDescriptions = onSaveRaporDescriptions,
         onLoadAiTokenBalance = onLoadAiTokenBalance,
         onGenerateAiContent = onGenerateAiContent,
         selectedSection = selectedDetailSection,
@@ -368,6 +375,758 @@ fun MapelScreen(
       }
     }
   }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun UjianScreen(
+  isRefreshing: Boolean,
+  onMenuClick: () -> Unit,
+  onRefresh: () -> Unit,
+  onLoadSnapshot: suspend () -> GuruExamQuestionSnapshot,
+  onSaveQuestion: suspend (GuruExamQuestionItem, String) -> QuestionSaveOutcome,
+  onEditorModeChange: (Boolean) -> Unit = {},
+  modifier: Modifier = Modifier
+) {
+  val context = LocalContext.current
+  val scope = rememberCoroutineScope()
+  var snapshot by remember { mutableStateOf<GuruExamQuestionSnapshot?>(null) }
+  var questionByRowKey by remember { mutableStateOf<Map<String, MapelQuestionDraft>>(emptyMap()) }
+  var selectedFolderKey by rememberSaveable { mutableStateOf<String?>(null) }
+  var selectedRowKey by rememberSaveable { mutableStateOf<String?>(null) }
+  var editorQuestionDraft by remember { mutableStateOf<MapelQuestionDraft?>(null) }
+  var questionUndoStack by remember { mutableStateOf<List<MapelQuestionDraft>>(emptyList()) }
+  var editingQuestionDetail by remember { mutableStateOf<MapelQuestionDraft?>(null) }
+  var editingQuestionDetailItem by remember { mutableStateOf<GuruExamQuestionItem?>(null) }
+  var isAddingQuestionModel by remember { mutableStateOf(false) }
+  var isLoading by remember { mutableStateOf(true) }
+  var isSaving by rememberSaveable { mutableStateOf(false) }
+  var isPrinting by rememberSaveable { mutableStateOf(false) }
+
+  fun resolveQuestion(item: GuruExamQuestionItem): MapelQuestionDraft {
+    val storageKey = examQuestionStorageKey(item.rowKey)
+    val localQuestions = loadMapelQuestions(context, storageKey)
+    val remoteQuestions = decodeMapelQuestions(item.questionDraftJson)
+    val merged = when {
+      localQuestions.isEmpty() -> remoteQuestions
+      remoteQuestions.isEmpty() -> localQuestions
+      else -> mergeLocalAndRemoteMapelQuestions(localQuestions, remoteQuestions)
+    }
+    val resolved = merged.firstOrNull() ?: buildDefaultExamQuestionDraft(item)
+    saveMapelQuestions(context, storageKey, listOf(resolved), synchronous = true)
+    return resolved
+  }
+
+  fun reloadSnapshot() {
+    scope.launch {
+      isLoading = true
+      val loaded = onLoadSnapshot()
+      snapshot = loaded
+      questionByRowKey = loaded.items.associate { item -> item.rowKey to resolveQuestion(item) }
+      if (selectedRowKey != null && loaded.items.none { it.rowKey == selectedRowKey }) {
+        selectedRowKey = null
+        editorQuestionDraft = null
+      }
+      if (editingQuestionDetailItem != null && loaded.items.none { it.rowKey == editingQuestionDetailItem?.rowKey }) {
+        editingQuestionDetail = null
+        editingQuestionDetailItem = null
+      }
+      if (selectedFolderKey != null && loaded.items.none { it.folderTitle() == selectedFolderKey }) {
+        selectedFolderKey = null
+      }
+      isLoading = false
+    }
+  }
+
+  fun updateSelectedQuestion(item: GuruExamQuestionItem, updated: MapelQuestionDraft) {
+    val latest = updated.copy(
+      statusLabel = QuestionStatusDraft,
+      updatedAt = System.currentTimeMillis()
+    )
+    questionByRowKey = questionByRowKey + (item.rowKey to latest)
+    editorQuestionDraft = latest
+    saveMapelQuestions(context, examQuestionStorageKey(item.rowKey), listOf(latest))
+  }
+
+  fun addQuestionModel(item: GuruExamQuestionItem, question: MapelQuestionDraft, typeKey: String) {
+    val selectedType = SoalTypeOptions.firstOrNull { it.key == typeKey } ?: SoalTypeOptions.first()
+    val nextSections = question.sections + buildQuestionSectionDraft(selectedType)
+    updateSelectedQuestion(
+      item,
+      question.copy(
+        form = nextSections.map { it.typeLabel }.distinct().joinToString(", "),
+        sections = nextSections
+      )
+    )
+  }
+
+  fun saveSelectedQuestion(item: GuruExamQuestionItem, question: MapelQuestionDraft) {
+    if (isSaving) return
+    scope.launch {
+      isSaving = true
+      val savedLocalQuestion = question.copy(
+        statusLabel = QuestionStatusSaved,
+        updatedAt = System.currentTimeMillis()
+      )
+      val storageKey = examQuestionStorageKey(item.rowKey)
+      val rawJson = saveMapelQuestions(context, storageKey, listOf(savedLocalQuestion), synchronous = true)
+      val outcome = onSaveQuestion(item, rawJson)
+      if (outcome.success) {
+        questionByRowKey = questionByRowKey + (item.rowKey to savedLocalQuestion)
+        editorQuestionDraft = savedLocalQuestion
+      } else {
+        val draftQuestion = savedLocalQuestion.copy(statusLabel = QuestionStatusDraft)
+        questionByRowKey = questionByRowKey + (item.rowKey to draftQuestion)
+        editorQuestionDraft = draftQuestion
+        saveMapelQuestions(context, storageKey, listOf(draftQuestion), synchronous = true)
+      }
+      Toast.makeText(
+        context,
+        outcome.message.ifBlank {
+          if (outcome.success) "Soal ujian berhasil disimpan." else "Gagal menyimpan soal ujian."
+        },
+        if (outcome.success) Toast.LENGTH_SHORT else Toast.LENGTH_LONG
+      ).show()
+      isSaving = false
+    }
+  }
+
+  fun printQuestion(item: GuruExamQuestionItem, question: MapelQuestionDraft, share: Boolean) {
+    if (isPrinting) return
+    scope.launch {
+      isPrinting = true
+      runCatching {
+        val latest = if (editorQuestionDraft?.id == question.id) editorQuestionDraft ?: question else question
+        val exportData = latest.toExportData()
+        val docx = MapelQuestionExporter.createDocxFile(context, item.subject, exportData)
+        if (share) {
+          MapelQuestionExporter.shareDocument(context, docx, exportData)
+        } else {
+          MapelQuestionExporter.openDocument(context, docx, exportData)
+        }
+      }.onFailure {
+        Toast.makeText(context, it.message ?: "Gagal menyiapkan dokumen Word.", Toast.LENGTH_LONG).show()
+      }
+      isPrinting = false
+    }
+  }
+
+  fun deleteQuestion(item: GuruExamQuestionItem) {
+    if (isSaving) return
+    scope.launch {
+      isSaving = true
+      val emptyJson = saveMapelQuestions(context, examQuestionStorageKey(item.rowKey), emptyList(), synchronous = true)
+      val blankQuestion = buildDefaultExamQuestionDraft(item).copy(updatedAt = System.currentTimeMillis())
+      questionByRowKey = questionByRowKey + (item.rowKey to blankQuestion)
+      if (selectedRowKey == item.rowKey) {
+        selectedRowKey = null
+        editorQuestionDraft = null
+        questionUndoStack = emptyList()
+      }
+      val outcome = onSaveQuestion(item, emptyJson)
+      Toast.makeText(
+        context,
+        outcome.message.ifBlank {
+          if (outcome.success) "Soal ujian berhasil dihapus." else "Soal lokal dihapus, tetapi server belum tersinkron."
+        },
+        if (outcome.success) Toast.LENGTH_SHORT else Toast.LENGTH_LONG
+      ).show()
+      isSaving = false
+    }
+  }
+
+  LaunchedEffect(Unit) {
+    reloadSnapshot()
+  }
+
+  LaunchedEffect(editorQuestionDraft != null) {
+    onEditorModeChange(editorQuestionDraft != null)
+  }
+
+  DisposableEffect(Unit) {
+    onDispose { onEditorModeChange(false) }
+  }
+
+  val selectedItem = selectedRowKey?.let { key -> snapshot?.items?.firstOrNull { it.rowKey == key } }
+  val selectedQuestion = selectedItem?.let { item -> questionByRowKey[item.rowKey] ?: buildDefaultExamQuestionDraft(item) }
+  val groupedFolders = snapshot?.items.orEmpty().groupBy { it.folderTitle() }
+  val selectedFolderRows = selectedFolderKey?.let { key -> groupedFolders[key].orEmpty() }.orEmpty()
+
+  BackHandler(enabled = editorQuestionDraft != null || selectedRowKey != null || selectedFolderKey != null) {
+    if (editorQuestionDraft != null) {
+      editorQuestionDraft = null
+      selectedRowKey = null
+      questionUndoStack = emptyList()
+    } else if (selectedRowKey != null) {
+      selectedRowKey = null
+      editingQuestionDetail = null
+    } else {
+      selectedFolderKey = null
+    }
+  }
+
+  Scaffold(
+    modifier = modifier.background(AppBackground),
+    containerColor = Color.Transparent,
+    topBar = {
+      when {
+        selectedItem != null && editorQuestionDraft != null -> {
+          MapelDetailTopBar(
+            title = "Editor Soal",
+            onBackClick = {
+              editorQuestionDraft = null
+              selectedRowKey = null
+              questionUndoStack = emptyList()
+            },
+            showUndo = questionUndoStack.isNotEmpty(),
+            onUndoClick = {
+              val restored = questionUndoStack.lastOrNull()
+              if (restored != null && selectedItem != null) {
+                questionUndoStack = questionUndoStack.dropLast(1)
+                updateSelectedQuestion(selectedItem, restored)
+              }
+            },
+            actions = {
+              MapelTopButton(
+                icon = Icons.Outlined.Save,
+                contentDescription = if (isSaving) "Menyimpan soal" else "Simpan soal",
+                enabled = !isSaving,
+                onClick = {
+                  val latest = editorQuestionDraft
+                  if (latest != null) saveSelectedQuestion(selectedItem, latest)
+                }
+              )
+            }
+          )
+        }
+        selectedItem != null -> {
+          MapelDetailTopBar(
+            title = "Soal Ujian",
+            onBackClick = { selectedRowKey = null }
+          )
+        }
+        selectedFolderKey != null -> {
+          MapelDetailTopBar(
+            title = selectedFolderKey ?: "Folder Ujian",
+            onBackClick = { selectedFolderKey = null }
+          )
+        }
+        else -> {
+          MapelTopBar(
+            title = "Ujian",
+            onMenuClick = onMenuClick
+          )
+        }
+      }
+    }
+  ) { innerPadding ->
+    PullToRefreshBox(
+      isRefreshing = isRefreshing || isLoading,
+      onRefresh = {
+        onRefresh()
+        reloadSnapshot()
+      },
+      modifier = Modifier
+        .fillMaxSize()
+        .padding(innerPadding)
+    ) {
+      Box(modifier = Modifier.fillMaxSize()) {
+        if (selectedItem != null && editorQuestionDraft != null) {
+          LazyColumn(
+            modifier = Modifier
+              .fillMaxSize()
+              .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            contentPadding = PaddingValues(bottom = 124.dp)
+          ) {
+            item {
+              UjianScheduleHeaderCard(item = selectedItem, modifier = Modifier.padding(top = 12.dp))
+            }
+            item {
+              SoalWorkspaceScreen(
+                question = editorQuestionDraft!!,
+                onQuestionChange = { updated -> updateSelectedQuestion(selectedItem, updated) },
+                onBeforeDelete = { snapshotQuestion ->
+                  questionUndoStack = (questionUndoStack + snapshotQuestion).takeLast(20)
+                }
+              )
+            }
+          }
+          SoalEditorFabMenu(
+            isPrinting = isPrinting,
+            onAddModel = { isAddingQuestionModel = true },
+            onPrint = { printQuestion(selectedItem, editorQuestionDraft!!, share = false) },
+            modifier = Modifier
+              .align(Alignment.BottomEnd)
+              .navigationBarsPadding()
+              .padding(end = 20.dp, bottom = 20.dp)
+          )
+        } else if (selectedItem != null && selectedQuestion != null) {
+          LazyColumn(
+            modifier = Modifier
+              .fillMaxSize()
+              .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            contentPadding = PaddingValues(bottom = 124.dp)
+          ) {
+            item {
+              UjianScheduleHeaderCard(item = selectedItem, modifier = Modifier.padding(top = 12.dp))
+            }
+            item {
+              SoalCard(
+                question = selectedQuestion,
+                onEdit = {
+                  editorQuestionDraft = selectedQuestion
+                  questionUndoStack = emptyList()
+                },
+                onEditDetail = {
+                  editingQuestionDetailItem = selectedItem
+                  editingQuestionDetail = selectedQuestion
+                },
+                onPrint = { printQuestion(selectedItem, selectedQuestion, share = false) },
+                onShare = { printQuestion(selectedItem, selectedQuestion, share = true) },
+                onDelete = { deleteQuestion(selectedItem) }
+              )
+            }
+          }
+        } else if (selectedFolderKey != null) {
+          LazyColumn(
+            modifier = Modifier
+              .fillMaxSize()
+              .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            contentPadding = PaddingValues(bottom = 124.dp)
+          ) {
+            item {
+              UjianFolderHeaderCard(
+                title = selectedFolderKey ?: "Folder Ujian",
+                total = selectedFolderRows.size,
+                modifier = Modifier.padding(top = 12.dp)
+              )
+            }
+            if (selectedFolderRows.isEmpty()) {
+              item {
+                EmptyPlaceholderCard("Belum ada mapel di folder ujian ini.")
+              }
+            } else {
+              items(selectedFolderRows, key = { it.rowKey }) { item ->
+                val question = questionByRowKey[item.rowKey] ?: buildDefaultExamQuestionDraft(item)
+                UjianFolderRowCard(
+                  item = item,
+                  question = question,
+                  onClick = {
+                    selectedRowKey = item.rowKey
+                    editorQuestionDraft = question
+                    questionUndoStack = emptyList()
+                  },
+                  onEditDetail = {
+                    editingQuestionDetailItem = item
+                    editingQuestionDetail = question
+                  },
+                  onPrint = { printQuestion(item, question, share = false) },
+                  onShare = { printQuestion(item, question, share = true) },
+                  onDelete = { deleteQuestion(item) }
+                )
+              }
+            }
+          }
+        } else {
+          LazyColumn(
+            modifier = Modifier
+              .fillMaxSize()
+              .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            contentPadding = PaddingValues(bottom = 124.dp)
+          ) {
+            item {
+              UjianSummaryCard(
+                totalFolders = groupedFolders.size,
+                statusMessage = snapshot?.statusMessage.orEmpty(),
+                isLoading = isLoading,
+                modifier = Modifier.padding(top = 12.dp)
+              )
+            }
+            when {
+              isLoading -> {
+                items(4) { index -> AttendanceSkeletonCard(index = index + 1) }
+              }
+              snapshot?.items.orEmpty().isEmpty() -> {
+                item {
+                  EmptyPlaceholderCard(snapshot?.statusMessage?.takeIf { it.isNotBlank() }
+                    ?: "Belum ada folder ujian yang cocok dengan kelas dan mapel guru ini.")
+                }
+              }
+              else -> {
+                groupedFolders.forEach { (folderTitle, rows) ->
+                  item(key = "folder-$folderTitle") {
+                    UjianFolderHeaderCard(
+                      title = folderTitle,
+                      total = rows.size,
+                      onClick = { selectedFolderKey = folderTitle }
+                    )
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  editingQuestionDetail?.let { question ->
+    val item = editingQuestionDetailItem ?: selectedItem
+    if (item != null) {
+      SoalDetailDialog(
+        subject = item.subject,
+        question = question,
+        onDismiss = {
+          editingQuestionDetail = null
+          editingQuestionDetailItem = null
+        },
+        onSave = { updated ->
+          val latest = updated.copy(statusLabel = QuestionStatusDraft, updatedAt = System.currentTimeMillis())
+          questionByRowKey = questionByRowKey + (item.rowKey to latest)
+          editorQuestionDraft = editorQuestionDraft?.let { current -> if (current.id == latest.id) latest else current }
+          saveMapelQuestions(context, examQuestionStorageKey(item.rowKey), listOf(latest), synchronous = true)
+          editingQuestionDetail = null
+          editingQuestionDetailItem = null
+        }
+      )
+    }
+  }
+
+  val itemForAddModel = selectedItem
+  val questionForAddModel = editorQuestionDraft
+  if (isAddingQuestionModel && itemForAddModel != null && questionForAddModel != null) {
+    SoalAddModelDialog(
+      onDismiss = { isAddingQuestionModel = false },
+      onAdd = { typeKey ->
+        addQuestionModel(itemForAddModel, questionForAddModel, typeKey)
+        isAddingQuestionModel = false
+      }
+    )
+  }
+}
+
+@Composable
+private fun UjianSummaryCard(
+  totalFolders: Int,
+  statusMessage: String,
+  isLoading: Boolean,
+  modifier: Modifier = Modifier
+) {
+  Row(
+    modifier = modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(22.dp))
+      .background(CardBackground.copy(alpha = 0.94f))
+      .border(1.dp, CardBorder.copy(alpha = 0.84f), RoundedCornerShape(22.dp))
+      .padding(16.dp),
+    horizontalArrangement = Arrangement.spacedBy(12.dp),
+    verticalAlignment = Alignment.CenterVertically
+  ) {
+    Box(
+      modifier = Modifier
+        .size(48.dp)
+        .clip(RoundedCornerShape(16.dp))
+        .background(PrimaryBlue.copy(alpha = 0.12f))
+        .border(1.dp, PrimaryBlue.copy(alpha = 0.20f), RoundedCornerShape(16.dp)),
+      contentAlignment = Alignment.Center
+    ) {
+      if (isLoading) {
+        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp, color = PrimaryBlue)
+      } else {
+        Icon(Icons.Outlined.Quiz, contentDescription = null, tint = PrimaryBlue)
+      }
+    }
+    Column(
+      modifier = Modifier.weight(1f),
+      verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+      Text(
+        text = "Folder Ujian",
+        style = MaterialTheme.typography.titleMedium,
+        color = PrimaryBlueDark,
+        fontWeight = FontWeight.ExtraBold
+      )
+      Text(
+        text = when {
+          isLoading -> "Memuat folder ujian dari admin..."
+          statusMessage.isNotBlank() -> statusMessage
+          else -> "$totalFolders folder ujian siap diisi."
+        },
+        style = MaterialTheme.typography.bodySmall,
+        color = SubtleInk
+      )
+    }
+  }
+}
+
+@Composable
+private fun UjianFolderHeaderCard(
+  title: String,
+  total: Int,
+  modifier: Modifier = Modifier,
+  onClick: (() -> Unit)? = null
+) {
+  val cardModifier = if (onClick != null) {
+    modifier.clickable(onClick = onClick)
+  } else {
+    modifier
+  }
+  Row(
+    modifier = cardModifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(18.dp))
+      .background(SoftPanel.copy(alpha = 0.86f))
+      .border(1.dp, CardBorder.copy(alpha = 0.72f), RoundedCornerShape(18.dp))
+      .padding(horizontal = 14.dp, vertical = 12.dp),
+    horizontalArrangement = Arrangement.SpaceBetween,
+    verticalAlignment = Alignment.CenterVertically
+  ) {
+    Text(
+      text = title,
+      style = MaterialTheme.typography.titleSmall,
+      color = PrimaryBlueDark,
+      fontWeight = FontWeight.ExtraBold,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+      modifier = Modifier.weight(1f)
+    )
+    SoalMiniChip("$total mapel")
+  }
+}
+
+@Composable
+private fun UjianFolderRowCard(
+  item: GuruExamQuestionItem,
+  question: MapelQuestionDraft,
+  onClick: () -> Unit,
+  onEditDetail: () -> Unit,
+  onPrint: () -> Unit,
+  onShare: () -> Unit,
+  onDelete: () -> Unit
+) {
+  var menuExpanded by remember { mutableStateOf(false) }
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .shadow(12.dp, RoundedCornerShape(22.dp), ambientColor = Color(0x100F172A), spotColor = Color(0x100F172A))
+      .clip(RoundedCornerShape(22.dp))
+      .background(CardBackground.copy(alpha = 0.94f))
+      .border(1.dp, CardBorder.copy(alpha = 0.86f), RoundedCornerShape(22.dp))
+      .clickable(onClick = onClick)
+      .padding(16.dp),
+    verticalArrangement = Arrangement.spacedBy(12.dp)
+  ) {
+    Row(
+      horizontalArrangement = Arrangement.spacedBy(12.dp),
+      verticalAlignment = Alignment.Top
+    ) {
+      Box(
+        modifier = Modifier
+          .size(46.dp)
+          .clip(RoundedCornerShape(16.dp))
+          .background(PrimaryBlue.copy(alpha = 0.12f))
+          .border(1.dp, PrimaryBlue.copy(alpha = 0.18f), RoundedCornerShape(16.dp)),
+        contentAlignment = Alignment.Center
+      ) {
+        Icon(Icons.Outlined.Quiz, contentDescription = null, tint = PrimaryBlue)
+      }
+      Column(
+        modifier = Modifier.weight(1f),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+      ) {
+        Text(
+          text = item.subjectName.ifBlank { item.subject.title.ifBlank { "Mapel" } },
+          style = MaterialTheme.typography.titleMedium,
+          color = PrimaryBlueDark,
+          fontWeight = FontWeight.ExtraBold,
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis
+        )
+        Text(
+          text = listOf(item.className, formatSimpleDate(item.dateIso))
+            .filter { it.isNotBlank() }
+            .joinToString(" | "),
+          style = MaterialTheme.typography.bodySmall,
+          color = SubtleInk,
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis
+        )
+      }
+      Box {
+        Box(
+          modifier = Modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .background(SoftPanel.copy(alpha = 0.92f))
+            .clickable { menuExpanded = true },
+          contentAlignment = Alignment.Center
+        ) {
+          Icon(Icons.Outlined.MoreVert, contentDescription = t("Aksi soal"), tint = PrimaryBlueDark)
+        }
+        DropdownMenu(
+          expanded = menuExpanded,
+          onDismissRequest = { menuExpanded = false }
+        ) {
+          DropdownMenuItem(
+            text = { Text(t("Edit Detail")) },
+            leadingIcon = { Icon(Icons.Outlined.EditNote, contentDescription = null) },
+            onClick = {
+              menuExpanded = false
+              onEditDetail()
+            }
+          )
+          DropdownMenuItem(
+            text = { Text(t("Cetak")) },
+            leadingIcon = { Icon(Icons.Outlined.Print, contentDescription = null) },
+            onClick = {
+              menuExpanded = false
+              onPrint()
+            }
+          )
+          DropdownMenuItem(
+            text = { Text(t("Kirim")) },
+            leadingIcon = { Icon(Icons.Outlined.Share, contentDescription = null) },
+            onClick = {
+              menuExpanded = false
+              onShare()
+            }
+          )
+          DropdownMenuItem(
+            text = { Text(t("Hapus")) },
+            leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null, tint = Color(0xFFDC2626)) },
+            onClick = {
+              menuExpanded = false
+              onDelete()
+            }
+          )
+        }
+      }
+    }
+    Row(
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      SoalMiniChip("${question.questionCount()} nomor")
+      SoalMiniChip("${question.sections.size} model")
+      SoalMiniChip(question.statusLabel)
+    }
+  }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun UjianScheduleHeaderCard(
+  item: GuruExamQuestionItem,
+  modifier: Modifier = Modifier
+) {
+  val subjectTitle = item.subjectName.ifBlank { item.subject.title.ifBlank { item.nama.ifBlank { "Soal Ujian" } } }
+  val folderTitle = item.nama.takeIf { it.isNotBlank() && it != subjectTitle }
+  Column(
+    modifier = modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(22.dp))
+      .background(CardBackground.copy(alpha = 0.94f))
+      .border(1.dp, CardBorder.copy(alpha = 0.86f), RoundedCornerShape(22.dp))
+      .padding(16.dp),
+    verticalArrangement = Arrangement.spacedBy(10.dp)
+  ) {
+    Text(
+      text = subjectTitle,
+      style = MaterialTheme.typography.titleMedium,
+      color = PrimaryBlueDark,
+      fontWeight = FontWeight.ExtraBold
+    )
+    if (folderTitle != null) {
+      Text(
+        text = folderTitle,
+        style = MaterialTheme.typography.bodySmall,
+        color = SubtleInk,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+      )
+    }
+    FlowRow(
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+      verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+      UjianMetaChip("Jenis", item.jenis.ifBlank { "-" })
+      UjianMetaChip("Kelas", item.className.ifBlank { "-" })
+      UjianMetaChip("Mapel", item.subjectName.ifBlank { item.subject.title.ifBlank { "-" } })
+      UjianMetaChip("Tanggal", formatSimpleDate(item.dateIso).ifBlank { "-" })
+    }
+  }
+}
+
+@Composable
+private fun UjianMetaChip(
+  label: String,
+  value: String
+) {
+  Column(
+    modifier = Modifier
+      .width(136.dp)
+      .heightIn(min = 58.dp)
+      .clip(RoundedCornerShape(16.dp))
+      .background(SoftPanel.copy(alpha = 0.72f))
+      .border(1.dp, CardBorder.copy(alpha = 0.76f), RoundedCornerShape(16.dp))
+      .padding(horizontal = 12.dp, vertical = 9.dp),
+    verticalArrangement = Arrangement.spacedBy(2.dp)
+  ) {
+    Text(
+      text = label,
+      style = MaterialTheme.typography.labelSmall,
+      color = SubtleInk,
+      fontWeight = FontWeight.SemiBold,
+      maxLines = 1
+    )
+    Text(
+      text = value,
+      style = MaterialTheme.typography.labelLarge,
+      color = PrimaryBlueDark,
+      fontWeight = FontWeight.ExtraBold,
+      maxLines = 2,
+      overflow = TextOverflow.Ellipsis
+    )
+  }
+}
+
+private fun GuruExamQuestionItem.folderTitle(): String {
+  return listOf(jenis, nama)
+    .filter { it.isNotBlank() }
+    .joinToString(" - ")
+    .ifBlank { "Ujian" }
+}
+
+private fun examQuestionStorageKey(rowKey: String): String {
+  return "ujian-" + rowKey.replace(Regex("[^A-Za-z0-9._-]+"), "_").take(96).ifBlank { rowKey.hashCode().toString() }
+}
+
+private fun buildDefaultExamQuestionDraft(item: GuruExamQuestionItem): MapelQuestionDraft {
+  val now = System.currentTimeMillis()
+  return MapelQuestionDraft(
+    id = "soal-ujian-${item.rowKey.hashCode()}",
+    title = item.nama.ifBlank { "Soal ${item.subjectName.ifBlank { item.subject.title }}" },
+    category = item.jenis.ifBlank { "Ujian" },
+    form = "",
+    dateIso = item.dateIso.ifBlank { LocalDate.now().toString() },
+    academicYearLabel = defaultAcademicYearLabel(),
+    instruction = "",
+    sections = emptyList(),
+    languageCode = "ID",
+    statusLabel = QuestionStatusDraft,
+    updatedAt = now
+  )
+}
+
+private fun formatSimpleDate(value: String): String {
+  if (value.isBlank()) return ""
+  return runCatching {
+    LocalDate.parse(value.take(10)).format(DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.forLanguageTag("id-ID")))
+  }.getOrDefault(value)
 }
 
 @Composable
@@ -556,6 +1315,8 @@ private fun MapelDetailScreen(
   onSavePatronMateri: suspend (String, SubjectOverview, List<PatronMateriItem>) -> PatronMateriSaveOutcome,
   onLoadQuestions: suspend (String, SubjectOverview) -> String?,
   onSaveQuestions: suspend (String, SubjectOverview, String) -> QuestionSaveOutcome,
+  onLoadRaporDescriptions: suspend (String, SubjectOverview) -> String?,
+  onSaveRaporDescriptions: suspend (String, SubjectOverview, String) -> QuestionSaveOutcome,
   onLoadAiTokenBalance: suspend () -> GuruAiTokenWallet?,
   onGenerateAiContent: suspend (GuruAiGenerateRequest) -> GuruAiGenerateResult,
   selectedSection: MapelDetailSection,
@@ -587,6 +1348,9 @@ private fun MapelDetailScreen(
   var questionUndoStack by remember(subject.id) { mutableStateOf<List<MapelQuestionDraft>>(emptyList()) }
   var isPrintingQuestion by remember(subject.id) { mutableStateOf(false) }
   var isSavingQuestionToServer by rememberSaveable(subject.id) { mutableStateOf(false) }
+  var raporTemplate by remember(subject.id) { mutableStateOf(MapelRaporTemplate()) }
+  var isSavingRaporTemplate by rememberSaveable(subject.id) { mutableStateOf(false) }
+  var raporTemplateEditedAt by remember(subject.id) { mutableStateOf(0L) }
   var aiDialogFeature by rememberSaveable(subject.id) { mutableStateOf<String?>(null) }
   var aiPrompt by rememberSaveable(subject.id) { mutableStateOf("") }
   var aiCountText by rememberSaveable(subject.id) { mutableStateOf("5") }
@@ -656,6 +1420,35 @@ private fun MapelDetailScreen(
     questionItems = latestItems
     persistQuestionItems(latestItems, synchronous = true)
     return loadMapelQuestions(context, subject.id)
+  }
+
+  fun persistRaporTemplate(nextTemplate: MapelRaporTemplate = raporTemplate) {
+    val normalized = nextTemplate.normalized()
+    raporTemplate = normalized
+    raporTemplateEditedAt = System.currentTimeMillis()
+    saveMapelRaporTemplate(context, subject.id, normalized)
+  }
+
+  fun saveRaporTemplateToServer() {
+    if (isSavingRaporTemplate) return
+    detailScope.launch {
+      isSavingRaporTemplate = true
+      val normalized = raporTemplate.normalized()
+      persistRaporTemplate(normalized)
+      val outcome = onSaveRaporDescriptions(
+        subject.id,
+        subject,
+        encodeMapelRaporTemplate(normalized)
+      )
+      Toast.makeText(
+        context,
+        outcome.message.ifBlank {
+          if (outcome.success) "Deskripsi rapor berhasil disimpan." else "Gagal menyimpan deskripsi rapor."
+        },
+        if (outcome.success) Toast.LENGTH_SHORT else Toast.LENGTH_LONG
+      ).show()
+      isSavingRaporTemplate = false
+    }
   }
 
   fun addQuestionModel(question: MapelQuestionDraft, typeKey: String) {
@@ -961,6 +1754,16 @@ private fun MapelDetailScreen(
     isLoadingAttendance = true
     isLoadingScores = true
     isLoadingPatronMateri = true
+    val raporLoadStartedAt = System.currentTimeMillis()
+    val localRaporTemplate = loadMapelRaporTemplate(context, subject.id)
+    raporTemplate = localRaporTemplate
+    val remoteRaporTemplate = onLoadRaporDescriptions(subject.id, subject)
+      ?.let(::decodeMapelRaporTemplate)
+      ?.takeIf { it.hasAnyDescription() }
+    if (remoteRaporTemplate != null && raporTemplateEditedAt <= raporLoadStartedAt) {
+      raporTemplate = remoteRaporTemplate
+      saveMapelRaporTemplate(context, subject.id, remoteRaporTemplate)
+    }
     val localQuestions = loadMapelQuestions(context, subject.id)
     questionItems = localQuestions
     val remoteQuestions = onLoadQuestions(subject.id, subject)
@@ -1112,6 +1915,15 @@ private fun MapelDetailScreen(
               )
             }
           }
+        } else if (selectedSection == MapelDetailSection.Rapor) {
+          {
+            MapelTopButton(
+              icon = Icons.Outlined.Save,
+              contentDescription = t(if (isSavingRaporTemplate) "Menyimpan template rapor" else "Simpan template rapor"),
+              enabled = !isSavingRaporTemplate,
+              onClick = { saveRaporTemplateToServer() }
+            )
+          }
         } else if (selectedSection == MapelDetailSection.Absensi && !isQuestionEditorOpen) {
           {
             var actionMenuExpanded by rememberSaveable { mutableStateOf(false) }
@@ -1206,6 +2018,8 @@ private fun MapelDetailScreen(
                 modifier = Modifier.padding(bottom = 14.dp)
               )
             }
+
+            MapelDetailSection.Rapor -> Unit
 
             MapelDetailSection.PatronMateri -> {
               PatronMateriToolbar(
@@ -1374,6 +2188,50 @@ private fun MapelDetailScreen(
                         }
                       }
                     }
+                  }
+                }
+              }
+            } else if (selectedSection == MapelDetailSection.Rapor) {
+              when {
+                isLoadingScores -> {
+                  items(4) { index ->
+                    ScoreSkeletonCard(index = index + 1)
+                  }
+                }
+
+                scoreSnapshot == null -> {
+                  item {
+                    EmptyPlaceholderCard("Data nilai rapor belum tersedia. Coba buka kembali saat koneksi aktif.")
+                  }
+                }
+
+                scoreSnapshot?.students?.isEmpty() != false -> {
+                  item {
+                    EmptyPlaceholderCard("Belum ada santri aktif untuk kelas ini.")
+                  }
+                }
+
+                else -> {
+                  val students = scoreSnapshot?.students.orEmpty().sortedBy { it.name.lowercase() }
+                  item {
+                    MapelRaporTemplateEditor(
+                      template = raporTemplate,
+                      onTemplateChange = { updated ->
+                        persistRaporTemplate(updated)
+                      }
+                    )
+                  }
+                  item {
+                    MapelRaporSummaryCard(students = students)
+                  }
+                  items(
+                    items = students,
+                    key = { it.id }
+                  ) { student ->
+                    MapelRaporStudentCard(
+                      student = student,
+                      template = raporTemplate
+                    )
                   }
                 }
               }
@@ -5835,6 +6693,339 @@ private fun ScoreCard(
   }
 }
 
+@Composable
+private fun MapelRaporTemplateEditor(
+  template: MapelRaporTemplate,
+  onTemplateChange: (MapelRaporTemplate) -> Unit
+) {
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .shadow(10.dp, RoundedCornerShape(22.dp), ambientColor = Color(0x100F172A), spotColor = Color(0x100F172A))
+      .clip(RoundedCornerShape(22.dp))
+      .background(CardBackground.copy(alpha = 0.96f))
+      .border(1.dp, CardBorder.copy(alpha = 0.94f), RoundedCornerShape(22.dp))
+      .padding(14.dp),
+    verticalArrangement = Arrangement.spacedBy(12.dp)
+  ) {
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.spacedBy(12.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Box(
+        modifier = Modifier
+          .size(42.dp)
+          .clip(RoundedCornerShape(16.dp))
+          .background(PrimaryBlue.copy(alpha = 0.12f)),
+        contentAlignment = Alignment.Center
+      ) {
+        Icon(
+          imageVector = Icons.Outlined.Description,
+          contentDescription = null,
+          tint = PrimaryBlue
+        )
+      }
+      Column(
+        modifier = Modifier.weight(1f),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
+      ) {
+        Text(
+          text = t("Deskripsi rapor mapel"),
+          style = MaterialTheme.typography.titleSmall,
+          color = PrimaryBlueDark,
+          fontWeight = FontWeight.ExtraBold
+        )
+        Text(
+          text = t("Isi deskripsi sekali per predikat. Daftar santri di bawah akan memakai deskripsi sesuai predikat nilainya."),
+          style = MaterialTheme.typography.bodySmall,
+          color = SubtleInk
+        )
+      }
+    }
+
+    MapelRaporDescriptionGroup(
+      title = "Pengetahuan",
+      descriptions = template.knowledgeDescriptions,
+      tone = PrimaryBlue,
+      onDescriptionChange = { predicate, description ->
+        onTemplateChange(
+          template.copy(
+            knowledgeDescriptions = template.knowledgeDescriptions.toMutableMap().apply {
+              put(predicate, description)
+            }
+          )
+        )
+      }
+    )
+
+    MapelRaporDescriptionGroup(
+      title = "Keterampilan",
+      descriptions = template.skillDescriptions,
+      tone = WarmAccent,
+      onDescriptionChange = { predicate, description ->
+        onTemplateChange(
+          template.copy(
+            skillDescriptions = template.skillDescriptions.toMutableMap().apply {
+              put(predicate, description)
+            }
+          )
+        )
+      }
+    )
+  }
+}
+
+@Composable
+private fun MapelRaporDescriptionGroup(
+  title: String,
+  descriptions: Map<String, String>,
+  tone: Color,
+  onDescriptionChange: (String, String) -> Unit
+) {
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(18.dp))
+      .background(SoftPanel)
+      .border(1.dp, CardBorder.copy(alpha = 0.86f), RoundedCornerShape(18.dp))
+      .padding(12.dp),
+    verticalArrangement = Arrangement.spacedBy(10.dp)
+  ) {
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+      Box(
+        modifier = Modifier
+          .size(8.dp)
+          .clip(CircleShape)
+          .background(tone)
+      )
+      Text(
+        text = t(title),
+        style = MaterialTheme.typography.labelLarge,
+        color = PrimaryBlueDark,
+        fontWeight = FontWeight.ExtraBold
+      )
+    }
+
+    RaporPredicateOptions.forEach { predicate ->
+      OutlinedTextField(
+        value = descriptions[predicate].orEmpty(),
+        onValueChange = { onDescriptionChange(predicate, it) },
+        label = { Text("${t("Predikat")} $predicate") },
+        minLines = 2,
+        maxLines = 4,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp)
+      )
+    }
+  }
+}
+
+@Composable
+private fun MapelRaporSummaryCard(students: List<ScoreStudent>) {
+  val knowledgeScores = remember(students) { students.mapNotNull { it.nilaiAkhir } }
+  val skillScores = remember(students) { students.mapNotNull { it.nilaiKeterampilan } }
+  val knowledgeAverage = knowledgeScores.takeIf { it.isNotEmpty() }?.average()
+  val skillAverage = skillScores.takeIf { it.isNotEmpty() }?.average()
+
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(20.dp))
+      .background(PrimaryBlue.copy(alpha = 0.08f))
+      .border(1.dp, PrimaryBlue.copy(alpha = 0.16f), RoundedCornerShape(20.dp))
+      .padding(14.dp),
+    verticalArrangement = Arrangement.spacedBy(10.dp)
+  ) {
+    Text(
+      text = t("Ringkasan nilai rapor"),
+      style = MaterialTheme.typography.titleSmall,
+      color = PrimaryBlueDark,
+      fontWeight = FontWeight.ExtraBold
+    )
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+      MapelRaporSummaryItem(
+        label = "Santri",
+        value = students.size.toString(),
+        modifier = Modifier.weight(1f)
+      )
+      MapelRaporSummaryItem(
+        label = "Rata-rata pengetahuan",
+        value = knowledgeAverage?.let(::formatScoreNumber) ?: "-",
+        modifier = Modifier.weight(1f)
+      )
+    }
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+      MapelRaporSummaryItem(
+        label = "Rata-rata keterampilan",
+        value = skillAverage?.let(::formatScoreNumber) ?: "-",
+        modifier = Modifier.weight(1f)
+      )
+      MapelRaporSummaryItem(
+        label = "Template",
+        value = "${RaporPredicateOptions.size} predikat",
+        modifier = Modifier.weight(1f)
+      )
+    }
+  }
+}
+
+@Composable
+private fun MapelRaporSummaryItem(
+  label: String,
+  value: String,
+  modifier: Modifier = Modifier
+) {
+  Column(
+    modifier = modifier
+      .clip(RoundedCornerShape(16.dp))
+      .background(CardBackground.copy(alpha = 0.9f))
+      .border(1.dp, CardBorder.copy(alpha = 0.84f), RoundedCornerShape(16.dp))
+      .padding(horizontal = 12.dp, vertical = 10.dp),
+    verticalArrangement = Arrangement.spacedBy(3.dp)
+  ) {
+    Text(
+      text = t(label),
+      style = MaterialTheme.typography.labelSmall,
+      color = SubtleInk,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis
+    )
+    Text(
+      text = value,
+      style = MaterialTheme.typography.labelLarge,
+      color = PrimaryBlueDark,
+      fontWeight = FontWeight.ExtraBold,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis
+    )
+  }
+}
+
+@Composable
+private fun MapelRaporStudentCard(
+  student: ScoreStudent,
+  template: MapelRaporTemplate
+) {
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .shadow(10.dp, RoundedCornerShape(20.dp), ambientColor = Color(0x100F172A), spotColor = Color(0x100F172A))
+      .clip(RoundedCornerShape(20.dp))
+      .background(CardBackground.copy(alpha = 0.94f))
+      .border(1.dp, CardBorder.copy(alpha = 0.94f), RoundedCornerShape(20.dp))
+      .padding(horizontal = 14.dp, vertical = 12.dp),
+    verticalArrangement = Arrangement.spacedBy(10.dp)
+  ) {
+    Text(
+      text = student.name,
+      style = MaterialTheme.typography.titleSmall,
+      color = PrimaryBlueDark,
+      fontWeight = FontWeight.SemiBold,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis
+    )
+    MapelRaporScoreBlock(
+      label = "Pengetahuan",
+      score = student.nilaiAkhir,
+      description = mapelRaporDescription(
+        descriptions = template.knowledgeDescriptions,
+        score = student.nilaiAkhir
+      ),
+      tone = PrimaryBlue
+    )
+    MapelRaporScoreBlock(
+      label = "Keterampilan",
+      score = student.nilaiKeterampilan,
+      description = mapelRaporDescription(
+        descriptions = template.skillDescriptions,
+        score = student.nilaiKeterampilan
+      ),
+      tone = WarmAccent
+    )
+  }
+}
+
+@Composable
+private fun MapelRaporScoreBlock(
+  label: String,
+  score: Double?,
+  description: String,
+  tone: Color
+) {
+  val predicate = score?.let(::mapelRaporPredicate) ?: "-"
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(16.dp))
+      .background(SoftPanel)
+      .border(1.dp, CardBorder.copy(alpha = 0.86f), RoundedCornerShape(16.dp))
+      .padding(12.dp),
+    verticalArrangement = Arrangement.spacedBy(8.dp)
+  ) {
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+      Text(
+        text = t(label),
+        style = MaterialTheme.typography.bodyMedium,
+        color = PrimaryBlueDark,
+        fontWeight = FontWeight.ExtraBold,
+        modifier = Modifier.weight(1f)
+      )
+      MapelRaporValueChip(label = "Nilai", value = score?.let(::formatScoreNumber) ?: "-", tone = tone)
+      MapelRaporValueChip(label = "Predikat", value = predicate, tone = tone)
+    }
+    Text(
+      text = description,
+      style = MaterialTheme.typography.bodySmall,
+      color = SubtleInk
+    )
+  }
+}
+
+@Composable
+private fun MapelRaporValueChip(
+  label: String,
+  value: String,
+  tone: Color
+) {
+  Column(
+    modifier = Modifier
+      .clip(RoundedCornerShape(14.dp))
+      .background(tone.copy(alpha = 0.1f))
+      .border(1.dp, tone.copy(alpha = 0.18f), RoundedCornerShape(14.dp))
+      .padding(horizontal = 9.dp, vertical = 6.dp),
+    horizontalAlignment = Alignment.CenterHorizontally
+  ) {
+    Text(
+      text = t(label),
+      style = MaterialTheme.typography.labelSmall,
+      color = SubtleInk,
+      maxLines = 1
+    )
+    Text(
+      text = value,
+      style = MaterialTheme.typography.labelLarge,
+      color = PrimaryBlueDark,
+      fontWeight = FontWeight.ExtraBold,
+      maxLines = 1
+    )
+  }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ScoreTypeCard(
@@ -6639,7 +7830,7 @@ private fun MapelDetailBottomNav(
   ) {
     Row(
       modifier = Modifier
-        .width(356.dp)
+        .fillMaxWidth()
         .shadow(18.dp, RoundedCornerShape(32.dp), ambientColor = Color(0x180F172A), spotColor = Color(0x180F172A))
         .clip(RoundedCornerShape(32.dp))
         .background(CardBackground.copy(alpha = 0.96f))
@@ -6826,6 +8017,7 @@ private enum class MapelDetailSection(
 ) {
   Absensi("Absensi", Icons.Outlined.TaskAlt),
   Nilai("Nilai", Icons.Outlined.EditNote),
+  Rapor("Rapor", Icons.Outlined.Description),
   PatronMateri("Patron Materi", Icons.Outlined.AutoStories),
   Soal("Soal", Icons.Outlined.Quiz)
 }
@@ -7219,7 +8411,7 @@ private fun normalizeSoalPrintLanguageCode(value: String): String {
 private fun normalizeQuestionStatusLabel(value: String): String {
   val normalized = value.trim().lowercase(Locale.ROOT)
   return when (normalized) {
-    "tersimpan", "saved", "sinkron", "synced" -> QuestionStatusSaved
+    "tersimpan", "saved", "sinkron", "synced", "submitted", "published" -> QuestionStatusSaved
     "draft", "draf", "" -> QuestionStatusDraft
     else -> value.trim().ifBlank { QuestionStatusDraft }
   }
@@ -8731,11 +9923,20 @@ private fun shouldPreferLocalQuestion(
   val localStatus = normalizeQuestionStatusLabel(localQuestion.statusLabel)
   val remoteStatus = normalizeQuestionStatusLabel(remoteQuestion.statusLabel)
   return when {
+    remoteQuestion.hasFilledChoiceOptions() && !localQuestion.hasFilledChoiceOptions() -> false
     localQuestion.hasQuestionEditorContent() && !remoteQuestion.hasQuestionEditorContent() -> true
     localStatus == QuestionStatusDraft && localQuestion.updatedAt >= remoteQuestion.updatedAt -> true
     localQuestion.updatedAt > remoteQuestion.updatedAt -> true
     localStatus == QuestionStatusSaved && remoteStatus != QuestionStatusSaved -> true
     else -> false
+  }
+}
+
+private fun MapelQuestionDraft.hasFilledChoiceOptions(): Boolean {
+  return sections.any { section ->
+    section.choiceQuestions.any { question ->
+      question.options.any { option -> option.isNotBlank() }
+    }
   }
 }
 
@@ -9169,6 +10370,13 @@ private data class ScoreDetailDraftRow(
   val dateIso: String = "",
   val valueText: String = "",
   val material: String = ""
+)
+
+private val RaporPredicateOptions = listOf("A", "B", "C", "D", "E")
+
+private data class MapelRaporTemplate(
+  val knowledgeDescriptions: Map<String, String> = emptyRaporDescriptionMap(),
+  val skillDescriptions: Map<String, String> = emptyRaporDescriptionMap()
 )
 
 private data class PatronLearningMaterial(
@@ -10031,6 +11239,107 @@ private fun formatScoreNumber(value: Double): String {
     rounded.toInt().toString()
   } else {
     rounded.toString()
+  }
+}
+
+private fun emptyRaporDescriptionMap(): Map<String, String> {
+  return RaporPredicateOptions.associateWith { "" }
+}
+
+private fun MapelRaporTemplate.normalized(): MapelRaporTemplate {
+  return copy(
+    knowledgeDescriptions = normalizedRaporDescriptionMap(knowledgeDescriptions),
+    skillDescriptions = normalizedRaporDescriptionMap(skillDescriptions)
+  )
+}
+
+private fun MapelRaporTemplate.hasAnyDescription(): Boolean {
+  return knowledgeDescriptions.values.any { it.isNotBlank() } ||
+    skillDescriptions.values.any { it.isNotBlank() }
+}
+
+private fun normalizedRaporDescriptionMap(values: Map<String, String>): Map<String, String> {
+  return RaporPredicateOptions.associateWith { predicate ->
+    values[predicate].orEmpty()
+  }
+}
+
+private fun mapelRaporPredicate(value: Double): String {
+  return when {
+    value >= 90.0 -> "A"
+    value >= 80.0 -> "B"
+    value >= 70.0 -> "C"
+    value >= 60.0 -> "D"
+    else -> "E"
+  }
+}
+
+private fun mapelRaporDescription(
+  descriptions: Map<String, String>,
+  score: Double?
+): String {
+  if (score == null) return "Nilai belum tersedia."
+  val predicate = mapelRaporPredicate(score)
+  return descriptions[predicate]
+    .orEmpty()
+    .ifBlank { "Deskripsi predikat $predicate belum diisi." }
+}
+
+private fun loadMapelRaporTemplate(
+  context: Context,
+  subjectId: String
+): MapelRaporTemplate {
+  val rawJson = context.getSharedPreferences("mapel_rapor_templates", Context.MODE_PRIVATE)
+    .getString(subjectId, "{}")
+    .orEmpty()
+  return decodeMapelRaporTemplate(rawJson)
+}
+
+private fun decodeMapelRaporTemplate(rawJson: String): MapelRaporTemplate {
+  return runCatching {
+    val root = JSONObject(rawJson.ifBlank { "{}" })
+    MapelRaporTemplate(
+      knowledgeDescriptions = readRaporDescriptionMap(root.optJSONObject("knowledgeDescriptions")
+        ?: root.optJSONObject("knowledge")),
+      skillDescriptions = readRaporDescriptionMap(root.optJSONObject("skillDescriptions")
+        ?: root.optJSONObject("skill"))
+    ).normalized()
+  }.getOrDefault(MapelRaporTemplate())
+}
+
+private fun readRaporDescriptionMap(row: JSONObject?): Map<String, String> {
+  return RaporPredicateOptions.associateWith { predicate ->
+    row?.optString(predicate).orEmpty()
+  }
+}
+
+private fun saveMapelRaporTemplate(
+  context: Context,
+  subjectId: String,
+  template: MapelRaporTemplate
+): String {
+  val normalized = template.normalized()
+  val rawJson = encodeMapelRaporTemplate(normalized)
+  context.getSharedPreferences("mapel_rapor_templates", Context.MODE_PRIVATE)
+    .edit()
+    .putString(subjectId, rawJson)
+    .apply()
+  return rawJson
+}
+
+private fun encodeMapelRaporTemplate(template: MapelRaporTemplate): String {
+  val normalized = template.normalized()
+  return JSONObject().apply {
+    put("knowledgeDescriptions", raporDescriptionJson(normalized.knowledgeDescriptions))
+    put("skillDescriptions", raporDescriptionJson(normalized.skillDescriptions))
+  }.toString()
+}
+
+private fun raporDescriptionJson(values: Map<String, String>): JSONObject {
+  return JSONObject().apply {
+    RaporPredicateOptions.forEach { predicate ->
+      put(predicate, values[predicate].orEmpty())
+    }
   }
 }
 

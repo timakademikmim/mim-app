@@ -23,6 +23,7 @@ import com.mim.guruapp.MonthlyExtracurricularSaveOutcome
 import com.mim.guruapp.MonthlyReportSaveOutcome
 import com.mim.guruapp.UtsReportSaveOutcome
 import com.mim.guruapp.WakasekReviewOutcome
+import com.mim.guruapp.availableAppRoles
 import com.mim.guruapp.data.model.AttendanceHistoryEntry
 import com.mim.guruapp.data.model.AttendanceApprovalRequest
 import com.mim.guruapp.data.model.CalendarEvent
@@ -47,12 +48,24 @@ import com.mim.guruapp.data.model.WaliSantriProfile
 import com.mim.guruapp.data.remote.GuruAiGenerateRequest
 import com.mim.guruapp.data.remote.GuruAiGenerateResult
 import com.mim.guruapp.data.remote.GuruAiTokenWallet
+import com.mim.guruapp.data.remote.GuruExamQuestionItem
+import com.mim.guruapp.data.remote.GuruExamQuestionSnapshot
+import com.mim.guruapp.data.remote.AdminEmployee
+import com.mim.guruapp.data.remote.AdminEmployeeListResult
+import com.mim.guruapp.data.remote.AdminEmployeeSaveResult
+import com.mim.guruapp.data.remote.AdminSchoolProfile
+import com.mim.guruapp.data.remote.AdminSchoolProfileLoadResult
+import com.mim.guruapp.data.remote.AdminSchoolProfileSaveResult
+import com.mim.guruapp.data.remote.AdminSantri
+import com.mim.guruapp.data.remote.AdminSantriLoadResult
+import com.mim.guruapp.data.remote.AdminSantriSaveResult
 import com.mim.guruapp.ui.components.clearFocusOnOutsideTap
 import com.mim.guruapp.ui.i18n.AppLanguage
 import com.mim.guruapp.ui.i18n.LocalAppLanguage
 import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.screens.GuruHomeScreen
 import com.mim.guruapp.ui.screens.LoginScreen
+import com.mim.guruapp.ui.screens.RolePickerScreen
 import com.mim.guruapp.ui.screens.WelcomeScreen
 import com.mim.guruapp.ui.theme.AppBackground
 import java.time.LocalDate
@@ -64,6 +77,8 @@ fun GuruAppRoot(
   onPasswordChange: (String) -> Unit,
   onLoginClick: () -> Unit,
   onUseDemoAccount: () -> Unit,
+  onSelectActiveRole: (String) -> Unit,
+  onOpenRolePicker: () -> Unit,
   onToggleSidebar: () -> Unit,
   onCloseSidebar: () -> Unit,
   onToggleSidebarParent: (GuruSidebarParent) -> Unit,
@@ -99,8 +114,20 @@ fun GuruAppRoot(
   onSaveMapelPatronMateri: suspend (String, SubjectOverview, List<PatronMateriItem>) -> PatronMateriSaveOutcome,
   onLoadMapelQuestions: suspend (String, SubjectOverview) -> String?,
   onSaveMapelQuestions: suspend (String, SubjectOverview, String) -> QuestionSaveOutcome,
+  onLoadMapelRaporDescriptions: suspend (String, SubjectOverview) -> String?,
+  onSaveMapelRaporDescriptions: suspend (String, SubjectOverview, String) -> QuestionSaveOutcome,
+  onLoadExamQuestions: suspend () -> GuruExamQuestionSnapshot,
+  onSaveExamQuestions: suspend (GuruExamQuestionItem, String) -> QuestionSaveOutcome,
   onLoadAiTokenBalance: suspend () -> GuruAiTokenWallet?,
   onGenerateAiContent: suspend (GuruAiGenerateRequest) -> GuruAiGenerateResult,
+  onLoadAdminEmployees: suspend () -> AdminEmployeeListResult,
+  onSaveAdminEmployee: suspend (AdminEmployee, String) -> AdminEmployeeSaveResult,
+  onLoadAdminSchoolProfile: suspend () -> AdminSchoolProfileLoadResult,
+  onSaveAdminSchoolProfile: suspend (AdminSchoolProfile) -> AdminSchoolProfileSaveResult,
+  onLoadAdminSantri: suspend () -> AdminSantriLoadResult,
+  onSaveAdminSantri: suspend (AdminSantri) -> AdminSantriSaveResult,
+  onPromoteAdminSantri: suspend (AdminSantri) -> AdminSantriSaveResult,
+  onGraduateAdminSantri: suspend (AdminSantri) -> AdminSantriSaveResult,
   onSaveProfile: suspend (GuruProfile) -> ProfileSaveOutcome,
   onSaveSantri: suspend (WaliSantriProfile) -> SantriSaveOutcome,
   onSaveMonthlyReport: suspend (MonthlyReportItem) -> MonthlyReportSaveOutcome,
@@ -145,82 +172,105 @@ fun GuruAppRoot(
           onUseDemoAccount = onUseDemoAccount
         )
 
+        GuruDestination.RolePicker -> RolePickerScreen(
+          teacherName = state.session.teacherName.ifBlank { state.dashboard?.teacherName.orEmpty() },
+          activeRole = state.session.activeRole,
+          roles = availableAppRoles(state.session.roles),
+          onSelectRole = onSelectActiveRole,
+          onLogoutClick = onLogoutClick
+        )
+
         GuruDestination.Home -> {
           val dashboard = state.dashboard
           if (dashboard == null) {
             Box(modifier = Modifier.fillMaxSize())
           } else {
             GuruHomeScreen(
-            dashboard = dashboard,
-            syncBanner = state.syncBanner,
-            selectedDestination = state.selectedSidebarDestination,
-            isCalendarScreenOpen = state.isCalendarScreenOpen,
-            isNotificationPopupOpen = state.isNotificationPopupOpen,
-            selectedCalendarDateIso = state.selectedCalendarDateIso,
-            teachingReminderSettings = state.teachingReminderSettings,
-            pendingInputAbsensiTarget = state.pendingInputAbsensiTarget,
-            isSidebarOpen = state.isSidebarOpen,
-            expandedSidebarParent = state.expandedSidebarParent,
-            bottomNavShortcutDestinations = state.bottomNavShortcutDestinations,
-            languageCode = state.languageCode,
-            themeModeCode = state.themeModeCode,
-            isClaimSectionVisible = state.isClaimSectionVisible,
-            selectedClaimSubjectIds = state.selectedClaimSubjectIds,
-            onToggleSidebar = onToggleSidebar,
-            onCloseSidebar = onCloseSidebar,
-            onToggleSidebarParent = onToggleSidebarParent,
-            onSelectDestination = onSelectSidebarDestination,
-            onUpdateBottomNavShortcuts = onUpdateBottomNavShortcuts,
-            onOpenCalendarScreen = onOpenCalendarScreen,
-            onCloseCalendarScreen = onCloseCalendarScreen,
-            onOpenNotificationPopup = onOpenNotificationPopup,
-            onCloseNotificationPopup = onCloseNotificationPopup,
-            onMarkNotificationAsRead = onMarkNotificationAsRead,
-            onMarkAllNotificationsAsRead = onMarkAllNotificationsAsRead,
-            onUpdateTeachingReminderSettings = onUpdateTeachingReminderSettings,
-            onOpenInputAbsensiTarget = onOpenInputAbsensiTarget,
-            onConsumePendingInputAbsensiTarget = onConsumePendingInputAbsensiTarget,
-            onLoadAttendanceApprovalRequest = onLoadAttendanceApprovalRequest,
-            onReviewAttendanceApproval = onReviewAttendanceApproval,
-            onSelectCalendarDate = onSelectCalendarDate,
-            onToggleClaimSection = onToggleClaimSection,
-            onToggleClaimSubject = onToggleClaimSubject,
-            onClearClaimSelection = onClearClaimSelection,
-            onClaimSelectedSubjects = onClaimSelectedSubjects,
-            onLoadMapelAttendance = onLoadMapelAttendance,
-            onSaveMapelAttendance = onSaveMapelAttendance,
-            onSaveMapelAttendanceBatch = onSaveMapelAttendanceBatch,
-            onDeleteMapelAttendance = onDeleteMapelAttendance,
-            onSendMapelAttendanceDelegation = onSendMapelAttendanceDelegation,
-            onLoadSubstituteTeacherContext = onLoadSubstituteTeacherContext,
-            onLoadDelegatedAttendanceContext = onLoadDelegatedAttendanceContext,
-            onLoadMapelScores = onLoadMapelScores,
-            onSaveMapelScores = onSaveMapelScores,
-            onSaveMapelScoresBatch = onSaveMapelScoresBatch,
-            onLoadMapelPatronMateri = onLoadMapelPatronMateri,
-            onSaveMapelPatronMateri = onSaveMapelPatronMateri,
-            onLoadMapelQuestions = onLoadMapelQuestions,
-            onSaveMapelQuestions = onSaveMapelQuestions,
-            onLoadAiTokenBalance = onLoadAiTokenBalance,
-            onGenerateAiContent = onGenerateAiContent,
-            onSaveProfile = onSaveProfile,
-            onSaveSantri = onSaveSantri,
-            onSaveMonthlyReport = onSaveMonthlyReport,
-            onSaveMonthlyExtracurricularReports = onSaveMonthlyExtracurricularReports,
-            onLoadMonthlyAttendanceSummaries = onLoadMonthlyAttendanceSummaries,
-            onLoadMonthlyAttendanceDetail = onLoadMonthlyAttendanceDetail,
-            onSaveUtsReportOverride = onSaveUtsReportOverride,
-            onLoadMutabaah = onLoadMutabaah,
-            onSaveMutabaahStatus = onSaveMutabaahStatus,
-            onSaveMutabaahStatuses = onSaveMutabaahStatuses,
-            onLoadLeaveRequests = onLoadLeaveRequests,
-            onSubmitLeaveRequest = onSubmitLeaveRequest,
-            onDeleteLeaveRequest = onDeleteLeaveRequest,
-            onReviewWakasekLeaveRequest = onReviewWakasekLeaveRequest,
-            onApplyLanguage = onApplyLanguage,
-            onApplyThemeMode = onApplyThemeMode,
-            onRefreshClick = onRefreshClick,
-            onLogoutClick = onLogoutClick
+              dashboard = dashboard,
+              activeRole = state.session.activeRole,
+              availableRoles = availableAppRoles(state.session.roles),
+              syncBanner = state.syncBanner,
+              selectedDestination = state.selectedSidebarDestination,
+              isCalendarScreenOpen = state.isCalendarScreenOpen,
+              isNotificationPopupOpen = state.isNotificationPopupOpen,
+              selectedCalendarDateIso = state.selectedCalendarDateIso,
+              teachingReminderSettings = state.teachingReminderSettings,
+              pendingInputAbsensiTarget = state.pendingInputAbsensiTarget,
+              isSidebarOpen = state.isSidebarOpen,
+              expandedSidebarParent = state.expandedSidebarParent,
+              bottomNavShortcutDestinations = state.bottomNavShortcutDestinations,
+              languageCode = state.languageCode,
+              themeModeCode = state.themeModeCode,
+              isClaimSectionVisible = state.isClaimSectionVisible,
+              selectedClaimSubjectIds = state.selectedClaimSubjectIds,
+              onToggleSidebar = onToggleSidebar,
+              onCloseSidebar = onCloseSidebar,
+              onToggleSidebarParent = onToggleSidebarParent,
+              onSelectDestination = onSelectSidebarDestination,
+              onOpenRolePicker = onOpenRolePicker,
+              onUpdateBottomNavShortcuts = onUpdateBottomNavShortcuts,
+              onOpenCalendarScreen = onOpenCalendarScreen,
+              onCloseCalendarScreen = onCloseCalendarScreen,
+              onOpenNotificationPopup = onOpenNotificationPopup,
+              onCloseNotificationPopup = onCloseNotificationPopup,
+              onMarkNotificationAsRead = onMarkNotificationAsRead,
+              onMarkAllNotificationsAsRead = onMarkAllNotificationsAsRead,
+              onUpdateTeachingReminderSettings = onUpdateTeachingReminderSettings,
+              onOpenInputAbsensiTarget = onOpenInputAbsensiTarget,
+              onConsumePendingInputAbsensiTarget = onConsumePendingInputAbsensiTarget,
+              onLoadAttendanceApprovalRequest = onLoadAttendanceApprovalRequest,
+              onReviewAttendanceApproval = onReviewAttendanceApproval,
+              onSelectCalendarDate = onSelectCalendarDate,
+              onToggleClaimSection = onToggleClaimSection,
+              onToggleClaimSubject = onToggleClaimSubject,
+              onClearClaimSelection = onClearClaimSelection,
+              onClaimSelectedSubjects = onClaimSelectedSubjects,
+              onLoadMapelAttendance = onLoadMapelAttendance,
+              onSaveMapelAttendance = onSaveMapelAttendance,
+              onSaveMapelAttendanceBatch = onSaveMapelAttendanceBatch,
+              onDeleteMapelAttendance = onDeleteMapelAttendance,
+              onSendMapelAttendanceDelegation = onSendMapelAttendanceDelegation,
+              onLoadSubstituteTeacherContext = onLoadSubstituteTeacherContext,
+              onLoadDelegatedAttendanceContext = onLoadDelegatedAttendanceContext,
+              onLoadMapelScores = onLoadMapelScores,
+              onSaveMapelScores = onSaveMapelScores,
+              onSaveMapelScoresBatch = onSaveMapelScoresBatch,
+              onLoadMapelPatronMateri = onLoadMapelPatronMateri,
+              onSaveMapelPatronMateri = onSaveMapelPatronMateri,
+              onLoadMapelQuestions = onLoadMapelQuestions,
+              onSaveMapelQuestions = onSaveMapelQuestions,
+              onLoadMapelRaporDescriptions = onLoadMapelRaporDescriptions,
+              onSaveMapelRaporDescriptions = onSaveMapelRaporDescriptions,
+              onLoadExamQuestions = onLoadExamQuestions,
+              onSaveExamQuestions = onSaveExamQuestions,
+              onLoadAiTokenBalance = onLoadAiTokenBalance,
+              onGenerateAiContent = onGenerateAiContent,
+              onLoadAdminEmployees = onLoadAdminEmployees,
+              onSaveAdminEmployee = onSaveAdminEmployee,
+              onLoadAdminSchoolProfile = onLoadAdminSchoolProfile,
+              onSaveAdminSchoolProfile = onSaveAdminSchoolProfile,
+              onLoadAdminSantri = onLoadAdminSantri,
+              onSaveAdminSantri = onSaveAdminSantri,
+              onPromoteAdminSantri = onPromoteAdminSantri,
+              onGraduateAdminSantri = onGraduateAdminSantri,
+              onSaveProfile = onSaveProfile,
+              onSaveSantri = onSaveSantri,
+              onSaveMonthlyReport = onSaveMonthlyReport,
+              onSaveMonthlyExtracurricularReports = onSaveMonthlyExtracurricularReports,
+              onLoadMonthlyAttendanceSummaries = onLoadMonthlyAttendanceSummaries,
+              onLoadMonthlyAttendanceDetail = onLoadMonthlyAttendanceDetail,
+              onSaveUtsReportOverride = onSaveUtsReportOverride,
+              onLoadMutabaah = onLoadMutabaah,
+              onSaveMutabaahStatus = onSaveMutabaahStatus,
+              onSaveMutabaahStatuses = onSaveMutabaahStatuses,
+              onLoadLeaveRequests = onLoadLeaveRequests,
+              onSubmitLeaveRequest = onSubmitLeaveRequest,
+              onDeleteLeaveRequest = onDeleteLeaveRequest,
+              onReviewWakasekLeaveRequest = onReviewWakasekLeaveRequest,
+              onApplyLanguage = onApplyLanguage,
+              onApplyThemeMode = onApplyThemeMode,
+              onRefreshClick = onRefreshClick,
+              onLogoutClick = onLogoutClick
             )
           }
         }

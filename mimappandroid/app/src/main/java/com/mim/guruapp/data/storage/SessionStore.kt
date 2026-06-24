@@ -69,6 +69,12 @@ class SessionStore(private val context: Context) {
     }
   }
 
+  suspend fun updateActiveRole(activeRole: String) {
+    context.sessionDataStore.edit { prefs ->
+      prefs[Keys.ActiveRole] = activeRole
+    }
+  }
+
   suspend fun clear() {
     context.sessionDataStore.edit { prefs ->
       prefs.clear()
