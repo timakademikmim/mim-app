@@ -133,6 +133,8 @@ fun RaporScreen(
   isRefreshing: Boolean,
   onMenuClick: () -> Unit,
   onRefresh: () -> Unit,
+  onLoadScores: suspend (String, SubjectOverview) -> MapelScoreSnapshot? = { _, _ -> null },
+  onLoadRaporDescriptions: suspend (String, SubjectOverview) -> String? = { _, _ -> null },
   onLoadAttendance: suspend (String, SubjectOverview) -> MapelAttendanceSnapshot? = { _, _ -> null },
   onDetailModeChange: (Boolean) -> Unit = {},
   modifier: Modifier = Modifier
@@ -156,6 +158,12 @@ fun RaporScreen(
   var isResetDialogOpen by rememberSaveable { mutableStateOf(false) }
   var progressDialogState by remember { mutableStateOf<RaporProgressDialogState?>(null) }
   var requestedAttendanceLoadIds by remember(selectedSemesterId) { mutableStateOf<Set<String>>(emptySet()) }
+  var requestedScoreLoadIds by remember(selectedSemesterId, utsReportSnapshot.updatedAt) { mutableStateOf<Set<String>>(emptySet()) }
+  var requestedDescriptionLoadIds by remember(selectedSemesterId, utsReportSnapshot.updatedAt) { mutableStateOf<Set<String>>(emptySet()) }
+  var freshRaporDataLoadingCount by remember(selectedSemesterId, utsReportSnapshot.updatedAt) { mutableStateOf(0) }
+  var remoteRaporDescriptionTemplates by remember(selectedSemesterId, utsReportSnapshot.updatedAt) {
+    mutableStateOf<Map<String, RaporDescriptionTemplate>>(emptyMap())
+  }
 
   LaunchedEffect(semesters) {
     if (selectedSemesterId !in semesters.map { it.id }) {
@@ -199,13 +207,64 @@ fun RaporScreen(
       )
     }
   }
+  LaunchedEffect(raporAttendanceSubjects, selectedSemester, requestedScoreLoadIds) {
+    val missingSubjects = raporAttendanceSubjects
+      .filter { it.distribusiId !in requestedScoreLoadIds }
+    if (missingSubjects.isEmpty()) return@LaunchedEffect
+    requestedScoreLoadIds = requestedScoreLoadIds + missingSubjects.map { it.distribusiId }
+    missingSubjects.forEach { subject ->
+      launch {
+        freshRaporDataLoadingCount += 1
+        try {
+          onLoadScores(
+            subject.distribusiId,
+            subject.toSubjectOverview(
+              className = classNameById[subject.classId].orEmpty(),
+              semester = selectedSemester
+            )
+          )
+        } finally {
+          freshRaporDataLoadingCount = (freshRaporDataLoadingCount - 1).coerceAtLeast(0)
+        }
+      }
+    }
+  }
+  LaunchedEffect(raporAttendanceSubjects, selectedSemester, requestedDescriptionLoadIds) {
+    val missingSubjects = raporAttendanceSubjects
+      .filter { it.distribusiId !in requestedDescriptionLoadIds }
+    if (missingSubjects.isEmpty()) return@LaunchedEffect
+    requestedDescriptionLoadIds = requestedDescriptionLoadIds + missingSubjects.map { it.distribusiId }
+    missingSubjects.forEach { subject ->
+      launch {
+        freshRaporDataLoadingCount += 1
+        try {
+          val rawJson = onLoadRaporDescriptions(
+            subject.distribusiId,
+            subject.toSubjectOverview(
+              className = classNameById[subject.classId].orEmpty(),
+              semester = selectedSemester
+            )
+          ).orEmpty()
+          val template = decodeRaporDescriptionTemplate(rawJson)
+          if (template.hasAnyDescription()) {
+            saveRaporDescriptionTemplate(context, subject.distribusiId, rawJson)
+            remoteRaporDescriptionTemplates = remoteRaporDescriptionTemplates +
+              (subject.distribusiId to template)
+          }
+        } finally {
+          freshRaporDataLoadingCount = (freshRaporDataLoadingCount - 1).coerceAtLeast(0)
+        }
+      }
+    }
+  }
   val raporDescriptionTemplateIds = remember(utsReportSnapshot.classSubjects, scoreSnapshots) {
     (utsReportSnapshot.classSubjects.map { it.distribusiId } + scoreSnapshots.map { it.distribusiId })
       .map { it.trim() }
       .filter { it.isNotBlank() }
       .distinct()
   }
-  val raporDescriptionTemplates = loadRaporDescriptionTemplates(context, raporDescriptionTemplateIds)
+  val raporDescriptionTemplates = loadRaporDescriptionTemplates(context, raporDescriptionTemplateIds) +
+    remoteRaporDescriptionTemplates
   val reports = remember(students, selectedSemester, utsReportSnapshot, scoreSnapshots, attendanceSnapshots, manualReports, profile, raporDescriptionTemplates) {
     students.associate { student ->
       val manual = manualReports[buildRaporManualKey(student, selectedSemester)]
@@ -400,6 +459,7 @@ fun RaporScreen(
           santri = activeSantri,
           report = report,
           manualData = manualData,
+          isFreshDataLoading = freshRaporDataLoadingCount > 0,
           onBackClick = { selectedSantriId = null },
           onPrintClick = { launchExport(report, share = false) },
           onSendClick = { launchExport(report, share = true) },
@@ -603,6 +663,7 @@ private fun RaporDetailContent(
   santri: WaliSantriProfile,
   report: RaporStudentReport,
   manualData: RaporManualData?,
+  isFreshDataLoading: Boolean,
   onBackClick: () -> Unit,
   onPrintClick: () -> Unit,
   onSendClick: () -> Unit,
@@ -628,11 +689,35 @@ private fun RaporDetailContent(
         leadingContentDescription = "Kembali ke daftar rapor",
         onLeadingClick = onBackClick,
         actions = {
-          RaporTopButton(Icons.Outlined.Print, "Cetak rapor", onPrintClick)
+          RaporTopButton(Icons.Outlined.Print, "Cetak rapor", onPrintClick, enabled = !isFreshDataLoading)
           Spacer(modifier = Modifier.width(8.dp))
-          RaporTopButton(Icons.AutoMirrored.Outlined.Send, "Kirim rapor", onSendClick)
+          RaporTopButton(Icons.AutoMirrored.Outlined.Send, "Kirim rapor", onSendClick, enabled = !isFreshDataLoading)
         }
       )
+
+      if (isFreshDataLoading) {
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(PrimaryBlue.copy(alpha = 0.08f))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+          horizontalArrangement = Arrangement.spacedBy(10.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          CircularProgressIndicator(
+            modifier = Modifier.size(18.dp),
+            strokeWidth = 2.dp,
+            color = PrimaryBlue
+          )
+          Text(
+            text = "Memuat nilai dan deskripsi terbaru dari database...",
+            style = MaterialTheme.typography.bodySmall,
+            color = PrimaryBlueDark,
+            fontWeight = FontWeight.SemiBold
+          )
+        }
+      }
 
       if (activeSection.canImport) {
         RaporSectionActionBar(
@@ -745,20 +830,21 @@ private fun RaporTopBar(
 private fun RaporTopButton(
   icon: ImageVector,
   contentDescription: String,
-  onClick: () -> Unit
+  onClick: () -> Unit,
+  enabled: Boolean = true
 ) {
   Box(
     modifier = Modifier
       .size(42.dp)
-      .background(CardBackground.copy(alpha = 0.86f), CircleShape)
+      .background(CardBackground.copy(alpha = if (enabled) 0.86f else 0.42f), CircleShape)
       .border(1.dp, CardBorder, CircleShape)
-      .clickable(onClick = onClick),
+      .clickable(enabled = enabled, onClick = onClick),
     contentAlignment = Alignment.Center
   ) {
     Icon(
       imageVector = icon,
       contentDescription = t(contentDescription),
-      tint = PrimaryBlueDark
+      tint = if (enabled) PrimaryBlueDark else SubtleInk
     )
   }
 }
@@ -3843,6 +3929,18 @@ private fun loadRaporDescriptionTemplates(
     val template = decodeRaporDescriptionTemplate(rawJson)
     if (template.hasAnyDescription()) distribusiId to template else null
   }.toMap()
+}
+
+private fun saveRaporDescriptionTemplate(
+  context: Context,
+  distribusiId: String,
+  rawJson: String
+) {
+  if (distribusiId.isBlank() || rawJson.isBlank()) return
+  context.getSharedPreferences("mapel_rapor_templates", Context.MODE_PRIVATE)
+    .edit()
+    .putString(distribusiId, rawJson)
+    .commit()
 }
 
 private fun decodeRaporDescriptionTemplate(rawJson: String): RaporDescriptionTemplate {

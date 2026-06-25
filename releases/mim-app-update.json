@@ -1,15 +1,16 @@
 {
-  "versionCode": 1018,
-  "versionName": "0.1.18",
-  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.18/MIM.APP.apk",
-  "releaseNotes": "MIM App Android 0.1.18. Template cetak rapor kini menyesuaikan jenjang SMP dan SMA.",
+  "versionCode": 1019,
+  "versionName": "0.1.19",
+  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.19/MIM.APP.apk",
+  "releaseNotes": "MIM App Android 0.1.19. Rapor wali kelas kini memuat nilai dan deskripsi rapor terbaru langsung dari database.",
   "features": [
-    "Kelas VII, VIII, dan IX kini menggunakan template rapor SMP khusus saat cetak, kirim, atau download rapor.",
-    "Kelas X, XI, dan XII tetap menggunakan template rapor SMA yang sudah dipakai sebelumnya."
+    "Detail rapor wali kelas kini otomatis memuat nilai akhir, keterampilan, dan deskripsi rapor terbaru dari database saat halaman dibuka.",
+    "Tombol cetak dan kirim rapor ditahan sebentar saat data nilai/deskripsi terbaru masih dimuat agar dokumen tidak memakai data lama."
   ],
   "fixes": [
-    "Pemilihan template rapor otomatis membaca nama kelas seperti VII, VIII A, IX, X, XI, dan XII.",
-    "Download rapor massal memakai template sesuai kelas pertama pada daftar yang dipilih agar format dokumen konsisten."
+    "Nilai akhir dan keterampilan di detail rapor tidak lagi bergantung pada guru membuka detail mapel bagian nilai terlebih dahulu.",
+    "Deskripsi rapor mapel yang sudah tersimpan di Supabase kini dicari ulang dari database dan diprioritaskan berdasarkan guru, mapel, dan semester.",
+    "Cache lokal deskripsi rapor mapel disimpan lebih aman agar tidak mudah hilang ketika aplikasi ditutup."
   ],
   "mandatory": false
 }

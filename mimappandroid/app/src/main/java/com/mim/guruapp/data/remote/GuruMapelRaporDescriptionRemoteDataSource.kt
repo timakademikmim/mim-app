@@ -21,7 +21,8 @@ sealed interface GuruMapelRaporDescriptionSaveResult {
 
 class GuruMapelRaporDescriptionRemoteDataSource {
   suspend fun fetchDescriptionJson(
-    distribusiId: String
+    distribusiId: String,
+    guruId: String = ""
   ): String? = withContext(Dispatchers.IO) {
     if (distribusiId.isBlank()) return@withContext null
     runCatching {
@@ -34,7 +35,13 @@ class GuruMapelRaporDescriptionRemoteDataSource {
           append("&limit=1")
         }
       ).firstOrNull()
-      row?.toDescriptionJson()
+      val exactRow = row?.takeIf { it.hasAnyRaporDescription() }
+      val fallbackRow = if (exactRow == null) {
+        fetchFallbackDescriptionRow(distribusiId, guruId)
+      } else {
+        null
+      }
+      (exactRow ?: fallbackRow ?: row)?.toDescriptionJson()
     }.getOrNull()
   }
 
@@ -134,6 +141,39 @@ class GuruMapelRaporDescriptionRemoteDataSource {
     }
   }
 
+  private fun fetchFallbackDescriptionRow(
+    distribusiId: String,
+    guruId: String
+  ): JSONObject? {
+    val distribusiRow = fetchRows(
+      table = "distribusi_mapel",
+      query = "select=id,mapel_id,semester_id&id=eq.${encodeValue(distribusiId)}&limit=1"
+    ).firstOrNull() ?: return null
+
+    val mapelId = distribusiRow.optString("mapel_id").trim()
+    val semesterId = distribusiRow.optString("semester_id").trim()
+    if (mapelId.isBlank() || semesterId.isBlank()) return null
+
+    val rows = fetchRows(
+      table = "rapor_deskripsi_mapel",
+      query = buildString {
+        append("select=*")
+        append("&mapel_id=eq.")
+        append(encodeValue(mapelId))
+        append("&semester_id=eq.")
+        append(encodeValue(semesterId))
+        append("&order=updated_at.desc")
+        append("&limit=20")
+      }
+    )
+    val normalizedGuruId = guruId.trim()
+    return rows.firstOrNull { row ->
+      normalizedGuruId.isNotBlank() &&
+        row.optString("guru_id").trim() == normalizedGuruId &&
+        row.hasAnyRaporDescription()
+    } ?: rows.firstOrNull { it.hasAnyRaporDescription() } ?: rows.firstOrNull()
+  }
+
   private fun createConnection(requestUrl: String, method: String): HttpURLConnection {
     return (URL(requestUrl).openConnection() as HttpURLConnection).apply {
       requestMethod = method
@@ -168,6 +208,21 @@ private fun JSONObject.toDescriptionJson(): String {
       put("E", optString("deskripsi_e_keterampilan"))
     })
   }.toString()
+}
+
+private fun JSONObject.hasAnyRaporDescription(): Boolean {
+  return listOf(
+    "deskripsi_a_pengetahuan",
+    "deskripsi_b_pengetahuan",
+    "deskripsi_c_pengetahuan",
+    "deskripsi_d_pengetahuan",
+    "deskripsi_e_pengetahuan",
+    "deskripsi_a_keterampilan",
+    "deskripsi_b_keterampilan",
+    "deskripsi_c_keterampilan",
+    "deskripsi_d_keterampilan",
+    "deskripsi_e_keterampilan"
+  ).any { key -> optString(key).trim().isNotBlank() }
 }
 
 private fun JSONObject.descriptionText(sectionKey: String, predicate: String): String {

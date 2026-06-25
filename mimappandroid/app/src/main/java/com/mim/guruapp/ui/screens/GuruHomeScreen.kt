@@ -1472,6 +1472,8 @@ fun GuruHomeScreen(
         isRefreshing = syncBanner.isSyncing,
         onMenuClick = onToggleSidebar,
         onRefresh = onRefreshClick,
+        onLoadScores = onLoadMapelScores,
+        onLoadRaporDescriptions = onLoadMapelRaporDescriptions,
         onLoadAttendance = onLoadMapelAttendance,
         onDetailModeChange = { isRaporDetailMode = it },
         modifier = Modifier

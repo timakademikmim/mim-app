@@ -118,18 +118,44 @@ class GuruMapelScoreRemoteDataSource {
       val students = santriRows.map { santri ->
         val santriId = santri.optString("id").trim()
         val nilai = nilaiBySantriId[santriId]
+        val detailRowsByMetric = detailRowsBySantriMetric[santriId].orEmpty()
+        fun detailAverage(metricKey: String): Double? {
+          val values = detailRowsByMetric[metricKey].orEmpty().mapNotNull { it.value }
+          if (values.isEmpty()) return null
+          return round2(values.sum() / values.size.toDouble())
+        }
+
+        val tugasDetail = detailAverage("nilai_tugas")
+        val ulanganHarianDetail = detailAverage("nilai_ulangan_harian")
+        val ptsDetail = detailAverage("nilai_pts")
+        val pasDetail = detailAverage("nilai_pas")
+        val keterampilanDetail = detailAverage("nilai_keterampilan")
+        val nilaiTugas = tugasDetail ?: nilai?.optDoubleOrNull("nilai_tugas")
+        val nilaiUlanganHarian = ulanganHarianDetail ?: nilai?.optDoubleOrNull("nilai_ulangan_harian")
+        val nilaiPts = ptsDetail ?: nilai?.optDoubleOrNull("nilai_pts")
+        val nilaiPas = pasDetail ?: nilai?.optDoubleOrNull("nilai_pas")
+        val nilaiKehadiran = nilai?.optDoubleOrNull("nilai_kehadiran")
+        val nilaiKeterampilan = keterampilanDetail ?: nilai?.optDoubleOrNull("nilai_keterampilan")
+        val hasDetailKnowledge = listOf(tugasDetail, ulanganHarianDetail, ptsDetail, pasDetail).any { it != null }
+        val hasAnyKnowledge = listOf(nilaiTugas, nilaiUlanganHarian, nilaiPts, nilaiPas, nilaiKehadiran).any { it != null }
+        val nilaiAkhir = when {
+          hasDetailKnowledge -> calculateNilaiAkhir(nilaiTugas, nilaiUlanganHarian, nilaiPts, nilaiPas, nilaiKehadiran)
+          nilai?.optDoubleOrNull("nilai_akhir") != null -> nilai.optDoubleOrNull("nilai_akhir")
+          hasAnyKnowledge -> calculateNilaiAkhir(nilaiTugas, nilaiUlanganHarian, nilaiPts, nilaiPas, nilaiKehadiran)
+          else -> null
+        }
         ScoreStudent(
           id = santriId,
           name = santri.optString("nama").trim().ifBlank { "-" },
           rowId = nilai?.optString("id")?.trim().orEmpty(),
-          nilaiTugas = nilai?.optDoubleOrNull("nilai_tugas"),
-          nilaiUlanganHarian = nilai?.optDoubleOrNull("nilai_ulangan_harian"),
-          nilaiPts = nilai?.optDoubleOrNull("nilai_pts"),
-          nilaiPas = nilai?.optDoubleOrNull("nilai_pas"),
-          nilaiKehadiran = nilai?.optDoubleOrNull("nilai_kehadiran"),
-          nilaiAkhir = nilai?.optDoubleOrNull("nilai_akhir"),
-          nilaiKeterampilan = nilai?.optDoubleOrNull("nilai_keterampilan"),
-          detailRowsByMetric = detailRowsBySantriMetric[santriId].orEmpty()
+          nilaiTugas = nilaiTugas,
+          nilaiUlanganHarian = nilaiUlanganHarian,
+          nilaiPts = nilaiPts,
+          nilaiPas = nilaiPas,
+          nilaiKehadiran = nilaiKehadiran,
+          nilaiAkhir = nilaiAkhir,
+          nilaiKeterampilan = nilaiKeterampilan,
+          detailRowsByMetric = detailRowsByMetric
         )
       }
 

@@ -1707,9 +1707,6 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
   ): MapelScoreSnapshot? {
     val dashboard = uiState.dashboard ?: return null
     val cachedSnapshot = dashboard.scoreSnapshots.firstOrNull { it.distribusiId == distribusiId }
-    if (cachedSnapshot != null && !isScoreSnapshotMissingDetailRows(cachedSnapshot)) {
-      return cachedSnapshot
-    }
 
     val remoteSnapshot = mapelScoreRemoteDataSource.fetchScoreSnapshot(
       distribusiId = distribusiId,
@@ -1964,7 +1961,10 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     distribusiId: String,
     subject: SubjectOverview
   ): String? {
-    return mapelRaporDescriptionRemoteDataSource.fetchDescriptionJson(distribusiId)
+    return mapelRaporDescriptionRemoteDataSource.fetchDescriptionJson(
+      distribusiId = distribusiId,
+      guruId = uiState.session.teacherRowId.ifBlank { uiState.session.teacherId }
+    )
   }
 
   suspend fun saveMapelRaporDescriptionJson(

@@ -11323,7 +11323,7 @@ private fun saveMapelRaporTemplate(
   context.getSharedPreferences("mapel_rapor_templates", Context.MODE_PRIVATE)
     .edit()
     .putString(subjectId, rawJson)
-    .apply()
+    .commit()
   return rawJson
 }
 
