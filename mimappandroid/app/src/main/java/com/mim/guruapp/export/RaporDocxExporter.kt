@@ -95,9 +95,25 @@ data class RaporExportAttendanceRow(
   val alpaText: String
 )
 
+enum class RaporExportSection(
+  val label: String,
+  val sectionIndex: Int
+) {
+  Akhlak("Akhlak", 0),
+  Alquran("Alquran", 1),
+  Nilai("Nilai", 2),
+  Lainnya("Lainnya", 3)
+}
+
 private data class RaporSubjectTemplateSlot(
   val startOccurrence: Int,
   val aliases: List<String>
+)
+
+private data class RaporWordBodySections(
+  val sections: List<String>,
+  val finalSectionProperties: String,
+  val defaultHeaderReference: String
 )
 
 object RaporDocxExporter {
@@ -124,13 +140,7 @@ object RaporDocxExporter {
     val entries = readZipEntries(context.assets.open(TemplateAsset))
     val documentXml = entries["word/document.xml"]?.toString(Charsets.UTF_8)
       ?: throw IllegalStateException("Template rapor tidak memiliki word/document.xml")
-    val values = buildMergeFieldValues(data)
-    val occurrenceValues = buildMergeFieldOccurrenceValues(data)
-    entries["word/document.xml"] = fillMergeFields(documentXml, values, occurrenceValues)
-      .fillSubjectTableRows(data)
-      .replaceStaticTemplateText(data)
-      .replaceRoleSignaturePlaceholders(data)
-      .toByteArray(Charsets.UTF_8)
+    entries["word/document.xml"] = fillRaporDocumentXml(documentXml, data).toByteArray(Charsets.UTF_8)
 
     val outputDir = File(
       context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: context.filesDir,
@@ -143,10 +153,75 @@ object RaporDocxExporter {
     file
   }
 
+  suspend fun createSectionDocxFile(
+    context: Context,
+    data: List<RaporExportData>,
+    section: RaporExportSection
+  ): File = withContext(Dispatchers.IO) {
+    if (data.isEmpty()) throw IllegalStateException("Belum ada data santri untuk didownload.")
+    val entries = readZipEntries(context.assets.open(TemplateAsset))
+    val documentXml = entries["word/document.xml"]?.toString(Charsets.UTF_8)
+      ?: throw IllegalStateException("Template rapor tidak memiliki word/document.xml")
+    val templateSections = splitDocumentBodySections(documentXml)
+    val fallbackSectionProperties = templateSections.finalSectionProperties
+      .ensureSectionHeaderReference(templateSections.defaultHeaderReference)
+    val numberingRemaps = mutableListOf<Map<Int, Int>>()
+    val bodyContent = data.mapIndexed { index, item ->
+      val filledDocument = fillRaporDocumentXml(documentXml, item)
+      val selectedSection = splitDocumentBodySections(filledDocument).sections.getOrNull(section.sectionIndex)
+        ?: throw IllegalStateException("Bagian ${section.label} belum ditemukan di template rapor.")
+      val sectionWithHeader = selectedSection
+        .ensureSectionHeaderReference(templateSections.defaultHeaderReference)
+        .let { content ->
+          if ("<w:sectPr" in content) content else content + fallbackSectionProperties
+        }
+      if (index == 0) {
+        sectionWithHeader
+      } else {
+        val remap = sectionWithHeader.buildNumberingIdRemap(index)
+        numberingRemaps += remap
+        sectionWithHeader.remapNumberingIds(remap)
+      }
+    }.joinToString(separator = "")
+    entries["word/numbering.xml"]?.let { numberingXml ->
+      entries["word/numbering.xml"] = numberingXml
+        .toString(Charsets.UTF_8)
+        .cloneNumberingDefinitions(numberingRemaps)
+        .toByteArray(Charsets.UTF_8)
+    }
+    entries["word/document.xml"] = replaceDocumentBodyContent(
+      documentXml = documentXml,
+      bodyContent = bodyContent
+    ).toByteArray(Charsets.UTF_8)
+
+    val first = data.first()
+    val outputDir = File(
+      context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: context.filesDir,
+      "MIM/rapor"
+    ).apply { mkdirs() }
+    val file = File(outputDir, "${buildSectionFileName(section, first)}-${System.currentTimeMillis()}.docx")
+    FileOutputStream(file).use { output ->
+      writeZipEntries(entries, output)
+    }
+    file
+  }
+
   fun openDocument(
     context: Context,
     documentFile: File,
     data: RaporExportData
+  ) {
+    openDocument(
+      context = context,
+      documentFile = documentFile,
+      title = "Rapor ${data.studentName}"
+    )
+  }
+
+  fun openDocument(
+    context: Context,
+    documentFile: File,
+    title: String
   ) {
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", documentFile)
     val viewIntent = Intent(Intent.ACTION_VIEW).apply {
@@ -157,12 +232,12 @@ object RaporDocxExporter {
     }
     try {
       context.startActivity(
-        Intent.createChooser(viewIntent, "Buka rapor ${data.studentName}")
+        Intent.createChooser(viewIntent, "Buka $title")
           .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
           .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
       )
     } catch (_: ActivityNotFoundException) {
-      shareDocument(context, documentFile, data)
+      shareDocument(context, documentFile, title)
     }
   }
 
@@ -171,11 +246,23 @@ object RaporDocxExporter {
     documentFile: File,
     data: RaporExportData
   ) {
+    shareDocument(
+      context = context,
+      documentFile = documentFile,
+      title = "Rapor ${data.studentName}"
+    )
+  }
+
+  fun shareDocument(
+    context: Context,
+    documentFile: File,
+    title: String
+  ) {
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", documentFile)
     val shareIntent = Intent(Intent.ACTION_SEND).apply {
       type = DocxMime
       putExtra(Intent.EXTRA_STREAM, uri)
-      putExtra(Intent.EXTRA_SUBJECT, "Rapor ${data.studentName}")
+      putExtra(Intent.EXTRA_SUBJECT, title)
       putExtra(Intent.EXTRA_TITLE, documentFile.nameWithoutExtension)
       clipData = ClipData.newUri(context.contentResolver, documentFile.name, uri)
       addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -244,6 +331,19 @@ object RaporDocxExporter {
       "",
       "Dokumen rapor terlampir."
     ).joinToString("\n")
+  }
+
+  private fun fillRaporDocumentXml(
+    documentXml: String,
+    data: RaporExportData
+  ): String {
+    val values = buildMergeFieldValues(data)
+    val occurrenceValues = buildMergeFieldOccurrenceValues(data)
+    return fillMergeFields(documentXml, values, occurrenceValues)
+      .fillSubjectTableRows(data)
+      .fillNomorIndukCells(data)
+      .replaceStaticTemplateText(data)
+      .replaceRoleSignaturePlaceholders(data)
   }
 
   private fun buildMergeFieldValues(data: RaporExportData): Map<String, String> {
@@ -410,6 +510,42 @@ object RaporDocxExporter {
     }
   }
 
+  private fun String.fillNomorIndukCells(data: RaporExportData): String {
+    val nisn = data.studentNisn.trim()
+    if (nisn.isBlank()) return this
+    val rowRegex = Regex("""<w:tr\b[^>]*>.*?</w:tr>""", RegexOption.DOT_MATCHES_ALL)
+    return rowRegex.replace(this) { rowMatch ->
+      val rowXml = rowMatch.value
+      val cellMatches = Regex("""<w:tc\b[^>]*>.*?</w:tc>""", RegexOption.DOT_MATCHES_ALL)
+        .findAll(rowXml)
+        .toList()
+      val replacements = mutableMapOf<Int, String>()
+      cellMatches.forEachIndexed { index, cellMatch ->
+        val label = normalizeKey(extractPlainWordText(cellMatch.value))
+        if (label.contains("nomor induk")) {
+          val valueIndex = index + 2
+          val valueCell = cellMatches.getOrNull(valueIndex)?.value ?: return@forEachIndexed
+          if (extractPlainWordText(valueCell).isBlank()) {
+            replacements[valueIndex] = valueCell.replaceCellText(nisn)
+          }
+        }
+      }
+      if (replacements.isEmpty()) {
+        rowXml
+      } else {
+        buildString {
+          var cursor = 0
+          cellMatches.forEachIndexed { index, cellMatch ->
+            append(rowXml.substring(cursor, cellMatch.range.first))
+            append(replacements[index] ?: cellMatch.value)
+            cursor = cellMatch.range.last + 1
+          }
+          append(rowXml.substring(cursor))
+        }
+      }
+    }
+  }
+
   private fun String.replaceCellText(value: String): String {
     val paragraph = Regex("""<w:p\b[^>]*>.*?</w:p>""", RegexOption.DOT_MATCHES_ALL).find(this)
       ?: return this
@@ -563,6 +699,15 @@ object RaporDocxExporter {
   private fun String.replaceRoleSignaturePlaceholders(data: RaporExportData): String {
     return replaceSignaturePlaceholderAfter("Musyrif", data.musyrifName)
       .replaceSignaturePlaceholderAfter("Muhaffiz", data.quran.muhaffizName)
+      .replaceSignatureLabel("Khaerurrahmat, B.Ed.", data.waliKelasName)
+  }
+
+  private fun String.replaceSignatureLabel(
+    label: String,
+    value: String
+  ): String {
+    if (value.isBlank()) return this
+    return replaceFirst(escapeXml(label), escapeXml(value))
   }
 
   private fun String.replaceSignaturePlaceholderAfter(
@@ -587,11 +732,123 @@ object RaporDocxExporter {
     return "Izin ${izinText.ifBlank { "0" }}, Sakit ${sakitText.ifBlank { "0" }}, Telat ${telatText.ifBlank { "0" }}, Alpa ${alpaText.ifBlank { "0" }}"
   }
 
+  private fun splitDocumentBodySections(documentXml: String): RaporWordBodySections {
+    val bodyContent = Regex("""<w:body>(.*)</w:body>""", RegexOption.DOT_MATCHES_ALL)
+      .find(documentXml)
+      ?.groupValues
+      ?.getOrNull(1)
+      ?: throw IllegalStateException("Template rapor tidak memiliki body dokumen.")
+    val sectionPropertyMatches = Regex("""<w:sectPr\b.*?</w:sectPr>""", RegexOption.DOT_MATCHES_ALL)
+      .findAll(bodyContent)
+      .toList()
+    val finalSectionProperties = sectionPropertyMatches.lastOrNull()?.value.orEmpty()
+    val defaultHeaderReference = sectionPropertyMatches
+      .mapNotNull { match ->
+        Regex("""<w:headerReference\b[^>]*/>""", RegexOption.DOT_MATCHES_ALL)
+          .find(match.value)
+          ?.value
+      }
+      .firstOrNull()
+      .orEmpty()
+    val bodyBeforeFinalSection = sectionPropertyMatches.lastOrNull()?.let { match ->
+      bodyContent.substring(0, match.range.first)
+    } ?: bodyContent
+
+    val paragraphRegex = Regex("""<w:p\b[^>]*>.*?</w:p>""", RegexOption.DOT_MATCHES_ALL)
+    val sections = mutableListOf<String>()
+    var startIndex = 0
+    paragraphRegex.findAll(bodyBeforeFinalSection).forEach { paragraph ->
+      if ("<w:sectPr" in paragraph.value) {
+        val endIndex = paragraph.range.last + 1
+        sections += bodyBeforeFinalSection.substring(startIndex, endIndex)
+        startIndex = endIndex
+      }
+    }
+    val tail = bodyBeforeFinalSection.substring(startIndex).trim()
+    if (tail.isNotBlank()) sections += tail
+    return RaporWordBodySections(
+      sections = sections,
+      finalSectionProperties = finalSectionProperties,
+      defaultHeaderReference = defaultHeaderReference
+    )
+  }
+
+  private fun String.ensureSectionHeaderReference(headerReference: String): String {
+    if (headerReference.isBlank() || !contains("<w:sectPr")) return this
+    val sectionRegex = Regex("""<w:sectPr\b.*?</w:sectPr>""", RegexOption.DOT_MATCHES_ALL)
+    return sectionRegex.replace(this) { match ->
+      val sectionProperties = match.value
+      if ("<w:headerReference" in sectionProperties) {
+        sectionProperties
+      } else {
+        sectionProperties.replaceFirst(">", ">$headerReference")
+      }
+    }
+  }
+
+  private fun replaceDocumentBodyContent(
+    documentXml: String,
+    bodyContent: String
+  ): String {
+    val bodyRegex = Regex("""<w:body>.*</w:body>""", RegexOption.DOT_MATCHES_ALL)
+    return bodyRegex.replace(documentXml, "<w:body>$bodyContent</w:body>")
+  }
+
+  private fun String.buildNumberingIdRemap(copyIndex: Int): Map<Int, Int> {
+    return Regex("""<w:numId\s+w:val="(\d+)"""")
+      .findAll(this)
+      .mapNotNull { it.groupValues.getOrNull(1)?.toIntOrNull() }
+      .distinct()
+      .associateWith { originalId -> 1000 + (copyIndex * 10) + originalId }
+  }
+
+  private fun String.remapNumberingIds(remap: Map<Int, Int>): String {
+    return remap.entries.fold(this) { current, (originalId, newId) ->
+      current.replace("""<w:numId w:val="$originalId"""", """<w:numId w:val="$newId"""")
+    }
+  }
+
+  private fun String.cloneNumberingDefinitions(remaps: List<Map<Int, Int>>): String {
+    val clonedDefinitions = remaps
+      .flatMap { it.entries }
+      .distinctBy { it.value }
+      .mapNotNull { (originalId, newId) -> cloneNumberingDefinition(originalId, newId) }
+      .joinToString(separator = "")
+    if (clonedDefinitions.isBlank()) return this
+    return replace("</w:numbering>", "$clonedDefinitions</w:numbering>")
+  }
+
+  private fun String.cloneNumberingDefinition(
+    originalId: Int,
+    newId: Int
+  ): String? {
+    val source = Regex("""<w:num\s+w:numId="$originalId"[^>]*>.*?</w:num>""", RegexOption.DOT_MATCHES_ALL)
+      .find(this)
+      ?.value
+      ?: return null
+    val withoutDurableId = source.replace(Regex("""\s+w16cid:durableId="[^"]*"""", RegexOption.IGNORE_CASE), "")
+    val withNewId = withoutDurableId.replace("""w:numId="$originalId"""", """w:numId="$newId"""")
+    return if ("<w:lvlOverride" in withNewId) {
+      withNewId
+    } else {
+      withNewId.replace("</w:num>", """<w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride></w:num>""")
+    }
+  }
+
   private fun buildFileName(data: RaporExportData): String {
     val name = data.studentName.ifBlank { "Santri" }.sanitizeFilePart()
     val className = data.className.ifBlank { "Kelas" }.sanitizeFilePart()
     val semester = data.semesterLabel.ifBlank { "Semester" }.sanitizeFilePart()
     return "Rapor-$name-$className-$semester"
+  }
+
+  private fun buildSectionFileName(
+    section: RaporExportSection,
+    data: RaporExportData
+  ): String {
+    val className = data.className.ifBlank { "Kelas" }.sanitizeFilePart()
+    val semester = data.semesterLabel.ifBlank { "Semester" }.sanitizeFilePart()
+    return "Rapor-${section.label}-$className-$semester"
   }
 
   private fun normalizeWhatsappNumber(raw: String): String {

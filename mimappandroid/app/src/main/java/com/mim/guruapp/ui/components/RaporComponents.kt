@@ -39,6 +39,7 @@ import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Grade
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Print
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.School
@@ -46,6 +47,7 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -96,6 +98,7 @@ import com.mim.guruapp.export.RaporExportAttendanceRow
 import com.mim.guruapp.export.RaporExportData
 import com.mim.guruapp.export.RaporExportQuranData
 import com.mim.guruapp.export.RaporExportQuranRow
+import com.mim.guruapp.export.RaporExportSection
 import com.mim.guruapp.export.RaporExportSimpleRow
 import com.mim.guruapp.export.RaporExportSubject
 import com.mim.guruapp.ui.i18n.t
@@ -149,6 +152,8 @@ fun RaporScreen(
   var query by rememberSaveable { mutableStateOf("") }
   var manualReports by remember(context) { mutableStateOf(loadRaporManualReports(context)) }
   var isImportDialogOpen by rememberSaveable { mutableStateOf(false) }
+  var isDownloadDialogOpen by rememberSaveable { mutableStateOf(false) }
+  var progressDialogState by remember { mutableStateOf<RaporProgressDialogState?>(null) }
   var requestedAttendanceLoadIds by remember(selectedSemesterId) { mutableStateOf<Set<String>>(emptySet()) }
 
   LaunchedEffect(semesters) {
@@ -238,10 +243,18 @@ fun RaporScreen(
 
   fun launchExport(report: RaporStudentReport, share: Boolean) {
     scope.launch {
-      val message = if (share) "Menyiapkan dokumen untuk dikirim..." else "Menyiapkan dokumen rapor..."
-      snackbarHostState.showSnackbar(message, duration = SnackbarDuration.Short)
+      progressDialogState = RaporProgressDialogState(
+        title = if (share) "Menyiapkan Dokumen Kirim" else "Menyiapkan Dokumen Rapor",
+        message = if (share) {
+          "Sedang membuat file rapor dan membuka WhatsApp. Mohon tunggu sampai proses selesai."
+        } else {
+          "Sedang membuat file rapor. Mohon tunggu sampai dokumen terbuka."
+        },
+        isLoading = true
+      )
       runCatching {
         val file = RaporDocxExporter.createDocxFile(context, report.toExportData())
+        progressDialogState = null
         if (share) {
           val phone = selectedSantri?.guardianPhone
             ?.ifBlank { selectedSantri.fatherPhone }
@@ -257,9 +270,48 @@ fun RaporScreen(
           RaporDocxExporter.openDocument(context, file, report.toExportData())
         }
       }.onFailure { error ->
-        snackbarHostState.showSnackbar(
+        progressDialogState = RaporProgressDialogState(
+          title = "Gagal Membuat Dokumen",
           message = error.message ?: "Gagal membuat dokumen rapor.",
-          duration = SnackbarDuration.Long
+          isLoading = false
+        )
+      }
+    }
+  }
+
+  fun launchSectionDownload(section: RaporExportSection) {
+    scope.launch {
+      val exportData = students.mapNotNull { student -> reports[student.id]?.toExportData() }
+      if (exportData.isEmpty()) {
+        progressDialogState = RaporProgressDialogState(
+          title = "Download Rapor",
+          message = "Belum ada data santri untuk didownload.",
+          isLoading = false
+        )
+        return@launch
+      }
+      progressDialogState = RaporProgressDialogState(
+        title = "Download Rapor ${section.label}",
+        message = "Sedang membuat file Word untuk ${exportData.size} santri. Mohon tunggu sampai dokumen terbuka.",
+        isLoading = true
+      )
+      runCatching {
+        val file = RaporDocxExporter.createSectionDocxFile(
+          context = context,
+          data = exportData,
+          section = section
+        )
+        progressDialogState = null
+        RaporDocxExporter.openDocument(
+          context = context,
+          documentFile = file,
+          title = "Rapor ${section.label} ${selectedSemester.label}"
+        )
+      }.onFailure { error ->
+        progressDialogState = RaporProgressDialogState(
+          title = "Gagal Download Rapor",
+          message = error.message ?: "Gagal membuat download rapor ${section.label}.",
+          isLoading = false
         )
       }
     }
@@ -270,7 +322,15 @@ fun RaporScreen(
       .fillMaxSize()
       .background(AppBackground),
     containerColor = Color.Transparent,
-    snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+    snackbarHost = {
+      SnackbarHost(
+        hostState = snackbarHostState,
+        modifier = Modifier
+          .navigationBarsPadding()
+          .padding(horizontal = 16.dp)
+          .padding(bottom = 96.dp)
+      )
+    },
     contentWindowInsets = WindowInsets(0, 0, 0, 0)
   ) { innerPadding ->
     AnimatedContent(
@@ -304,6 +364,7 @@ fun RaporScreen(
             showSkeleton = showSkeleton,
             onMenuClick = onMenuClick,
             onImportClick = { isImportDialogOpen = true },
+            onDownloadClick = { isDownloadDialogOpen = true },
             onSantriClick = { selectedSantriId = it.id }
           )
         }
@@ -361,6 +422,25 @@ fun RaporScreen(
       }
     )
   }
+
+  if (isDownloadDialogOpen) {
+    RaporDownloadDialog(
+      onDismiss = { isDownloadDialogOpen = false },
+      onDownload = { section ->
+        isDownloadDialogOpen = false
+        launchSectionDownload(section)
+      }
+    )
+  }
+
+  progressDialogState?.let { state ->
+    RaporProgressDialog(
+      state = state,
+      onDismiss = {
+        if (!state.isLoading) progressDialogState = null
+      }
+    )
+  }
 }
 
 @Composable
@@ -377,6 +457,7 @@ private fun RaporListContent(
   showSkeleton: Boolean,
   onMenuClick: () -> Unit,
   onImportClick: () -> Unit,
+  onDownloadClick: () -> Unit,
   onSantriClick: (WaliSantriProfile) -> Unit
 ) {
   val filteredStudents = remember(students, query) {
@@ -405,7 +486,10 @@ private fun RaporListContent(
       leadingContentDescription = "Buka sidebar",
       onLeadingClick = onMenuClick,
       actions = {
-        RaporTopButton(Icons.Outlined.UploadFile, "Import data rapor", onImportClick)
+        RaporListActionsMenu(
+          onImportClick = onImportClick,
+          onDownloadClick = onDownloadClick
+        )
       }
     )
 
@@ -632,6 +716,43 @@ private fun RaporTopButton(
 }
 
 @Composable
+private fun RaporListActionsMenu(
+  onImportClick: () -> Unit,
+  onDownloadClick: () -> Unit
+) {
+  var expanded by remember { mutableStateOf(false) }
+  Box {
+    RaporTopButton(
+      icon = Icons.Outlined.MoreVert,
+      contentDescription = "Menu rapor",
+      onClick = { expanded = true }
+    )
+    DropdownMenu(
+      expanded = expanded,
+      onDismissRequest = { expanded = false },
+      modifier = Modifier.background(CardBackground)
+    ) {
+      DropdownMenuItem(
+        text = { Text("Import data") },
+        leadingIcon = { Icon(Icons.Outlined.UploadFile, contentDescription = null, tint = PrimaryBlue) },
+        onClick = {
+          expanded = false
+          onImportClick()
+        }
+      )
+      DropdownMenuItem(
+        text = { Text("Download") },
+        leadingIcon = { Icon(Icons.Outlined.Print, contentDescription = null, tint = PrimaryBlue) },
+        onClick = {
+          expanded = false
+          onDownloadClick()
+        }
+      )
+    }
+  }
+}
+
+@Composable
 private fun RaporSemesterSelector(
   semesters: List<UtsSemesterInfo>,
   selectedSemesterId: String,
@@ -685,6 +806,105 @@ private fun RaporSemesterSelector(
       }
     }
   }
+}
+
+@Composable
+private fun RaporDownloadDialog(
+  onDismiss: () -> Unit,
+  onDownload: (RaporExportSection) -> Unit
+) {
+  val sections = remember {
+    listOf(
+      RaporExportSection.Akhlak,
+      RaporExportSection.Alquran,
+      RaporExportSection.Nilai,
+      RaporExportSection.Lainnya
+    )
+  }
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("Download Rapor") },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        sections.forEach { section ->
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(16.dp))
+              .background(SoftPanel.copy(alpha = 0.62f))
+              .clickable { onDownload(section) }
+              .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+          ) {
+            Text(
+              text = section.label,
+              style = MaterialTheme.typography.titleSmall,
+              color = PrimaryBlueDark,
+              fontWeight = FontWeight.ExtraBold
+            )
+            Text(
+              text = "Semua santri",
+              style = MaterialTheme.typography.bodySmall,
+              color = SubtleInk
+            )
+          }
+        }
+      }
+    },
+    confirmButton = {},
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("Batal")
+      }
+    }
+  )
+}
+
+private data class RaporProgressDialogState(
+  val title: String,
+  val message: String,
+  val isLoading: Boolean
+)
+
+@Composable
+private fun RaporProgressDialog(
+  state: RaporProgressDialogState,
+  onDismiss: () -> Unit
+) {
+  AlertDialog(
+    onDismissRequest = {
+      if (!state.isLoading) onDismiss()
+    },
+    title = { Text(state.title) },
+    text = {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+      ) {
+        if (state.isLoading) {
+          CircularProgressIndicator(
+            modifier = Modifier.size(30.dp),
+            color = PrimaryBlue,
+            strokeWidth = 3.dp
+          )
+        }
+        Text(
+          text = state.message,
+          style = MaterialTheme.typography.bodyMedium,
+          color = PrimaryBlueDark
+        )
+      }
+    },
+    confirmButton = {
+      if (!state.isLoading) {
+        TextButton(onClick = onDismiss) {
+          Text("Tutup")
+        }
+      }
+    }
+  )
 }
 
 @Composable

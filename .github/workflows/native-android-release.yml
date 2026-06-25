@@ -118,20 +118,16 @@ jobs:
             "versionCode": ${MIM_VERSION_CODE},
             "versionName": "${MIM_VERSION_NAME}",
             "apkUrl": "${APK_URL}",
-            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Mode admin, ujian, rapor, import spreadsheet, dan export rapor diperkuat agar data sekolah lebih lengkap dipakai langsung dari aplikasi.",
+            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Export rapor wali kelas diperhalus agar download massal lebih jelas, lengkap, dan sesuai template.",
             "features": [
-              "Mode admin mulai tersedia di Android dengan pemilihan role, dashboard, profil, data karyawan, data santri, profil sekolah, kalender ujian, dan tahun ajaran.",
-              "Menu ujian guru kini membaca folder ujian dari server dan memakai editor soal yang sejalan dengan detail mapel.",
-              "Rapor wali kelas kini memakai navbar bagian Informasi, Akhlak, Alquran, Nilai, dan Lainnya, lengkap dengan cetak dan kirim dokumen.",
-              "Detail mapel memiliki menu Rapor untuk mengatur predikat dan deskripsi umum per mapel agar otomatis masuk ke rapor siswa.",
-              "Import spreadsheet rapor diperluas untuk Akhlak, Alquran per juz, Nilai, Prestasi, Kehadiran, dan Ekstrakurikuler per kelas."
+              "Menu Rapor kini menyediakan download per bagian untuk Akhlak, Alquran, Nilai, dan Lainnya dalam satu file berisi semua santri.",
+              "Proses cetak, kirim, dan download rapor kini memakai dialog progress yang tetap tampil sampai dokumen selesai dibuat atau terjadi error."
             ],
             "fixes": [
-              "Isi soal, pilihan ganda, detail ujian, dan status simpan soal diperbaiki agar tetap tersedia dari device lain.",
-              "Export rapor DOCX diperbaiki agar nilai, deskripsi, semester, tanggal, tanda tangan, dan kehadiran masuk ke posisi template yang benar.",
-              "Import spreadsheet rapor lebih aman membaca sheet per kelas dan mencegah data ekstrakurikuler ikut masuk sebagai prestasi.",
-              "Perhitungan kehadiran kelas rapor diperbaiki agar satu tanggal hanya dihitung sekali dengan prioritas hadir/terlambat sebelum izin, sakit, dan alpa.",
-              "Data manual hasil import rapor disimpan lokal sebagai overlay sehingga tidak hilang saat aplikasi ditutup dan tidak mengubah data asli sistem."
+              "NISN sekarang masuk di semua halaman hasil cetak rapor, termasuk Akhlak dan Alquran pada cetak detail maupun download umum.",
+              "Background template rapor tetap ikut terbawa saat download umum bagian Alquran, Nilai, dan Lainnya.",
+              "Penomoran pada download rapor massal diulang dari awal di setiap halaman agar tidak bersambung antar santri.",
+              "Pesan proses download tidak lagi muncul singkat di bawah navbar, sehingga status pembuatan dokumen lebih mudah dibaca."
             ],
             "mandatory": ${MANDATORY}
           }
