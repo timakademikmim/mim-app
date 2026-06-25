@@ -118,7 +118,8 @@ private data class RaporWordBodySections(
 
 object RaporDocxExporter {
   private const val DocxMime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-  private const val TemplateAsset = "exam/Format Rapor.docx"
+  private const val SmaTemplateAsset = "exam/Format Rapor.docx"
+  private const val SmpTemplateAsset = "exam/Format Rapor smp.docx"
   private val RaporSubjectTemplateSlots = listOf(
     RaporSubjectTemplateSlot(147, listOf("bahasa arab", "arab")),
     RaporSubjectTemplateSlot(153, listOf("bahasa inggris", "inggris")),
@@ -137,7 +138,7 @@ object RaporDocxExporter {
     context: Context,
     data: RaporExportData
   ): File = withContext(Dispatchers.IO) {
-    val entries = readZipEntries(context.assets.open(TemplateAsset))
+    val entries = readZipEntries(context.assets.open(raporTemplateAssetFor(data.className)))
     val documentXml = entries["word/document.xml"]?.toString(Charsets.UTF_8)
       ?: throw IllegalStateException("Template rapor tidak memiliki word/document.xml")
     entries["word/document.xml"] = fillRaporDocumentXml(documentXml, data).toByteArray(Charsets.UTF_8)
@@ -159,7 +160,8 @@ object RaporDocxExporter {
     section: RaporExportSection
   ): File = withContext(Dispatchers.IO) {
     if (data.isEmpty()) throw IllegalStateException("Belum ada data santri untuk didownload.")
-    val entries = readZipEntries(context.assets.open(TemplateAsset))
+    val first = data.first()
+    val entries = readZipEntries(context.assets.open(raporTemplateAssetFor(first.className)))
     val documentXml = entries["word/document.xml"]?.toString(Charsets.UTF_8)
       ?: throw IllegalStateException("Template rapor tidak memiliki word/document.xml")
     val templateSections = splitDocumentBodySections(documentXml)
@@ -194,7 +196,6 @@ object RaporDocxExporter {
       bodyContent = bodyContent
     ).toByteArray(Charsets.UTF_8)
 
-    val first = data.first()
     val outputDir = File(
       context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: context.filesDir,
       "MIM/rapor"
@@ -849,6 +850,39 @@ object RaporDocxExporter {
     val className = data.className.ifBlank { "Kelas" }.sanitizeFilePart()
     val semester = data.semesterLabel.ifBlank { "Semester" }.sanitizeFilePart()
     return "Rapor-${section.label}-$className-$semester"
+  }
+
+  private fun raporTemplateAssetFor(className: String): String {
+    return if (className.classLevelNumber() in 7..9) {
+      SmpTemplateAsset
+    } else {
+      SmaTemplateAsset
+    }
+  }
+
+  private fun String.classLevelNumber(): Int? {
+    val match = Regex("""(?i)\b(?:kelas\s*)?([0-9]+|[ivx]+)\b""").find(this.trim())
+      ?: return null
+    val level = match.groupValues.getOrNull(1).orEmpty()
+    return level.toIntOrNull() ?: romanToInt(level)
+  }
+
+  private fun romanToInt(value: String): Int? {
+    return when (value.trim().uppercase(Locale.ROOT)) {
+      "I" -> 1
+      "II" -> 2
+      "III" -> 3
+      "IV" -> 4
+      "V" -> 5
+      "VI" -> 6
+      "VII" -> 7
+      "VIII" -> 8
+      "IX" -> 9
+      "X" -> 10
+      "XI" -> 11
+      "XII" -> 12
+      else -> null
+    }
   }
 
   private fun normalizeWhatsappNumber(raw: String): String {

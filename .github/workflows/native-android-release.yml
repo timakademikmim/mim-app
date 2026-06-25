@@ -118,15 +118,14 @@ jobs:
             "versionCode": ${MIM_VERSION_CODE},
             "versionName": "${MIM_VERSION_NAME}",
             "apkUrl": "${APK_URL}",
-            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Reset data manual rapor kini bisa dilakukan sekaligus untuk semua santri pada semester aktif.",
+            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Template cetak rapor kini menyesuaikan jenjang SMP dan SMA.",
             "features": [
-              "Menu Rapor kini memiliki pilihan Reset data dari tombol titik tiga di daftar rapor.",
-              "Reset data manual bisa dilakukan untuk semua bagian sekaligus, atau per bagian Akhlak, Alquran, Nilai, dan Lainnya."
+              "Kelas VII, VIII, dan IX kini menggunakan template rapor SMP khusus saat cetak, kirim, atau download rapor.",
+              "Kelas X, XI, dan XII tetap menggunakan template rapor SMA yang sudah dipakai sebelumnya."
             ],
             "fixes": [
-              "Reset umum hanya menghapus data manual atau overlay hasil import untuk santri di semester yang sedang dipilih.",
-              "Data asli dari sistem tetap aman karena reset umum memakai mekanisme overlay yang sama dengan reset per santri.",
-              "Setelah reset umum, aplikasi menampilkan jumlah data santri yang berhasil dikembalikan ke data asli sistem."
+              "Pemilihan template rapor otomatis membaca nama kelas seperti VII, VIII A, IX, X, XI, dan XII.",
+              "Download rapor massal memakai template sesuai kelas pertama pada daftar yang dipilih agar format dokumen konsisten."
             ],
             "mandatory": ${MANDATORY}
           }
