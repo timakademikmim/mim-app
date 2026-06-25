@@ -118,15 +118,14 @@ jobs:
             "versionCode": ${MIM_VERSION_CODE},
             "versionName": "${MIM_VERSION_NAME}",
             "apkUrl": "${APK_URL}",
-            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Rapor wali kelas kini memuat nilai dan deskripsi rapor terbaru langsung dari database.",
+            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Cetak rapor SMP dan download umum bagian lainnya kini lebih rapi dan konsisten.",
             "features": [
-              "Detail rapor wali kelas kini otomatis memuat nilai akhir, keterampilan, dan deskripsi rapor terbaru dari database saat halaman dibuka.",
-              "Tombol cetak dan kirim rapor ditahan sebentar saat data nilai/deskripsi terbaru masih dimuat agar dokumen tidak memakai data lama."
+              "Hasil cetak rapor SMP kini menghitung total nilai dan predikat dari mapel yang benar-benar muncul di template cetak.",
+              "Download umum rapor per bagian tetap mempertahankan pemisahan halaman antar santri."
             ],
             "fixes": [
-              "Nilai akhir dan keterampilan di detail rapor tidak lagi bergantung pada guru membuka detail mapel bagian nilai terlebih dahulu.",
-              "Deskripsi rapor mapel yang sudah tersimpan di Supabase kini dicari ulang dari database dan diprioritaskan berdasarkan guru, mapel, dan semester.",
-              "Cache lokal deskripsi rapor mapel disimpan lebih aman agar tidak mudah hilang ketika aplikasi ditutup."
+              "Total nilai dan predikat pada hasil cetak rapor SMP tidak lagi mengikuti total detail rapor jika ada mapel yang tidak ikut dicetak.",
+              "Cetak umum bagian lainnya tidak lagi membiarkan halaman santri berikutnya naik mengisi ruang kosong halaman sebelumnya."
             ],
             "mandatory": ${MANDATORY}
           }

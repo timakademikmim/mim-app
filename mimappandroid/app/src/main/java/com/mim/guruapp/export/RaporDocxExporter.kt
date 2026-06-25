@@ -167,6 +167,7 @@ object RaporDocxExporter {
     val templateSections = splitDocumentBodySections(documentXml)
     val fallbackSectionProperties = templateSections.finalSectionProperties
       .ensureSectionHeaderReference(templateSections.defaultHeaderReference)
+      .forceNextPageSectionBreak()
     val numberingRemaps = mutableListOf<Map<Int, Int>>()
     val bodyContent = data.mapIndexed { index, item ->
       val filledDocument = fillRaporDocumentXml(documentXml, item)
@@ -174,9 +175,7 @@ object RaporDocxExporter {
         ?: throw IllegalStateException("Bagian ${section.label} belum ditemukan di template rapor.")
       val sectionWithHeader = selectedSection
         .ensureSectionHeaderReference(templateSections.defaultHeaderReference)
-        .let { content ->
-          if ("<w:sectPr" in content) content else content + fallbackSectionProperties
-        }
+        .withTrailingNextPageSectionBreak(fallbackSectionProperties)
       if (index == 0) {
         sectionWithHeader
       } else {
@@ -338,13 +337,14 @@ object RaporDocxExporter {
     documentXml: String,
     data: RaporExportData
   ): String {
-    val values = buildMergeFieldValues(data)
-    val occurrenceValues = buildMergeFieldOccurrenceValues(data)
+    val exportData = data.withTemplateAwarePrintedTotals(documentXml)
+    val values = buildMergeFieldValues(exportData)
+    val occurrenceValues = buildMergeFieldOccurrenceValues(exportData)
     return fillMergeFields(documentXml, values, occurrenceValues)
-      .fillSubjectTableRows(data)
-      .fillNomorIndukCells(data)
-      .replaceStaticTemplateText(data)
-      .replaceRoleSignaturePlaceholders(data)
+      .fillSubjectTableRows(exportData)
+      .fillNomorIndukCells(exportData)
+      .replaceStaticTemplateText(exportData)
+      .replaceRoleSignaturePlaceholders(exportData)
   }
 
   private fun buildMergeFieldValues(data: RaporExportData): Map<String, String> {
@@ -464,6 +464,35 @@ object RaporDocxExporter {
       val key = normalizeKey(subject.name)
       slot.aliases.any { alias -> key == alias || key.contains(alias) || alias.contains(key) }
     }
+  }
+
+  private fun RaporExportData.withTemplateAwarePrintedTotals(documentXml: String): RaporExportData {
+    if (raporTemplateAssetFor(className) != SmpTemplateAsset) return this
+    val printedSubjects = printedSubjectsForDocument(documentXml)
+    if (printedSubjects.isEmpty()) return this
+
+    val knowledgeValues = printedSubjects.mapNotNull { it.knowledgeScoreText.toScoreNumberOrNull() }
+    val skillValues = printedSubjects.mapNotNull { it.skillScoreText.toScoreNumberOrNull() }
+    return copy(
+      totalKnowledgeText = knowledgeValues.totalScoreText(),
+      totalKnowledgePredicate = knowledgeValues.averagePredicateText(),
+      totalSkillText = skillValues.totalScoreText(),
+      totalSkillPredicate = skillValues.averagePredicateText()
+    )
+  }
+
+  private fun RaporExportData.printedSubjectsForDocument(documentXml: String): List<RaporExportSubject> {
+    val rowRegex = Regex("""<w:tr\b[^>]*>.*?</w:tr>""", RegexOption.DOT_MATCHES_ALL)
+    return rowRegex.findAll(documentXml)
+      .mapNotNull { rowMatch ->
+        val key = normalizeKey(extractPlainWordText(rowMatch.value))
+        val slot = RaporSubjectTemplateSlots.firstOrNull { templateSlot ->
+          templateSlot.aliases.any { alias -> key.contains(alias) }
+        } ?: return@mapNotNull null
+        findSubjectForSlot(slot)
+      }
+      .distinctBy { normalizeKey(it.name) }
+      .toList()
   }
 
   private fun String.fillSubjectTableRows(data: RaporExportData): String {
@@ -684,6 +713,39 @@ object RaporDocxExporter {
     return rounded + match.groupValues[2]
   }
 
+  private fun String.toScoreNumberOrNull(): Double? {
+    val raw = trim().replace(",", ".")
+    if (raw.isBlank() || raw == "-") return null
+    return raw.toDoubleOrNull()
+  }
+
+  private fun List<Double>.totalScoreText(): String {
+    if (isEmpty()) return "-"
+    return sum().formatScoreText()
+  }
+
+  private fun List<Double>.averagePredicateText(): String {
+    if (isEmpty()) return "-"
+    return scorePredicate(average())
+  }
+
+  private fun Double.formatScoreText(): String {
+    val rounded = kotlin.math.round(this * 100.0) / 100.0
+    return if (rounded % 1.0 == 0.0) rounded.toInt().toString() else {
+      "%.2f".format(Locale.US, rounded).trimEnd('0').trimEnd('.')
+    }
+  }
+
+  private fun scorePredicate(value: Double): String {
+    return when {
+      value >= 90.0 -> "A"
+      value >= 80.0 -> "B"
+      value >= 70.0 -> "C"
+      value >= 60.0 -> "D"
+      else -> "E"
+    }
+  }
+
   private fun String.replaceStaticTemplateText(data: RaporExportData): String {
     val replacements = listOf(
       "PQ Putra Markaz Imam Malik" to data.schoolName,
@@ -785,6 +847,33 @@ object RaporDocxExporter {
         sectionProperties.replaceFirst(">", ">$headerReference")
       }
     }
+  }
+
+  private fun String.withTrailingNextPageSectionBreak(fallbackSectionProperties: String): String {
+    val content = if ("<w:sectPr" in this) {
+      this
+    } else {
+      this + fallbackSectionProperties.asSectionBreakParagraph()
+    }
+    return content.forceNextPageSectionBreak()
+  }
+
+  private fun String.asSectionBreakParagraph(): String {
+    if (isBlank()) return """<w:p><w:r><w:br w:type="page"/></w:r></w:p>"""
+    return "<w:p><w:pPr>$this</w:pPr></w:p>"
+  }
+
+  private fun String.forceNextPageSectionBreak(): String {
+    val sectionRegex = Regex("""<w:sectPr\b[^>]*>.*?</w:sectPr>""", RegexOption.DOT_MATCHES_ALL)
+    return sectionRegex.replace(this) { match ->
+      match.value.withNextPageSectionType()
+    }
+  }
+
+  private fun String.withNextPageSectionType(): String {
+    val withoutType = replace(Regex("""<w:type\b[^>]*/>""", RegexOption.IGNORE_CASE), "")
+    val startTag = Regex("""<w:sectPr\b[^>]*>""").find(withoutType) ?: return withoutType
+    return withoutType.replaceRange(startTag.range, startTag.value + """<w:type w:val="nextPage"/>""")
   }
 
   private fun replaceDocumentBodyContent(
