@@ -153,6 +153,7 @@ fun RaporScreen(
   var manualReports by remember(context) { mutableStateOf(loadRaporManualReports(context)) }
   var isImportDialogOpen by rememberSaveable { mutableStateOf(false) }
   var isDownloadDialogOpen by rememberSaveable { mutableStateOf(false) }
+  var isResetDialogOpen by rememberSaveable { mutableStateOf(false) }
   var progressDialogState by remember { mutableStateOf<RaporProgressDialogState?>(null) }
   var requestedAttendanceLoadIds by remember(selectedSemesterId) { mutableStateOf<Set<String>>(emptySet()) }
 
@@ -239,6 +240,28 @@ fun RaporScreen(
     val cleanedReports = nextReports.filterValues { it.hasAnyManualData() }
     manualReports = cleanedReports
     saveRaporManualReports(context, cleanedReports)
+  }
+
+  fun resetManualReportsForCurrentStudents(section: RaporSection?): Int {
+    val targetKeys = students.flatMap { student ->
+      listOf(buildRaporManualKey(student, selectedSemester), student.id)
+    }.toSet()
+    var affectedCount = 0
+    val nextReports = manualReports.toMutableMap()
+    targetKeys.forEach { key ->
+      val current = nextReports[key] ?: return@forEach
+      val hasTargetData = section?.let { current.hasSectionManualData(it) } ?: current.hasAnyManualData()
+      if (!hasTargetData) return@forEach
+      affectedCount += 1
+      val nextManual = section?.let { current.clearSection(it) }
+      if (nextManual == null || !nextManual.hasAnyManualData()) {
+        nextReports.remove(key)
+      } else {
+        nextReports[key] = nextManual
+      }
+    }
+    if (affectedCount > 0) updateManualReports(nextReports)
+    return affectedCount
   }
 
   fun launchExport(report: RaporStudentReport, share: Boolean) {
@@ -365,6 +388,7 @@ fun RaporScreen(
             onMenuClick = onMenuClick,
             onImportClick = { isImportDialogOpen = true },
             onDownloadClick = { isDownloadDialogOpen = true },
+            onResetClick = { isResetDialogOpen = true },
             onSantriClick = { selectedSantriId = it.id }
           )
         }
@@ -433,6 +457,28 @@ fun RaporScreen(
     )
   }
 
+  if (isResetDialogOpen) {
+    RaporBulkResetDialog(
+      semesterLabel = semesterDisplayLabel(selectedSemester),
+      onDismiss = { isResetDialogOpen = false },
+      onReset = { section ->
+        val affectedCount = resetManualReportsForCurrentStudents(section)
+        isResetDialogOpen = false
+        scope.launch {
+          val targetLabel = section?.label ?: "Semua bagian"
+          snackbarHostState.showSnackbar(
+            if (affectedCount > 0) {
+              "Data manual $targetLabel untuk $affectedCount santri direset."
+            } else {
+              "Tidak ada data manual $targetLabel untuk direset."
+            },
+            duration = SnackbarDuration.Short
+          )
+        }
+      }
+    )
+  }
+
   progressDialogState?.let { state ->
     RaporProgressDialog(
       state = state,
@@ -458,6 +504,7 @@ private fun RaporListContent(
   onMenuClick: () -> Unit,
   onImportClick: () -> Unit,
   onDownloadClick: () -> Unit,
+  onResetClick: () -> Unit,
   onSantriClick: (WaliSantriProfile) -> Unit
 ) {
   val filteredStudents = remember(students, query) {
@@ -488,7 +535,8 @@ private fun RaporListContent(
       actions = {
         RaporListActionsMenu(
           onImportClick = onImportClick,
-          onDownloadClick = onDownloadClick
+          onDownloadClick = onDownloadClick,
+          onResetClick = onResetClick
         )
       }
     )
@@ -718,7 +766,8 @@ private fun RaporTopButton(
 @Composable
 private fun RaporListActionsMenu(
   onImportClick: () -> Unit,
-  onDownloadClick: () -> Unit
+  onDownloadClick: () -> Unit,
+  onResetClick: () -> Unit
 ) {
   var expanded by remember { mutableStateOf(false) }
   Box {
@@ -746,6 +795,14 @@ private fun RaporListActionsMenu(
         onClick = {
           expanded = false
           onDownloadClick()
+        }
+      )
+      DropdownMenuItem(
+        text = { Text("Reset data") },
+        leadingIcon = { Icon(Icons.Outlined.RestartAlt, contentDescription = null, tint = PrimaryBlue) },
+        onClick = {
+          expanded = false
+          onResetClick()
         }
       )
     }
@@ -833,6 +890,82 @@ private fun RaporDownloadDialog(
               .clip(RoundedCornerShape(16.dp))
               .background(SoftPanel.copy(alpha = 0.62f))
               .clickable { onDownload(section) }
+              .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+          ) {
+            Text(
+              text = section.label,
+              style = MaterialTheme.typography.titleSmall,
+              color = PrimaryBlueDark,
+              fontWeight = FontWeight.ExtraBold
+            )
+            Text(
+              text = "Semua santri",
+              style = MaterialTheme.typography.bodySmall,
+              color = SubtleInk
+            )
+          }
+        }
+      }
+    },
+    confirmButton = {},
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("Batal")
+      }
+    }
+  )
+}
+
+@Composable
+private fun RaporBulkResetDialog(
+  semesterLabel: String,
+  onDismiss: () -> Unit,
+  onReset: (RaporSection?) -> Unit
+) {
+  val sections = remember {
+    RaporSection.entries.filter { it.canImport }
+  }
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("Reset Data Manual") },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+          text = "Pilih bagian yang akan dikembalikan ke data asli sistem untuk semua santri pada $semesterLabel.",
+          style = MaterialTheme.typography.bodyMedium,
+          color = SubtleInk
+        )
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(PrimaryBlue.copy(alpha = 0.1f))
+            .clickable { onReset(null) }
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+          Text(
+            text = "Semua bagian",
+            style = MaterialTheme.typography.titleSmall,
+            color = PrimaryBlueDark,
+            fontWeight = FontWeight.ExtraBold
+          )
+          Text(
+            text = "Semua santri",
+            style = MaterialTheme.typography.bodySmall,
+            color = SubtleInk
+          )
+        }
+        sections.forEach { section ->
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(16.dp))
+              .background(SoftPanel.copy(alpha = 0.62f))
+              .clickable { onReset(section) }
               .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween

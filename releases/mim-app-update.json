@@ -1,17 +1,16 @@
 {
-  "versionCode": 1016,
-  "versionName": "0.1.16",
-  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.16/MIM.APP.apk",
-  "releaseNotes": "MIM App Android 0.1.16. Export rapor wali kelas diperhalus agar download massal lebih jelas, lengkap, dan sesuai template.",
+  "versionCode": 1017,
+  "versionName": "0.1.17",
+  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.17/MIM.APP.apk",
+  "releaseNotes": "MIM App Android 0.1.17. Reset data manual rapor kini bisa dilakukan sekaligus untuk semua santri pada semester aktif.",
   "features": [
-    "Menu Rapor kini menyediakan download per bagian untuk Akhlak, Alquran, Nilai, dan Lainnya dalam satu file berisi semua santri.",
-    "Proses cetak, kirim, dan download rapor kini memakai dialog progress yang tetap tampil sampai dokumen selesai dibuat atau terjadi error."
+    "Menu Rapor kini memiliki pilihan Reset data dari tombol titik tiga di daftar rapor.",
+    "Reset data manual bisa dilakukan untuk semua bagian sekaligus, atau per bagian Akhlak, Alquran, Nilai, dan Lainnya."
   ],
   "fixes": [
-    "NISN sekarang masuk di semua halaman hasil cetak rapor, termasuk Akhlak dan Alquran pada cetak detail maupun download umum.",
-    "Background template rapor tetap ikut terbawa saat download umum bagian Alquran, Nilai, dan Lainnya.",
-    "Penomoran pada download rapor massal diulang dari awal di setiap halaman agar tidak bersambung antar santri.",
-    "Pesan proses download tidak lagi muncul singkat di bawah navbar, sehingga status pembuatan dokumen lebih mudah dibaca."
+    "Reset umum hanya menghapus data manual atau overlay hasil import untuk santri di semester yang sedang dipilih.",
+    "Data asli dari sistem tetap aman karena reset umum memakai mekanisme overlay yang sama dengan reset per santri.",
+    "Setelah reset umum, aplikasi menampilkan jumlah data santri yang berhasil dikembalikan ke data asli sistem."
   ],
   "mandatory": false
 }
