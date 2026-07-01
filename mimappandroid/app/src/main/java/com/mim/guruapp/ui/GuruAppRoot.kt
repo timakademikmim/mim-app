@@ -73,6 +73,7 @@ import java.time.LocalDate
 @Composable
 fun GuruAppRoot(
   state: GuruAppUiState,
+  onLoginTenantSelected: (String) -> Unit,
   onTeacherNameChange: (String) -> Unit,
   onPasswordChange: (String) -> Unit,
   onLoginClick: () -> Unit,
@@ -162,10 +163,13 @@ fun GuruAppRoot(
         )
 
         GuruDestination.Login -> LoginScreen(
+          tenants = state.loginTenants,
+          selectedTenantId = state.selectedLoginTenantId,
           teacherName = state.loginTeacherName,
           password = state.loginPassword,
           errorMessage = t(state.loginError),
           isBusy = state.isBusy,
+          onTenantSelected = onLoginTenantSelected,
           onTeacherNameChange = onTeacherNameChange,
           onPasswordChange = onPasswordChange,
           onLoginClick = onLoginClick,

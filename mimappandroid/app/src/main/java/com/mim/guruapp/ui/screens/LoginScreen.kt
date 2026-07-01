@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import com.mim.guruapp.ui.components.GlassCard
 import com.mim.guruapp.ui.components.GradientLoginButton
 import com.mim.guruapp.ui.components.LoginHeader
+import com.mim.guruapp.ui.components.LoginTenantDropdown
 import com.mim.guruapp.ui.components.LoginTextField
 import com.mim.guruapp.ui.components.LogoBackground
 import com.mim.guruapp.ui.components.PasswordIcon
@@ -27,13 +28,17 @@ import com.mim.guruapp.ui.components.RememberMeRow
 import com.mim.guruapp.ui.components.UsernameIcon
 import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.MimGuruTheme
+import com.mim.guruapp.data.remote.TenantLoginOption
 
 @Composable
 fun LoginScreen(
+  tenants: List<TenantLoginOption>,
+  selectedTenantId: String,
   teacherName: String,
   password: String,
   errorMessage: String,
   isBusy: Boolean,
+  onTenantSelected: (String) -> Unit,
   onTeacherNameChange: (String) -> Unit,
   onPasswordChange: (String) -> Unit,
   onLoginClick: () -> Unit,
@@ -59,13 +64,21 @@ fun LoginScreen(
           subtitle = "Silahkan login untuk melanjutkan"
         )
 
+        LoginTenantDropdown(
+          tenants = tenants,
+          selectedTenantId = selectedTenantId,
+          onTenantSelected = onTenantSelected,
+          enabled = !isBusy,
+          modifier = Modifier.padding(top = 24.dp)
+        )
+
         LoginTextField(
           value = teacherName,
           onValueChange = onTeacherNameChange,
           label = "ID Karyawan",
           placeholder = "Masukkan ID Karyawan",
           leadingIcon = UsernameIcon,
-          modifier = Modifier.padding(top = 24.dp)
+          modifier = Modifier.padding(top = 16.dp)
         )
 
         LoginTextField(
@@ -114,10 +127,21 @@ private fun LoginScreenPreview() {
 
   MimGuruTheme {
     LoginScreen(
+      tenants = listOf(
+        TenantLoginOption(
+          id = "putra",
+          code = "putra",
+          name = "MIM Putra",
+          officialName = "Ma'had Imam Malik Putra",
+          logoUrl = ""
+        )
+      ),
+      selectedTenantId = "putra",
       teacherName = teacherName,
       password = password,
       errorMessage = "",
       isBusy = false,
+      onTenantSelected = {},
       onTeacherNameChange = { teacherName = it },
       onPasswordChange = { password = it },
       onLoginClick = {},

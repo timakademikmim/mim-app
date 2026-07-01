@@ -24,6 +24,8 @@ import androidx.core.content.FileProvider
 import com.mim.guruapp.BuildConfig
 import com.mim.guruapp.data.model.UtsReportPayload
 import com.mim.guruapp.data.model.UtsReportSubject
+import com.mim.guruapp.data.remote.SupabaseRequestAuth
+import com.mim.guruapp.data.remote.applySupabaseRequestHeaders
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
@@ -87,8 +89,7 @@ object UtsReportExporter {
       connectTimeout = 20_000
       readTimeout = 30_000
       doOutput = true
-      setRequestProperty("apikey", BuildConfig.SUPABASE_ANON_KEY)
-      setRequestProperty("Authorization", "Bearer ${BuildConfig.SUPABASE_ANON_KEY}")
+      applySupabaseRequestHeaders()
       setRequestProperty("Content-Type", "application/pdf")
       setRequestProperty("x-upsert", "true")
     }
@@ -479,7 +480,9 @@ object UtsReportExporter {
   private fun buildStoragePath(data: UtsReportPayload): String {
     val semester = sanitizeFileNamePart(data.semesterLabel).replace(" ", "-").ifBlank { "semester" }
     val name = sanitizeFileNamePart(data.studentName).replace(" ", "-").ifBlank { data.studentId.ifBlank { "santri" } }
-    return "android/$semester/$name-${System.currentTimeMillis()}.pdf"
+    return SupabaseRequestAuth.tenantStoragePath(
+      "android/$semester/$name-${System.currentTimeMillis()}.pdf"
+    )
   }
 
   private fun sanitizeFileNamePart(value: String): String {

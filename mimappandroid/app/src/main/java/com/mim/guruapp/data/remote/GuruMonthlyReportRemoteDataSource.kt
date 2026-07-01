@@ -889,8 +889,7 @@ class GuruMonthlyReportRemoteDataSource {
       requestMethod = method
       connectTimeout = 15_000
       readTimeout = 15_000
-      setRequestProperty("apikey", BuildConfig.SUPABASE_ANON_KEY)
-      setRequestProperty("Authorization", "Bearer ${BuildConfig.SUPABASE_ANON_KEY}")
+      applySupabaseRequestHeaders()
       setRequestProperty("Accept", "application/json")
       setRequestProperty("Accept-Charset", "UTF-8")
     }

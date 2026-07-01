@@ -339,10 +339,10 @@ private fun AdminKaryawanDetailContent(
             modifier = Modifier.padding(top = 10.dp)
           )
           AdminKaryawanInputField(
-            value = employee.password,
+            value = if (employee.authLinked) "Terhubung ke Supabase Auth" else "Belum dimigrasikan",
             onValueChange = {},
-            label = "Password",
-            placeholder = "Belum ada password",
+            label = "Status Login",
+            placeholder = "Belum terhubung",
             readOnly = true,
             modifier = Modifier.padding(top = 10.dp)
           )
@@ -362,7 +362,7 @@ private fun AdminKaryawanDetailContent(
               value = newPassword,
               onValueChange = { newPassword = it },
               label = "Password baru",
-              placeholder = "Masukkan password baru",
+              placeholder = "Minimal 10 karakter",
               isPassword = true,
               passwordVisible = showPassword,
               onPasswordVisibilityToggle = { showPassword = !showPassword },

@@ -1,15 +1,17 @@
 {
-  "versionCode": 1020,
-  "versionName": "0.1.20",
-  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.20/MIM.APP.apk",
-  "releaseNotes": "MIM App Android 0.1.20. Cetak rapor SMP dan download umum bagian lainnya kini lebih rapi dan konsisten.",
+  "versionCode": 1021,
+  "versionName": "0.1.21",
+  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.21/MIM.APP.apk",
+  "releaseNotes": "MIM App Android 0.1.21. Login kini menggunakan unit sekolah dan Supabase Auth yang lebih aman untuk mendukung multitenant.",
   "features": [
-    "Hasil cetak rapor SMP kini menghitung total nilai dan predikat dari mapel yang benar-benar muncul di template cetak.",
-    "Download umum rapor per bagian tetap mempertahankan pemisahan halaman antar santri."
+    "Layar login kini mewajibkan pemilihan unit sekolah sebelum masuk.",
+    "Akun pengguna kini memakai Supabase Auth dengan sesi yang dapat diperbarui otomatis.",
+    "Pengelolaan profil unit dan akun karyawan kini memakai layanan server yang terlindungi."
   ],
   "fixes": [
-    "Total nilai dan predikat pada hasil cetak rapor SMP tidak lagi mengikuti total detail rapor jika ada mapel yang tidak ikut dicetak.",
-    "Cetak umum bagian lainnya tidak lagi membiarkan halaman santri berikutnya naik mengisi ruang kosong halaman sebelumnya."
+    "Cache dan data lokal kini dipisahkan berdasarkan unit serta akun agar tidak tercampur pada perangkat bersama.",
+    "Token sesi disimpan terenkripsi dan seluruh permintaan data memakai JWT akun aktif.",
+    "Upload laporan dan media kini ditempatkan pada folder Storage khusus tenant."
   ],
-  "mandatory": false
+  "mandatory": true
 }

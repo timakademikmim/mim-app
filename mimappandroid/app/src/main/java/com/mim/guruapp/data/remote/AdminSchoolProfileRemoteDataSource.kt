@@ -52,7 +52,17 @@ class AdminSchoolProfileRemoteDataSource {
   suspend fun fetchSnapshot(): AdminSchoolProfileLoadResult = withContext(Dispatchers.IO) {
     try {
       val employees = fetchEmployees()
-      val profile = fetchProfileRow() ?: AdminSchoolProfile()
+      val structureProfile = fetchProfileRow() ?: AdminSchoolProfile()
+      val profile = if (SupabaseRequestAuth.isAuthenticated()) {
+        fetchTenantIdentity()?.let { identity ->
+          structureProfile.copy(
+            schoolName = identity.first.ifBlank { structureProfile.schoolName },
+            schoolAddress = identity.second.ifBlank { structureProfile.schoolAddress }
+          )
+        } ?: structureProfile
+      } else {
+        structureProfile
+      }
       AdminSchoolProfileLoadResult.Success(
         buildSnapshot(
           profile = profile,
@@ -73,6 +83,9 @@ class AdminSchoolProfileRemoteDataSource {
 
   suspend fun saveProfile(profile: AdminSchoolProfile): AdminSchoolProfileSaveResult = withContext(Dispatchers.IO) {
     try {
+      if (SupabaseRequestAuth.isAuthenticated()) {
+        updateTenantIdentity(profile)
+      }
       val savedProfile = upsertProfile(profile)
       syncWakasekRoles(savedProfile)
       val employees = fetchEmployees()
@@ -146,6 +159,39 @@ class AdminSchoolProfileRemoteDataSource {
       "?select=*&order=updated_at.desc&order=created_at.desc&limit=1"
     val rows = createConnection(requestUrl, "GET").useSchoolProfileJsonArrayResponse { it }
     return parseProfile(rows.optJSONObject(0))
+  }
+
+  private fun fetchTenantIdentity(): Pair<String, String>? {
+    val response = postTenantProfile(
+      JSONObject().put("action", "get")
+    )
+    val profile = response.optJSONObject("profile") ?: return null
+    val name = profile.optCleanString("official_name").ifBlank { profile.optCleanString("name") }
+    return name to profile.optCleanString("address")
+  }
+
+  private fun updateTenantIdentity(profile: AdminSchoolProfile) {
+    postTenantProfile(
+      JSONObject().apply {
+        put("action", "update")
+        put("name", profile.schoolName.trim())
+        put("official_name", profile.schoolName.trim())
+        putNullableString("address", profile.schoolAddress)
+      }
+    )
+  }
+
+  private fun postTenantProfile(payload: JSONObject): JSONObject {
+    val requestUrl = "${BuildConfig.SUPABASE_URL}/functions/v1/manage-tenant-profile"
+    val connection = createConnection(requestUrl, "POST").apply {
+      doOutput = true
+      setRequestProperty("Content-Type", "application/json")
+    }
+    connection.outputStream.use { stream ->
+      stream.write(payload.toString().toByteArray(Charsets.UTF_8))
+      stream.flush()
+    }
+    return connection.useSchoolProfileJsonObjectResponse { it }
   }
 
   private fun upsertProfile(profile: AdminSchoolProfile): AdminSchoolProfile {
@@ -278,8 +324,7 @@ class AdminSchoolProfileRemoteDataSource {
       requestMethod = method
       connectTimeout = 15_000
       readTimeout = 15_000
-      setRequestProperty("apikey", BuildConfig.SUPABASE_ANON_KEY)
-      setRequestProperty("Authorization", "Bearer ${BuildConfig.SUPABASE_ANON_KEY}")
+      applySupabaseRequestHeaders()
       setRequestProperty("Accept", "application/json")
       setRequestProperty("Accept-Charset", "UTF-8")
     }
@@ -343,6 +388,14 @@ private inline fun <T> HttpURLConnection.useSchoolProfileJsonArrayResponse(
 ): T {
   return useSchoolProfileStringResponse { payload ->
     block(JSONArray(payload.ifBlank { "[]" }))
+  }
+}
+
+private inline fun <T> HttpURLConnection.useSchoolProfileJsonObjectResponse(
+  block: (JSONObject) -> T
+): T {
+  return useSchoolProfileStringResponse { payload ->
+    block(JSONObject(payload.ifBlank { "{}" }))
   }
 }
 

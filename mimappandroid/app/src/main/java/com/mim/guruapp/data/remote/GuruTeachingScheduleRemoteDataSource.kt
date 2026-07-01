@@ -217,8 +217,7 @@ class GuruTeachingScheduleRemoteDataSource {
       requestMethod = "GET"
       connectTimeout = 15_000
       readTimeout = 15_000
-      setRequestProperty("apikey", BuildConfig.SUPABASE_ANON_KEY)
-      setRequestProperty("Authorization", "Bearer ${BuildConfig.SUPABASE_ANON_KEY}")
+      applySupabaseRequestHeaders()
       setRequestProperty("Accept", "application/json")
     }
     return try {

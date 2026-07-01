@@ -18,12 +18,22 @@ private val Context.sessionDataStore by preferencesDataStore(name = "mim_guru_se
 
 class SessionStore(private val context: Context) {
   private val json = Json { ignoreUnknownKeys = true }
+  private val crypto = SessionCrypto()
 
   private object Keys {
     val IsLoggedIn = booleanPreferencesKey("is_logged_in")
     val TeacherRowId = stringPreferencesKey("teacher_row_id")
     val TeacherId = stringPreferencesKey("teacher_id")
     val TeacherName = stringPreferencesKey("teacher_name")
+    val TenantId = stringPreferencesKey("tenant_id")
+    val TenantName = stringPreferencesKey("tenant_name")
+    val OrganizationId = stringPreferencesKey("organization_id")
+    val AuthUserId = stringPreferencesKey("auth_user_id")
+    val AuthAccessToken = stringPreferencesKey("auth_access_token")
+    val AuthRefreshToken = stringPreferencesKey("auth_refresh_token")
+    val AuthExpiresAt = longPreferencesKey("auth_expires_at")
+    val UsesSupabaseAuth = booleanPreferencesKey("uses_supabase_auth")
+    val MustChangePassword = booleanPreferencesKey("must_change_password")
     val ActiveRole = stringPreferencesKey("active_role")
     val Roles = stringPreferencesKey("roles")
     val LastLoginAt = longPreferencesKey("last_login_at")
@@ -39,6 +49,15 @@ class SessionStore(private val context: Context) {
       teacherRowId = prefs[Keys.TeacherRowId] ?: "",
       teacherId = prefs[Keys.TeacherId] ?: "",
       teacherName = prefs[Keys.TeacherName] ?: "",
+      tenantId = prefs[Keys.TenantId] ?: "",
+      tenantName = prefs[Keys.TenantName] ?: "",
+      organizationId = prefs[Keys.OrganizationId] ?: "",
+      authUserId = prefs[Keys.AuthUserId] ?: "",
+      authAccessToken = crypto.decrypt(prefs[Keys.AuthAccessToken] ?: ""),
+      authRefreshToken = crypto.decrypt(prefs[Keys.AuthRefreshToken] ?: ""),
+      authExpiresAt = prefs[Keys.AuthExpiresAt] ?: 0L,
+      usesSupabaseAuth = prefs[Keys.UsesSupabaseAuth] ?: false,
+      mustChangePassword = prefs[Keys.MustChangePassword] ?: false,
       activeRole = prefs[Keys.ActiveRole] ?: "",
       roles = roles,
       lastLoginAt = prefs[Keys.LastLoginAt] ?: 0L
@@ -50,16 +69,68 @@ class SessionStore(private val context: Context) {
     teacherId: String,
     teacherName: String,
     activeRole: String,
-    roles: List<String>
+    roles: List<String>,
+    tenantId: String = "",
+    tenantName: String = "",
+    organizationId: String = "",
+    authUserId: String = "",
+    authAccessToken: String = "",
+    authRefreshToken: String = "",
+    authExpiresAt: Long = 0L,
+    usesSupabaseAuth: Boolean = false,
+    mustChangePassword: Boolean = false
   ) {
     context.sessionDataStore.edit { prefs ->
       prefs[Keys.IsLoggedIn] = true
       prefs[Keys.TeacherRowId] = teacherRowId
       prefs[Keys.TeacherId] = teacherId
       prefs[Keys.TeacherName] = teacherName
+      prefs[Keys.TenantId] = tenantId
+      prefs[Keys.TenantName] = tenantName
+      prefs[Keys.OrganizationId] = organizationId
+      prefs[Keys.AuthUserId] = authUserId
+      prefs[Keys.AuthAccessToken] = crypto.encrypt(authAccessToken)
+      prefs[Keys.AuthRefreshToken] = crypto.encrypt(authRefreshToken)
+      prefs[Keys.AuthExpiresAt] = authExpiresAt
+      prefs[Keys.UsesSupabaseAuth] = usesSupabaseAuth
+      prefs[Keys.MustChangePassword] = mustChangePassword
       prefs[Keys.ActiveRole] = activeRole
       prefs[Keys.Roles] = json.encodeToString(roles)
       prefs[Keys.LastLoginAt] = System.currentTimeMillis()
+    }
+  }
+
+  suspend fun saveLogin(session: SessionSnapshot) {
+    saveLogin(
+      teacherRowId = session.teacherRowId,
+      teacherId = session.teacherId,
+      teacherName = session.teacherName,
+      activeRole = session.activeRole,
+      roles = session.roles,
+      tenantId = session.tenantId,
+      tenantName = session.tenantName,
+      organizationId = session.organizationId,
+      authUserId = session.authUserId,
+      authAccessToken = session.authAccessToken,
+      authRefreshToken = session.authRefreshToken,
+      authExpiresAt = session.authExpiresAt,
+      usesSupabaseAuth = session.usesSupabaseAuth,
+      mustChangePassword = session.mustChangePassword
+    )
+  }
+
+  suspend fun updateAuthSession(
+    authUserId: String,
+    accessToken: String,
+    refreshToken: String,
+    expiresAt: Long
+  ) {
+    context.sessionDataStore.edit { prefs ->
+      prefs[Keys.AuthUserId] = authUserId
+      prefs[Keys.AuthAccessToken] = crypto.encrypt(accessToken)
+      prefs[Keys.AuthRefreshToken] = crypto.encrypt(refreshToken)
+      prefs[Keys.AuthExpiresAt] = expiresAt
+      prefs[Keys.UsesSupabaseAuth] = true
     }
   }
 
@@ -72,6 +143,12 @@ class SessionStore(private val context: Context) {
   suspend fun updateActiveRole(activeRole: String) {
     context.sessionDataStore.edit { prefs ->
       prefs[Keys.ActiveRole] = activeRole
+    }
+  }
+
+  suspend fun updateMustChangePassword(mustChangePassword: Boolean) {
+    context.sessionDataStore.edit { prefs ->
+      prefs[Keys.MustChangePassword] = mustChangePassword
     }
   }
 

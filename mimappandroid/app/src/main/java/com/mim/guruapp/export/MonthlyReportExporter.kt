@@ -19,6 +19,8 @@ import android.print.PrintDocumentAdapter
 import android.print.PrintDocumentInfo
 import android.print.PrintManager
 import com.mim.guruapp.BuildConfig
+import com.mim.guruapp.data.remote.SupabaseRequestAuth
+import com.mim.guruapp.data.remote.applySupabaseRequestHeaders
 import androidx.core.content.FileProvider
 import java.io.BufferedReader
 import java.io.File
@@ -116,8 +118,7 @@ object MonthlyReportExporter {
       connectTimeout = 20_000
       readTimeout = 30_000
       doOutput = true
-      setRequestProperty("apikey", BuildConfig.SUPABASE_ANON_KEY)
-      setRequestProperty("Authorization", "Bearer ${BuildConfig.SUPABASE_ANON_KEY}")
+      applySupabaseRequestHeaders()
       setRequestProperty("Content-Type", "application/pdf")
       setRequestProperty("x-upsert", "true")
     }
@@ -705,7 +706,9 @@ object MonthlyReportExporter {
   private fun buildStoragePath(data: MonthlyReportExportData): String {
     val period = sanitizeFileNamePart(data.periodLabel).replace(" ", "-").ifBlank { "periode" }
     val name = sanitizeFileNamePart(data.studentName).replace(" ", "-").ifBlank { data.studentId.ifBlank { "santri" } }
-    return "android/$period/$name-${System.currentTimeMillis()}.pdf"
+    return SupabaseRequestAuth.tenantStoragePath(
+      "android/$period/$name-${System.currentTimeMillis()}.pdf"
+    )
   }
 
   private fun sanitizeFileNamePart(value: String): String {

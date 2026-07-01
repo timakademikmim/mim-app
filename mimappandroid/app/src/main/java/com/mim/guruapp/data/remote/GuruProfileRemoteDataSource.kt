@@ -33,6 +33,12 @@ class GuruProfileRemoteDataSource {
     teacherRowId: String,
     teacherKaryawanId: String
   ): GuruRemoteProfile? = withContext(Dispatchers.IO) {
+    if (SupabaseRequestAuth.isAuthenticated()) {
+      return@withContext runCatching {
+        val response = postSelfProfile(JSONObject().put("action", "get"))
+        parseProfile(response.optJSONObject("profile"))
+      }.getOrNull()
+    }
     val selectVariants = listOf(
       "id,id_karyawan,nama,no_hp,alamat,password,foto_url",
       "id,id_karyawan,nama,no_hp,alamat,password"
@@ -70,6 +76,31 @@ class GuruProfileRemoteDataSource {
     val normalizedName = profile.name.trim()
     if (normalizedName.isBlank()) {
       return@withContext GuruProfileSyncResult.Error("Nama wajib diisi.")
+    }
+
+    if (SupabaseRequestAuth.isAuthenticated()) {
+      return@withContext try {
+        val response = postSelfProfile(
+          JSONObject().apply {
+            put("action", "update")
+            put("name", normalizedName)
+            putNullableProfileText("phone", profile.phoneNumber)
+            putNullableProfileText("address", profile.address)
+            putNullableProfileText("avatar_url", profile.avatarUri)
+            if (profile.password.isNotBlank()) put("password", profile.password)
+          }
+        )
+        val saved = parseProfile(response.optJSONObject("profile"))
+          ?: return@withContext GuruProfileSyncResult.Error("Profil tidak ditemukan setelah disimpan.")
+        GuruProfileSyncResult.Success(saved)
+      } catch (_: SocketTimeoutException) {
+        GuruProfileSyncResult.Error("Koneksi ke server terlalu lama. Coba lagi.")
+      } catch (error: Exception) {
+        val message = runCatching {
+          JSONObject(error.message.orEmpty()).optString("error").trim()
+        }.getOrDefault("")
+        GuruProfileSyncResult.Error(message.ifBlank { "Gagal menyimpan profil ke server." })
+      }
     }
 
     val syncAttempts = listOf(true, false)
@@ -142,11 +173,23 @@ class GuruProfileRemoteDataSource {
       requestMethod = method
       connectTimeout = 15_000
       readTimeout = 15_000
-      setRequestProperty("apikey", BuildConfig.SUPABASE_ANON_KEY)
-      setRequestProperty("Authorization", "Bearer ${BuildConfig.SUPABASE_ANON_KEY}")
+      applySupabaseRequestHeaders()
       setRequestProperty("Accept", "application/json")
       setRequestProperty("Accept-Charset", "UTF-8")
     }
+  }
+
+  private fun postSelfProfile(payload: JSONObject): JSONObject {
+    val requestUrl = "${BuildConfig.SUPABASE_URL}/functions/v1/manage-self-profile"
+    val connection = createConnection(requestUrl, "POST").apply {
+      doOutput = true
+      setRequestProperty("Content-Type", "application/json")
+    }
+    connection.outputStream.use { stream ->
+      stream.write(payload.toString().toByteArray(Charsets.UTF_8))
+      stream.flush()
+    }
+    return connection.useProfileJsonObjectResponse { it }
   }
 
   private fun buildSelectUrl(
@@ -175,9 +218,24 @@ class GuruProfileRemoteDataSource {
       name = item.optString("nama").trim(),
       phoneNumber = item.optString("no_hp").trim(),
       address = item.optString("alamat").trim(),
-      password = item.optString("password").trim(),
+      password = "",
       avatarUrl = item.optString("foto_url").trim()
     )
+  }
+}
+
+private inline fun <T> HttpURLConnection.useProfileJsonObjectResponse(
+  block: (JSONObject) -> T
+): T {
+  return try {
+    val responseCode = responseCode
+    val payload = readProfilePayload(responseCode in 200..299)
+    if (responseCode !in 200..299) {
+      throw IllegalStateException(payload.ifBlank { "HTTP $responseCode" })
+    }
+    block(JSONObject(payload.ifBlank { "{}" }))
+  } finally {
+    disconnect()
   }
 }
 
@@ -202,4 +260,9 @@ private fun HttpURLConnection.readProfilePayload(useInputStream: Boolean): Strin
   return BufferedReader(InputStreamReader(stream)).use { reader ->
     reader.lineSequence().joinToString(separator = "")
   }
+}
+
+private fun JSONObject.putNullableProfileText(key: String, value: String) {
+  val normalized = value.trim()
+  put(key, if (normalized.isBlank()) JSONObject.NULL else normalized)
 }

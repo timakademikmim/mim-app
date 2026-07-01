@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -26,6 +27,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Checkbox
@@ -33,8 +36,13 @@ import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,6 +62,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.mim.guruapp.R
+import com.mim.guruapp.data.remote.TenantLoginOption
 import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.PrimaryBlueDark
 
@@ -264,6 +273,86 @@ fun LoginTextField(
         }
       }
     )
+  }
+}
+
+@Composable
+fun LoginTenantDropdown(
+  tenants: List<TenantLoginOption>,
+  selectedTenantId: String,
+  onTenantSelected: (String) -> Unit,
+  enabled: Boolean,
+  modifier: Modifier = Modifier
+) {
+  var expanded by remember { mutableStateOf(false) }
+  val shape = RoundedCornerShape(18.dp)
+  val selectedTenant = tenants.firstOrNull { it.id == selectedTenantId }
+
+  Column(modifier = modifier.fillMaxWidth()) {
+    Text(
+      text = t("Unit Sekolah"),
+      style = MaterialTheme.typography.labelLarge,
+      color = Color.White.copy(alpha = 0.92f),
+      modifier = Modifier.padding(bottom = 8.dp)
+    )
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .background(Color.White.copy(alpha = 0.16f), shape)
+          .border(1.dp, Color.White.copy(alpha = 0.20f), shape)
+          .clickable(enabled = enabled && tenants.isNotEmpty()) { expanded = true }
+          .padding(horizontal = 16.dp, vertical = 15.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+      ) {
+        Icon(
+          imageVector = Icons.Outlined.School,
+          contentDescription = null,
+          tint = Color.White.copy(alpha = 0.82f),
+          modifier = Modifier.size(20.dp)
+        )
+        Text(
+          text = selectedTenant?.name ?: t("Pilih unit sekolah"),
+          style = MaterialTheme.typography.bodyLarge,
+          color = if (selectedTenant == null) Color.White.copy(alpha = 0.54f) else Color.White,
+          modifier = Modifier.weight(1f)
+        )
+        Icon(
+          imageVector = Icons.Outlined.KeyboardArrowDown,
+          contentDescription = t("Pilih unit sekolah"),
+          tint = Color.White.copy(alpha = 0.82f),
+          modifier = Modifier.size(20.dp)
+        )
+      }
+
+      DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = { expanded = false },
+        modifier = Modifier.widthIn(min = maxWidth, max = maxWidth)
+      ) {
+        tenants.forEach { tenant ->
+          DropdownMenuItem(
+            text = {
+              Column {
+                Text(text = tenant.name, style = MaterialTheme.typography.bodyLarge)
+                if (tenant.officialName.isNotBlank() && tenant.officialName != tenant.name) {
+                  Text(
+                    text = tenant.officialName,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                  )
+                }
+              }
+            },
+            onClick = {
+              expanded = false
+              onTenantSelected(tenant.id)
+            }
+          )
+        }
+      }
+    }
   }
 }
 

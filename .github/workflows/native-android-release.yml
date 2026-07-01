@@ -112,20 +112,26 @@ jobs:
           cp "$APP_DIR/app/build/outputs/apk/release/MIM APP.apk" "$OUTPUT_DIR/MIM.APP.apk"
 
           APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG_NAME}/MIM.APP.apk"
-          MANDATORY="${{ inputs.mandatory || false }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            MANDATORY="${{ inputs.mandatory }}"
+          else
+            MANDATORY="$(jq -r '.mandatory // false' releases/mim-app-update.json)"
+          fi
           cat > "$OUTPUT_DIR/mim-app-update.json" <<EOF
           {
             "versionCode": ${MIM_VERSION_CODE},
             "versionName": "${MIM_VERSION_NAME}",
             "apkUrl": "${APK_URL}",
-            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Cetak rapor SMP dan download umum bagian lainnya kini lebih rapi dan konsisten.",
+            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Login kini menggunakan unit sekolah dan Supabase Auth yang lebih aman untuk mendukung multitenant.",
             "features": [
-              "Hasil cetak rapor SMP kini menghitung total nilai dan predikat dari mapel yang benar-benar muncul di template cetak.",
-              "Download umum rapor per bagian tetap mempertahankan pemisahan halaman antar santri."
+              "Layar login kini mewajibkan pemilihan unit sekolah sebelum masuk.",
+              "Akun pengguna kini memakai Supabase Auth dengan sesi yang dapat diperbarui otomatis.",
+              "Pengelolaan profil unit dan akun karyawan kini memakai layanan server yang terlindungi."
             ],
             "fixes": [
-              "Total nilai dan predikat pada hasil cetak rapor SMP tidak lagi mengikuti total detail rapor jika ada mapel yang tidak ikut dicetak.",
-              "Cetak umum bagian lainnya tidak lagi membiarkan halaman santri berikutnya naik mengisi ruang kosong halaman sebelumnya."
+              "Cache dan data lokal kini dipisahkan berdasarkan unit serta akun agar tidak tercampur pada perangkat bersama.",
+              "Token sesi disimpan terenkripsi dan seluruh permintaan data memakai JWT akun aktif.",
+              "Upload laporan dan media kini ditempatkan pada folder Storage khusus tenant."
             ],
             "mandatory": ${MANDATORY}
           }

@@ -3,14 +3,12 @@ package com.mim.guruapp.data.remote
 import com.mim.guruapp.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URL
-import java.net.URLEncoder
 
 data class AdminEmployee(
   val rowId: String,
@@ -20,7 +18,9 @@ data class AdminEmployee(
   val role: String,
   val phoneNumber: String,
   val address: String,
-  val active: Boolean
+  val active: Boolean,
+  val authLinked: Boolean = false,
+  val mustChangePassword: Boolean = false
 )
 
 sealed interface AdminEmployeeListResult {
@@ -36,15 +36,19 @@ sealed interface AdminEmployeeSaveResult {
 class AdminKaryawanRemoteDataSource {
   suspend fun fetchEmployees(): AdminEmployeeListResult = withContext(Dispatchers.IO) {
     try {
-      val requestUrl = "${BuildConfig.SUPABASE_URL}/rest/v1/karyawan" +
-        "?select=id,id_karyawan,nama,password,role,no_hp,alamat,aktif&order=aktif.desc&order=nama.asc"
-      val rows = createConnection(requestUrl, "GET").useAdminEmployeeJsonArrayResponse { it }
+      val response = postAction(JSONObject().put("action", "list"))
+      val rows = response.optJSONArray("employees")
       AdminEmployeeListResult.Success(
-        (0 until rows.length())
-          .mapNotNull { index -> parseEmployee(rows.optJSONObject(index)) }
+        if (rows == null) {
+          emptyList()
+        } else {
+          (0 until rows.length()).mapNotNull { index -> parseEmployee(rows.optJSONObject(index)) }
+        }
       )
     } catch (_: SocketTimeoutException) {
       AdminEmployeeListResult.Error("Koneksi ke server terlalu lama. Coba lagi.")
+    } catch (error: TenantAdminHttpException) {
+      AdminEmployeeListResult.Error(error.userMessage("Gagal memuat data karyawan."))
     } catch (_: Exception) {
       AdminEmployeeListResult.Error("Gagal memuat data karyawan.")
     }
@@ -65,56 +69,76 @@ class AdminKaryawanRemoteDataSource {
     }
 
     try {
-      val requestUrl = "${BuildConfig.SUPABASE_URL}/rest/v1/karyawan" +
-        "?select=id,id_karyawan,nama,password,role,no_hp,alamat,aktif&id=eq.${encodeValue(employee.rowId)}"
-      val connection = createConnection(requestUrl, "PATCH").apply {
-        doOutput = true
-        setRequestProperty("Content-Type", "application/json")
-        setRequestProperty("Prefer", "return=representation")
+      val updateResponse = postAction(
+        JSONObject().apply {
+          put("action", "update")
+          put("employee_id", employee.rowId)
+          put("login_id", normalizedId)
+          put("name", normalizedName)
+          put("roles", normalizedRole)
+          putNullableText("phone", employee.phoneNumber)
+          putNullableText("address", employee.address)
+        }
+      )
+      var saved = parseEmployee(updateResponse.optJSONObject("employee"))
+        ?: throw IllegalStateException("Data karyawan tidak ditemukan setelah disimpan.")
+
+      if (saved.active != employee.active) {
+        val activeResponse = postAction(
+          JSONObject().apply {
+            put("action", "set_active")
+            put("employee_id", employee.rowId)
+            put("active", employee.active)
+          }
+        )
+        saved = parseEmployee(activeResponse.optJSONObject("employee")) ?: saved.copy(active = employee.active)
       }
-      val payload = JSONObject().apply {
-        put("id_karyawan", normalizedId)
-        put("nama", normalizedName)
-        put("role", normalizedRole)
-        val phone = employee.phoneNumber.trim()
-        val address = employee.address.trim()
-        put("no_hp", if (phone.isBlank()) JSONObject.NULL else phone)
-        put("alamat", if (address.isBlank()) JSONObject.NULL else address)
-        put("aktif", employee.active)
-        val password = newPassword.trim()
-        if (password.isNotBlank()) {
-          put("password", password)
+
+      if (newPassword.isNotBlank()) {
+        val passwordPayload = JSONObject().apply {
+          put("action", "reset_password")
+          put("employee_id", employee.rowId)
+          put("password", newPassword)
+        }
+        try {
+          postAction(passwordPayload)
+          saved = saved.copy(authLinked = true, mustChangePassword = true)
+        } catch (error: TenantAdminHttpException) {
+          if (error.statusCode != HttpURLConnection.HTTP_CONFLICT) throw error
+          passwordPayload.put("action", "migrate_auth")
+          val migrationResponse = postAction(passwordPayload)
+          saved = parseEmployee(migrationResponse.optJSONObject("employee"))
+            ?: saved.copy(authLinked = true, mustChangePassword = true)
         }
       }
-      connection.outputStream.use { stream ->
-        stream.write(payload.toString().toByteArray(Charsets.UTF_8))
-        stream.flush()
-      }
-      val saved = connection.useAdminEmployeeJsonArrayResponse { rows ->
-        parseEmployee(rows.optJSONObject(0))
-      }
-      if (saved != null) {
-        AdminEmployeeSaveResult.Success(saved)
-      } else {
-        AdminEmployeeSaveResult.Error("Data karyawan tidak ditemukan setelah disimpan.")
-      }
+
+      AdminEmployeeSaveResult.Success(saved.copy(password = ""))
     } catch (_: SocketTimeoutException) {
       AdminEmployeeSaveResult.Error("Koneksi ke server terlalu lama. Coba lagi.")
-    } catch (_: Exception) {
-      AdminEmployeeSaveResult.Error("Gagal menyimpan data karyawan.")
+    } catch (error: TenantAdminHttpException) {
+      AdminEmployeeSaveResult.Error(error.userMessage("Gagal menyimpan data karyawan."))
+    } catch (error: Exception) {
+      AdminEmployeeSaveResult.Error(error.message?.takeIf { it.isNotBlank() } ?: "Gagal menyimpan data karyawan.")
     }
   }
 
-  private fun createConnection(requestUrl: String, method: String): HttpURLConnection {
-    return (URL(requestUrl).openConnection() as HttpURLConnection).apply {
-      requestMethod = method
-      connectTimeout = 15_000
-      readTimeout = 15_000
-      setRequestProperty("apikey", BuildConfig.SUPABASE_ANON_KEY)
-      setRequestProperty("Authorization", "Bearer ${BuildConfig.SUPABASE_ANON_KEY}")
+  private fun postAction(payload: JSONObject): JSONObject {
+    val requestUrl = "${BuildConfig.SUPABASE_URL}/functions/v1/manage-tenant-user"
+    val connection = (URL(requestUrl).openConnection() as HttpURLConnection).apply {
+      requestMethod = "POST"
+      connectTimeout = 20_000
+      readTimeout = 20_000
+      doOutput = true
+      applySupabaseRequestHeaders()
+      setRequestProperty("Content-Type", "application/json")
       setRequestProperty("Accept", "application/json")
       setRequestProperty("Accept-Charset", "UTF-8")
     }
+    connection.outputStream.use { stream ->
+      stream.write(payload.toString().toByteArray(Charsets.UTF_8))
+      stream.flush()
+    }
+    return connection.useTenantAdminJsonResponse()
   }
 
   private fun parseEmployee(item: JSONObject?): AdminEmployee? {
@@ -123,16 +147,14 @@ class AdminKaryawanRemoteDataSource {
       rowId = item.optCleanString("id"),
       employeeId = item.optCleanString("id_karyawan"),
       name = item.optCleanString("nama"),
-      password = item.optCleanString("password"),
+      password = "",
       role = item.optCleanString("role"),
       phoneNumber = item.optCleanString("no_hp"),
       address = item.optCleanString("alamat"),
-      active = item.optBooleanFlexible("aktif")
+      active = item.optBooleanFlexible("aktif"),
+      authLinked = item.optCleanString("auth_user_id").isNotBlank(),
+      mustChangePassword = item.optBooleanFlexible("must_change_password")
     )
-  }
-
-  private fun encodeValue(value: String): String {
-    return URLEncoder.encode(value, Charsets.UTF_8.name())
   }
 
   private fun normalizeRoleForStore(rawRole: String): String {
@@ -145,27 +167,38 @@ class AdminKaryawanRemoteDataSource {
   }
 }
 
-private inline fun <T> HttpURLConnection.useAdminEmployeeJsonArrayResponse(
-  block: (JSONArray) -> T
-): T {
+private class TenantAdminHttpException(
+  val statusCode: Int,
+  private val payload: String
+) : Exception(payload) {
+  fun userMessage(fallback: String): String {
+    val message = runCatching { JSONObject(payload).optCleanString("error") }.getOrDefault("")
+    return message.ifBlank { fallback }
+  }
+}
+
+private fun HttpURLConnection.useTenantAdminJsonResponse(): JSONObject {
   return try {
-    val responseCode = responseCode
-    val payload = readAdminEmployeePayload(responseCode in 200..299)
-    if (responseCode !in 200..299) {
-      throw IllegalStateException(payload.ifBlank { "HTTP $responseCode" })
-    }
-    block(JSONArray(payload.ifBlank { "[]" }))
+    val status = responseCode
+    val payload = readTenantAdminPayload(status in 200..299)
+    if (status !in 200..299) throw TenantAdminHttpException(status, payload)
+    JSONObject(payload.ifBlank { "{}" })
   } finally {
     disconnect()
   }
 }
 
-private fun HttpURLConnection.readAdminEmployeePayload(useInputStream: Boolean): String {
+private fun HttpURLConnection.readTenantAdminPayload(useInputStream: Boolean): String {
   val stream = if (useInputStream) inputStream else errorStream
   if (stream == null) return ""
   return BufferedReader(InputStreamReader(stream)).use { reader ->
     reader.lineSequence().joinToString(separator = "")
   }
+}
+
+private fun JSONObject.putNullableText(key: String, value: String) {
+  val normalized = value.trim()
+  put(key, if (normalized.isBlank()) JSONObject.NULL else normalized)
 }
 
 private fun JSONObject.optBooleanFlexible(key: String): Boolean {

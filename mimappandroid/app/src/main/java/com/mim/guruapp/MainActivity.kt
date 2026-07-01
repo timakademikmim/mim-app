@@ -69,6 +69,7 @@ class MainActivity : ComponentActivity() {
       MimGuruTheme(themeMode = AppThemeMode.fromCode(viewModel.uiState.themeModeCode)) {
         GuruAppRoot(
           state = viewModel.uiState,
+          onLoginTenantSelected = viewModel::onLoginTenantSelected,
           onTeacherNameChange = viewModel::onTeacherNameChange,
           onPasswordChange = viewModel::onPasswordChange,
           onLoginClick = viewModel::login,
