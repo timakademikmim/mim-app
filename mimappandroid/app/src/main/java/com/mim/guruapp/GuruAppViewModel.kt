@@ -60,9 +60,12 @@ import com.mim.guruapp.data.remote.GuruMapelClaimResult
 import com.mim.guruapp.data.remote.GuruMapelPayload
 import com.mim.guruapp.data.remote.GuruMapelRemoteDataSource
 import com.mim.guruapp.data.remote.GuruAuthResult
+import com.mim.guruapp.data.remote.GuruMfaPendingSession
+import com.mim.guruapp.data.remote.GuruPasswordResetRequestResult
 import com.mim.guruapp.data.remote.TenantDirectoryResult
 import com.mim.guruapp.data.remote.TenantLoginOption
 import com.mim.guruapp.data.remote.GuruProfileRemoteDataSource
+import com.mim.guruapp.data.remote.GuruPasswordChangeResult
 import com.mim.guruapp.data.remote.GuruProfileSyncResult
 import com.mim.guruapp.data.remote.GuruRemoteProfile
 import com.mim.guruapp.data.remote.KalenderAkademikRemoteDataSource
@@ -128,6 +131,7 @@ import kotlin.math.roundToInt
 enum class GuruDestination {
   Splash,
   Login,
+  Mfa,
   RolePicker,
   Home
 }
@@ -353,6 +357,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
   private val wakasekKurikulumRemoteDataSource = GuruWakasekKurikulumRemoteDataSource()
   private val substituteTeacherContextCache = mutableMapOf<String, Pair<List<SubjectOverview>, List<CalendarEvent>>>()
   private var authRefreshJob: Job? = null
+  private var pendingMfaSession: GuruMfaPendingSession? = null
 
   var uiState by mutableStateOf(GuruAppUiState())
     private set
@@ -404,88 +409,129 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
           )
         }
 
-        is GuruAuthResult.Success -> {
-          val authSession = result.authSession
-          val roleOptions = availableAppRoles(result.user.roles)
-          val selectedRole = roleOptions.singleOrNull().orEmpty()
-          val initialSession = SessionSnapshot(
-            isLoggedIn = true,
-            teacherRowId = result.user.teacherRowId,
-            teacherId = result.user.teacherId,
-            teacherName = result.user.teacherName,
-            tenantId = result.user.tenantId.ifBlank { selectedTenant.id },
-            tenantName = result.user.tenantName.ifBlank { selectedTenant.name },
-            organizationId = result.user.organizationId,
-            authUserId = authSession?.authUserId.orEmpty(),
-            authAccessToken = authSession?.accessToken.orEmpty(),
-            authRefreshToken = authSession?.refreshToken.orEmpty(),
-            authExpiresAt = authSession?.expiresAt ?: 0L,
-            usesSupabaseAuth = authSession != null,
-            mustChangePassword = result.user.mustChangePassword,
-            activeRole = selectedRole,
-            roles = result.user.roles
-          )
-          SupabaseRequestAuth.update(initialSession)
-          val remoteProfile = profileRemoteDataSource.fetchProfile(
-            teacherRowId = result.user.teacherRowId,
-            teacherKaryawanId = result.user.teacherId
-          )
-          val resolvedTeacherName = remoteProfile?.name?.ifBlank { result.user.teacherName } ?: result.user.teacherName
-          val resolvedSession = initialSession.copy(teacherName = resolvedTeacherName)
-          cacheStore.setScope(initialSession.tenantId, initialSession.teacherId)
-          sessionStore.saveLogin(resolvedSession)
-          val dashboard = cacheStore.readDashboard() ?: SampleDataFactory.createDashboard(resolvedTeacherName)
-          val nextDashboard = dashboard
-            .preserveRoleAccessForTeacher(
-              teacherId = result.user.teacherId,
-              teacherName = resolvedTeacherName
-            )
-            .copy(teacherName = resolvedTeacherName)
-            .withResolvedProfile(session = resolvedSession, remoteProfile = remoteProfile)
-            .withSessionRoleAccess(resolvedSession)
-            .withActiveRoleLabel(resolvedSession)
-          cacheStore.writeDashboard(nextDashboard)
-          val session = sessionStore.readSession()
-          val reminderSettings = teachingReminderStore.readSettings()
-          val bottomNavShortcuts = readBottomNavShortcuts()
-          val languageCode = appLanguageStore.readLanguageCode()
-          val themeModeCode = appThemeStore.readThemeModeCode()
+        is GuruAuthResult.MfaRequired -> {
+          pendingMfaSession = result.pending
           uiState = uiState.copy(
-            destination = if (roleOptions.size > 1) GuruDestination.RolePicker else GuruDestination.Splash,
+            destination = GuruDestination.Mfa,
             isBusy = false,
-            dashboard = nextDashboard,
-            session = session,
-            loginTeacherName = result.user.teacherId,
             loginPassword = "",
-            splashMessage = if (roleOptions.size > 1) "Pilih role untuk masuk." else "Data lokal siap. Mengunduh sumber data awal...",
-            splashProgress = if (roleOptions.size > 1) 1f else 0.28f,
-            syncBanner = SyncBannerState(
-              if (roleOptions.size > 1) {
-                "Login berhasil. Pilih role yang ingin dipakai."
-              } else {
-                "Login berhasil. Data lokal siap dan sinkron awal sedang dijalankan..."
-              },
-              roleOptions.size <= 1
-            ),
-            selectedSidebarDestination = GuruSidebarDestination.Dashboard,
-            isCalendarScreenOpen = false,
-            selectedCalendarDateIso = LocalDate.now().toString(),
-            teachingReminderSettings = reminderSettings,
-            isSidebarOpen = false,
-            expandedSidebarParent = null,
-            isClaimSectionVisible = false,
-            selectedClaimSubjectIds = emptySet(),
-            bottomNavShortcutDestinations = bottomNavShortcuts,
-            languageCode = languageCode,
-            themeModeCode = themeModeCode
+            loginError = ""
           )
-          scheduleAuthRefresh(session)
-          if (roleOptions.size <= 1) {
-            refreshFromServer(force = true, showWelcome = true)
-          }
         }
+
+        is GuruAuthResult.Success -> completeAuthenticatedLogin(result, selectedTenant)
       }
     }
+  }
+
+  suspend fun requestOwnPasswordReset(): ProfileSaveOutcome {
+    val tenantId = uiState.selectedLoginTenantId
+    val teacherId = uiState.loginTeacherName.trim()
+    return when (val result = authRemoteDataSource.requestPasswordReset(tenantId, teacherId)) {
+      is GuruPasswordResetRequestResult.Success -> ProfileSaveOutcome(true, result.message)
+      is GuruPasswordResetRequestResult.Error -> ProfileSaveOutcome(false, result.message)
+    }
+  }
+
+  suspend fun verifyMfaCode(code: String): ProfileSaveOutcome {
+    val pending = pendingMfaSession
+      ?: return ProfileSaveOutcome(false, "Sesi MFA tidak tersedia. Silakan login kembali.")
+    uiState = uiState.copy(isBusy = true, loginError = "")
+    return when (val result = authRemoteDataSource.verifyMfa(pending, code.trim())) {
+      is GuruAuthResult.Success -> {
+        pendingMfaSession = null
+        completeAuthenticatedLogin(result, pending.tenant)
+        ProfileSaveOutcome(true, "MFA berhasil diverifikasi.")
+      }
+      is GuruAuthResult.Error -> {
+        uiState = uiState.copy(isBusy = false, loginError = result.message)
+        ProfileSaveOutcome(false, result.message)
+      }
+      is GuruAuthResult.MfaRequired -> {
+        pendingMfaSession = result.pending
+        uiState = uiState.copy(isBusy = false)
+        ProfileSaveOutcome(false, "Masukkan kode authenticator terbaru.")
+      }
+    }
+  }
+
+  fun cancelMfa() {
+    pendingMfaSession = null
+    SupabaseRequestAuth.clear()
+    uiState = uiState.copy(destination = GuruDestination.Login, isBusy = false, loginError = "")
+  }
+
+  private suspend fun completeAuthenticatedLogin(
+    result: GuruAuthResult.Success,
+    selectedTenant: TenantLoginOption
+  ) {
+    val authSession = result.authSession
+    val roleOptions = availableAppRoles(result.user.roles)
+    val selectedRole = roleOptions.singleOrNull().orEmpty()
+    val initialSession = SessionSnapshot(
+      isLoggedIn = true,
+      teacherRowId = result.user.teacherRowId,
+      teacherId = result.user.teacherId,
+      teacherName = result.user.teacherName,
+      tenantId = result.user.tenantId.ifBlank { selectedTenant.id },
+      tenantName = result.user.tenantName.ifBlank { selectedTenant.name },
+      organizationId = result.user.organizationId,
+      authUserId = authSession?.authUserId.orEmpty(),
+      authAccessToken = authSession?.accessToken.orEmpty(),
+      authRefreshToken = authSession?.refreshToken.orEmpty(),
+      authExpiresAt = authSession?.expiresAt ?: 0L,
+      usesSupabaseAuth = authSession != null,
+      mustChangePassword = result.user.mustChangePassword,
+      activeRole = selectedRole,
+      roles = result.user.roles
+    )
+    SupabaseRequestAuth.update(initialSession)
+    val remoteProfile = profileRemoteDataSource.fetchProfile(result.user.teacherRowId, result.user.teacherId)
+    val resolvedTeacherName = remoteProfile?.name?.ifBlank { result.user.teacherName } ?: result.user.teacherName
+    val resolvedSession = initialSession.copy(teacherName = resolvedTeacherName)
+    cacheStore.setScope(initialSession.tenantId, initialSession.teacherId)
+    sessionStore.saveLogin(resolvedSession)
+    val dashboard = cacheStore.readDashboard() ?: SampleDataFactory.createDashboard(resolvedTeacherName)
+    val nextDashboard = dashboard
+      .preserveRoleAccessForTeacher(result.user.teacherId, resolvedTeacherName)
+      .copy(teacherName = resolvedTeacherName)
+      .withResolvedProfile(session = resolvedSession, remoteProfile = remoteProfile)
+      .withSessionRoleAccess(resolvedSession)
+      .withActiveRoleLabel(resolvedSession)
+    cacheStore.writeDashboard(nextDashboard)
+    val session = sessionStore.readSession()
+    val reminderSettings = teachingReminderStore.readSettings()
+    val bottomNavShortcuts = readBottomNavShortcuts()
+    val languageCode = appLanguageStore.readLanguageCode()
+    val themeModeCode = appThemeStore.readThemeModeCode()
+    uiState = uiState.copy(
+      destination = if (roleOptions.size > 1) GuruDestination.RolePicker else GuruDestination.Splash,
+      isBusy = false,
+      dashboard = nextDashboard,
+      session = session,
+      loginTeacherName = result.user.teacherId,
+      loginPassword = "",
+      splashMessage = if (roleOptions.size > 1) "Pilih role untuk masuk." else "Data lokal siap. Mengunduh sumber data awal...",
+      splashProgress = if (roleOptions.size > 1) 1f else 0.28f,
+      syncBanner = SyncBannerState(
+        if (roleOptions.size > 1) "Login berhasil. Pilih role yang ingin dipakai."
+        else "Login berhasil. Data lokal siap dan sinkron awal sedang dijalankan...",
+        roleOptions.size <= 1
+      ),
+      selectedSidebarDestination = GuruSidebarDestination.Dashboard,
+      isCalendarScreenOpen = false,
+      selectedCalendarDateIso = LocalDate.now().toString(),
+      teachingReminderSettings = reminderSettings,
+      isSidebarOpen = false,
+      expandedSidebarParent = null,
+      isClaimSectionVisible = false,
+      selectedClaimSubjectIds = emptySet(),
+      bottomNavShortcutDestinations = bottomNavShortcuts,
+      languageCode = languageCode,
+      themeModeCode = themeModeCode
+    )
+    scheduleAuthRefresh(session)
+    if (roleOptions.size <= 1) refreshFromServer(force = true, showWelcome = true)
   }
 
   fun useDemoAccount() {
@@ -826,7 +872,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
       name = normalizedName,
       username = session.teacherId.ifBlank { profile.username.trim() },
       address = profile.address.trim(),
-      password = profile.password,
+      password = "",
       phoneNumber = profile.phoneNumber.trim()
     )
     uiState = uiState.copy(syncBanner = SyncBannerState("Menyimpan profil ke server...", true))
@@ -848,9 +894,6 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
           .withResolvedProfile(session = session, remoteProfile = result.profile)
         cacheStore.writeDashboard(nextDashboard)
         sessionStore.updateTeacherName(nextDashboard.teacherName)
-        if (session.usesSupabaseAuth && nextProfile.password.isNotBlank()) {
-          sessionStore.updateMustChangePassword(false)
-        }
         val nextSession = sessionStore.readSession()
         SupabaseRequestAuth.update(nextSession)
         uiState = uiState.copy(
@@ -2014,6 +2057,44 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     }
   }
 
+  suspend fun changeOwnPassword(
+    currentPassword: String,
+    newPassword: String
+  ): ProfileSaveOutcome {
+    if (currentPassword.isBlank()) return ProfileSaveOutcome(false, "Password saat ini wajib diisi.")
+    if (newPassword.length < 12) return ProfileSaveOutcome(false, "Password baru minimal 12 karakter.")
+    if (
+      newPassword.none(Char::isLowerCase) ||
+      newPassword.none(Char::isUpperCase) ||
+      newPassword.none(Char::isDigit) ||
+      newPassword.none { !it.isLetterOrDigit() }
+    ) {
+      return ProfileSaveOutcome(false, "Password harus memuat huruf besar, huruf kecil, angka, dan simbol.")
+    }
+    if (currentPassword == newPassword) {
+      return ProfileSaveOutcome(false, "Password baru harus berbeda dari password saat ini.")
+    }
+
+    uiState = uiState.copy(syncBanner = SyncBannerState("Mengganti password...", true))
+    return when (val result = profileRemoteDataSource.changePassword(currentPassword, newPassword)) {
+      is GuruPasswordChangeResult.Error -> {
+        uiState = uiState.copy(syncBanner = SyncBannerState(result.message, false))
+        ProfileSaveOutcome(false, result.message)
+      }
+
+      GuruPasswordChangeResult.Success -> {
+        sessionStore.updateMustChangePassword(false)
+        val nextSession = sessionStore.readSession()
+        SupabaseRequestAuth.update(nextSession)
+        uiState = uiState.copy(
+          session = nextSession,
+          syncBanner = SyncBannerState("Password berhasil diganti.", false)
+        )
+        ProfileSaveOutcome(true, "Password berhasil diganti.")
+      }
+    }
+  }
+
   suspend fun loadMapelRaporDescriptionJson(
     distribusiId: String,
     subject: SubjectOverview
@@ -2459,6 +2540,10 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
       val bottomNavShortcuts = readBottomNavShortcuts()
       val languageCode = appLanguageStore.readLanguageCode()
       val themeModeCode = appThemeStore.readThemeModeCode()
+      if (storedSession.isLoggedIn && !storedSession.usesSupabaseAuth) {
+        sessionStore.clear()
+        storedSession = sessionStore.readSession()
+      }
       if (!storedSession.isLoggedIn) {
         SupabaseRequestAuth.clear()
         uiState = uiState.copy(splashMessage = "Memuat daftar unit sekolah...", splashProgress = 0.18f)
@@ -2749,8 +2834,8 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
   private suspend fun ensureFreshAuthSession(force: Boolean = false): Boolean {
     val current = uiState.session
     if (!current.usesSupabaseAuth) {
-      SupabaseRequestAuth.update(current)
-      return true
+      SupabaseRequestAuth.clear()
+      return false
     }
     if (
       !force &&

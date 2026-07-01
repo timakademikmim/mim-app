@@ -808,7 +808,10 @@
       const rawId = safeId(state.currentUser.id)
       if (!rawId) return ''
       const safe = String(rawId).replaceAll('/', '-').replaceAll('\\', '-')
-      return `users/${safe}`
+      const relativePath = `users/${safe}`
+      return window.buildTenantStoragePath
+        ? window.buildTenantStoragePath(relativePath)
+        : relativePath
     }
 
     function formatStickerError(prefix, error) {

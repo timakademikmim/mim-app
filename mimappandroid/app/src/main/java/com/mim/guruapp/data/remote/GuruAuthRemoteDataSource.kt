@@ -29,6 +29,16 @@ data class GuruSupabaseAuthSession(
   val expiresAt: Long
 )
 
+data class GuruMfaPendingSession(
+  val tenant: TenantLoginOption,
+  val teacherId: String,
+  val authUserId: String,
+  val accessToken: String,
+  val refreshToken: String,
+  val expiresAt: Long,
+  val factorId: String
+)
+
 data class GuruAuthUser(
   val teacherRowId: String,
   val teacherId: String,
@@ -52,6 +62,8 @@ sealed interface GuruAuthResult {
     val authSession: GuruSupabaseAuthSession? = null
   ) : GuruAuthResult
 
+  data class MfaRequired(val pending: GuruMfaPendingSession) : GuruAuthResult
+
   data class Error(val message: String) : GuruAuthResult
 }
 
@@ -60,7 +72,40 @@ sealed interface GuruAuthRefreshResult {
   data class Error(val message: String) : GuruAuthRefreshResult
 }
 
+sealed interface GuruPasswordResetRequestResult {
+  data class Success(val message: String) : GuruPasswordResetRequestResult
+  data class Error(val message: String) : GuruPasswordResetRequestResult
+}
+
 class GuruAuthRemoteDataSource {
+  suspend fun requestPasswordReset(
+    tenantId: String,
+    teacherId: String
+  ): GuruPasswordResetRequestResult = withContext(Dispatchers.IO) {
+    if (tenantId.isBlank() || teacherId.isBlank()) {
+      return@withContext GuruPasswordResetRequestResult.Error("Pilih unit dan isi ID Karyawan terlebih dahulu.")
+    }
+    try {
+      val requestUrl = "${BuildConfig.SUPABASE_URL}/functions/v1/request-password-reset"
+      val connection = createConnection(requestUrl, "POST", BuildConfig.SUPABASE_ANON_KEY).apply {
+        doOutput = true
+        setRequestProperty("Content-Type", "application/json")
+      }
+      val payload = JSONObject().apply {
+        put("tenant_id", tenantId)
+        put("login_id", teacherId.trim())
+      }
+      connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+      connection.useJsonObjectResponse { json ->
+        GuruPasswordResetRequestResult.Success(
+          json.optCleanString("message").ifBlank { "Permintaan reset telah dikirim kepada admin unit." }
+        )
+      }
+    } catch (_: Exception) {
+      GuruPasswordResetRequestResult.Error("Permintaan reset belum dapat dikirim. Coba lagi.")
+    }
+  }
+
   suspend fun fetchLoginTenants(): TenantDirectoryResult = withContext(Dispatchers.IO) {
     try {
       val requestUrl = "${BuildConfig.SUPABASE_URL}/rest/v1/rpc/list_login_tenants"
@@ -105,10 +150,7 @@ class GuruAuthRemoteDataSource {
     teacherId: String,
     password: String
   ): GuruAuthResult = withContext(Dispatchers.IO) {
-    when (val authResult = loginWithSupabaseAuth(tenant, teacherId, password)) {
-      is GuruAuthResult.Success -> authResult
-      is GuruAuthResult.Error -> loginLegacyAccount(tenant, teacherId, password, authResult.message)
-    }
+    loginWithSupabaseAuth(tenant, teacherId, password)
   }
 
   suspend fun refreshSession(refreshToken: String): GuruAuthRefreshResult = withContext(Dispatchers.IO) {
@@ -151,6 +193,53 @@ class GuruAuthRemoteDataSource {
     }
   }
 
+  suspend fun verifyMfa(pending: GuruMfaPendingSession, code: String): GuruAuthResult = withContext(Dispatchers.IO) {
+    if (!code.matches(Regex("^\\d{6}$"))) {
+      return@withContext GuruAuthResult.Error("Masukkan 6 digit kode authenticator.")
+    }
+    try {
+      val challengeUrl = "${BuildConfig.SUPABASE_URL}/auth/v1/factors/${encodeValue(pending.factorId)}/challenge"
+      val challengeConnection = createConnection(challengeUrl, "POST", pending.accessToken).apply {
+        doOutput = true
+        setRequestProperty("Content-Type", "application/json")
+      }
+      challengeConnection.outputStream.use { it.write("{}".toByteArray()) }
+      val challengeId = challengeConnection.useJsonObjectResponse { it.optCleanString("id") }
+      if (challengeId.isBlank()) return@withContext GuruAuthResult.Error("Tantangan MFA tidak dapat dibuat.")
+
+      val verifyUrl = "${BuildConfig.SUPABASE_URL}/auth/v1/factors/${encodeValue(pending.factorId)}/verify"
+      val verifyConnection = createConnection(verifyUrl, "POST", pending.accessToken).apply {
+        doOutput = true
+        setRequestProperty("Content-Type", "application/json")
+      }
+      val verifyPayload = JSONObject().apply {
+        put("challenge_id", challengeId)
+        put("code", code)
+      }
+      verifyConnection.outputStream.use { it.write(verifyPayload.toString().toByteArray(Charsets.UTF_8)) }
+      verifyConnection.useJsonObjectResponse { verified ->
+        val accessToken = verified.optCleanString("access_token")
+        val refreshToken = verified.optCleanString("refresh_token").ifBlank { pending.refreshToken }
+        val expiresInSeconds = verified.optLong("expires_in", 3600L).coerceAtLeast(60L)
+        if (accessToken.isBlank()) return@useJsonObjectResponse GuruAuthResult.Error("Verifikasi MFA gagal.")
+        buildAuthenticatedResult(
+          tenant = pending.tenant,
+          teacherId = pending.teacherId,
+          authUserId = pending.authUserId,
+          accessToken = accessToken,
+          refreshToken = refreshToken,
+          expiresAt = System.currentTimeMillis() + expiresInSeconds * 1000L
+        )
+      }
+    } catch (_: HttpResponseException) {
+      GuruAuthResult.Error("Kode authenticator salah atau sudah kedaluwarsa.")
+    } catch (_: SocketTimeoutException) {
+      GuruAuthResult.Error("Verifikasi MFA terlalu lama. Periksa koneksi internet.")
+    } catch (_: Exception) {
+      GuruAuthResult.Error("MFA belum dapat diverifikasi.")
+    }
+  }
+
   private fun loginWithSupabaseAuth(
     tenant: TenantLoginOption,
     teacherId: String,
@@ -178,43 +267,22 @@ class GuruAuthRemoteDataSource {
         if (accessToken.isBlank() || authUserId.isBlank()) {
           return@useJsonObjectResponse GuruAuthResult.Error("ID Karyawan atau password salah.")
         }
-
-        val employee = fetchAuthenticatedEmployee(
-          accessToken = accessToken,
-          authUserId = authUserId,
-          tenant = tenant
-        ) ?: return@useJsonObjectResponse GuruAuthResult.Error(
-          "Akun Auth belum terhubung ke data karyawan unit ini."
-        )
-
-        val roles = parseRoleList(employee.optCleanString("role"))
-        if (!employee.optBooleanFlexible("aktif")) {
-          return@useJsonObjectResponse GuruAuthResult.Error("Akun nonaktif. Silakan hubungi admin.")
-        }
-        if (availableAppRoles(roles).isEmpty()) {
-          return@useJsonObjectResponse GuruAuthResult.Error(
-            "Akun ini tidak memiliki akses ke aplikasi Android."
+        val factorId = findVerifiedTotpFactorId(authJson.optJSONObject("user"))
+        val expiresAt = System.currentTimeMillis() + expiresInSeconds * 1000L
+        if (factorId.isNotBlank()) {
+          return@useJsonObjectResponse GuruAuthResult.MfaRequired(
+            GuruMfaPendingSession(
+              tenant = tenant,
+              teacherId = teacherId,
+              authUserId = authUserId,
+              accessToken = accessToken,
+              refreshToken = refreshToken,
+              expiresAt = expiresAt,
+              factorId = factorId
+            )
           )
         }
-
-        GuruAuthResult.Success(
-          user = GuruAuthUser(
-            teacherRowId = employee.optCleanString("id"),
-            teacherId = employee.optCleanString("id_karyawan"),
-            teacherName = employee.optCleanString("nama").ifBlank { teacherId },
-            roles = roles,
-            tenantId = tenant.id,
-            tenantName = tenant.name,
-            organizationId = employee.optCleanString("organization_id"),
-            mustChangePassword = employee.optBooleanFlexible("must_change_password")
-          ),
-          authSession = GuruSupabaseAuthSession(
-            authUserId = authUserId,
-            accessToken = accessToken,
-            refreshToken = refreshToken,
-            expiresAt = System.currentTimeMillis() + expiresInSeconds * 1000L
-          )
-        )
+        buildAuthenticatedResult(tenant, teacherId, authUserId, accessToken, refreshToken, expiresAt)
       }
     } catch (_: HttpResponseException) {
       GuruAuthResult.Error("ID Karyawan atau password salah.")
@@ -223,6 +291,49 @@ class GuruAuthRemoteDataSource {
     } catch (_: Exception) {
       GuruAuthResult.Error("Tidak dapat terhubung ke server login.")
     }
+  }
+
+  private fun buildAuthenticatedResult(
+    tenant: TenantLoginOption,
+    teacherId: String,
+    authUserId: String,
+    accessToken: String,
+    refreshToken: String,
+    expiresAt: Long
+  ): GuruAuthResult {
+    val employee = fetchAuthenticatedEmployee(accessToken, authUserId, tenant)
+      ?: return GuruAuthResult.Error("Akun Auth belum terhubung ke data karyawan unit ini.")
+    val roles = parseRoleList(employee.optCleanString("role"))
+    if (!employee.optBooleanFlexible("aktif")) {
+      return GuruAuthResult.Error("Akun nonaktif. Silakan hubungi admin.")
+    }
+    if (availableAppRoles(roles).isEmpty()) {
+      return GuruAuthResult.Error("Akun ini tidak memiliki akses ke aplikasi Android.")
+    }
+    return GuruAuthResult.Success(
+      user = GuruAuthUser(
+        teacherRowId = employee.optCleanString("id"),
+        teacherId = employee.optCleanString("id_karyawan"),
+        teacherName = employee.optCleanString("nama").ifBlank { teacherId },
+        roles = roles,
+        tenantId = tenant.id,
+        tenantName = tenant.name,
+        organizationId = employee.optCleanString("organization_id"),
+        mustChangePassword = employee.optBooleanFlexible("must_change_password")
+      ),
+      authSession = GuruSupabaseAuthSession(authUserId, accessToken, refreshToken, expiresAt)
+    )
+  }
+
+  private fun findVerifiedTotpFactorId(user: JSONObject?): String {
+    val factors = user?.optJSONArray("factors") ?: return ""
+    for (index in 0 until factors.length()) {
+      val factor = factors.optJSONObject(index) ?: continue
+      val status = factor.optCleanString("status").lowercase()
+      val type = factor.optCleanString("factor_type").ifBlank { factor.optCleanString("type") }.lowercase()
+      if (status == "verified" && type == "totp") return factor.optCleanString("id")
+    }
+    return ""
   }
 
   private fun fetchAuthenticatedEmployee(
@@ -242,58 +353,6 @@ class GuruAuthRemoteDataSource {
     }
     val connection = createConnection(requestUrl, "GET", accessToken)
     return connection.useJsonArrayResponse { rows -> rows.optJSONObject(0) }
-  }
-
-  private fun loginLegacyAccount(
-    tenant: TenantLoginOption,
-    teacherId: String,
-    password: String,
-    authErrorMessage: String
-  ): GuruAuthResult {
-    return try {
-      val requestUrl = buildString {
-        append(BuildConfig.SUPABASE_URL)
-        append("/rest/v1/karyawan")
-        append("?select=id,id_karyawan,nama,role,aktif,tenant_id,organization_id,auth_user_id")
-        append("&tenant_id=eq.")
-        append(encodeValue(tenant.id))
-        append("&id_karyawan=eq.")
-        append(encodeValue(teacherId))
-        append("&password=eq.")
-        append(encodeValue(password))
-        append("&auth_user_id=is.null&limit=1")
-      }
-      val connection = createConnection(requestUrl, "GET", BuildConfig.SUPABASE_ANON_KEY)
-      connection.useJsonArrayResponse { rows ->
-        if (rows.length() == 0) {
-          return@useJsonArrayResponse GuruAuthResult.Error(authErrorMessage)
-        }
-        val item = rows.optJSONObject(0)
-          ?: return@useJsonArrayResponse GuruAuthResult.Error("Data login tidak valid.")
-        if (!item.optBooleanFlexible("aktif")) {
-          return@useJsonArrayResponse GuruAuthResult.Error("Akun nonaktif. Silakan hubungi admin.")
-        }
-        val roles = parseRoleList(item.optCleanString("role"))
-        if (availableAppRoles(roles).isEmpty()) {
-          return@useJsonArrayResponse GuruAuthResult.Error(
-            "Akun ini tidak memiliki akses ke aplikasi Android."
-          )
-        }
-        GuruAuthResult.Success(
-          user = GuruAuthUser(
-            teacherRowId = item.optCleanString("id"),
-            teacherId = item.optCleanString("id_karyawan"),
-            teacherName = item.optCleanString("nama").ifBlank { teacherId },
-            roles = roles,
-            tenantId = tenant.id,
-            tenantName = tenant.name,
-            organizationId = item.optCleanString("organization_id")
-          )
-        )
-      }
-    } catch (_: Exception) {
-      GuruAuthResult.Error(authErrorMessage)
-    }
   }
 
   private fun createConnection(

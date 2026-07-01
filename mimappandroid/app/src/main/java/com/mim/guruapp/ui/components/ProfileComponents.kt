@@ -34,6 +34,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -103,6 +104,7 @@ import java.net.URL
 private enum class ProfileSection {
   Menu,
   Information,
+  PasswordSecurity,
   Settings,
   Guide
 }
@@ -155,6 +157,7 @@ fun EditProfileScreen(
   themeModeCode: String,
   onApplyThemeMode: (String) -> Unit,
   onSaveClick: suspend (GuruProfile) -> ProfileSaveOutcome,
+  onChangePassword: suspend (String, String) -> ProfileSaveOutcome,
   onStartInteractiveGuide: (String) -> Unit = {},
   openGuideRequest: Int = 0,
   openSettingsRequest: Int = 0,
@@ -163,9 +166,7 @@ fun EditProfileScreen(
   var name by rememberSaveable(profile) { mutableStateOf(profile.name) }
   var address by rememberSaveable(profile) { mutableStateOf(profile.address) }
   var username by rememberSaveable(profile) { mutableStateOf(profile.username) }
-  var password by rememberSaveable(profile) { mutableStateOf("") }
   var phoneNumber by rememberSaveable(profile) { mutableStateOf(profile.phoneNumber) }
-  var showPassword by rememberSaveable { mutableStateOf(false) }
   var isSaving by rememberSaveable { mutableStateOf(false) }
   var activeSectionName by rememberSaveable { mutableStateOf(ProfileSection.Menu.name) }
   var activeGuideTitle by rememberSaveable { mutableStateOf<String?>(null) }
@@ -181,9 +182,7 @@ fun EditProfileScreen(
     name = profile.name
     address = profile.address
     username = profile.username
-    password = ""
     phoneNumber = profile.phoneNumber
-    showPassword = false
     activeGuideTitle = null
     activeSectionName = ProfileSection.Menu.name
   }
@@ -192,7 +191,7 @@ fun EditProfileScreen(
     name = name,
     address = address,
     username = username,
-    password = password,
+    password = "",
     phoneNumber = phoneNumber,
     avatarUri = profile.avatarUri
   )
@@ -204,7 +203,6 @@ fun EditProfileScreen(
     if (openGuideRequest > 0) {
       activeSectionName = ProfileSection.Guide.name
       activeGuideTitle = null
-      showPassword = false
     }
   }
 
@@ -212,7 +210,6 @@ fun EditProfileScreen(
     if (openSettingsRequest > 0) {
       activeSectionName = ProfileSection.Settings.name
       activeGuideTitle = null
-      showPassword = false
     }
   }
 
@@ -224,7 +221,6 @@ fun EditProfileScreen(
     } else {
       activeSectionName = ProfileSection.Menu.name
       activeGuideTitle = null
-      showPassword = false
     }
   }
 
@@ -261,6 +257,7 @@ fun EditProfileScreen(
             title = when (activeSection) {
               ProfileSection.Menu -> "Profil"
               ProfileSection.Information -> "Informasi Umum"
+              ProfileSection.PasswordSecurity -> "Atur Password"
               ProfileSection.Settings -> "Pengaturan"
               ProfileSection.Guide -> activeGuide?.title ?: "Panduan Pengguna"
             }.let { t(it) },
@@ -275,7 +272,6 @@ fun EditProfileScreen(
                 activeSectionName = ProfileSection.Menu.name
                 activeGuideTitle = null
               }
-              showPassword = false
             },
             onCancelClick = resetDraftAndReturnToMenu,
             onSaveClick = {
@@ -283,7 +279,6 @@ fun EditProfileScreen(
                 scope.launch {
                   isSaving = true
                   val result = onSaveClick(draft)
-                  if (result.success) password = ""
                   isSaving = false
                   snackbarHostState.showSnackbar(result.message)
                 }
@@ -303,9 +298,15 @@ fun EditProfileScreen(
               )
               ProfileSectionCard(
                 title = t("Informasi Umum"),
-                description = t("Edit nama, alamat, username, nomor HP, atau ganti password."),
+                description = t("Edit nama, alamat, username, dan nomor HP."),
                 icon = Icons.Outlined.Person,
                 onClick = { activeSectionName = ProfileSection.Information.name }
+              )
+              ProfileSectionCard(
+                title = t("Atur Password"),
+                description = t("Verifikasi password saat ini lalu buat password baru."),
+                icon = Icons.Outlined.Lock,
+                onClick = { activeSectionName = ProfileSection.PasswordSecurity.name }
               )
               ProfileSectionCard(
                 title = t("Pengaturan"),
@@ -370,13 +371,6 @@ fun EditProfileScreen(
                   onValueChange = { username = it },
                   enabled = false
                 )
-                PasswordField(
-                  label = t("Password baru (opsional)"),
-                  value = password,
-                  onValueChange = { password = it },
-                  visible = showPassword,
-                  onToggleVisibility = { showPassword = !showPassword }
-                )
                 PhoneNumberField(
                   label = t("Phone number"),
                   value = phoneNumber,
@@ -406,6 +400,13 @@ fun EditProfileScreen(
                 )
               }
             }
+
+            ProfileSection.PasswordSecurity -> {
+              PasswordSecurityPanel(
+                onChangePassword = onChangePassword,
+                snackbarHostState = snackbarHostState
+              )
+            }
           }
 
           Spacer(modifier = Modifier.size(124.dp))
@@ -413,6 +414,106 @@ fun EditProfileScreen(
       }
 
       SavingOverlay(visible = isSaving)
+    }
+  }
+}
+
+@Composable
+private fun PasswordSecurityPanel(
+  onChangePassword: suspend (String, String) -> ProfileSaveOutcome,
+  snackbarHostState: SnackbarHostState
+) {
+  var currentPassword by rememberSaveable { mutableStateOf("") }
+  var newPassword by rememberSaveable { mutableStateOf("") }
+  var confirmation by rememberSaveable { mutableStateOf("") }
+  var showCurrentPassword by rememberSaveable { mutableStateOf(false) }
+  var showNewPassword by rememberSaveable { mutableStateOf(false) }
+  var showConfirmation by rememberSaveable { mutableStateOf(false) }
+  var isChanging by rememberSaveable { mutableStateOf(false) }
+  val scope = rememberCoroutineScope()
+  val currentPasswordRequiredMessage = t("Password saat ini wajib diisi.")
+  val passwordLengthMessage = t("Password baru minimal 12 karakter.")
+  val passwordStrengthMessage = t("Password harus memuat huruf besar, huruf kecil, angka, dan simbol.")
+  val passwordMustDifferMessage = t("Password baru harus berbeda dari password saat ini.")
+  val confirmationMismatchMessage = t("Konfirmasi password baru tidak cocok.")
+
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .shadow(12.dp, RoundedCornerShape(28.dp), ambientColor = Color(0x140F172A), spotColor = Color(0x140F172A))
+      .clip(RoundedCornerShape(28.dp))
+      .background(CardBackground.copy(alpha = 0.94f))
+      .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(28.dp))
+      .padding(18.dp),
+    verticalArrangement = Arrangement.spacedBy(14.dp)
+  ) {
+    Text(
+      text = t("Keamanan Akun"),
+      style = MaterialTheme.typography.titleMedium,
+      color = PrimaryBlueDark,
+      fontWeight = FontWeight.ExtraBold
+    )
+    Text(
+      text = t("Password lama tidak dapat ditampilkan karena tidak disimpan sebagai teks. Masukkan password saat ini untuk verifikasi."),
+      style = MaterialTheme.typography.bodySmall,
+      color = SubtleInk
+    )
+    PasswordField(
+      label = t("Password saat ini"),
+      value = currentPassword,
+      onValueChange = { currentPassword = it },
+      visible = showCurrentPassword,
+      onToggleVisibility = { showCurrentPassword = !showCurrentPassword }
+    )
+    PasswordField(
+      label = t("Password baru"),
+      value = newPassword,
+      onValueChange = { newPassword = it },
+      visible = showNewPassword,
+      onToggleVisibility = { showNewPassword = !showNewPassword }
+    )
+    PasswordField(
+      label = t("Konfirmasi password baru"),
+      value = confirmation,
+      onValueChange = { confirmation = it },
+      visible = showConfirmation,
+      onToggleVisibility = { showConfirmation = !showConfirmation }
+    )
+    Button(
+      onClick = {
+        scope.launch {
+          val validationMessage = when {
+            currentPassword.isBlank() -> currentPasswordRequiredMessage
+            newPassword.length < 12 -> passwordLengthMessage
+            newPassword.none(Char::isLowerCase) || newPassword.none(Char::isUpperCase) ||
+              newPassword.none(Char::isDigit) || newPassword.none { !it.isLetterOrDigit() } -> passwordStrengthMessage
+            currentPassword == newPassword -> passwordMustDifferMessage
+            confirmation != newPassword -> confirmationMismatchMessage
+            else -> ""
+          }
+          if (validationMessage.isNotBlank()) {
+            snackbarHostState.showSnackbar(validationMessage)
+            return@launch
+          }
+          isChanging = true
+          val result = onChangePassword(currentPassword, newPassword)
+          isChanging = false
+          if (result.success) {
+            currentPassword = ""
+            newPassword = ""
+            confirmation = ""
+            showCurrentPassword = false
+            showNewPassword = false
+            showConfirmation = false
+          }
+          snackbarHostState.showSnackbar(result.message)
+        }
+      },
+      enabled = !isChanging,
+      modifier = Modifier.fillMaxWidth(),
+      shape = RoundedCornerShape(16.dp)
+    ) {
+      Text(if (isChanging) t("Menyimpan...") else t("Simpan Password"))
     }
   }
 }

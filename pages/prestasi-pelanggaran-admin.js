@@ -128,10 +128,16 @@ function resolveSantriIdFromSearch(mode) {
   return ''
 }
 
-function openPrestasiPelanggaranDocPopup(url, title) {
-  const link = String(url || '').trim()
+async function openPrestasiPelanggaranDocPopup(url, title) {
+  let link = String(url || '').trim()
   if (!link) {
     alert('Dokumen belum tersedia.')
+    return
+  }
+  try {
+    link = await window.resolveStorageObjectUrl(link, 3600)
+  } catch (error) {
+    alert(`Dokumen tidak dapat dibuka: ${error?.message || 'akses ditolak'}`)
     return
   }
   const overlay = document.getElementById('pp-admin-doc-overlay')
@@ -424,7 +430,10 @@ async function uploadPelanggaranSuratFile(event) {
   if (!file) return
   try {
     const ext = String(file.name || '').split('.').pop() || 'bin'
-    const path = `surat/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+    const relativePath = `surat/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+    const path = window.buildTenantStoragePath
+      ? window.buildTenantStoragePath(relativePath)
+      : relativePath
     const { error: uploadError } = await sb.storage.from(SANTRI_SURAT_BUCKET).upload(path, file, {
       cacheControl: '3600',
       upsert: true
@@ -432,14 +441,8 @@ async function uploadPelanggaranSuratFile(event) {
     if (uploadError) {
       throw uploadError
     }
-    const { data: pubData } = sb.storage.from(SANTRI_SURAT_BUCKET).getPublicUrl(path)
-    const publicUrl = String(pubData?.publicUrl || '').trim()
-    if (!publicUrl) {
-      alert('Upload berhasil, tapi URL file tidak ditemukan.')
-      return
-    }
     const urlInput = document.getElementById('pp-pelanggaran-surat-url')
-    if (urlInput) urlInput.value = publicUrl
+    if (urlInput) urlInput.value = window.buildStorageObjectReference(SANTRI_SURAT_BUCKET, path)
     alert('Upload surat berhasil.')
   } catch (error) {
     console.error(error)

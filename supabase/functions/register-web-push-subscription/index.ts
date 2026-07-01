@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { requireTenantCaller, TenantAuthError } from "../_shared/tenant-auth.ts"
 
 const corsHeaders = {
   "access-control-allow-origin": "*",
@@ -38,6 +39,14 @@ serve(async req => {
     return jsonResponse(405, { ok: false, error: "Method not allowed" })
   }
 
+  let caller
+  try {
+    caller = await requireTenantCaller(req)
+  } catch (error) {
+    const status = error instanceof TenantAuthError ? error.status : 401
+    return jsonResponse(status, { ok: false, error: error instanceof Error ? error.message : "Sesi tidak valid" })
+  }
+
   let payload: {
     user_id?: string
     endpoint?: string
@@ -53,7 +62,8 @@ serve(async req => {
     return jsonResponse(400, { ok: false, error: "Invalid JSON" })
   }
 
-  const userId = String(payload.user_id || "").trim()
+  const requestedUserId = String(payload.user_id || "").trim()
+  const userId = caller.employeeLoginId
   const endpoint = String(payload.endpoint || "").trim()
   const p256dh = String(payload.keys?.p256dh || "").trim()
   const auth = String(payload.keys?.auth || "").trim()
@@ -61,7 +71,10 @@ serve(async req => {
   const userAgent = String(payload.user_agent || "").trim() || null
   const deviceId = String(payload.device_id || "").trim() || null
 
-  if (!userId || !endpoint || !p256dh || !auth) {
+  if (requestedUserId && requestedUserId.toLowerCase() !== userId.toLowerCase()) {
+    return jsonResponse(403, { ok: false, error: "Subscription hanya dapat didaftarkan untuk akun sendiri" })
+  }
+  if (!userId || !caller.tenantId || !endpoint || !p256dh || !auth) {
     return jsonResponse(400, {
       ok: false,
       error: "user_id, endpoint, keys.p256dh, dan keys.auth wajib diisi"
@@ -74,6 +87,7 @@ serve(async req => {
     .upsert(
       {
         user_id: userId,
+        tenant_id: caller.tenantId,
         endpoint,
         p256dh,
         auth,
@@ -99,6 +113,7 @@ serve(async req => {
         updated_at: nowIso
       })
       .eq("user_id", userId)
+      .eq("tenant_id", caller.tenantId)
       .eq("device_id", deviceId)
       .neq("endpoint", endpoint)
   }

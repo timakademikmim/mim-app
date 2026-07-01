@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { enforceActionRateLimit, requireTenantCaller, TenantAuthError, writeAuditLog } from "../_shared/tenant-auth.ts"
 
 const corsHeaders = {
   "access-control-allow-origin": "*",
@@ -100,6 +101,15 @@ serve(async req => {
     return jsonResponse(405, { ok: false, error: "Method not allowed" })
   }
 
+  let caller
+  try {
+    caller = await requireTenantCaller(req)
+    await enforceActionRateLimit(caller, "tenant.notification.fcm.send", 60, 60)
+  } catch (error) {
+    const status = error instanceof TenantAuthError ? error.status : 401
+    return jsonResponse(status, { ok: false, error: error instanceof Error ? error.message : "Sesi tidak valid" })
+  }
+
   let payload: {
     token?: string
     user_id?: string
@@ -145,27 +155,40 @@ serve(async req => {
   let tokens: string[] = []
   const explicitToken = String(payload.token || "").trim()
   if (explicitToken) {
-    tokens = [explicitToken]
-    if (!data.notify_user_id) {
-      const { data: tokenRow } = await supabase
-        .from("push_tokens")
-        .select("user_id")
-        .eq("token", explicitToken)
-        .maybeSingle()
-      const tokenUserId = String(tokenRow?.user_id || "").trim()
-      if (tokenUserId) {
-        data.notify_user_id = tokenUserId
-      }
+    const { data: tokenRow } = await supabase
+      .from("push_tokens")
+      .select("user_id,tenant_id")
+      .eq("token", explicitToken)
+      .eq("tenant_id", caller.tenantId)
+      .maybeSingle()
+    const tokenUserId = String(tokenRow?.user_id || "").trim()
+    if (!tokenUserId) {
+      return jsonResponse(403, { ok: false, error: "Token tujuan tidak berada dalam unit yang sama" })
     }
+    tokens = [explicitToken]
+    data.notify_user_id = tokenUserId
   } else {
     const userId = targetUserId
     if (!userId) {
       return jsonResponse(400, { ok: false, error: "token atau user_id wajib diisi" })
     }
+    const { data: targetEmployee, error: targetError } = await supabase
+      .from("karyawan")
+      .select("id_karyawan")
+      .eq("tenant_id", caller.tenantId)
+      .eq("aktif", true)
+      .ilike("id_karyawan", userId)
+      .maybeSingle()
+    if (targetError || !targetEmployee) {
+      return jsonResponse(403, { ok: false, error: "Pengguna tujuan tidak berada dalam unit yang sama" })
+    }
+    const resolvedUserId = String(targetEmployee.id_karyawan || "").trim()
+    data.notify_user_id = resolvedUserId
     const { data: rows, error } = await supabase
       .from("push_tokens")
       .select("token")
-      .eq("user_id", userId)
+      .eq("tenant_id", caller.tenantId)
+      .eq("user_id", resolvedUserId)
     if (error) {
       return jsonResponse(500, { ok: false, error: error.message })
     }
@@ -210,5 +233,9 @@ serve(async req => {
   }
 
   const sent = results.filter(item => item.ok).length
+  await writeAuditLog(caller, caller.tenantId, "tenant.notification.fcm.send", "push_tokens", null, {
+    target_user_id: data.notify_user_id || null,
+    sent,
+  })
   return jsonResponse(200, { ok: sent > 0, sent, results })
 })

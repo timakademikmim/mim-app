@@ -13,6 +13,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
@@ -29,6 +30,8 @@ import com.mim.guruapp.ui.components.UsernameIcon
 import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.theme.MimGuruTheme
 import com.mim.guruapp.data.remote.TenantLoginOption
+import com.mim.guruapp.ProfileSaveOutcome
+import kotlinx.coroutines.launch
 
 @Composable
 fun LoginScreen(
@@ -42,10 +45,13 @@ fun LoginScreen(
   onTeacherNameChange: (String) -> Unit,
   onPasswordChange: (String) -> Unit,
   onLoginClick: () -> Unit,
+  onForgotPassword: suspend () -> ProfileSaveOutcome,
   onUseDemoAccount: () -> Unit
 ) {
   var rememberMe by rememberSaveable { mutableStateOf(true) }
   var passwordVisible by rememberSaveable { mutableStateOf(false) }
+  var resetMessage by rememberSaveable { mutableStateOf("") }
+  val scope = rememberCoroutineScope()
 
   Box(modifier = Modifier.fillMaxSize()) {
     LogoBackground()
@@ -106,9 +112,20 @@ fun LoginScreen(
           modifier = Modifier.padding(top = 18.dp)
         )
 
-        if (errorMessage.isNotBlank()) {
+        androidx.compose.material3.TextButton(
+          onClick = {
+            scope.launch { resetMessage = onForgotPassword().message }
+          },
+          enabled = !isBusy,
+          modifier = Modifier.align(Alignment.CenterHorizontally)
+        ) {
+          androidx.compose.material3.Text(t("Lupa password?"))
+        }
+
+        val visibleMessage = errorMessage.ifBlank { resetMessage }
+        if (visibleMessage.isNotBlank()) {
           androidx.compose.material3.Text(
-            text = errorMessage,
+            text = visibleMessage,
             style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
             color = androidx.compose.material3.MaterialTheme.colorScheme.error,
             modifier = Modifier.padding(top = 12.dp)
@@ -145,6 +162,7 @@ private fun LoginScreenPreview() {
       onTeacherNameChange = { teacherName = it },
       onPasswordChange = { password = it },
       onLoginClick = {},
+      onForgotPassword = { ProfileSaveOutcome(true, "Permintaan terkirim") },
       onUseDemoAccount = {
         teacherName = "khaerurrahmat"
         password = ""

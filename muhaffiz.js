@@ -1,8 +1,6 @@
-const supabaseUrl = 'https://optucpelkueqmlhwlbej.supabase.co'
-const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9wdHVjcGVsa3VlcW1saHdsYmVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAxOTY4MTgsImV4cCI6MjA4NTc3MjgxOH0.Vqaey9pcnltu9uRbPk0J-AGWaGDZjQLw92pcRv67GNE'
-const sb = window.createDesktopAwareSupabaseClient
-  ? window.createDesktopAwareSupabaseClient(supabaseUrl, supabaseKey)
-  : supabase.createClient(supabaseUrl, supabaseKey)
+const supabaseUrl = window.MIM_SUPABASE_URL
+const supabaseKey = window.MIM_SUPABASE_ANON_KEY
+const sb = window.mimSupabaseClient
 
 const MONTHLY_REPORT_TABLE = 'laporan_bulanan_wali'
 const MONTHLY_REPORT_CAPAIAN_TEXT_COLUMN = 'keterangan_capaian_hafalan_bulanan'
@@ -571,11 +569,18 @@ function setupCustomPopupSystem() {
 async function getCurrentMuhaffiz() {
   const loginId = String(localStorage.getItem('login_id') || '').trim()
   if (!loginId) return null
+  if (String(localStorage.getItem('login_auth_mode') || '').trim().toLowerCase() === 'auth') {
+    const { data: response, error } = await sb.functions.invoke('manage-self-profile', {
+      body: { action: 'get' }
+    })
+    if (error) throw error
+    return response?.profile ? { ...response.profile, aktif: true, password: '' } : null
+  }
   let data = null
   let error = null
   const variants = [
-    'id, id_karyawan, nama, no_hp, alamat, password, aktif, foto_url',
-    'id, id_karyawan, nama, no_hp, alamat, password, aktif'
+    'id, id_karyawan, nama, no_hp, alamat, aktif, foto_url',
+    'id, id_karyawan, nama, no_hp, alamat, aktif'
   ]
   for (const selectCols of variants) {
     const result = await sb
@@ -2450,14 +2455,8 @@ async function renderMuhaffizProfil() {
             <input id="muhaffiz-profil-alamat" type="text" value="${escapeHtml(profile.alamat || '')}" class="guru-field" autocomplete="off">
           </div>
         </div>
-        <div style="margin-top:12px;">
-          <label class="guru-label">Password</label>
-          <div style="position:relative;">
-            <input id="muhaffiz-profil-password" type="password" value="${escapeHtml(profile.password || '')}" placeholder="Password" class="guru-field" autocomplete="off" style="padding-right:70px;">
-            <button id="muhaffiz-profil-password-toggle" type="button" onclick="toggleMuhaffizProfilePassword()" aria-label="Tampilkan password" title="Tampilkan/Sembunyikan password" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); border:none; background:transparent; cursor:pointer; font-size:13px; font-weight:600; color:#2563eb;">Lihat</button>
-          </div>
-        </div>
         <div class="profile-actions">
+          <button type="button" class="modal-btn" onclick="openSecurePasswordDialog()">Atur Password</button>
           <button type="button" class="modal-btn modal-btn-primary" onclick="saveMuhaffizProfil('${escapeHtml(profile.id)}')">Simpan Profil</button>
         </div>
       </div>
@@ -2473,21 +2472,10 @@ async function renderMuhaffizProfil() {
   }
 }
 
-function toggleMuhaffizProfilePassword() {
-  const input = document.getElementById('muhaffiz-profil-password')
-  const btn = document.getElementById('muhaffiz-profil-password-toggle')
-  if (!input || !btn) return
-  const willShow = input.type === 'password'
-  input.type = willShow ? 'text' : 'password'
-  btn.textContent = willShow ? 'Sembunyi' : 'Lihat'
-  btn.setAttribute('aria-label', willShow ? 'Sembunyikan password' : 'Tampilkan password')
-}
-
 async function saveMuhaffizProfil(muhaffizId) {
   const nama = String(document.getElementById('muhaffiz-profil-nama')?.value || '').trim()
   const noHp = String(document.getElementById('muhaffiz-profil-no-hp')?.value || '').trim()
   const alamat = String(document.getElementById('muhaffiz-profil-alamat')?.value || '').trim()
-  const password = String(document.getElementById('muhaffiz-profil-password')?.value || '').trim()
   const fotoUrl = String(document.getElementById('muhaffiz-profil-foto-url')?.value || '').trim()
 
   if (!nama) {
@@ -2501,12 +2489,16 @@ async function saveMuhaffizProfil(muhaffizId) {
     alamat: alamat || null,
     foto_url: fotoUrl || null
   }
-  if (password) payload.password = password
-
-  const { error } = await sb
-    .from('karyawan')
-    .update(payload)
-    .eq('id', muhaffizId)
+  const result = await sb.functions.invoke('manage-self-profile', {
+    body: {
+      action: 'update',
+      name: nama,
+      phone: noHp || null,
+      address: alamat || null,
+      avatar_url: fotoUrl || null
+    }
+  })
+  const error = result.error || (result.data?.error ? new Error(result.data.error) : null)
   if (error) {
     console.error(error)
     alert(`Gagal menyimpan profil: ${error.message || 'Unknown error'}`)
@@ -2857,10 +2849,16 @@ function resolveMuhaffizPrestasiSantriId(mode) {
   return ''
 }
 
-function openMuhaffizPrestasiDoc(url) {
-  const link = String(url || '').trim()
+async function openMuhaffizPrestasiDoc(url) {
+  let link = String(url || '').trim()
   if (!link) {
     alert('Dokumen belum tersedia.')
+    return
+  }
+  try {
+    link = await window.resolveStorageObjectUrl(link, 3600)
+  } catch (error) {
+    alert(`Dokumen tidak dapat dibuka: ${error?.message || 'akses ditolak'}`)
     return
   }
   const overlay = document.getElementById('mpp-doc-overlay')
@@ -2885,12 +2883,14 @@ async function uploadMuhaffizPelanggaranSuratFile(event) {
   if (!file) return
   try {
     const ext = String(file.name || '').split('.').pop() || 'bin'
-    const filePath = `surat/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+    const relativePath = `surat/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+    const filePath = window.buildTenantStoragePath
+      ? window.buildTenantStoragePath(relativePath)
+      : relativePath
     const { error: uploadError } = await sb.storage.from(SANTRI_SURAT_BUCKET).upload(filePath, file, { upsert: true, cacheControl: '3600' })
     if (uploadError) throw uploadError
-    const { data } = sb.storage.from(SANTRI_SURAT_BUCKET).getPublicUrl(filePath)
     const input = document.getElementById('mpp-pelanggaran-surat-url')
-    if (input) input.value = String(data?.publicUrl || '')
+    if (input) input.value = window.buildStorageObjectReference(SANTRI_SURAT_BUCKET, filePath)
     alert('Upload surat berhasil.')
   } catch (error) {
     console.error(error)
@@ -3819,12 +3819,12 @@ async function renderMuhaffizChatPage() {
   }
 }
 
-function logout() {
-  localStorage.removeItem('login_id')
-  localStorage.removeItem('login_name')
-  localStorage.removeItem('login_role')
-  localStorage.removeItem('login_roles')
-  localStorage.removeItem(MUHAFFIZ_LAST_PAGE_KEY)
+async function logout() {
+  if (typeof window.performSecureLogout === 'function') {
+    await window.performSecureLogout()
+    return
+  }
+  localStorage.clear()
   location.href = 'index.html'
 }
 

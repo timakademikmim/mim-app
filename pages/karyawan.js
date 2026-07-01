@@ -74,6 +74,40 @@ function getSupabaseErrorMessage(error) {
   return parts.length > 0 ? parts.join(' | ') : JSON.stringify(error)
 }
 
+function usesAuthenticatedTenantSession() {
+  return String(localStorage.getItem('login_auth_mode') || '').trim().toLowerCase() === 'auth'
+}
+
+async function invokeTenantUser(body) {
+  const { data, error } = await sb.functions.invoke('manage-tenant-user', { body })
+  if (!error) return data || {}
+  let message = String(error?.message || '').trim()
+  try {
+    const response = error?.context
+    if (response && typeof response.clone === 'function') {
+      const payload = await response.clone().json()
+      message = String(payload?.error || payload?.message || message).trim()
+    }
+  } catch (_error) {}
+  throw new Error(message || 'Permintaan pengelolaan akun gagal.')
+}
+
+function normalizeTenantEmployee(item = {}) {
+  return {
+    id: String(item?.id || '').trim(),
+    id_karyawan: String(item?.id_karyawan || '').trim(),
+    nama: String(item?.nama || '').trim(),
+    role: String(item?.role || '').trim(),
+    no_hp: String(item?.no_hp || '').trim(),
+    alamat: String(item?.alamat || '').trim(),
+    aktif: item?.aktif === true,
+    foto_url: String(item?.foto_url || '').trim(),
+    auth_user_id: String(item?.auth_user_id || '').trim(),
+    must_change_password: item?.must_change_password === true,
+    password_reset_requested_at: String(item?.password_reset_requested_at || '').trim()
+  }
+}
+
 function generateClientUuid() {
   if (window.crypto && typeof window.crypto.randomUUID === 'function') {
     return window.crypto.randomUUID()
@@ -138,7 +172,10 @@ async function uploadKaryawanFotoFile(file, idHint = '') {
   }
   const ext = getFotoFileExt(file.name)
   const keyBase = String(idHint || '').trim().replaceAll(' ', '_') || `karyawan_${Date.now()}`
-  const filePath = `${keyBase}_${Date.now()}.${ext}`
+  const relativePath = `${keyBase}_${Date.now()}.${ext}`
+  const filePath = window.buildTenantStoragePath
+    ? window.buildTenantStoragePath(relativePath)
+    : relativePath
   const uploadRes = await sb
     .storage
     .from(KARYAWAN_FOTO_BUCKET)
@@ -378,7 +415,7 @@ function createAddKaryawanModal() {
       <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">ID Karyawan</div>
       <input class="karyawan-field" type="text" id="modal-add-karyawan-id-karyawan" placeholder="ID Karyawan" style="${getInsetFieldStyle('margin-bottom:8px;')}">
       <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">Password</div>
-      <input class="karyawan-field" type="password" id="modal-add-karyawan-password" placeholder="Password" style="${getInsetFieldStyle('margin-bottom:8px;')}">
+      <input class="karyawan-field" type="password" id="modal-add-karyawan-password" placeholder="Minimal 12 karakter, huruf besar/kecil, angka, simbol" autocomplete="new-password" style="${getInsetFieldStyle('margin-bottom:8px;')}">
       <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">Nama Karyawan</div>
       <input class="karyawan-field" type="text" id="modal-add-karyawan-nama" placeholder="Nama Karyawan" style="${getInsetFieldStyle('margin-bottom:8px;')}">
       <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">Role</div>
@@ -461,6 +498,7 @@ function createEditKaryawanModal() {
   modal.innerHTML = `
     <div style="background:#fff; margin:60px auto; padding:24px; border-radius:8px; width:360px; box-shadow:0 2px 12px #0002; position:relative;">
       <h3>Edit Karyawan</h3>
+      <div id="modal-edit-karyawan-auth-status" style="font-size:12px; font-weight:600; margin-bottom:10px;"></div>
       <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">Foto</div>
       <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
         <div id="modal-edit-karyawan-foto-preview"></div>
@@ -471,8 +509,8 @@ function createEditKaryawanModal() {
       </div>
       <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">ID Karyawan</div>
       <input class="karyawan-field" type="text" id="modal-edit-karyawan-id-karyawan" placeholder="ID Karyawan" style="${getInsetFieldStyle('margin-bottom:8px;')}">
-      <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">Password Baru (Opsional)</div>
-      <input class="karyawan-field" type="password" id="modal-edit-karyawan-password" placeholder="Password baru (opsional)" style="${getInsetFieldStyle('margin-bottom:8px;')}">
+      <div id="modal-edit-karyawan-password-label" style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">Password Baru (Opsional)</div>
+      <input class="karyawan-field" type="password" id="modal-edit-karyawan-password" placeholder="Minimal 12 karakter, huruf besar/kecil, angka, simbol" autocomplete="new-password" style="${getInsetFieldStyle('margin-bottom:8px;')}">
       <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">Nama Karyawan</div>
       <input class="karyawan-field" type="text" id="modal-edit-karyawan-nama" placeholder="Nama Karyawan" style="${getInsetFieldStyle('margin-bottom:8px;')}">
       <div style="font-size:12px; font-weight:600; color:#334155; margin-bottom:4px;">Role</div>
@@ -536,7 +574,7 @@ function closeEditKaryawanModal() {
 
 async function tambahKaryawan() {
   const idKaryawan = (document.getElementById('modal-add-karyawan-id-karyawan')?.value || '').trim()
-  const password = (document.getElementById('modal-add-karyawan-password')?.value || '').trim()
+  const password = String(document.getElementById('modal-add-karyawan-password')?.value || '')
   const nama = (document.getElementById('modal-add-karyawan-nama')?.value || '').trim()
   const fotoUrl = getFotoUrlFromInput('modal-add-karyawan-foto-url')
   const roleInput = (document.getElementById('modal-add-karyawan-role')?.value || '').trim()
@@ -553,6 +591,33 @@ async function tambahKaryawan() {
 
   if (karyawanPageMode === 'guru-only' && !parseRoleList(normalizedRole).includes('guru')) {
     alert('Di Data Guru, role wajib mengandung guru')
+    return
+  }
+
+  if (password.length < 12 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
+    alert('Password minimal 12 karakter dan wajib memuat huruf besar, huruf kecil, angka, serta simbol.')
+    return
+  }
+
+  if (usesAuthenticatedTenantSession()) {
+    try {
+      await invokeTenantUser({
+        action: 'create',
+        login_id: idKaryawan,
+        password,
+        name: nama,
+        roles: normalizedRole,
+        phone: noHp || null,
+        address: alamat || null,
+        photo_url: fotoUrl || null,
+        active: aktif
+      })
+      closeAddKaryawanModal()
+      if (typeof clearCachedData === 'function') clearCachedData(KARYAWAN_CACHE_KEY)
+      await loadKaryawan(true)
+    } catch (error) {
+      alert(`Gagal tambah karyawan: ${getSupabaseErrorMessage(error)}`)
+    }
     return
   }
 
@@ -604,6 +669,24 @@ async function showEditKaryawanForm(id) {
   currentEditKaryawanId = id
   document.getElementById('modal-edit-karyawan-id-karyawan').value = karyawan.id_karyawan ?? ''
   document.getElementById('modal-edit-karyawan-password').value = ''
+  const authStatus = document.getElementById('modal-edit-karyawan-auth-status')
+  const passwordLabel = document.getElementById('modal-edit-karyawan-password-label')
+  const passwordInput = document.getElementById('modal-edit-karyawan-password')
+  if (karyawan.auth_user_id) {
+    if (authStatus) {
+      authStatus.textContent = 'Akun Auth aktif'
+      authStatus.style.color = '#15803d'
+    }
+    if (passwordLabel) passwordLabel.textContent = 'Password Baru (Opsional)'
+    if (passwordInput) passwordInput.placeholder = 'Isi hanya untuk mengganti password'
+  } else {
+    if (authStatus) {
+      authStatus.textContent = 'Akun legacy - belum terhubung ke Supabase Auth'
+      authStatus.style.color = '#b45309'
+    }
+    if (passwordLabel) passwordLabel.textContent = 'Password Sementara untuk Migrasi (Opsional)'
+    if (passwordInput) passwordInput.placeholder = 'Minimal 10 karakter untuk menghubungkan Auth'
+  }
   document.getElementById('modal-edit-karyawan-nama').value = karyawan.nama ?? ''
   const editFotoInput = document.getElementById('modal-edit-karyawan-foto-url')
   if (editFotoInput) {
@@ -624,7 +707,7 @@ async function modalEditKaryawan() {
   if (!currentEditKaryawanId) return
 
   const idKaryawan = (document.getElementById('modal-edit-karyawan-id-karyawan')?.value || '').trim()
-  const password = (document.getElementById('modal-edit-karyawan-password')?.value || '').trim()
+  const password = String(document.getElementById('modal-edit-karyawan-password')?.value || '')
   const nama = (document.getElementById('modal-edit-karyawan-nama')?.value || '').trim()
   const fotoUrl = getFotoUrlFromInput('modal-edit-karyawan-foto-url')
   const roleInput = (document.getElementById('modal-edit-karyawan-role')?.value || '').trim()
@@ -644,6 +727,11 @@ async function modalEditKaryawan() {
     return
   }
 
+  if (password && (password.length < 12 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9]/.test(password))) {
+    alert('Password minimal 12 karakter dan wajib memuat huruf besar, huruf kecil, angka, serta simbol.')
+    return
+  }
+
   if (await isIdKaryawanUsed(idKaryawan, currentEditKaryawanId)) {
     alert('ID Karyawan sudah terdaftar')
     return
@@ -660,6 +748,44 @@ async function modalEditKaryawan() {
   }
 
   if (password) payload.password = password
+
+  if (usesAuthenticatedTenantSession()) {
+    try {
+      await invokeTenantUser({
+        action: 'update',
+        employee_id: currentEditKaryawanId,
+        login_id: idKaryawan,
+        name: nama,
+        roles: normalizedRole,
+        phone: noHp || null,
+        address: alamat || null,
+        photo_url: fotoUrl || null
+      })
+      await invokeTenantUser({
+        action: 'set_active',
+        employee_id: currentEditKaryawanId,
+        active: aktif
+      })
+      if (password) {
+        try {
+          await invokeTenantUser({
+            action: 'reset_password',
+            employee_id: currentEditKaryawanId,
+            password
+          })
+        } catch (error) {
+          throw error
+        }
+      }
+      syncTopbarIdentityIfCurrentUser(idKaryawan, payload)
+      closeEditKaryawanModal()
+      if (typeof clearCachedData === 'function') clearCachedData(KARYAWAN_CACHE_KEY)
+      await loadKaryawan(true)
+    } catch (error) {
+      alert(`Gagal edit karyawan: ${getSupabaseErrorMessage(error)}`)
+    }
+    return
+  }
 
   let { error } = await sb
     .from('karyawan')
@@ -691,9 +817,20 @@ async function modalEditKaryawan() {
 
 async function hapusKaryawan(id) {
   const confirmed = typeof showPopupConfirm === 'function'
-    ? await showPopupConfirm('Yakin ingin hapus karyawan ini?')
-    : confirm('Yakin ingin hapus karyawan ini?')
+    ? await showPopupConfirm(usesAuthenticatedTenantSession() ? 'Nonaktifkan akun karyawan ini?' : 'Yakin ingin hapus karyawan ini?')
+    : confirm(usesAuthenticatedTenantSession() ? 'Nonaktifkan akun karyawan ini?' : 'Yakin ingin hapus karyawan ini?')
   if (!confirmed) return
+
+  if (usesAuthenticatedTenantSession()) {
+    try {
+      await invokeTenantUser({ action: 'set_active', employee_id: id, active: false })
+      if (typeof clearCachedData === 'function') clearCachedData(KARYAWAN_CACHE_KEY)
+      await loadKaryawan(true)
+    } catch (error) {
+      alert(`Gagal menonaktifkan akun: ${getSupabaseErrorMessage(error)}`)
+    }
+    return
+  }
 
   const { error } = await sb
     .from('karyawan')
@@ -804,6 +941,7 @@ function renderKaryawanSearchTable() {
             <th style="padding:8px; border:1px solid #ddd; text-align:center; width:150px;">No HP</th>
             <th style="padding:8px; border:1px solid #ddd; text-align:center; min-width:230px;">Alamat</th>
             <th style="padding:8px; border:1px solid #ddd; text-align:center; width:100px;">Status</th>
+            ${usesAuthenticatedTenantSession() ? '<th style="padding:8px; border:1px solid #ddd; text-align:center; width:100px;">Akun</th>' : ''}
             <th style="padding:8px; border:1px solid #ddd; text-align:center; width:${karyawanPageMode === 'guru-only' ? '380px' : '200px'};">Aksi</th>
           </tr>
         </thead>
@@ -824,6 +962,7 @@ function renderKaryawanSearchTable() {
       <td style="padding:8px; border:1px solid #ddd;">${k.no_hp ?? '-'}</td>
       <td style="padding:8px; border:1px solid #ddd;">${k.alamat ?? '-'}</td>
       <td style="padding:8px; border:1px solid #ddd;">${k.aktif ? 'Aktif' : 'Tidak Aktif'}</td>
+      ${usesAuthenticatedTenantSession() ? `<td style="padding:8px; border:1px solid #ddd; color:${k.password_reset_requested_at ? '#b45309' : '#15803d'}; font-weight:600;">${k.password_reset_requested_at ? 'Minta Reset' : 'Auth'}</td>` : ''}
       <td style="padding:8px; border:1px solid #ddd; text-align:center; white-space:nowrap;">
         ${karyawanPageMode === 'guru-only' ? `<button class="btn-detail" onclick="openGuruDetail('${k.id}')">Detail</button>` : ''}
         ${karyawanPageMode === 'guru-only' ? `<button class="btn-chatgpt" onclick="openGuruDetailChatGpt('${k.id}')">ChatGPT</button>` : ''}
@@ -940,11 +1079,30 @@ async function loadKaryawan(forceRefresh = false) {
 
   container.innerHTML = 'Loading...'
 
+  if (usesAuthenticatedTenantSession()) {
+    try {
+      const response = await invokeTenantUser({ action: 'list' })
+      const data = (Array.isArray(response?.employees) ? response.employees : []).map(normalizeTenantEmployee)
+      if (typeof setCachedData === 'function') setCachedData(KARYAWAN_CACHE_KEY, data)
+      window.karyawanList = filterKaryawanByMode(data)
+      populateKaryawanRoleFilterOptions(window.karyawanList)
+      if (!window.karyawanList.length) {
+        container.innerHTML = 'Belum ada karyawan'
+        return
+      }
+      renderKaryawanSearchTable()
+    } catch (error) {
+      console.error(error)
+      container.innerHTML = `Gagal load karyawan: ${escapeHtml(getSupabaseErrorMessage(error))}`
+    }
+    return
+  }
+
   let data = null
   let error = null
   const variants = [
-    'id, id_karyawan, password, nama, role, no_hp, alamat, aktif, foto_url',
-    'id, id_karyawan, password, nama, role, no_hp, alamat, aktif'
+    'id, id_karyawan, nama, role, no_hp, alamat, aktif, foto_url',
+    'id, id_karyawan, nama, role, no_hp, alamat, aktif'
   ]
   for (const selectCols of variants) {
     const result = await sb

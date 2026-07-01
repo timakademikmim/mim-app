@@ -70,7 +70,8 @@ body {
   font-weight: 600;
 }
 
-.login-card input {
+.login-card input,
+.login-card select {
   width: 100%;
   padding: 11px 12px;
   border-radius: 10px;
@@ -80,9 +81,16 @@ body {
   font-size: 14px;
 }
 
-.login-card input:focus {
+.login-card input:focus,
+.login-card select:focus {
   border-color: #94a3b8;
   box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.22);
+}
+
+.login-card select:disabled,
+.login-card button:disabled {
+  cursor: wait;
+  opacity: 0.68;
 }
 
 .login-card button {

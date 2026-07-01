@@ -1,8 +1,6 @@
-const supabaseUrl = 'https://optucpelkueqmlhwlbej.supabase.co'
-const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9wdHVjcGVsa3VlcW1saHdsYmVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAxOTY4MTgsImV4cCI6MjA4NTc3MjgxOH0.Vqaey9pcnltu9uRbPk0J-AGWaGDZjQLw92pcRv67GNE'
-const sb = window.createDesktopAwareSupabaseClient
-  ? window.createDesktopAwareSupabaseClient(supabaseUrl, supabaseKey)
-  : supabase.createClient(supabaseUrl, supabaseKey)
+const supabaseUrl = window.MIM_SUPABASE_URL
+const supabaseKey = window.MIM_SUPABASE_ANON_KEY
+const sb = window.mimSupabaseClient
 
 const GURU_LAST_PAGE_KEY = 'guru_last_page'
 const GURU_HISTORY_STATE_KEY = 'guru_tab'
@@ -18,6 +16,8 @@ const ATTENDANCE_SUBMISSION_TABLE = 'absensi_pengajuan_pengganti'
 const INPUT_NILAI_TABLE = 'nilai_input_akademik'
 const RAPOR_DESC_TABLE = 'rapor_deskripsi_mapel'
 const MAPEL_PATRON_MATERI_TABLE = 'mapel_patron_materi'
+const MAPEL_SOAL_TABLE = 'mapel_soal_guru'
+const MAPEL_SOAL_SELECT_COLUMNS = 'id, distribusi_id, kelas_id, mapel_id, semester_id, tahun_ajaran_id, created_by_guru_id, created_by_guru_nama, updated_by_guru_id, updated_by_guru_nama, judul, kategori, tanggal, keterangan, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, created_at, updated_at'
 const MONTHLY_REPORT_TABLE = 'laporan_bulanan_wali'
 const MONTHLY_REPORT_STORAGE_BUCKET = 'laporan-bulanan'
 const MONTHLY_REPORT_WA_TEMPLATE_KEY = 'laporan_bulanan_wa_template'
@@ -116,6 +116,8 @@ const ATTENDANCE_STATUS_META = {
   Alpa: { tone: 'alpa', hint: 'Tidak hadir tanpa keterangan' }
 }
 const INPUT_NILAI_JENIS_LIST = ['Tugas', 'Ulangan Harian', 'UTS', 'UAS', 'Keterampilan']
+const MAPEL_SOAL_CATEGORY_LIST = ['Tugas', 'Kuis', 'Ulangan Harian', 'Ujian', 'PTS', 'PAS', 'Remedial', 'Try Out', 'Lainnya']
+const MAPEL_SOAL_ROW_KEY_PREFIX = 'mapel-soal:'
 
 const PAGE_TITLES = {
   dashboard: 'Dashboard',
@@ -347,6 +349,7 @@ let ujianGuruState = {
   mapelPairs: new Set(),
   classListByMapelPerangkatan: new Map(),
   soalByJadwal: new Map(),
+  activeSourceMode: 'ujian',
   openFolders: new Set(),
   openRowMenuKey: '',
   supportsKelasTarget: true,
@@ -5240,11 +5243,28 @@ async function getCurrentGuruRow() {
     return currentGuruRowCache.data
   }
 
+  const authMode = String(localStorage.getItem('login_auth_mode') || '').trim().toLowerCase()
+  if (authMode === 'auth') {
+    const { data: response, error: functionError } = await sb.functions.invoke('manage-self-profile', {
+      body: { action: 'get' }
+    })
+    if (functionError) throw functionError
+    const profile = response?.profile || null
+    const data = profile ? {
+      ...profile,
+      role: JSON.parse(localStorage.getItem('login_roles') || '[]').join(','),
+      aktif: true,
+      password: ''
+    } : null
+    currentGuruRowCache = { loginId, ts: now, data }
+    return data
+  }
+
   let data = null
   let error = null
   const selectVariants = [
-    'id, id_karyawan, nama, role, no_hp, alamat, password, aktif, foto_url',
-    'id, id_karyawan, nama, role, no_hp, alamat, password, aktif'
+    'id, id_karyawan, nama, role, no_hp, alamat, aktif, foto_url',
+    'id, id_karyawan, nama, role, no_hp, alamat, aktif'
   ]
   for (const selectCols of selectVariants) {
     const result = await sb
@@ -5611,7 +5631,7 @@ function buildAbsensiPatronMateriColumnMessage() {
 
 function normalizeMapelDetailTab(tab) {
   const raw = String(tab || '').trim().toLowerCase()
-  if (raw === 'nilai' || raw === 'rapor-desc' || raw === 'patron-materi') return raw
+  if (raw === 'nilai' || raw === 'rapor-desc' || raw === 'patron-materi' || raw === 'soal') return raw
   return 'absensi'
 }
 
@@ -5689,12 +5709,54 @@ function buildInputNilaiMissingMateriColumnMessage() {
   return `Kolom materi belum tersedia di tabel '${INPUT_NILAI_TABLE}'.\n\nJalankan SQL berikut di Supabase:\n\nalter table public.${INPUT_NILAI_TABLE}\n  add column if not exists materi text null;`
 }
 
+function normalizeMapelSoalCategory(value = '') {
+  const raw = String(value || '').trim()
+  if (!raw) return 'Tugas'
+  const match = MAPEL_SOAL_CATEGORY_LIST.find(item => item.toLowerCase() === raw.toLowerCase())
+  return match || raw
+}
+
+function buildMapelSoalRowKey(id = '') {
+  const safeId = String(id || '').trim()
+  return safeId ? `${MAPEL_SOAL_ROW_KEY_PREFIX}${safeId}` : ''
+}
+
+function isMapelSoalRowKey(value = '') {
+  return String(value || '').trim().startsWith(MAPEL_SOAL_ROW_KEY_PREFIX)
+}
+
+function extractMapelSoalIdFromRowKey(value = '') {
+  const raw = String(value || '').trim()
+  return isMapelSoalRowKey(raw) ? raw.slice(MAPEL_SOAL_ROW_KEY_PREFIX.length) : ''
+}
+
+function isMissingMapelSoalTableError(error) {
+  return isMissingTableErrorByName(error, MAPEL_SOAL_TABLE)
+}
+
+function isMapelSoalPermissionError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  const code = String(error?.code || '').toUpperCase()
+  return code === '42501' ||
+    msg.includes('permission denied') ||
+    msg.includes('row-level security') ||
+    msg.includes('policy')
+}
+
+function buildMapelSoalMissingTableMessage() {
+  return `Tabel '${MAPEL_SOAL_TABLE}' belum ada.\n\nJalankan SQL berikut di Supabase:\n\ncreate table if not exists public.${MAPEL_SOAL_TABLE} (\n  id uuid primary key default gen_random_uuid(),\n  distribusi_id text not null,\n  kelas_id text not null,\n  mapel_id text not null,\n  semester_id text null,\n  tahun_ajaran_id text null,\n  created_by_guru_id text not null,\n  created_by_guru_nama text null,\n  updated_by_guru_id text null,\n  updated_by_guru_nama text null,\n  judul text not null,\n  kategori text not null default 'Tugas',\n  tanggal date null,\n  keterangan text null,\n  bentuk_soal text null,\n  jumlah_nomor integer null,\n  instruksi text null,\n  questions_json text null,\n  status text not null default 'draft',\n  created_at timestamptz not null default now(),\n  updated_at timestamptz not null default now()\n);\n\ncreate index if not exists mapel_soal_guru_distribusi_idx on public.${MAPEL_SOAL_TABLE}(distribusi_id, updated_at desc);`
+}
+
+function buildMapelSoalPermissionMessage() {
+  return `Akses tabel '${MAPEL_SOAL_TABLE}' ditolak oleh policy Supabase.\n\nJalankan SQL dari file:\n- scripts/supabase-mapel-soal-setup.sql`
+}
+
 function isMissingRaporDescTableError(error) {
   return isMissingTableErrorByName(error, RAPOR_DESC_TABLE)
 }
 
 function buildRaporDescMissingTableMessage() {
-  return `Tabel '${RAPOR_DESC_TABLE}' belum ada di Supabase.\n\nJalankan SQL berikut:\n\ncreate table if not exists public.${RAPOR_DESC_TABLE} (\n  id bigserial primary key,\n  distribusi_id text not null,\n  guru_id text not null,\n  mapel_id text not null,\n  semester_id text null,\n  deskripsi_a_pengetahuan text null,\n  deskripsi_b_pengetahuan text null,\n  deskripsi_c_pengetahuan text null,\n  deskripsi_d_pengetahuan text null,\n  deskripsi_a_keterampilan text null,\n  deskripsi_b_keterampilan text null,\n  deskripsi_c_keterampilan text null,\n  deskripsi_d_keterampilan text null,\n  updated_at timestamptz not null default now(),\n  unique (distribusi_id)\n);`
+  return `Tabel '${RAPOR_DESC_TABLE}' belum ada di Supabase.\n\nJalankan SQL dari file:\n- scripts/supabase-rapor-deskripsi-mapel-setup.sql`
 }
 
 function isMissingMonthlyReportTableError(error) {
@@ -8819,14 +8881,8 @@ async function renderGuruProfil() {
             <input id="guru-profil-alamat" type="text" value="${escapeHtml(guru.alamat || '')}" class="guru-field" autocomplete="off">
           </div>
         </div>
-        <div style="margin-top:12px;">
-          <label class="guru-label">Password</label>
-          <div style="position:relative;">
-            <input id="guru-profil-password" type="password" value="${escapeHtml(guru.password || '')}" placeholder="Password" class="guru-field" autocomplete="off" style="padding-right:70px;">
-            <button id="guru-profil-password-toggle" type="button" onclick="toggleGuruProfilePassword()" aria-label="Tampilkan password" title="Tampilkan/Sembunyikan password" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); border:none; background:transparent; cursor:pointer; font-size:13px; font-weight:600; color:#2563eb;">Lihat</button>
-          </div>
-        </div>
         <div class="profile-actions">
+          <button type="button" class="modal-btn" onclick="openSecurePasswordDialog()">Atur Password</button>
           <button type="button" class="modal-btn modal-btn-primary" onclick="saveGuruProfil('${escapeHtml(guru.id)}')">Simpan Profil</button>
         </div>
       </div>
@@ -8842,21 +8898,10 @@ async function renderGuruProfil() {
   }
 }
 
-function toggleGuruProfilePassword() {
-  const input = document.getElementById('guru-profil-password')
-  const btn = document.getElementById('guru-profil-password-toggle')
-  if (!input || !btn) return
-  const willShow = input.type === 'password'
-  input.type = willShow ? 'text' : 'password'
-  btn.textContent = willShow ? 'Sembunyi' : 'Lihat'
-  btn.setAttribute('aria-label', willShow ? 'Sembunyikan password' : 'Tampilkan password')
-}
-
 async function saveGuruProfil(guruId) {
   const nama = String(document.getElementById('guru-profil-nama')?.value || '').trim()
   const no_hp = String(document.getElementById('guru-profil-no-hp')?.value || '').trim()
   const alamat = String(document.getElementById('guru-profil-alamat')?.value || '').trim()
-  const password = String(document.getElementById('guru-profil-password')?.value || '').trim()
   const fotoUrl = String(document.getElementById('guru-profil-foto-url')?.value || '').trim()
 
   if (!nama) {
@@ -8871,12 +8916,16 @@ async function saveGuruProfil(guruId) {
     foto_url: fotoUrl || null
   }
 
-  if (password) payload.password = password
-
-  const { error } = await sb
-    .from('karyawan')
-    .update(payload)
-    .eq('id', guruId)
+  const result = await sb.functions.invoke('manage-self-profile', {
+    body: {
+      action: 'update',
+      name: nama,
+      phone: no_hp || null,
+      address: alamat || null,
+      avatar_url: fotoUrl || null
+    }
+  })
+  const error = result.error || (result.data?.error ? new Error(result.data.error) : null)
 
   if (error) {
     console.error(error)
@@ -10470,7 +10519,10 @@ async function quickSendLaporanBulananWA(santriId) {
   const periodeSlug = sanitizeFileNamePart(detail.periodeLabel || '').replace(/\s+/g, '-')
   const namaSlug = sanitizeFileNamePart(detail.nama || '').replace(/\s+/g, '-')
   const fileName = `Laporan Evaluasi Bulan ${sanitizeFileNamePart(detail.periodeLabel)} - ${sanitizeFileNamePart(detail.nama)}.pdf`
-  const storagePath = `${String(detailData.guru.id)}/${periodeSlug || 'periode'}/${namaSlug || sid}-${Date.now()}.pdf`
+  const relativeStoragePath = `${String(detailData.guru.id)}/${periodeSlug || 'periode'}/${namaSlug || sid}-${Date.now()}.pdf`
+  const storagePath = window.buildTenantStoragePath
+    ? window.buildTenantStoragePath(relativeStoragePath)
+    : relativeStoragePath
 
   const uploadRes = await sb
     .storage
@@ -10491,12 +10543,7 @@ async function quickSendLaporanBulananWA(santriId) {
     return
   }
 
-  const { data: publicUrlData } = sb
-    .storage
-    .from(MONTHLY_REPORT_STORAGE_BUCKET)
-    .getPublicUrl(storagePath)
-
-  const publicUrl = publicUrlData?.publicUrl || ''
+  const publicUrl = await window.createSignedStorageUrl(MONTHLY_REPORT_STORAGE_BUCKET, storagePath, 604800)
   if (!publicUrl) {
     alert('Gagal mendapatkan link laporan PDF.')
     return
@@ -11754,6 +11801,411 @@ async function loadJadwalGuru() {
   `
 }
 
+function formatGuruMapelSoalDate(value = '') {
+  const raw = String(value || '').trim()
+  if (!raw) return '-'
+  const iso = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : ''
+  const date = iso ? new Date(`${iso}T00:00:00`) : new Date(raw)
+  if (Number.isNaN(date.getTime())) return raw
+  return date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+function buildGuruMapelSoalPseudoJadwal(row, refs = {}) {
+  const semesterMap = refs?.semesterMap instanceof Map ? refs.semesterMap : new Map()
+  const tahunAjaranMap = refs?.tahunAjaranMap instanceof Map ? refs.tahunAjaranMap : new Map()
+  const semester = semesterMap.get(String(row?.semester_id || '')) || null
+  const tahunAjaran = tahunAjaranMap.get(String(row?.tahun_ajaran_id || semester?.tahun_ajaran_id || '')) || null
+  const semesterLabel = String(semester?.nama || refs?.semesterNama || '').trim()
+  const tahunLabel = String(tahunAjaran?.nama || refs?.tahunAjaranNama || '').trim()
+  return {
+    id: String(row?.id || ''),
+    jenis: normalizeMapelSoalCategory(row?.kategori),
+    nama: String(row?.judul || '-').trim() || '-',
+    kelas: String(refs?.kelasNama || '-'),
+    mapel: String(refs?.mapelLabel || '-'),
+    tanggal: String(row?.tanggal || '').trim() || '',
+    jam_mulai: '',
+    jam_selesai: '',
+    keterangan: JSON.stringify({
+      source: 'mapel-soal',
+      document_title: String(row?.judul || '').trim() || 'SOAL',
+      semester_nama: semesterLabel,
+      tahun_ajaran_nama: tahunLabel,
+      kategori: normalizeMapelSoalCategory(row?.kategori),
+      catatan: String(row?.keterangan || '').trim()
+    })
+  }
+}
+
+function buildGuruMapelSoalEditorRows(rows = [], refs = {}) {
+  return (Array.isArray(rows) ? rows : [])
+    .map(item => {
+      const rowKey = buildMapelSoalRowKey(item?.id)
+      const jadwal = buildGuruMapelSoalPseudoJadwal(item, refs)
+      const semester = refs?.semesterMap instanceof Map ? refs.semesterMap.get(String(item?.semester_id || '')) : null
+      const tahunAjaran = refs?.tahunAjaranMap instanceof Map
+        ? refs.tahunAjaranMap.get(String(item?.tahun_ajaran_id || semester?.tahun_ajaran_id || ''))
+        : null
+      return {
+        sourceType: 'mapel-soal',
+        rowKey,
+        jadwal,
+        kelasNama: String(refs?.kelasNama || '-'),
+        mapelLabel: String(refs?.mapelLabel || '-'),
+        semesterNama: String(semester?.nama || '').trim(),
+        tahunAjaranNama: String(tahunAjaran?.nama || '').trim(),
+        soal: item
+      }
+    })
+    .filter(item => item.rowKey)
+}
+
+function syncGuruMapelSoalEditorRows() {
+  const rows = Array.isArray(currentMapelDetailState?.mapelSoalEditorRows) ? currentMapelDetailState.mapelSoalEditorRows : []
+  ujianGuruState.rows = rows
+  ujianGuruState.soalByJadwal = new Map(rows.map(item => [String(item.rowKey || ''), item.soal]).filter(item => item[0]))
+  ujianGuruState.activeSourceMode = 'mapel-soal'
+}
+
+function upsertCurrentMapelSoalStateRow(row) {
+  if (!row || typeof row !== 'object' || !currentMapelDetailState) return
+  const list = Array.isArray(currentMapelDetailState.mapelSoalRows) ? [...currentMapelDetailState.mapelSoalRows] : []
+  const rowId = String(row.id || '').trim()
+  if (!rowId) return
+  const next = list.filter(item => String(item?.id || '').trim() !== rowId)
+  next.unshift(row)
+  next.sort((a, b) => String(b?.updated_at || b?.created_at || '').localeCompare(String(a?.updated_at || a?.created_at || '')))
+  currentMapelDetailState.mapelSoalRows = next
+  currentMapelDetailState.mapelSoalEditorRows = buildGuruMapelSoalEditorRows(next, currentMapelDetailState.mapelSoalRefs || {})
+  if (currentMapelDetailTab === 'soal') syncGuruMapelSoalEditorRows()
+}
+
+function removeCurrentMapelSoalStateRow(rowId = '') {
+  if (!currentMapelDetailState) return
+  const safeRowId = String(rowId || '').trim()
+  if (!safeRowId) return
+  const list = Array.isArray(currentMapelDetailState.mapelSoalRows) ? [...currentMapelDetailState.mapelSoalRows] : []
+  const next = list.filter(item => String(item?.id || '').trim() !== safeRowId)
+  currentMapelDetailState.mapelSoalRows = next
+  currentMapelDetailState.mapelSoalEditorRows = buildGuruMapelSoalEditorRows(next, currentMapelDetailState.mapelSoalRefs || {})
+  if (String(ujianGuruState.activeSoal?.id || '').trim() === safeRowId) {
+    ujianGuruState.activeSoal = null
+  }
+  if (currentMapelDetailTab === 'soal') syncGuruMapelSoalEditorRows()
+}
+
+function ensureMapelSoalCreateModal() {
+  let overlay = document.getElementById('guru-mapel-soal-modal')
+  if (overlay) return overlay
+  overlay = document.createElement('div')
+  overlay.id = 'guru-mapel-soal-modal'
+  overlay.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.42); display:none; align-items:center; justify-content:center; z-index:10020; padding:16px; box-sizing:border-box;'
+  overlay.innerHTML = `
+    <div class="placeholder-card" style="width:min(720px, 100%); max-height:calc(100vh - 32px); overflow:auto; border-style:solid; border-color:#bfdbfe; background:#fff;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:12px;">
+        <div style="font-weight:700; color:#0f172a;">Buat Soal Mapel</div>
+        <button type="button" class="modal-btn" onclick="closeMapelSoalCreateModal()">Tutup</button>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px;">
+        <div style="grid-column:1 / -1;">
+          <label class="guru-label">Judul Soal</label>
+          <input id="mapel-soal-judul" class="guru-field" type="text" placeholder="Contoh: Tugas Bab 3 atau Ulangan Harian 1">
+        </div>
+        <div>
+          <label class="guru-label">Kategori</label>
+          <select id="mapel-soal-kategori" class="guru-field">
+            ${MAPEL_SOAL_CATEGORY_LIST.map(item => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="guru-label">Tanggal</label>
+          <input id="mapel-soal-tanggal" class="guru-field" type="date">
+        </div>
+        <div>
+          <label class="guru-label">Tahun Ajaran</label>
+          <select id="mapel-soal-tahun-ajaran" class="guru-field" onchange="onMapelSoalCreateTahunChange()"></select>
+        </div>
+        <div>
+          <label class="guru-label">Semester</label>
+          <select id="mapel-soal-semester" class="guru-field"></select>
+        </div>
+        <div style="grid-column:1 / -1;">
+          <label class="guru-label">Keterangan</label>
+          <textarea id="mapel-soal-keterangan" class="guru-field" rows="3" placeholder="Opsional. Misalnya cakupan materi, tujuan, atau catatan khusus."></textarea>
+        </div>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px;">
+        <button type="button" class="modal-btn" onclick="closeMapelSoalCreateModal()">Batal</button>
+        <button id="btn-save-mapel-soal-create" type="button" class="modal-btn modal-btn-primary" onclick="saveMapelSoalCreateModal()">Buat Soal</button>
+      </div>
+    </div>
+  `
+  overlay.addEventListener('click', event => {
+    if (event.target !== overlay) return
+    closeMapelSoalCreateModal()
+  })
+  document.body.appendChild(overlay)
+  return overlay
+}
+
+function renderMapelSoalCreateSemesterOptions(selectedYearId = '', selectedSemesterId = '') {
+  const semesterSelect = document.getElementById('mapel-soal-semester')
+  if (!semesterSelect) return
+  const state = currentMapelDetailState || {}
+  const semesterRows = Array.isArray(state.mapelSoalSemesterRows) ? state.mapelSoalSemesterRows : []
+  const filtered = semesterRows.filter(item => {
+    if (!selectedYearId) return true
+    return String(item?.tahun_ajaran_id || '') === String(selectedYearId || '')
+  })
+  semesterSelect.innerHTML = filtered.length
+    ? filtered.map(item => `<option value="${escapeHtml(String(item.id || ''))}">${escapeHtml(String(item.nama || '-'))}${asBool(item?.aktif) ? ' (Aktif)' : ''}</option>`).join('')
+    : '<option value="">-</option>'
+  if (selectedSemesterId && filtered.some(item => String(item?.id || '') === String(selectedSemesterId || ''))) {
+    semesterSelect.value = selectedSemesterId
+  }
+}
+
+function openMapelSoalCreateModal() {
+  if (!currentMapelDetailState?.distribusi) {
+    alert('Detail mapel belum siap.')
+    return
+  }
+  const overlay = ensureMapelSoalCreateModal()
+  const tahunSelect = document.getElementById('mapel-soal-tahun-ajaran')
+  const judulEl = document.getElementById('mapel-soal-judul')
+  const kategoriEl = document.getElementById('mapel-soal-kategori')
+  const tanggalEl = document.getElementById('mapel-soal-tanggal')
+  const keteranganEl = document.getElementById('mapel-soal-keterangan')
+  const tahunRows = Array.isArray(currentMapelDetailState.mapelSoalTahunRows) ? currentMapelDetailState.mapelSoalTahunRows : []
+  const currentYearId = String(currentMapelDetailState.mapelSoalCurrentTahunAjaranId || '')
+  const currentSemesterId = String(currentMapelDetailState.distribusi?.semester_id || '')
+  if (tahunSelect) {
+    tahunSelect.innerHTML = tahunRows.length
+      ? tahunRows.map(item => `<option value="${escapeHtml(String(item.id || ''))}">${escapeHtml(String(item.nama || '-'))}${asBool(item?.aktif) ? ' (Aktif)' : ''}</option>`).join('')
+      : '<option value="">-</option>'
+    if (currentYearId && tahunRows.some(item => String(item?.id || '') === currentYearId)) tahunSelect.value = currentYearId
+  }
+  renderMapelSoalCreateSemesterOptions(String(tahunSelect?.value || currentYearId || ''), currentSemesterId)
+  if (judulEl) judulEl.value = ''
+  if (kategoriEl) kategoriEl.value = 'Tugas'
+  if (tanggalEl) tanggalEl.value = new Date().toISOString().slice(0, 10)
+  if (keteranganEl) keteranganEl.value = ''
+  overlay.style.display = 'flex'
+  judulEl?.focus()
+}
+
+function closeMapelSoalCreateModal() {
+  const overlay = document.getElementById('guru-mapel-soal-modal')
+  if (overlay) overlay.style.display = 'none'
+}
+
+function onMapelSoalCreateTahunChange() {
+  const tahunSelect = document.getElementById('mapel-soal-tahun-ajaran')
+  renderMapelSoalCreateSemesterOptions(String(tahunSelect?.value || '').trim(), '')
+}
+
+async function saveMapelSoalCreateModal() {
+  const state = currentMapelDetailState
+  const distribusi = state?.distribusi || null
+  if (!distribusi) {
+    alert('Detail mapel belum siap.')
+    return
+  }
+  const judul = String(document.getElementById('mapel-soal-judul')?.value || '').trim()
+  const kategori = normalizeMapelSoalCategory(document.getElementById('mapel-soal-kategori')?.value)
+  const tahunAjaranId = String(document.getElementById('mapel-soal-tahun-ajaran')?.value || '').trim() || null
+  const semesterId = String(document.getElementById('mapel-soal-semester')?.value || '').trim() || null
+  const tanggal = String(document.getElementById('mapel-soal-tanggal')?.value || '').trim() || null
+  const keterangan = String(document.getElementById('mapel-soal-keterangan')?.value || '').trim() || null
+  if (!judul) {
+    alert('Judul soal wajib diisi.')
+    return
+  }
+
+  const buttonEl = document.getElementById('btn-save-mapel-soal-create')
+  if (buttonEl) {
+    buttonEl.disabled = true
+    buttonEl.textContent = 'Membuat...'
+  }
+  try {
+    const ctx = await getGuruContext()
+    if (!ctx?.guru?.id) {
+      alert('Data guru tidak ditemukan.')
+      return
+    }
+    const guruNama = String(ctx.guru.nama || ctx.guru.id_karyawan || '').trim() || null
+    const payload = {
+      distribusi_id: String(distribusi.id || ''),
+      kelas_id: String(distribusi.kelas_id || ''),
+      mapel_id: String(distribusi.mapel_id || ''),
+      semester_id: semesterId,
+      tahun_ajaran_id: tahunAjaranId,
+      created_by_guru_id: String(ctx.guru.id || ''),
+      created_by_guru_nama: guruNama,
+      updated_by_guru_id: String(ctx.guru.id || ''),
+      updated_by_guru_nama: guruNama,
+      judul,
+      kategori,
+      tanggal,
+      keterangan,
+      bentuk_soal: 'campuran',
+      jumlah_nomor: 0,
+      instruksi: '',
+      questions_json: JSON.stringify({ questions: [], sections: [] }),
+      status: 'draft',
+      updated_at: new Date().toISOString()
+    }
+    const { data, error } = await sb
+      .from(MAPEL_SOAL_TABLE)
+      .insert([payload])
+      .select(MAPEL_SOAL_SELECT_COLUMNS)
+      .maybeSingle()
+    if (error) {
+      if (isMissingMapelSoalTableError(error)) {
+        alert(buildMapelSoalMissingTableMessage())
+        return
+      }
+      if (isMapelSoalPermissionError(error)) {
+        alert(buildMapelSoalPermissionMessage())
+        return
+      }
+      throw error
+    }
+    if (data) upsertCurrentMapelSoalStateRow(data)
+    closeMapelSoalCreateModal()
+    await openMapelDetail(currentMapelDetailDistribusiId, 'soal')
+    alert('Soal mapel berhasil dibuat.')
+  } catch (error) {
+    console.error(error)
+    alert(`Gagal membuat soal mapel: ${error?.message || 'Unknown error'}`)
+  } finally {
+    if (buttonEl) {
+      buttonEl.disabled = false
+      buttonEl.textContent = 'Buat Soal'
+    }
+  }
+}
+
+async function deleteMapelSoalRow(rowKeyEncoded, triggerBtn = null) {
+  const decodedKey = decodeURIComponent(String(rowKeyEncoded || '')).trim()
+  const rowId = extractMapelSoalIdFromRowKey(decodedKey)
+  if (!rowId) {
+    alert('File soal mapel tidak valid.')
+    return
+  }
+
+  const row = (currentMapelDetailState?.mapelSoalEditorRows || []).find(item => String(item?.rowKey || '') === decodedKey)
+  const judul = String(row?.soal?.judul || 'file soal ini').trim() || 'file soal ini'
+  const ok = await popupConfirm(`Hapus ${judul}?`)
+  if (!ok) return
+
+  const buttonEl = triggerBtn || null
+  if (buttonEl?.disabled) return
+  if (buttonEl) setButtonLoading(buttonEl, true, 'Menghapus...')
+
+  try {
+    const { error } = await sb
+      .from(MAPEL_SOAL_TABLE)
+      .delete()
+      .eq('id', rowId)
+
+    if (error) {
+      if (isMissingMapelSoalTableError(error)) {
+        alert(buildMapelSoalMissingTableMessage())
+        return
+      }
+      if (isMapelSoalPermissionError(error)) {
+        alert(buildMapelSoalPermissionMessage())
+        return
+      }
+      throw error
+    }
+
+    removeCurrentMapelSoalStateRow(rowId)
+    closeGuruUjianRowMenu()
+    await openMapelDetail(currentMapelDetailDistribusiId, 'soal')
+    alert('File soal mapel berhasil dihapus.')
+  } catch (error) {
+    console.error(error)
+    alert(`Gagal menghapus soal mapel: ${error?.message || 'Unknown error'}`)
+  } finally {
+    if (buttonEl) setButtonLoading(buttonEl, false)
+  }
+}
+
+function renderGuruMapelSoalRowCardsHtml(rows = []) {
+  return (Array.isArray(rows) ? rows : []).map(item => {
+    const rowKey = String(item?.rowKey || '')
+    const rowKeyEncoded = encodeURIComponent(rowKey)
+    const soal = item?.soal || {}
+    const isMenuOpen = String(ujianGuruState.openRowMenuKey || '') === rowKey
+    const subtitle = [
+      formatGuruMapelSoalDate(soal?.tanggal),
+      String(item?.semesterNama || '').trim(),
+      String(item?.tahunAjaranNama || '').trim()
+    ].filter(Boolean).join(' • ')
+    const statusLabel = String(soal?.status || '').trim().toLowerCase() === 'published'
+      ? 'Siap dipakai'
+      : toExamStatusLabel(soal?.status)
+    return `
+      <div class="guru-ujian-row-card" data-row-key="${rowKeyEncoded}" onclick="openGuruUjianEditorPage('${rowKeyEncoded}')" oncontextmenu="event.preventDefault(); toggleGuruUjianRowMenu('${rowKeyEncoded}')"
+        ontouchstart="startGuruUjianRowPress(this.dataset.rowKey)" ontouchend="endGuruUjianRowPress()" ontouchcancel="endGuruUjianRowPress()">
+        <div class="guru-ujian-row-card-header">
+          <div>
+            <div class="guru-ujian-row-card-title">${escapeHtml(String(soal?.judul || '-'))}</div>
+            <div class="guru-ujian-row-card-sub">${escapeHtml(subtitle || '-')}</div>
+          </div>
+          <button type="button" class="modal-btn guru-ujian-row-menu-btn" onclick="event.stopPropagation(); toggleGuruUjianRowMenu('${rowKeyEncoded}')">&#8942;</button>
+        </div>
+        <div class="guru-ujian-row-card-meta">Status: ${escapeHtml(statusLabel || '-')}</div>
+        <div class="guru-ujian-row-menu" style="display:${isMenuOpen ? 'block' : 'none'};">
+          <button type="button" class="modal-btn" onclick="event.stopPropagation(); chooseAndPrintGuruUjianByRow('${rowKeyEncoded}'); closeGuruUjianRowMenu();">Cetak</button>
+          <button type="button" class="modal-btn modal-btn-danger" onclick="event.stopPropagation(); deleteMapelSoalRow('${rowKeyEncoded}', this);">Hapus</button>
+        </div>
+      </div>
+    `
+  }).join('')
+}
+
+function renderGuruMapelSoalListHtml(rows = []) {
+  const folderMap = new Map()
+  ;(Array.isArray(rows) ? rows : []).forEach(item => {
+    const kategori = normalizeMapelSoalCategory(item?.soal?.kategori)
+    if (!folderMap.has(kategori)) folderMap.set(kategori, [])
+    folderMap.get(kategori).push(item)
+  })
+  const folderNames = [...folderMap.keys()].sort((a, b) => a.localeCompare(b))
+  const namespacedFolderNames = folderNames.map(item => `mapel-soal-folder:${item}`)
+  if (folderNames.length && !namespacedFolderNames.some(key => ujianGuruState.openFolders.has(key))) {
+    namespacedFolderNames.forEach(key => ujianGuruState.openFolders.add(key))
+  }
+  return folderNames.map(folderName => {
+    const folderKey = `mapel-soal-folder:${folderName}`
+    const isOpen = ujianGuruState.openFolders.has(folderKey)
+    const bodyHtml = renderGuruMapelSoalRowCardsHtml((folderMap.get(folderName) || []).sort((a, b) => {
+      const timeCmp = String(b?.soal?.updated_at || b?.soal?.created_at || '').localeCompare(String(a?.soal?.updated_at || a?.soal?.created_at || ''))
+      if (timeCmp !== 0) return timeCmp
+      return String(a?.soal?.judul || '').localeCompare(String(b?.soal?.judul || ''))
+    }))
+    return `
+      <div class="guru-ujian-folder-card ${isOpen ? 'is-open' : ''}" data-folder="${encodeURIComponent(folderKey)}">
+        <div class="guru-ujian-folder-header" role="button" data-folder="${encodeURIComponent(folderKey)}" onclick="toggleGuruExamFolder(this.dataset.folder)">
+          <div>
+            <div class="guru-ujian-folder-title">${escapeHtml(folderName)}</div>
+            <div class="guru-ujian-folder-sub">${escapeHtml(String((folderMap.get(folderName) || []).length))} file soal</div>
+          </div>
+          <span class="guru-ujian-folder-chevron">&#9662;</span>
+        </div>
+        <div class="guru-ujian-folder-body" style="display:${isOpen ? 'block' : 'none'};">
+          <div class="guru-ujian-folder-card-list">
+            ${bodyHtml || '<div class="placeholder-card">Belum ada soal.</div>'}
+          </div>
+        </div>
+      </div>
+    `
+  }).join('') || '<div class="placeholder-card">Belum ada soal mapel. Tekan tombol + untuk membuat soal pertama.</div>'
+}
+
 async function renderMapelPage() {
   const content = document.getElementById('guru-content')
   if (!content) return
@@ -12129,14 +12581,6 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
     absensiRowsByKey.get(key).push(row)
   })
 
-  currentMapelDetailState = {
-    distribusi,
-    guruId: String(ctx.guru?.id || ''),
-    nilaiBySantriId,
-    absensiRowsByKey,
-    santriIdList: (santriList || []).map(item => String(item.id)),
-    santriMap
-  }
   const editAbsensi = currentMapelEditMode.absensi === true
 
   const absensiDateList = [...new Set(
@@ -12256,6 +12700,70 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
     .map((item, idx) => buildMapelPatronMateriRowHtml(idx + 1, item, Boolean(patronMateriErrorText)))
     .join('')
 
+  let mapelSoalRows = []
+  let mapelSoalErrorText = ''
+  let mapelSoalTahunRows = []
+  let mapelSoalSemesterRows = []
+  try {
+    const [mapelSoalRes, tahunAjaranRes, semesterRes] = await Promise.all([
+      sb
+        .from(MAPEL_SOAL_TABLE)
+        .select(MAPEL_SOAL_SELECT_COLUMNS)
+        .eq('distribusi_id', String(distribusi.id || ''))
+        .order('updated_at', { ascending: false }),
+      sb.from('tahun_ajaran').select('id, nama, aktif').order('id', { ascending: false }),
+      sb.from('semester').select('id, nama, aktif, tahun_ajaran_id').order('id', { ascending: false })
+    ])
+    if (mapelSoalRes.error) {
+      if (isMissingMapelSoalTableError(mapelSoalRes.error)) {
+        mapelSoalErrorText = buildMapelSoalMissingTableMessage()
+      } else if (isMapelSoalPermissionError(mapelSoalRes.error)) {
+        mapelSoalErrorText = buildMapelSoalPermissionMessage()
+      } else {
+        mapelSoalErrorText = `Gagal load soal mapel: ${mapelSoalRes.error.message || 'Unknown error'}`
+      }
+    } else {
+      mapelSoalRows = mapelSoalRes.data || []
+    }
+    if (!tahunAjaranRes.error) mapelSoalTahunRows = tahunAjaranRes.data || []
+    else console.error('Gagal memuat tahun ajaran soal mapel.', tahunAjaranRes.error)
+    if (!semesterRes.error) mapelSoalSemesterRows = semesterRes.data || []
+    else console.error('Gagal memuat semester soal mapel.', semesterRes.error)
+  } catch (mapelSoalError) {
+    console.error(mapelSoalError)
+    mapelSoalErrorText = `Gagal load soal mapel: ${mapelSoalError.message || 'Unknown error'}`
+  }
+  const mapelSoalTahunMap = new Map((mapelSoalTahunRows || []).map(item => [String(item.id || ''), item]))
+  const mapelSoalSemesterMap = new Map((mapelSoalSemesterRows || []).map(item => [String(item.id || ''), item]))
+  const mapelSoalRefs = {
+    kelasNama: String(kelas?.nama_kelas || '-'),
+    mapelLabel: String(getMapelLabel(mapel)),
+    semesterNama: String(semester?.nama || '').trim(),
+    tahunAjaranNama: String(mapelSoalTahunMap.get(String(semester?.tahun_ajaran_id || ''))?.nama || '').trim(),
+    semesterMap: mapelSoalSemesterMap,
+    tahunAjaranMap: mapelSoalTahunMap
+  }
+  const mapelSoalEditorRows = buildGuruMapelSoalEditorRows(mapelSoalRows, mapelSoalRefs)
+
+  currentMapelDetailState = {
+    distribusi,
+    guruId: String(ctx.guru?.id || ''),
+    kelas,
+    mapel,
+    semester,
+    nilaiBySantriId,
+    absensiRowsByKey,
+    santriIdList: (santriList || []).map(item => String(item.id)),
+    santriMap,
+    mapelSoalRows,
+    mapelSoalEditorRows,
+    mapelSoalRefs,
+    mapelSoalTahunRows,
+    mapelSoalSemesterRows,
+    mapelSoalCurrentTahunAjaranId: String(semester?.tahun_ajaran_id || '')
+  }
+  if (currentMapelDetailTab === 'soal') syncGuruMapelSoalEditorRows()
+
   const nilaiRowsHtml = (santriList || [])
     .map((santri, index) => {
       const nilai = nilaiRows.find(item => String(item.santri_id) === String(santri.id)) || {}
@@ -12292,6 +12800,7 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
     <div class="mapel-detail-tabs" style="margin-bottom:12px;">
       <button type="button" class="mapel-detail-tab-btn ${currentMapelDetailTab === 'absensi' ? 'active' : ''}" data-mapel-detail-tab="absensi" onclick="setMapelDetailTab('absensi')">Absensi</button>
       <button type="button" class="mapel-detail-tab-btn ${currentMapelDetailTab === 'nilai' ? 'active' : ''}" data-mapel-detail-tab="nilai" onclick="setMapelDetailTab('nilai')">Nilai</button>
+      <button type="button" class="mapel-detail-tab-btn ${currentMapelDetailTab === 'soal' ? 'active' : ''}" data-mapel-detail-tab="soal" onclick="setMapelDetailTab('soal')">Soal</button>
       <button type="button" class="mapel-detail-tab-btn ${currentMapelDetailTab === 'rapor-desc' ? 'active' : ''}" data-mapel-detail-tab="rapor-desc" onclick="setMapelDetailTab('rapor-desc')">Deskripsi Rapor</button>
       <button type="button" class="mapel-detail-tab-btn ${currentMapelDetailTab === 'patron-materi' ? 'active' : ''}" data-mapel-detail-tab="patron-materi" onclick="setMapelDetailTab('patron-materi')">Patron Materi</button>
     </div>
@@ -12346,9 +12855,20 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
       </div>
     </div>
 
+    <div id="mapel-detail-pane-soal" class="mapel-detail-pane ${currentMapelDetailTab === 'soal' ? 'active' : ''}">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
+        <div class="mapel-section-title" style="margin-bottom:0;">Soal</div>
+        <button type="button" class="modal-btn modal-btn-primary" onclick="openMapelSoalCreateModal()">+ Buat Soal</button>
+      </div>
+      ${mapelSoalErrorText
+        ? `<div class="placeholder-card" style="white-space:pre-wrap;">${escapeHtml(mapelSoalErrorText)}</div>`
+        : renderGuruMapelSoalListHtml(mapelSoalEditorRows)
+      }
+    </div>
+
     <div id="mapel-detail-pane-rapor-desc" class="mapel-detail-pane ${currentMapelDetailTab === 'rapor-desc' ? 'active' : ''}">
       <div class="placeholder-card">
-        <div style="font-weight:700; margin-bottom:8px;">Deskripsi Rapor Mapel (A/B/C/D)</div>
+        <div style="font-weight:700; margin-bottom:8px;">Deskripsi Rapor Mapel (A/B/C/D/E)</div>
         ${raporDescErrorText
           ? `<div style="white-space:pre-wrap; color:#991b1b; font-size:12px; margin-bottom:8px;">${escapeHtml(raporDescErrorText)}</div>`
           : '<div style="font-size:12px; color:#64748b; margin-bottom:8px;">Isi deskripsi untuk tiap predikat. Rapor akan mengambil deskripsi sesuai predikat nilai santri.</div>'
@@ -12359,14 +12879,16 @@ async function openMapelDetail(distribusiId, tab = 'absensi') {
             <input id="rapor-desc-a-pengetahuan" class="guru-field" type="text" placeholder="Predikat A" value="${escapeHtml(raporDescRow?.deskripsi_a_pengetahuan || '')}" style="margin-bottom:6px;">
             <input id="rapor-desc-b-pengetahuan" class="guru-field" type="text" placeholder="Predikat B" value="${escapeHtml(raporDescRow?.deskripsi_b_pengetahuan || '')}" style="margin-bottom:6px;">
             <input id="rapor-desc-c-pengetahuan" class="guru-field" type="text" placeholder="Predikat C" value="${escapeHtml(raporDescRow?.deskripsi_c_pengetahuan || '')}" style="margin-bottom:6px;">
-            <input id="rapor-desc-d-pengetahuan" class="guru-field" type="text" placeholder="Predikat D" value="${escapeHtml(raporDescRow?.deskripsi_d_pengetahuan || '')}">
+            <input id="rapor-desc-d-pengetahuan" class="guru-field" type="text" placeholder="Predikat D" value="${escapeHtml(raporDescRow?.deskripsi_d_pengetahuan || '')}" style="margin-bottom:6px;">
+            <input id="rapor-desc-e-pengetahuan" class="guru-field" type="text" placeholder="Predikat E" value="${escapeHtml(raporDescRow?.deskripsi_e_pengetahuan || '')}">
           </div>
           <div>
             <div style="font-weight:600; margin-bottom:6px; color:#334155;">Keterampilan</div>
             <input id="rapor-desc-a-keterampilan" class="guru-field" type="text" placeholder="Predikat A" value="${escapeHtml(raporDescRow?.deskripsi_a_keterampilan || '')}" style="margin-bottom:6px;">
             <input id="rapor-desc-b-keterampilan" class="guru-field" type="text" placeholder="Predikat B" value="${escapeHtml(raporDescRow?.deskripsi_b_keterampilan || '')}" style="margin-bottom:6px;">
             <input id="rapor-desc-c-keterampilan" class="guru-field" type="text" placeholder="Predikat C" value="${escapeHtml(raporDescRow?.deskripsi_c_keterampilan || '')}" style="margin-bottom:6px;">
-            <input id="rapor-desc-d-keterampilan" class="guru-field" type="text" placeholder="Predikat D" value="${escapeHtml(raporDescRow?.deskripsi_d_keterampilan || '')}">
+            <input id="rapor-desc-d-keterampilan" class="guru-field" type="text" placeholder="Predikat D" value="${escapeHtml(raporDescRow?.deskripsi_d_keterampilan || '')}" style="margin-bottom:6px;">
+            <input id="rapor-desc-e-keterampilan" class="guru-field" type="text" placeholder="Predikat E" value="${escapeHtml(raporDescRow?.deskripsi_e_keterampilan || '')}">
           </div>
         </div>
         <div style="margin-top:8px;">
@@ -12404,6 +12926,7 @@ function setMapelDetailTab(tab) {
   const validTab = normalizeMapelDetailTab(tab)
   currentMapelDetailTab = validTab
   saveMapelDetailState(currentMapelDetailDistribusiId, currentMapelDetailTab)
+  if (validTab === 'soal') syncGuruMapelSoalEditorRows()
   const buttons = document.querySelectorAll('.mapel-detail-tab-btn')
   buttons.forEach(button => {
     button.classList.toggle('active', button.getAttribute('data-mapel-detail-tab') === validTab)
@@ -12416,6 +12939,7 @@ function setMapelDetailTab(tab) {
 }
 
 function goBackToMapelList() {
+  closeMapelSoalCreateModal()
   clearMapelDetailState()
   clearGuruPageCache('mapel')
   currentMapelDetailDistribusiId = ''
@@ -13067,10 +13591,12 @@ async function saveMapelRaporDesc(distribusiId) {
       deskripsi_b_pengetahuan: String(document.getElementById('rapor-desc-b-pengetahuan')?.value || '').trim() || null,
       deskripsi_c_pengetahuan: String(document.getElementById('rapor-desc-c-pengetahuan')?.value || '').trim() || null,
       deskripsi_d_pengetahuan: String(document.getElementById('rapor-desc-d-pengetahuan')?.value || '').trim() || null,
+      deskripsi_e_pengetahuan: String(document.getElementById('rapor-desc-e-pengetahuan')?.value || '').trim() || null,
       deskripsi_a_keterampilan: String(document.getElementById('rapor-desc-a-keterampilan')?.value || '').trim() || null,
       deskripsi_b_keterampilan: String(document.getElementById('rapor-desc-b-keterampilan')?.value || '').trim() || null,
       deskripsi_c_keterampilan: String(document.getElementById('rapor-desc-c-keterampilan')?.value || '').trim() || null,
       deskripsi_d_keterampilan: String(document.getElementById('rapor-desc-d-keterampilan')?.value || '').trim() || null,
+      deskripsi_e_keterampilan: String(document.getElementById('rapor-desc-e-keterampilan')?.value || '').trim() || null,
       updated_at: new Date().toISOString()
     }
 
@@ -13207,7 +13733,7 @@ function getNilaiDeskripsi(value, kkm, label = 'Nilai') {
 function getRaporDescFieldName(aspek = 'pengetahuan', predikat = 'D') {
   const a = String(aspek || '').trim().toLowerCase()
   const p = String(predikat || '').trim().toUpperCase()
-  if (!['A', 'B', 'C', 'D'].includes(p)) return ''
+  if (!['A', 'B', 'C', 'D', 'E'].includes(p)) return ''
   if (a !== 'pengetahuan' && a !== 'keterampilan') return ''
   return `deskripsi_${p.toLowerCase()}_${a}`
 }
@@ -14699,17 +15225,28 @@ async function saveWaliSantriDetail(buttonEl = null) {
   const fieldKeys = getWaliSantriFieldKeys()
   const payload = {}
 
-  if (fieldKeys.nama) payload[fieldKeys.nama] = String(document.getElementById('wali-santri-nama')?.value || '').trim() || null
-  if (fieldKeys.nisn) payload[fieldKeys.nisn] = String(document.getElementById('wali-santri-nisn')?.value || '').trim() || null
-  if (fieldKeys.jenisKelamin) payload[fieldKeys.jenisKelamin] = String(document.getElementById('wali-santri-jk')?.value || '').trim() || null
-  if (fieldKeys.ayah) payload[fieldKeys.ayah] = String(document.getElementById('wali-santri-ayah')?.value || '').trim() || null
-  if (fieldKeys.ibu) payload[fieldKeys.ibu] = String(document.getElementById('wali-santri-ibu')?.value || '').trim() || null
-  if (fieldKeys.hpAyah) payload[fieldKeys.hpAyah] = String(document.getElementById('wali-santri-hp-ayah')?.value || '').trim() || null
-  if (fieldKeys.hpIbu) payload[fieldKeys.hpIbu] = String(document.getElementById('wali-santri-hp-ibu')?.value || '').trim() || null
-  if (fieldKeys.hpSantri) payload[fieldKeys.hpSantri] = String(document.getElementById('wali-santri-hp-santri')?.value || '').trim() || null
+  const setChangedSantriField = (fieldKey, inputId) => {
+    if (!fieldKey || !inputId) return
+    const input = document.getElementById(inputId)
+    if (!input) return
+    const nextValue = String(input.value || '').trim()
+    const currentValue = String(santri?.[fieldKey] ?? '').trim()
+    if (nextValue !== currentValue) {
+      payload[fieldKey] = nextValue || null
+    }
+  }
+
+  setChangedSantriField(fieldKeys.nama, 'wali-santri-nama')
+  setChangedSantriField(fieldKeys.nisn, 'wali-santri-nisn')
+  setChangedSantriField(fieldKeys.jenisKelamin, 'wali-santri-jk')
+  setChangedSantriField(fieldKeys.ayah, 'wali-santri-ayah')
+  setChangedSantriField(fieldKeys.ibu, 'wali-santri-ibu')
+  setChangedSantriField(fieldKeys.hpAyah, 'wali-santri-hp-ayah')
+  setChangedSantriField(fieldKeys.hpIbu, 'wali-santri-hp-ibu')
+  setChangedSantriField(fieldKeys.hpSantri, 'wali-santri-hp-santri')
 
   if (!Object.keys(payload).length) {
-    alert('Kolom data orang tua belum tersedia di tabel santri. Tambahkan kolom: ayah, ibu, no_hp_ayah, no_hp_ibu, no_hp.')
+    alert('Tidak ada perubahan data santri yang perlu disimpan.')
     return
   }
 
@@ -15467,7 +16004,10 @@ async function quickSendLaporanUtsWA(santriId, buttonEl = null) {
 
     const semesterSlug = sanitizeFileNamePart(payload.semesterLabel || '').replace(/\s+/g, '-')
     const namaSlug = sanitizeFileNamePart(payload.studentName || '').replace(/\s+/g, '-')
-    const storagePath = `${String(laporanUtsState?.guru?.id || 'guru')}/${semesterSlug || 'semester'}/${namaSlug || sid}-${Date.now()}.pdf`
+    const relativeStoragePath = `${String(laporanUtsState?.guru?.id || 'guru')}/${semesterSlug || 'semester'}/${namaSlug || sid}-${Date.now()}.pdf`
+    const storagePath = window.buildTenantStoragePath
+      ? window.buildTenantStoragePath(relativeStoragePath)
+      : relativeStoragePath
 
     const uploadRes = await sb
       .storage
@@ -15488,12 +16028,7 @@ async function quickSendLaporanUtsWA(santriId, buttonEl = null) {
       return
     }
 
-    const { data: publicUrlData } = sb
-      .storage
-      .from(UTS_REPORT_STORAGE_BUCKET)
-      .getPublicUrl(storagePath)
-
-    const publicUrl = publicUrlData?.publicUrl || ''
+    const publicUrl = await window.createSignedStorageUrl(UTS_REPORT_STORAGE_BUCKET, storagePath, 604800)
     if (!publicUrl) {
       alert('Gagal mendapatkan link PDF laporan UTS.')
       return
@@ -18192,7 +18727,10 @@ async function uploadGuruUjianImageToStorage(file, no, slotLabel = 'question') {
   }
   const ext = getGuruUjianImageFileExt(file.name)
   const safeSlot = String(slotLabel || 'question').trim().replace(/[^a-z0-9_-]+/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'question'
-  const storagePath = `${String(ctx.guru.id).trim()}/${String(ujianGuruState.activeJadwal.id).trim()}/q-${Number(no || 0) || 0}/${Date.now()}-${safeSlot}.${ext}`
+  const relativeStoragePath = `${String(ctx.guru.id).trim()}/${String(ujianGuruState.activeJadwal.id).trim()}/q-${Number(no || 0) || 0}/${Date.now()}-${safeSlot}.${ext}`
+  const storagePath = window.buildTenantStoragePath
+    ? window.buildTenantStoragePath(relativeStoragePath)
+    : relativeStoragePath
   const uploadPayload = {
     upsert: true,
     cacheControl: '3600',
@@ -19501,6 +20039,7 @@ function getGuruUjianDraftBySectionLocal(sectionSource = null) {
 function toExamStatusLabel(status) {
   const normalized = String(status || '').trim().toLowerCase()
   if (normalized === 'submitted') return 'Terkirim'
+  if (normalized === 'published') return 'Siap dipakai'
   if (normalized === 'draft') return 'Draft'
   return '-'
 }
@@ -19914,7 +20453,11 @@ async function createExamPdfDoc(jadwal, soal) {
     const diff = eMin - sMin
     return Number.isFinite(diff) && diff > 0 ? diff : 0
   }
+  const printMeta = parseExamMetaFromSchedule(jadwal || {})
   const getExamMainTitle = (jenisRaw, semesterNameRaw) => {
+    if (String(printMeta?.source || '').trim() === 'mapel-soal') {
+      return String(printMeta?.document_title || jadwal?.nama || 'SOAL').trim().toUpperCase()
+    }
     const jenis = String(jenisRaw || '').trim().toUpperCase()
     const semesterName = String(semesterNameRaw || '').trim().toLowerCase()
     const isAkhir = jenis.includes('UAS') || jenis.includes('PAS') || jenis.includes('AKHIR')
@@ -19931,8 +20474,8 @@ async function createExamPdfDoc(jadwal, soal) {
     getActiveTahunAjaran(),
     getActiveSemester()
   ])
-  const tahunAjaranLabel = String(tahunAjaranAktif?.nama || '-')
-  const semesterNama = String(semesterAktif?.nama || '').trim()
+  const tahunAjaranLabel = String(printMeta?.tahun_ajaran_nama || tahunAjaranAktif?.nama || '-')
+  const semesterNama = String(printMeta?.semester_nama || semesterAktif?.nama || '').trim()
   const mapelLabel = String(getExamMapelBaseLabel(jadwal?.mapel) || jadwal?.mapel || '-')
   const kelasLabel = String(jadwal?.kelas || '-')
   const hariTanggalLabel = toExamDateLabel(jadwal?.tanggal)
@@ -20574,7 +21117,11 @@ async function buildExamDocxHeaderMeta(jadwal, soal = null) {
     return date.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
   }
 
+  const printMeta = parseExamMetaFromSchedule(jadwal || {})
   const getExamMainTitle = (jenisRaw, semesterNameRaw) => {
+    if (String(printMeta?.source || '').trim() === 'mapel-soal') {
+      return String(printMeta?.document_title || jadwal?.nama || 'SOAL').trim().toUpperCase()
+    }
     const jenis = String(jenisRaw || '').trim().toUpperCase()
     const semesterName = String(semesterNameRaw || '').trim().toLowerCase()
     const isAkhir = jenis.includes('UAS') || jenis.includes('PAS') || jenis.includes('AKHIR')
@@ -20591,8 +21138,8 @@ async function buildExamDocxHeaderMeta(jadwal, soal = null) {
     getActiveTahunAjaran(),
     getActiveSemester()
   ])
-  const tahunAjaranLabel = String(tahunAjaranAktif?.nama || '-')
-  const semesterNama = String(semesterAktif?.nama || '').trim()
+  const tahunAjaranLabel = String(printMeta?.tahun_ajaran_nama || tahunAjaranAktif?.nama || '-')
+  const semesterNama = String(printMeta?.semester_nama || semesterAktif?.nama || '').trim()
   const mapelLabel = String(getExamMapelBaseLabel(jadwal?.mapel) || jadwal?.mapel || '-')
   const kelasLabel = String(jadwal?.kelas || '-')
   const hariTanggalLabel = toExamDateLabelLocal(jadwal?.tanggal)
@@ -22598,6 +23145,7 @@ function buildGuruUjianQuestionCardHtml(i, qType, localNo, prev, sectionForNo) {
 async function renderUjianPage() {
   const content = document.getElementById('guru-content')
   if (!content) return
+  ujianGuruState.activeSourceMode = 'ujian'
   content.innerHTML = 'Loading ujian...'
 
   let ctx
@@ -22825,6 +23373,9 @@ function findGuruUjianRowByKey(decodedKey) {
 }
 
 function resolveGuruUjianActiveSoal(decodedKey, jadwalId) {
+  if (isMapelSoalRowKey(decodedKey)) {
+    return ujianGuruState.soalByJadwal.get(decodedKey) || null
+  }
   const sid = String(jadwalId || '')
   if (ujianGuruState.supportsKelasTarget) {
     return ujianGuruState.soalByJadwal.get(decodedKey) || null
@@ -22975,6 +23526,34 @@ function setGuruUjianAutosaveStatus(text = '', tone = 'muted') {
 function buildGuruUjianAutosavePayload(snapshot, ctx) {
   const safeSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : null
   if (!safeSnapshot || !ctx?.guru?.id) return null
+  if (isGuruMapelSoalEditorMode()) {
+    const baseSoal = ujianGuruState.activeSoal || {}
+    return {
+      distribusi_id: String(baseSoal?.distribusi_id || currentMapelDetailState?.distribusi?.id || ''),
+      kelas_id: String(baseSoal?.kelas_id || currentMapelDetailState?.distribusi?.kelas_id || ''),
+      mapel_id: String(baseSoal?.mapel_id || currentMapelDetailState?.distribusi?.mapel_id || ''),
+      semester_id: String(baseSoal?.semester_id || currentMapelDetailState?.distribusi?.semester_id || '').trim() || null,
+      tahun_ajaran_id: String(baseSoal?.tahun_ajaran_id || currentMapelDetailState?.mapelSoalCurrentTahunAjaranId || '').trim() || null,
+      created_by_guru_id: String(baseSoal?.created_by_guru_id || ctx.guru.id || ''),
+      created_by_guru_nama: String(baseSoal?.created_by_guru_nama || ctx.guru.nama || ctx.guru.id_karyawan || '').trim() || null,
+      updated_by_guru_id: String(ctx.guru.id),
+      updated_by_guru_nama: String(ctx.guru.nama || ctx.guru.id_karyawan || '').trim() || null,
+      judul: String(baseSoal?.judul || ujianGuruState.activeJadwal?.nama || 'Soal Mapel').trim() || 'Soal Mapel',
+      kategori: normalizeMapelSoalCategory(baseSoal?.kategori || ujianGuruState.activeJadwal?.jenis || 'Tugas'),
+      tanggal: String(baseSoal?.tanggal || ujianGuruState.activeJadwal?.tanggal || '').trim() || null,
+      keterangan: String(baseSoal?.keterangan || '').trim() || null,
+      bentuk_soal: 'campuran',
+      jumlah_nomor: Number(safeSnapshot.count || 0) || 0,
+      instruksi: buildExamInstruksiWithMeta(safeSnapshot.lang || 'ID', safeSnapshot.instruksi || ''),
+      questions_json: JSON.stringify({
+        questions: Array.isArray(safeSnapshot.questions) ? safeSnapshot.questions : [],
+        sections: Array.isArray(safeSnapshot.sections) ? safeSnapshot.sections : [],
+        ...(getGuruUjianPayloadMeta(ujianGuruState.activeSoal) ? { meta: getGuruUjianPayloadMeta(ujianGuruState.activeSoal) } : {})
+      }),
+      status: 'draft',
+      updated_at: safeSnapshot.savedAt || new Date().toISOString()
+    }
+  }
   return {
     jadwal_id: String(safeSnapshot.jadwalId || ''),
     kelas_target: String(safeSnapshot.kelasName || '-').trim() || null,
@@ -23044,43 +23623,65 @@ async function flushGuruUjianAutosaveToServer(snapshot = null) {
     }
     const payload = buildGuruUjianAutosavePayload(safeSnapshot, ctx)
     if (!payload) return null
-    if (!ujianGuruState.supportsKelasTarget) delete payload.kelas_target
-    const activeSoalKelas = String(ujianGuruState.activeSoal?.kelas_target || '').trim()
-    const isSameClassRecord = !ujianGuruState.supportsKelasTarget || activeSoalKelas === String(safeSnapshot.kelasName || '').trim()
     let query
-    if (ujianGuruState.activeSoal?.id && isSameClassRecord) {
-      query = sb
-        .from(EXAM_QUESTION_TABLE)
-        .update(payload)
-        .eq('id', ujianGuruState.activeSoal.id)
-        .select('id, jadwal_id, kelas_target, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, updated_at')
-        .maybeSingle()
+    if (isGuruMapelSoalEditorMode()) {
+      if (ujianGuruState.activeSoal?.id) {
+        query = sb
+          .from(MAPEL_SOAL_TABLE)
+          .update(payload)
+          .eq('id', ujianGuruState.activeSoal.id)
+          .select(MAPEL_SOAL_SELECT_COLUMNS)
+          .maybeSingle()
+      } else {
+        query = sb
+          .from(MAPEL_SOAL_TABLE)
+          .insert([payload])
+          .select(MAPEL_SOAL_SELECT_COLUMNS)
+          .maybeSingle()
+      }
     } else {
-      query = sb
-        .from(EXAM_QUESTION_TABLE)
-        .insert([payload])
-        .select('id, jadwal_id, kelas_target, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, updated_at')
-        .maybeSingle()
+      if (!ujianGuruState.supportsKelasTarget) delete payload.kelas_target
+      const activeSoalKelas = String(ujianGuruState.activeSoal?.kelas_target || '').trim()
+      const isSameClassRecord = !ujianGuruState.supportsKelasTarget || activeSoalKelas === String(safeSnapshot.kelasName || '').trim()
+      if (ujianGuruState.activeSoal?.id && isSameClassRecord) {
+        query = sb
+          .from(EXAM_QUESTION_TABLE)
+          .update(payload)
+          .eq('id', ujianGuruState.activeSoal.id)
+          .select('id, jadwal_id, kelas_target, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, updated_at')
+          .maybeSingle()
+      } else {
+        query = sb
+          .from(EXAM_QUESTION_TABLE)
+          .insert([payload])
+          .select('id, jadwal_id, kelas_target, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, updated_at')
+          .maybeSingle()
+      }
     }
     const { data, error } = await query
     if (error) {
       console.error('guru ujian autosave server error:', error)
-      if (isExamTableMissingError(error) || isExamColumnMissingError(error)) {
-        setGuruUjianAutosaveStatus('Tersimpan lokal. Struktur tabel server ujian belum siap untuk autosave.', 'warn')
+      if (isGuruMapelSoalEditorMode()
+        ? isMissingMapelSoalTableError(error)
+        : (isExamTableMissingError(error) || isExamColumnMissingError(error))) {
+        setGuruUjianAutosaveStatus('Tersimpan lokal. Struktur tabel server soal belum siap untuk autosave.', 'warn')
       } else {
         setGuruUjianAutosaveStatus('Tersimpan lokal. Sinkron server gagal dan akan dicoba lagi saat ada perubahan baru.', 'error')
       }
       return null
     }
     if (data && typeof data === 'object') {
-      const dataRowKey = `${String(data.jadwal_id || '')}|${String(data.kelas_target || '-')}`
+      const dataRowKey = isGuruMapelSoalEditorMode()
+        ? buildMapelSoalRowKey(data.id)
+        : `${String(data.jadwal_id || '')}|${String(data.kelas_target || '-')}`
       ujianGuruState.soalByJadwal.set(dataRowKey, data)
-      if (!String(data.kelas_target || '').trim()) {
+      if (!isGuruMapelSoalEditorMode() && !String(data.kelas_target || '').trim()) {
         ujianGuruState.soalByJadwal.set(`${String(data.jadwal_id || '')}|*`, data)
       }
       if (String(ujianGuruState.autosaveActiveRowKey || '') === rowKey) {
         ujianGuruState.activeSoal = data
       }
+      if (isGuruMapelSoalEditorMode()) upsertCurrentMapelSoalStateRow(data)
     }
     ujianGuruState.autosaveServerHash = hash
     if (ujianGuruState.autosaveLocalHash && ujianGuruState.autosaveLocalHash !== hash) {
@@ -23187,6 +23788,18 @@ function getGuruUjianPayloadMeta(baseSoal = null) {
   return payload?.meta && typeof payload.meta === 'object' ? payload.meta : null
 }
 
+function isGuruMapelSoalEditorMode() {
+  return String(ujianGuruState.activeSourceMode || '').trim() === 'mapel-soal'
+}
+
+function getGuruUjianPrimaryActionLabel() {
+  return isGuruMapelSoalEditorMode() ? 'Simpan Soal' : 'Kirim Soal'
+}
+
+function getGuruUjianBackLabel() {
+  return isGuruMapelSoalEditorMode() ? 'Kembali ke Daftar Soal' : 'Kembali ke Folder'
+}
+
 function buildGuruUjianAiDraftBadgeHtml(meta = null) {
   const source = String(meta?.source || '').trim().toLowerCase()
   if (!source) return ''
@@ -23203,23 +23816,30 @@ function buildGuruUjianAiDraftBadgeHtml(meta = null) {
   return `
     <div style="margin-bottom:10px; padding:10px 12px; border-radius:12px; border:1px solid #86efac; background:linear-gradient(180deg,#f0fdf4 0%,#ffffff 100%); color:#166534;">
       <div style="font-weight:700;">${escapeHtml(sourceLabel)}</div>
-      <div style="margin-top:4px; font-size:12px;">Guru tetap perlu review isi soal sebelum menekan Kirim Soal.</div>
+      <div style="margin-top:4px; font-size:12px;">Guru tetap perlu review isi soal sebelum menekan ${escapeHtml(getGuruUjianPrimaryActionLabel())}.</div>
       ${suffix}
     </div>
   `
 }
 
 function buildGuruUjianEditorShellHtml({ jadwal, kelasLabel, mapelLabel, countValue, instruksi, instruksiLang, aiMeta = null }) {
+  const isMapelSoal = isGuruMapelSoalEditorMode()
+  const infoCards = [
+    `<div class="placeholder-card"><strong>Kelas</strong><br>${escapeHtml(kelasLabel)}</div>`,
+    `<div class="placeholder-card"><strong>Mapel</strong><br>${escapeHtml(mapelLabel)}</div>`,
+    `<div class="placeholder-card"><strong>Tanggal</strong><br>${escapeHtml(String(jadwal?.tanggal || '-'))}</div>`
+  ]
+  if (isMapelSoal) {
+    infoCards.push(`<div class="placeholder-card"><strong>Kategori</strong><br>${escapeHtml(String(jadwal?.jenis || '-'))}</div>`)
+  }
   return `
     <div class="placeholder-card" style="border-color:#93c5fd;">
       <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
-        <div style="font-weight:700; color:#0f172a;">Editor Soal - ${escapeHtml(jadwal.nama || '-')}</div>
-        <button type="button" class="modal-btn" onclick="backToGuruUjianList()">Kembali ke Folder</button>
+        <div style="font-weight:700; color:#0f172a;">${escapeHtml(isMapelSoal ? 'Editor Soal Mapel' : 'Editor Soal')} - ${escapeHtml(jadwal.nama || '-')}</div>
+        <button type="button" class="modal-btn" onclick="backToGuruUjianList()">${escapeHtml(getGuruUjianBackLabel())}</button>
       </div>
       <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:8px; margin-bottom:10px;">
-        <div class="placeholder-card"><strong>Kelas</strong><br>${escapeHtml(kelasLabel)}</div>
-        <div class="placeholder-card"><strong>Mapel</strong><br>${escapeHtml(mapelLabel)}</div>
-        <div class="placeholder-card"><strong>Tanggal</strong><br>${escapeHtml(String(jadwal?.tanggal || '-'))}</div>
+        ${infoCards.join('')}
       </div>
       <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:8px; margin-bottom:10px;">
         <div>
@@ -23245,7 +23865,7 @@ function buildGuruUjianEditorShellHtml({ jadwal, kelasLabel, mapelLabel, countVa
       <div id="guru-ujian-questions"></div>
       <div id="guru-ujian-sections" style="margin-top:10px; margin-bottom:10px;"></div>
       <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; margin-top:8px;">
-        <button type="button" class="modal-btn modal-btn-primary" onclick="saveGuruUjian(true)" style="width:100%;">Kirim Soal</button>
+        <button type="button" class="modal-btn modal-btn-primary" onclick="saveGuruUjian(true)" style="width:100%;">${escapeHtml(getGuruUjianPrimaryActionLabel())}</button>
         <button type="button" class="modal-btn" onclick="chooseAndPrintGuruUjianActive()" style="width:100%;">Cetak</button>
       </div>
       <div id="guru-ujian-autosave-status" style="display:block; margin-top:10px; padding:8px 10px; border-radius:10px; font-size:12px; background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe;">Autosave aktif. Perubahan akan disimpan otomatis di perangkat ini lalu disinkronkan ke server.</div>
@@ -23258,6 +23878,7 @@ function openGuruUjianEditorPage(jadwalId) {
   if (!decodedKey) return
   const row = findGuruUjianRowByKey(decodedKey)
   if (!row?.jadwal) return
+  ujianGuruState.activeSourceMode = row?.sourceType === 'mapel-soal' ? 'mapel-soal' : 'ujian'
   const jadwal = row.jadwal
   const kelasLabel = String(row.kelasNama || '-')
   const autosaveRowKey = String(row.rowKey || (String(jadwal.id || '') + '|' + kelasLabel))
@@ -23268,6 +23889,7 @@ function openGuruUjianEditorPage(jadwalId) {
   const content = document.getElementById('guru-content')
   if (!content) return
 
+  content.classList.remove('mapel-detail-locked')
   const payload = parseExamQuestionPayload(ujianGuruState.activeSoal?.questions_json)
   const existing = payload.questions
   const fallbackType = String(ujianGuruState.activeSoal?.bentuk_soal || 'pilihan-ganda')
@@ -23293,6 +23915,7 @@ function openGuruUjianEditorPage(jadwalId) {
     instruksiLang: instruksiMeta.lang,
     aiMeta: payload.meta
   })
+  content.scrollTop = 0
   renderGuruUjianSectionRows(ujianGuruState.sectionDefs)
   renderGuruUjianQuestionRows(ujianGuruState.sectionDefs, ujianGuruState.sectionDefs)
   bindGuruUjianAutosave()
@@ -23311,6 +23934,7 @@ function openGuruUjianEditorPage(jadwalId) {
   }
 }
 function backToGuruUjianList() {
+  const returnMode = isGuruMapelSoalEditorMode() ? 'mapel-soal' : 'ujian'
   if (ujianGuruState.autosaveTimer) {
     clearTimeout(ujianGuruState.autosaveTimer)
     ujianGuruState.autosaveTimer = null
@@ -23328,6 +23952,11 @@ function backToGuruUjianList() {
   ujianGuruState.sectionScoreDrafts = {}
   ujianGuruState.activeSoal = null
   ujianGuruState.activeScanData = null
+  ujianGuruState.activeSourceMode = 'ujian'
+  if (returnMode === 'mapel-soal' && currentMapelDetailDistribusiId) {
+    openMapelDetail(currentMapelDetailDistribusiId, 'soal')
+    return
+  }
   renderUjianPage()
 }
 
@@ -23591,6 +24220,14 @@ function buildGuruUjianSoalForPrint(soalSource, fallbackLang = 'ID') {
   }
 }
 
+function buildGuruUjianPrintFileName(jadwal, kelasLabel, ext = 'pdf') {
+  const meta = parseExamMetaFromSchedule(jadwal || {})
+  const baseTitle = String(meta?.source || '').trim() === 'mapel-soal'
+    ? (meta?.document_title || jadwal?.nama || 'Soal')
+    : (jadwal?.nama || 'Ujian')
+  return `Soal ${sanitizeFileNamePart(baseTitle)} - ${sanitizeFileNamePart(kelasLabel || '-')}.${String(ext || 'pdf').replace(/^\./, '')}`
+}
+
 async function saveGuruUjian(submitMode) {
   if (ujianGuruState.autosaveTimer) {
     clearTimeout(ujianGuruState.autosaveTimer)
@@ -23658,30 +24295,72 @@ async function saveGuruUjian(submitMode) {
   }
 
   let query
-  if (!ujianGuruState.supportsKelasTarget) delete payload.kelas_target
-
-  const activeSoalKelas = String(ujianGuruState.activeSoal?.kelas_target || '').trim()
-  const isSameClassRecord = !ujianGuruState.supportsKelasTarget || activeSoalKelas === kelasTarget
-  if (ujianGuruState.activeSoal?.id && isSameClassRecord) {
-    query = sb
-      .from(EXAM_QUESTION_TABLE)
-      .update(payload)
-      .eq('id', ujianGuruState.activeSoal.id)
-      .select('id, jadwal_id, kelas_target, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, updated_at')
-      .maybeSingle()
+  if (isGuruMapelSoalEditorMode()) {
+    const mapelSoalPayload = {
+      distribusi_id: String(ujianGuruState.activeSoal?.distribusi_id || currentMapelDetailState?.distribusi?.id || ''),
+      kelas_id: String(ujianGuruState.activeSoal?.kelas_id || currentMapelDetailState?.distribusi?.kelas_id || ''),
+      mapel_id: String(ujianGuruState.activeSoal?.mapel_id || currentMapelDetailState?.distribusi?.mapel_id || ''),
+      semester_id: String(ujianGuruState.activeSoal?.semester_id || currentMapelDetailState?.distribusi?.semester_id || '').trim() || null,
+      tahun_ajaran_id: String(ujianGuruState.activeSoal?.tahun_ajaran_id || currentMapelDetailState?.mapelSoalCurrentTahunAjaranId || '').trim() || null,
+      created_by_guru_id: String(ujianGuruState.activeSoal?.created_by_guru_id || ctx.guru.id || ''),
+      created_by_guru_nama: String(ujianGuruState.activeSoal?.created_by_guru_nama || ctx.guru.nama || ctx.guru.id_karyawan || '').trim() || null,
+      updated_by_guru_id: String(ctx.guru.id),
+      updated_by_guru_nama: String(ctx.guru.nama || ctx.guru.id_karyawan || '').trim() || null,
+      judul: String(ujianGuruState.activeSoal?.judul || jadwal.nama || 'Soal Mapel').trim() || 'Soal Mapel',
+      kategori: normalizeMapelSoalCategory(ujianGuruState.activeSoal?.kategori || jadwal.jenis || 'Tugas'),
+      tanggal: String(ujianGuruState.activeSoal?.tanggal || jadwal.tanggal || '').trim() || null,
+      keterangan: String(ujianGuruState.activeSoal?.keterangan || '').trim() || null,
+      bentuk_soal: 'campuran',
+      jumlah_nomor: estimateGuruUjianTotalFromSections(sectionsForStorage, questions.length),
+      instruksi: buildExamInstruksiWithMeta(bahasaSoal, instruksi),
+      questions_json: JSON.stringify({
+        questions,
+        sections: sectionsForStorage,
+        ...(getGuruUjianPayloadMeta(ujianGuruState.activeSoal) ? { meta: getGuruUjianPayloadMeta(ujianGuruState.activeSoal) } : {})
+      }),
+      status: submitMode ? 'published' : 'draft',
+      updated_at: new Date().toISOString()
+    }
+    if (ujianGuruState.activeSoal?.id) {
+      query = sb
+        .from(MAPEL_SOAL_TABLE)
+        .update(mapelSoalPayload)
+        .eq('id', ujianGuruState.activeSoal.id)
+        .select(MAPEL_SOAL_SELECT_COLUMNS)
+        .maybeSingle()
+    } else {
+      query = sb
+        .from(MAPEL_SOAL_TABLE)
+        .insert([mapelSoalPayload])
+        .select(MAPEL_SOAL_SELECT_COLUMNS)
+        .maybeSingle()
+    }
   } else {
-    query = sb
-      .from(EXAM_QUESTION_TABLE)
-      .insert([payload])
-      .select('id, jadwal_id, kelas_target, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, updated_at')
-      .maybeSingle()
+    if (!ujianGuruState.supportsKelasTarget) delete payload.kelas_target
+
+    const activeSoalKelas = String(ujianGuruState.activeSoal?.kelas_target || '').trim()
+    const isSameClassRecord = !ujianGuruState.supportsKelasTarget || activeSoalKelas === kelasTarget
+    if (ujianGuruState.activeSoal?.id && isSameClassRecord) {
+      query = sb
+        .from(EXAM_QUESTION_TABLE)
+        .update(payload)
+        .eq('id', ujianGuruState.activeSoal.id)
+        .select('id, jadwal_id, kelas_target, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, updated_at')
+        .maybeSingle()
+    } else {
+      query = sb
+        .from(EXAM_QUESTION_TABLE)
+        .insert([payload])
+        .select('id, jadwal_id, kelas_target, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, updated_at')
+        .maybeSingle()
+    }
   }
 
   const { data, error } = await query
   if (error) {
     const errMsg = String(error.message || '')
     const errCode = String(error.code || '').toUpperCase()
-    if (errCode === '23505' && ujianGuruState.supportsKelasTarget) {
+    if (!isGuruMapelSoalEditorMode() && errCode === '23505' && ujianGuruState.supportsKelasTarget) {
       alert(
         `Soal per kelas belum bisa disimpan karena index unik lama masih aktif.\n\n` +
         `Jalankan SQL ini:\n` +
@@ -23690,24 +24369,37 @@ async function saveGuruUjian(submitMode) {
       )
       return
     }
-    if (isExamTableMissingError(error)) {
+    if (isGuruMapelSoalEditorMode() && isMissingMapelSoalTableError(error)) {
+      alert(buildMapelSoalMissingTableMessage())
+      return
+    }
+    if (isGuruMapelSoalEditorMode() && isMapelSoalPermissionError(error)) {
+      alert(buildMapelSoalPermissionMessage())
+      return
+    }
+    if (!isGuruMapelSoalEditorMode() && isExamTableMissingError(error)) {
       alert(buildExamQuestionMissingTableMessage())
       return
     }
-    if (isExamColumnMissingError(error)) {
+    if (!isGuruMapelSoalEditorMode() && isExamColumnMissingError(error)) {
       alert(`Kolom tabel '${EXAM_QUESTION_TABLE}' belum sesuai.\nGunakan kolom: jadwal_id, kelas_target, guru_id, guru_nama, bentuk_soal, jumlah_nomor, instruksi, questions_json, status, updated_at.`)
       return
     }
     console.error(error)
-    alert(`Gagal menyimpan soal ujian: ${errMsg || 'Unknown error'}`)
+    alert(`Gagal menyimpan soal: ${errMsg || 'Unknown error'}`)
     return
   }
 
   if (data && typeof data === 'object') {
     ujianGuruState.activeSoal = data
-    const rowKey = `${String(data.jadwal_id || '')}|${String(data.kelas_target || '-')}`
+    const rowKey = isGuruMapelSoalEditorMode()
+      ? buildMapelSoalRowKey(data.id)
+      : `${String(data.jadwal_id || '')}|${String(data.kelas_target || '-')}`
     ujianGuruState.soalByJadwal.set(rowKey, data)
-    if (!String(data.kelas_target || '').trim()) ujianGuruState.soalByJadwal.set(`${String(data.jadwal_id || '')}|*`, data)
+    if (!isGuruMapelSoalEditorMode() && !String(data.kelas_target || '').trim()) {
+      ujianGuruState.soalByJadwal.set(`${String(data.jadwal_id || '')}|*`, data)
+    }
+    if (isGuruMapelSoalEditorMode()) upsertCurrentMapelSoalStateRow(data)
   }
 
   const normalizedSections = buildGuruUjianSectionDefs(scoreValidation.sections || sectionsForStorage)
@@ -23716,9 +24408,15 @@ async function saveGuruUjian(submitMode) {
   if (totalInput) totalInput.value = String(estimateGuruUjianTotalFromSections(normalizedSections, questions.length))
 
   clearGuruUjianAutosaveSnapshot()
-  alert(submitMode ? 'Soal berhasil dikirim.' : 'Draft soal berhasil disimpan.')
+  alert(isGuruMapelSoalEditorMode()
+    ? (submitMode ? 'Soal mapel berhasil disimpan.' : 'Draft soal mapel berhasil disimpan.')
+    : (submitMode ? 'Soal berhasil dikirim.' : 'Draft soal berhasil disimpan.'))
   if (submitMode) {
-    await renderUjianPage()
+    if (isGuruMapelSoalEditorMode()) {
+      await openMapelDetail(currentMapelDetailDistribusiId, 'soal')
+    } else {
+      await renderUjianPage()
+    }
     return
   }
   renderGuruUjianSectionRows(ujianGuruState.sectionDefs)
@@ -23766,16 +24464,16 @@ async function printGuruUjianActive(format = '') {
     const soal = buildGuruUjianSoalForPrint(soalRaw, bahasaSoal)
     if (mode === 'word') {
       if (bahasaSoal === 'AR') {
-        const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasTarget || '-')}.docx`
+        const fileName = buildGuruUjianPrintFileName(jadwal, kelasTarget, 'docx')
         await exportExamArabicTemplateFile({ ...jadwal, kelas: kelasTarget }, soal, fileName)
         return
       }
-      const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasTarget || '-')}.docx`
+      const fileName = buildGuruUjianPrintFileName(jadwal, kelasTarget, 'docx')
       await exportExamIndonesianTemplateFile({ ...jadwal, kelas: kelasTarget }, soal, fileName)
       return
     }
     if (mode === 'pdf' && typeof window.convertDocxBlobToPdfDesktopAndOpen === 'function') {
-      const pdfFileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasTarget || '-')}.pdf`
+      const pdfFileName = buildGuruUjianPrintFileName(jadwal, kelasTarget, 'pdf')
       const docxBlob = bahasaSoal === 'AR'
         ? await buildExamArabicTemplateBlob({ ...jadwal, kelas: kelasTarget }, soal)
         : await buildExamIndonesianTemplateBlob({ ...jadwal, kelas: kelasTarget }, soal)
@@ -23787,7 +24485,7 @@ async function printGuruUjianActive(format = '') {
       return
     }
     if (bahasaSoal === 'AR') {
-      const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasTarget || '-')}.docx`
+      const fileName = buildGuruUjianPrintFileName(jadwal, kelasTarget, 'docx')
       await exportExamArabicTemplateFile({ ...jadwal, kelas: kelasTarget }, soal, fileName)
       return
     }
@@ -23797,7 +24495,7 @@ async function printGuruUjianActive(format = '') {
       alert('Cetak gagal: font Arab/PDF belum siap. Pastikan file TTF tersedia dan refresh halaman.')
       return
     }
-    const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasTarget || '-')}.pdf`
+    const fileName = buildGuruUjianPrintFileName(jadwal, kelasTarget, 'pdf')
     await savePdfDocForCurrentPlatform(doc, fileName)
   } catch (err) {
     console.error('printGuruUjianActive error:', err)
@@ -23810,6 +24508,48 @@ async function printGuruUjianByRow(rowKeyEncoded, format = '') {
   try {
     const decodedKey = decodeURIComponent(String(rowKeyEncoded || '')).trim()
     if (!decodedKey) return
+    const directRow = findGuruUjianRowByKey(decodedKey)
+    if (directRow?.sourceType === 'mapel-soal') {
+      const jadwal = directRow.jadwal
+      const kelasNama = String(directRow.kelasNama || directRow.jadwal?.kelas || '-').trim() || '-'
+      const soalForPrint = buildGuruUjianSoalForPrint(directRow.soal || {}, 'ID')
+      const instruksiMeta = parseExamInstruksiMeta(soalForPrint?.instruksi)
+      const bahasaSoal = String(instruksiMeta.lang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
+      if (mode === 'word') {
+        const fileName = buildGuruUjianPrintFileName(jadwal, kelasNama, 'docx')
+        if (bahasaSoal === 'AR') {
+          await exportExamArabicTemplateFile({ ...jadwal, kelas: kelasNama }, soalForPrint, fileName)
+        } else {
+          await exportExamIndonesianTemplateFile({ ...jadwal, kelas: kelasNama }, soalForPrint, fileName)
+        }
+        return
+      }
+      if (mode === 'pdf' && typeof window.convertDocxBlobToPdfDesktopAndOpen === 'function') {
+        const pdfFileName = buildGuruUjianPrintFileName(jadwal, kelasNama, 'pdf')
+        const docxBlob = bahasaSoal === 'AR'
+          ? await buildExamArabicTemplateBlob({ ...jadwal, kelas: kelasNama }, soalForPrint)
+          : await buildExamIndonesianTemplateBlob({ ...jadwal, kelas: kelasNama }, soalForPrint)
+        await convertDocxBlobToPdfForCurrentPlatform(docxBlob, pdfFileName)
+        return
+      }
+      if (mode === 'pdf' && bahasaSoal === 'AR') {
+        alert('Cetak PDF untuk soal bahasa Arab dilakukan manual lewat Word. Pilih Word lalu cetak PDF dari Word.')
+        return
+      }
+      if (bahasaSoal === 'AR') {
+        const fileName = buildGuruUjianPrintFileName(jadwal, kelasNama, 'docx')
+        await exportExamArabicTemplateFile({ ...jadwal, kelas: kelasNama }, soalForPrint, fileName)
+        return
+      }
+      const doc = await createExamPdfDoc({ ...jadwal, kelas: kelasNama }, soalForPrint)
+      if (!doc) {
+        alert('Cetak gagal: font Arab/PDF belum siap. Pastikan file TTF tersedia dan refresh halaman.')
+        return
+      }
+      const fileName = buildGuruUjianPrintFileName(jadwal, kelasNama, 'pdf')
+      await savePdfDocForCurrentPlatform(doc, fileName)
+      return
+    }
     const [jadwalId, kelasNamaRaw] = decodedKey.split('|')
     const kelasNama = String(kelasNamaRaw || '-').trim() || '-'
     const jadwal = (ujianGuruState.rows || []).find(item => String(item.rowKey || '') === decodedKey)?.jadwal || (ujianGuruState.rows || []).find(item => String(item.jadwal?.id || '') === String(jadwalId || ''))?.jadwal
@@ -23842,16 +24582,16 @@ async function printGuruUjianByRow(rowKeyEncoded, format = '') {
     const bahasaSoal = String(instruksiMeta.lang || 'ID').toUpperCase() === 'AR' ? 'AR' : 'ID'
     if (mode === 'word') {
       if (bahasaSoal === 'AR') {
-        const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.docx`
+        const fileName = buildGuruUjianPrintFileName(jadwal, kelasNama, 'docx')
         await exportExamArabicTemplateFile({ ...jadwal, kelas: kelasNama }, soalForPrint, fileName)
         return
       }
-      const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.docx`
+      const fileName = buildGuruUjianPrintFileName(jadwal, kelasNama, 'docx')
       await exportExamIndonesianTemplateFile({ ...jadwal, kelas: kelasNama }, soalForPrint, fileName)
       return
     }
     if (mode === 'pdf' && typeof window.convertDocxBlobToPdfDesktopAndOpen === 'function') {
-      const pdfFileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.pdf`
+      const pdfFileName = buildGuruUjianPrintFileName(jadwal, kelasNama, 'pdf')
       const docxBlob = bahasaSoal === 'AR'
         ? await buildExamArabicTemplateBlob({ ...jadwal, kelas: kelasNama }, soalForPrint)
         : await buildExamIndonesianTemplateBlob({ ...jadwal, kelas: kelasNama }, soalForPrint)
@@ -23863,7 +24603,7 @@ async function printGuruUjianByRow(rowKeyEncoded, format = '') {
       return
     }
     if (bahasaSoal === 'AR') {
-      const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.docx`
+      const fileName = buildGuruUjianPrintFileName(jadwal, kelasNama, 'docx')
       await exportExamArabicTemplateFile({ ...jadwal, kelas: kelasNama }, soalForPrint, fileName)
       return
     }
@@ -23873,7 +24613,7 @@ async function printGuruUjianByRow(rowKeyEncoded, format = '') {
       alert('Cetak gagal: font Arab/PDF belum siap. Pastikan file TTF tersedia dan refresh halaman.')
       return
     }
-    const fileName = `Soal ${sanitizeFileNamePart(jadwal.nama || 'Ujian')} - ${sanitizeFileNamePart(kelasNama || '-')}.pdf`
+    const fileName = buildGuruUjianPrintFileName(jadwal, kelasNama, 'pdf')
     await savePdfDocForCurrentPlatform(doc, fileName)
   } catch (err) {
     console.error('printGuruUjianByRow error:', err)
@@ -24062,10 +24802,16 @@ function resolveGuruPrestasiSantriId(mode) {
   return ''
 }
 
-function openGuruPrestasiDoc(url) {
-  const link = String(url || '').trim()
+async function openGuruPrestasiDoc(url) {
+  let link = String(url || '').trim()
   if (!link) {
     alert('Dokumen belum tersedia.')
+    return
+  }
+  try {
+    link = await window.resolveStorageObjectUrl(link, 3600)
+  } catch (error) {
+    alert(`Dokumen tidak dapat dibuka: ${error?.message || 'akses ditolak'}`)
     return
   }
   const overlay = document.getElementById('gpp-doc-overlay')
@@ -24090,12 +24836,14 @@ async function uploadGuruPelanggaranSuratFile(event) {
   if (!file) return
   try {
     const ext = String(file.name || '').split('.').pop() || 'bin'
-    const filePath = `surat/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+    const relativePath = `surat/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+    const filePath = window.buildTenantStoragePath
+      ? window.buildTenantStoragePath(relativePath)
+      : relativePath
     const { error: uploadError } = await sb.storage.from(SANTRI_SURAT_BUCKET).upload(filePath, file, { upsert: true, cacheControl: '3600' })
     if (uploadError) throw uploadError
-    const { data } = sb.storage.from(SANTRI_SURAT_BUCKET).getPublicUrl(filePath)
     const input = document.getElementById('gpp-pelanggaran-surat-url')
-    if (input) input.value = String(data?.publicUrl || '')
+    if (input) input.value = window.buildStorageObjectReference(SANTRI_SURAT_BUCKET, filePath)
     alert('Upload surat berhasil.')
   } catch (error) {
     console.error(error)
@@ -24672,6 +25420,11 @@ window.exportGuruUjianActiveWord = exportGuruUjianActiveWord
 window.onMonitoringSantriClassFilterChange = onMonitoringSantriClassFilterChange
 window.saveMapelRaporDesc = saveMapelRaporDesc
 window.saveMapelPatronMateri = saveMapelPatronMateri
+window.openMapelSoalCreateModal = openMapelSoalCreateModal
+window.closeMapelSoalCreateModal = closeMapelSoalCreateModal
+window.onMapelSoalCreateTahunChange = onMapelSoalCreateTahunChange
+window.saveMapelSoalCreateModal = saveMapelSoalCreateModal
+window.deleteMapelSoalRow = deleteMapelSoalRow
 window.openMapelDetail = openMapelDetail
 window.toggleGuruAvailableMapelSection = toggleGuruAvailableMapelSection
 window.clearSelectedGuruMapelClaim = clearSelectedGuruMapelClaim

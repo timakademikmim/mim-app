@@ -28,30 +28,27 @@ sealed interface GuruProfileSyncResult {
   data class Error(val message: String) : GuruProfileSyncResult
 }
 
+sealed interface GuruPasswordChangeResult {
+  data object Success : GuruPasswordChangeResult
+  data class Error(val message: String) : GuruPasswordChangeResult
+}
+
 class GuruProfileRemoteDataSource {
   suspend fun fetchProfile(
     teacherRowId: String,
     teacherKaryawanId: String
   ): GuruRemoteProfile? = withContext(Dispatchers.IO) {
-    val authenticated = SupabaseRequestAuth.isAuthenticated()
-    if (authenticated) {
-      val protectedProfile = runCatching {
-        val response = postSelfProfile(JSONObject().put("action", "get"))
-        parseProfile(response.optJSONObject("profile"))
-      }.getOrNull()
-      if (protectedProfile != null) return@withContext protectedProfile
-    }
-    val selectVariants = if (authenticated) {
-      listOf(
-        "id,id_karyawan,nama,no_hp,alamat,foto_url",
-        "id,id_karyawan,nama,no_hp,alamat"
-      )
-    } else {
-      listOf(
-        "id,id_karyawan,nama,no_hp,alamat,password,foto_url",
-        "id,id_karyawan,nama,no_hp,alamat,password"
-      )
-    }
+    if (!SupabaseRequestAuth.isAuthenticated()) return@withContext null
+    val protectedProfile = runCatching {
+      val response = postSelfProfile(JSONObject().put("action", "get"))
+      parseProfile(response.optJSONObject("profile"))
+    }.getOrNull()
+    if (protectedProfile != null) return@withContext protectedProfile
+
+    val selectVariants = listOf(
+      "id,id_karyawan,nama,no_hp,alamat,foto_url",
+      "id,id_karyawan,nama,no_hp,alamat"
+    )
     for (select in selectVariants) {
       try {
         val requestUrl = buildSelectUrl(
@@ -87,8 +84,10 @@ class GuruProfileRemoteDataSource {
       return@withContext GuruProfileSyncResult.Error("Nama wajib diisi.")
     }
 
-    if (SupabaseRequestAuth.isAuthenticated()) {
-      return@withContext try {
+    if (!SupabaseRequestAuth.isAuthenticated()) {
+      return@withContext GuruProfileSyncResult.Error("Sesi login berakhir. Silakan masuk kembali.")
+    }
+    return@withContext try {
         val response = postSelfProfile(
           JSONObject().apply {
             put("action", "update")
@@ -96,7 +95,6 @@ class GuruProfileRemoteDataSource {
             putNullableProfileText("phone", profile.phoneNumber)
             putNullableProfileText("address", profile.address)
             putNullableProfileText("avatar_url", profile.avatarUri)
-            if (profile.password.isNotBlank()) put("password", profile.password)
           }
         )
         val saved = parseProfile(response.optJSONObject("profile"))
@@ -110,71 +108,29 @@ class GuruProfileRemoteDataSource {
         }.getOrDefault("")
         GuruProfileSyncResult.Error(message.ifBlank { "Gagal menyimpan profil ke server." })
       }
+  }
+
+  suspend fun changePassword(
+    currentPassword: String,
+    newPassword: String
+  ): GuruPasswordChangeResult = withContext(Dispatchers.IO) {
+    if (!SupabaseRequestAuth.isAuthenticated()) {
+      return@withContext GuruPasswordChangeResult.Error("Silakan masuk kembali sebelum mengganti password.")
     }
-
-    val syncAttempts = listOf(true, false)
-    for (includePhoto in syncAttempts) {
-      try {
-        val requestUrl = buildSelectUrl(
-          select = if (includePhoto) {
-            "id,id_karyawan,nama,no_hp,alamat,password,foto_url"
-          } else {
-            "id,id_karyawan,nama,no_hp,alamat,password"
-          },
-          teacherRowId = teacherRowId,
-          teacherKaryawanId = teacherKaryawanId
-        ) ?: return@withContext GuruProfileSyncResult.Error("ID guru tidak ditemukan.")
-
-        val connection = createConnection(requestUrl, "PATCH").apply {
-          doOutput = true
-          setRequestProperty("Content-Type", "application/json")
-          setRequestProperty("Prefer", "return=representation")
+    return@withContext try {
+      postSelfProfile(
+        JSONObject().apply {
+          put("action", "change_password")
+          put("current_password", currentPassword)
+          put("new_password", newPassword)
         }
-
-        val payload = JSONObject().apply {
-          val normalizedPhone = profile.phoneNumber.trim()
-          val normalizedAddress = profile.address.trim()
-          val normalizedAvatarUrl = profile.avatarUri.trim()
-          put("nama", normalizedName)
-          put("no_hp", if (normalizedPhone.isBlank()) JSONObject.NULL else normalizedPhone)
-          put("alamat", if (normalizedAddress.isBlank()) JSONObject.NULL else normalizedAddress)
-          if (profile.password.trim().isNotBlank()) {
-            put("password", profile.password.trim())
-          }
-          if (includePhoto) {
-            put("foto_url", if (normalizedAvatarUrl.isBlank()) JSONObject.NULL else normalizedAvatarUrl)
-          }
-        }
-
-        connection.outputStream.use { stream ->
-          stream.write(payload.toString().toByteArray(Charsets.UTF_8))
-          stream.flush()
-        }
-
-        val response = connection.useProfileJsonArrayResponse { rows ->
-          parseProfile(rows.optJSONObject(0))
-        }
-
-        if (response != null) {
-          return@withContext GuruProfileSyncResult.Success(response)
-        }
-
-        val fallbackProfile = fetchProfile(teacherRowId = teacherRowId, teacherKaryawanId = teacherKaryawanId)
-        if (fallbackProfile != null) {
-          return@withContext GuruProfileSyncResult.Success(fallbackProfile)
-        }
-      } catch (_: SocketTimeoutException) {
-        return@withContext GuruProfileSyncResult.Error("Koneksi ke server terlalu lama. Coba lagi.")
-      } catch (error: Exception) {
-        val message = error.message.orEmpty()
-        if (includePhoto && message.contains("foto_url", ignoreCase = true) && message.contains("column", ignoreCase = true)) {
-          continue
-        }
-        return@withContext GuruProfileSyncResult.Error("Gagal menyimpan profil ke server.")
-      }
+      )
+      GuruPasswordChangeResult.Success
+    } catch (_: SocketTimeoutException) {
+      GuruPasswordChangeResult.Error("Koneksi ke server terlalu lama. Coba lagi.")
+    } catch (error: Exception) {
+      GuruPasswordChangeResult.Error(extractProfileError(error, "Gagal mengganti password."))
     }
-
-    GuruProfileSyncResult.Error("Gagal menyimpan profil ke server.")
   }
 
   private fun createConnection(requestUrl: String, method: String): HttpURLConnection {
@@ -279,4 +235,10 @@ private fun HttpURLConnection.readProfilePayload(useInputStream: Boolean): Strin
 private fun JSONObject.putNullableProfileText(key: String, value: String) {
   val normalized = value.trim()
   put(key, if (normalized.isBlank()) JSONObject.NULL else normalized)
+}
+
+private fun extractProfileError(error: Exception, fallback: String): String {
+  return runCatching {
+    JSONObject(error.message.orEmpty()).optString("error").trim()
+  }.getOrDefault("").ifBlank { fallback }
 }

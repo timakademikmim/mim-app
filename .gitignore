@@ -21,3 +21,5 @@ releases/**/*.apk
 releases/**/*.idsig
 releases/*.log
 releases/**/*.log
+backups/
+.private/

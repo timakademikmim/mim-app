@@ -68,7 +68,10 @@
         .trim()
         .replaceAll(' ', '_')
       const ext = window.getProfilePhotoFileExt(file.name)
-      const filePath = `${idKaryawan}_${Date.now()}.${ext}`
+      const relativePath = `${idKaryawan}_${Date.now()}.${ext}`
+      const filePath = window.buildTenantStoragePath
+        ? window.buildTenantStoragePath(relativePath)
+        : relativePath
       const uploadRes = await sb.storage.from(String(bucket || '')).upload(filePath, file, { upsert: true })
       if (uploadRes.error) throw uploadRes.error
 
@@ -89,4 +92,3 @@
 
   window.__sharedProfilePhotoUtilsReady = true
 })()
-

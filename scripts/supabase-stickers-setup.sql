@@ -1,38 +1,13 @@
--- Supabase Storage setup for chat stickers (quick/anon version).
--- This allows any anon client to list/upload/delete within the bucket.
--- Use only if you are not using Supabase Auth yet.
+-- Supabase Storage bucket setup for chat stickers.
+-- Tenant policies are owned by migration 202607010005. Do not restore the old
+-- broad policies because they allow users to modify another unit's files.
 
 -- Create bucket (or ensure it exists and public).
 insert into storage.buckets (id, name, public)
 values ('chat-stickers', 'chat-stickers', true)
-on conflict (id) do update set public = true;
+on conflict (id) do nothing;
 
--- Recreate policies for anon access.
+-- Remove the obsolete pre-Auth policies if this helper is run manually.
 drop policy if exists "chat_stickers_select" on storage.objects;
 drop policy if exists "chat_stickers_insert" on storage.objects;
 drop policy if exists "chat_stickers_delete" on storage.objects;
-
-create policy "chat_stickers_select"
-on storage.objects
-for select
-using (
-  bucket_id = 'chat-stickers'
-  and name like 'users/%'
-);
-
-create policy "chat_stickers_insert"
-on storage.objects
-for insert
-with check (
-  bucket_id = 'chat-stickers'
-  and name like 'users/%'
-);
-
-create policy "chat_stickers_delete"
-on storage.objects
-for delete
-using (
-  bucket_id = 'chat-stickers'
-  and name like 'users/%'
-);
-

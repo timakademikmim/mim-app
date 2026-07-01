@@ -1,15 +1,17 @@
 {
-  "versionCode": 1022,
-  "versionName": "0.1.22",
-  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.22/MIM.APP.apk",
-  "releaseNotes": "MIM App Android 0.1.22. Data profil pengguna kini selalu dibaca dari akun dan unit yang benar.",
+  "versionCode": 1023,
+  "versionName": "0.1.23",
+  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.23/MIM.APP.apk",
+  "releaseNotes": "MIM App Android 0.1.23. Pembaruan keamanan akun, tenant, dokumen, dan notifikasi.",
   "features": [
-    "Profil pengguna kini memiliki fallback pembacaan langsung yang tetap dilindungi RLS tenant saat layanan profil sedang bermasalah."
+    "Halaman Atur Password memverifikasi password saat ini dan menerapkan password kuat.",
+    "Login mendukung verifikasi Authenticator MFA bagi akun yang mengaktifkannya.",
+    "Pengguna yang lupa password dapat mengirim permintaan reset kepada admin unit."
   ],
   "fixes": [
-    "Alamat dan nomor telepon tidak lagi mengambil nilai contoh dari cache awal aplikasi.",
-    "Kolom password profil kini selalu kosong dan hanya digunakan untuk memasukkan password baru.",
-    "Nilai null dari server tidak lagi ditampilkan sebagai teks pada form profil."
+    "Login legacy dan penyimpanan password plaintext telah dihapus.",
+    "Laporan yang dikirim menggunakan signed URL dari bucket private.",
+    "Token push dan penerima notifikasi kini dibatasi ke akun serta tenant yang sama."
   ],
   "mandatory": true
 }

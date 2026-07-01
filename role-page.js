@@ -31,6 +31,77 @@ if (requiredRole && !roles.includes(requiredRole)) {
   location.replace('index.html')
 }
 
+function isRolePageActiveValue(value) {
+  if (value === true || value === 1) return true
+  const text = String(value ?? '').trim().toLowerCase()
+  return text === 'true' || text === 't' || text === '1' || text === 'yes'
+}
+
+async function invalidateRolePageSession() {
+  try {
+    await window.mimSupabaseClient?.auth?.signOut({ scope: 'local' })
+  } catch (_error) {}
+  localStorage.clear()
+  location.replace('index.html')
+  return false
+}
+
+async function ensureRolePageMfaSession(client) {
+  const { data: factorsData, error: factorsError } = await client.auth.mfa.listFactors()
+  if (factorsError) throw factorsError
+  const factor = (factorsData?.totp || []).find(item => String(item?.status || '').toLowerCase() === 'verified')
+  if (!factor?.id) return true
+  const { data: aalData, error: aalError } = await client.auth.mfa.getAuthenticatorAssuranceLevel()
+  if (aalError) throw aalError
+  if (aalData?.currentLevel === 'aal2') return true
+  const code = String(window.prompt('Masukkan 6 digit kode dari aplikasi authenticator:') || '').trim()
+  if (!/^\d{6}$/.test(code)) return false
+  const { error } = await client.auth.mfa.challengeAndVerify({ factorId: factor.id, code })
+  return !error
+}
+
+async function validateRolePageSession() {
+  const authMode = String(localStorage.getItem('login_auth_mode') || '').trim().toLowerCase()
+  if (authMode !== 'auth') return invalidateRolePageSession()
+  const client = window.mimSupabaseClient
+  const tenantId = String(localStorage.getItem('login_tenant_id') || '').trim()
+  if (!client || !tenantId) return invalidateRolePageSession()
+
+  const { data: sessionData, error: sessionError } = await client.auth.getSession()
+  const session = sessionData?.session || null
+  if (sessionError || !session?.user?.id) return invalidateRolePageSession()
+  if (!await ensureRolePageMfaSession(client)) return invalidateRolePageSession()
+
+  const { data: employee, error } = await client
+    .from('karyawan')
+    .select('id,id_karyawan,nama,role,aktif,tenant_id,auth_user_id')
+    .eq('auth_user_id', session.user.id)
+    .eq('tenant_id', tenantId)
+    .maybeSingle()
+  if (error || !employee || !isRolePageActiveValue(employee.aktif)) {
+    return invalidateRolePageSession()
+  }
+
+  const serverRoles = String(employee.role || '')
+    .split(/[,|;]+/)
+    .map(value => value.trim().toLowerCase())
+    .filter(Boolean)
+  if (!serverRoles.length || (requiredRole && !serverRoles.includes(requiredRole))) {
+    return invalidateRolePageSession()
+  }
+
+  localStorage.setItem('login_id', String(employee.id_karyawan || '').trim())
+  localStorage.setItem('login_name', String(employee.nama || '').trim())
+  localStorage.setItem('login_roles', JSON.stringify(serverRoles))
+  localStorage.setItem('login_auth_user_id', session.user.id)
+  if (!serverRoles.includes(String(localStorage.getItem('login_role') || '').trim().toLowerCase())) {
+    localStorage.setItem('login_role', requiredRole || serverRoles[0])
+  }
+  return true
+}
+
+window.mimRolePageAuthReady = validateRolePageSession().catch(() => invalidateRolePageSession())
+
 function rememberLastOpenPage() {
   try {
     const path = String(window.location.pathname || '')
@@ -63,6 +134,20 @@ const CHAT_OPEN_STORAGE_KEY = 'chat_open_thread_id'
 const WEB_PUSH_REGISTER_FUNCTION = `${FCM_FUNCTION_BASE}/register-web-push-subscription`
 const WEB_PUSH_SEND_FUNCTION = `${FCM_FUNCTION_BASE}/send-web-push`
 const WEB_PUSH_ENDPOINT_CACHE_KEY = 'mim_web_push_endpoint'
+
+async function getMimFunctionHeaders(extra = {}) {
+  const client = window.mimSupabaseClient
+  let bearer = window.MIM_SUPABASE_ANON_KEY || ''
+  if (String(localStorage.getItem('login_auth_mode') || '').trim().toLowerCase() === 'auth' && client) {
+    const { data } = await client.auth.getSession()
+    bearer = String(data?.session?.access_token || '').trim() || bearer
+  }
+  return {
+    apikey: window.MIM_SUPABASE_ANON_KEY || '',
+    Authorization: `Bearer ${bearer}`,
+    ...extra
+  }
+}
 
 function isAndroidRuntime() {
   return hasTauriRuntime() && /android/i.test(String(navigator.userAgent || ''))
@@ -122,7 +207,7 @@ async function registerFcmToken(token) {
     }
     await fetch(`${FCM_FUNCTION_BASE}/register-push-token`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: await getMimFunctionHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify(payload)
     })
     localStorage.setItem('mim_fcm_token', clean)
@@ -1075,6 +1160,177 @@ function syncAndroidBottomAvatar(name, fotoUrl = '') {
   if (initialsEl) initialsEl.remove()
 }
 
+async function readFunctionError(error, fallback) {
+  let message = String(error?.message || '').trim()
+  try {
+    const response = error?.context
+    if (response && typeof response.clone === 'function') {
+      const payload = await response.clone().json()
+      message = String(payload?.error || payload?.message || message).trim()
+    }
+  } catch (_error) {}
+  return message || fallback
+}
+
+function validateStrongPassword(password) {
+  const value = String(password || '')
+  if (value.length < 12) return 'Password baru minimal 12 karakter.'
+  if (!/[a-z]/.test(value) || !/[A-Z]/.test(value) || !/\d/.test(value) || !/[^A-Za-z0-9]/.test(value)) {
+    return 'Password harus memuat huruf besar, huruf kecil, angka, dan simbol.'
+  }
+  return ''
+}
+
+function openSecurePasswordDialog() {
+  document.getElementById('secure-password-overlay')?.remove()
+  const overlay = document.createElement('div')
+  overlay.id = 'secure-password-overlay'
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:15000;background:rgba(15,23,42,.5);display:flex;align-items:center;justify-content:center;padding:16px;'
+  overlay.innerHTML = `
+    <div style="width:min(440px,100%);background:#fff;border-radius:14px;padding:20px;box-shadow:0 24px 60px #0f172a40;">
+      <h3 style="margin:0 0 6px;color:#0f172a;">Atur Password</h3>
+      <p style="margin:0 0 14px;color:#64748b;font-size:13px;line-height:1.45;">Password lama tidak dapat ditampilkan. Masukkan password saat ini untuk verifikasi.</p>
+      <label style="display:block;font-size:12px;font-weight:700;margin:10px 0 4px;">Password saat ini</label>
+      <input id="secure-password-current" type="password" autocomplete="current-password" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #cbd5e1;border-radius:9px;">
+      <label style="display:block;font-size:12px;font-weight:700;margin:10px 0 4px;">Password baru</label>
+      <input id="secure-password-new" type="password" autocomplete="new-password" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #cbd5e1;border-radius:9px;">
+      <label style="display:block;font-size:12px;font-weight:700;margin:10px 0 4px;">Konfirmasi password baru</label>
+      <input id="secure-password-confirm" type="password" autocomplete="new-password" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #cbd5e1;border-radius:9px;">
+      <label style="display:flex;align-items:center;gap:7px;margin-top:10px;font-size:12px;color:#475569;"><input id="secure-password-visible" type="checkbox"> Tampilkan password yang sedang diketik</label>
+      <div id="secure-password-error" style="min-height:18px;margin-top:10px;color:#b91c1c;font-size:12px;"></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
+        <button id="secure-password-cancel" type="button" class="modal-btn">Batal</button>
+        <button id="secure-password-save" type="button" class="modal-btn modal-btn-primary">Simpan Password</button>
+      </div>
+    </div>`
+  document.body.appendChild(overlay)
+
+  const inputs = ['secure-password-current', 'secure-password-new', 'secure-password-confirm']
+    .map(inputId => document.getElementById(inputId))
+    .filter(Boolean)
+  document.getElementById('secure-password-visible')?.addEventListener('change', event => {
+    inputs.forEach(input => { input.type = event.target.checked ? 'text' : 'password' })
+  })
+  document.getElementById('secure-password-cancel')?.addEventListener('click', () => overlay.remove())
+  overlay.addEventListener('click', event => { if (event.target === overlay) overlay.remove() })
+  document.getElementById('secure-password-save')?.addEventListener('click', async () => {
+    const currentPassword = String(document.getElementById('secure-password-current')?.value || '')
+    const newPassword = String(document.getElementById('secure-password-new')?.value || '')
+    const confirmation = String(document.getElementById('secure-password-confirm')?.value || '')
+    const errorEl = document.getElementById('secure-password-error')
+    const button = document.getElementById('secure-password-save')
+    let validation = currentPassword ? validateStrongPassword(newPassword) : 'Password saat ini wajib diisi.'
+    if (!validation && currentPassword === newPassword) validation = 'Password baru harus berbeda dari password saat ini.'
+    if (!validation && confirmation !== newPassword) validation = 'Konfirmasi password baru tidak cocok.'
+    if (validation) {
+      if (errorEl) errorEl.textContent = validation
+      return
+    }
+    if (button) {
+      button.disabled = true
+      button.textContent = 'Menyimpan...'
+    }
+    const { data, error } = await window.mimSupabaseClient.functions.invoke('manage-self-profile', {
+      body: { action: 'change_password', current_password: currentPassword, new_password: newPassword }
+    })
+    if (error || data?.error) {
+      if (errorEl) errorEl.textContent = data?.error || await readFunctionError(error, 'Gagal mengganti password.')
+      if (button) {
+        button.disabled = false
+        button.textContent = 'Simpan Password'
+      }
+      return
+    }
+    overlay.remove()
+    alert('Password berhasil diganti.')
+  })
+  document.getElementById('secure-password-current')?.focus()
+}
+
+window.openSecurePasswordDialog = openSecurePasswordDialog
+
+async function openMfaSecurityDialog() {
+  const client = window.mimSupabaseClient
+  if (!client) return alert('Sesi keamanan belum siap.')
+  document.getElementById('mfa-security-overlay')?.remove()
+  const overlay = document.createElement('div')
+  overlay.id = 'mfa-security-overlay'
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:15000;background:rgba(15,23,42,.5);display:flex;align-items:center;justify-content:center;padding:16px;'
+  overlay.innerHTML = `
+    <div style="width:min(460px,100%);max-height:90vh;overflow:auto;background:#fff;border-radius:14px;padding:20px;box-shadow:0 24px 60px #0f172a40;">
+      <h3 style="margin:0 0 6px;color:#0f172a;">Authenticator MFA</h3>
+      <p id="mfa-security-status" style="margin:0 0 14px;color:#64748b;font-size:13px;line-height:1.45;">Memeriksa status...</p>
+      <div id="mfa-security-enroll" style="display:none;">
+        <button id="mfa-security-start" type="button" class="modal-btn modal-btn-primary">Aktifkan MFA</button>
+      </div>
+      <div id="mfa-security-verify" style="display:none;">
+        <img id="mfa-security-qr" alt="QR MFA" style="display:block;width:220px;max-width:100%;margin:8px auto;background:#fff;">
+        <div style="font-size:12px;color:#475569;word-break:break-all;">Kode manual: <strong id="mfa-security-secret"></strong></div>
+        <input id="mfa-security-code" inputmode="numeric" maxlength="6" placeholder="6 digit kode authenticator" style="width:100%;box-sizing:border-box;margin-top:12px;padding:10px;border:1px solid #cbd5e1;border-radius:9px;">
+        <button id="mfa-security-confirm" type="button" class="modal-btn modal-btn-primary" style="width:100%;margin-top:10px;">Verifikasi dan Aktifkan</button>
+      </div>
+      <div id="mfa-security-error" style="min-height:18px;margin-top:10px;color:#b91c1c;font-size:12px;"></div>
+      <div style="display:flex;justify-content:flex-end;margin-top:8px;"><button id="mfa-security-close" type="button" class="modal-btn">Tutup</button></div>
+    </div>`
+  document.body.appendChild(overlay)
+  document.getElementById('mfa-security-close')?.addEventListener('click', () => overlay.remove())
+  overlay.addEventListener('click', event => { if (event.target === overlay) overlay.remove() })
+
+  const statusEl = document.getElementById('mfa-security-status')
+  const enrollEl = document.getElementById('mfa-security-enroll')
+  const verifyEl = document.getElementById('mfa-security-verify')
+  const errorEl = document.getElementById('mfa-security-error')
+  const { data: factorData, error: factorError } = await client.auth.mfa.listFactors()
+  if (factorError) {
+    if (statusEl) statusEl.textContent = 'Status MFA tidak dapat dimuat.'
+    if (errorEl) errorEl.textContent = factorError.message
+    return
+  }
+  const verified = (factorData?.totp || []).find(item => String(item?.status || '').toLowerCase() === 'verified')
+  if (verified) {
+    if (statusEl) statusEl.textContent = 'MFA aktif. Login berikutnya akan meminta kode authenticator.'
+    return
+  }
+  if (statusEl) statusEl.textContent = 'MFA belum aktif. Gunakan Google Authenticator, Microsoft Authenticator, Authy, atau aplikasi TOTP lain.'
+  if (enrollEl) enrollEl.style.display = 'block'
+
+  document.getElementById('mfa-security-start')?.addEventListener('click', async event => {
+    event.currentTarget.disabled = true
+    const { data, error } = await client.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'MIM App' })
+    if (error || !data?.id) {
+      if (errorEl) errorEl.textContent = error?.message || 'Pendaftaran MFA gagal.'
+      event.currentTarget.disabled = false
+      return
+    }
+    enrollEl.style.display = 'none'
+    verifyEl.style.display = 'block'
+    const qr = String(data.totp?.qr_code || '')
+    const qrEl = document.getElementById('mfa-security-qr')
+    if (qrEl) qrEl.src = qr.startsWith('data:') ? qr : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr)}`
+    const secretEl = document.getElementById('mfa-security-secret')
+    if (secretEl) secretEl.textContent = String(data.totp?.secret || '')
+    const confirmBtn = document.getElementById('mfa-security-confirm')
+    confirmBtn?.addEventListener('click', async () => {
+      const code = String(document.getElementById('mfa-security-code')?.value || '').trim()
+      if (!/^\d{6}$/.test(code)) {
+        if (errorEl) errorEl.textContent = 'Masukkan 6 digit kode authenticator.'
+        return
+      }
+      confirmBtn.disabled = true
+      const { error: verifyError } = await client.auth.mfa.challengeAndVerify({ factorId: data.id, code })
+      if (verifyError) {
+        if (errorEl) errorEl.textContent = 'Kode salah atau sudah kedaluwarsa.'
+        confirmBtn.disabled = false
+        return
+      }
+      overlay.remove()
+      alert('MFA berhasil diaktifkan.')
+    })
+  })
+}
+
+window.openMfaSecurityDialog = openMfaSecurityDialog
+
 function initTopbarAccountMenu() {
   const wrap = document.querySelector('.topbar-user-menu-wrap')
   const trigger = document.querySelector('.topbar-user-trigger')
@@ -1087,6 +1343,33 @@ function initTopbarAccountMenu() {
   setTopbarAvatar(displayName, photoUrl)
 
   menu.classList.add('topbar-account-menu')
+
+  if (!document.getElementById('topbar-password-btn')) {
+    const passwordBtn = document.createElement('button')
+    passwordBtn.type = 'button'
+    passwordBtn.id = 'topbar-password-btn'
+    passwordBtn.textContent = 'Atur Password'
+    passwordBtn.addEventListener('click', () => {
+      menu.classList.remove('open')
+      openSecurePasswordDialog()
+    })
+    const logoutBtn = menu.querySelector('button[onclick*="logout"], button[onclick*="Logout"]')
+    if (logoutBtn) logoutBtn.before(passwordBtn)
+    else menu.appendChild(passwordBtn)
+  }
+  if (!document.getElementById('topbar-mfa-btn')) {
+    const mfaBtn = document.createElement('button')
+    mfaBtn.type = 'button'
+    mfaBtn.id = 'topbar-mfa-btn'
+    mfaBtn.textContent = 'Authenticator MFA'
+    mfaBtn.addEventListener('click', () => {
+      menu.classList.remove('open')
+      void openMfaSecurityDialog()
+    })
+    const logoutBtn = menu.querySelector('button[onclick*="logout"], button[onclick*="Logout"]')
+    if (logoutBtn) logoutBtn.before(mfaBtn)
+    else menu.appendChild(mfaBtn)
+  }
 
   let nameEl = document.getElementById('topbar-account-name')
   if (!nameEl) {
@@ -2546,7 +2829,7 @@ async function fetchWebPushPublicKey() {
   mimWebPushPublicKeyPromise = (async () => {
     const res = await fetch(WEB_PUSH_REGISTER_FUNCTION, {
       method: 'GET',
-      headers: { accept: 'application/json' },
+      headers: await getMimFunctionHeaders({ accept: 'application/json' }),
       cache: 'no-store'
     })
     if (!res.ok) {
@@ -2602,7 +2885,7 @@ async function ensureWebPushSubscriptionRegistered(force = false) {
       }
       const res = await fetch(WEB_PUSH_REGISTER_FUNCTION, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: await getMimFunctionHeaders({ 'content-type': 'application/json' }),
         body: JSON.stringify(payload)
       })
       if (!res.ok) {
@@ -3001,7 +3284,7 @@ window.sendMimWebPushNotification = async function sendMimWebPushNotification({
   try {
     const res = await fetch(WEB_PUSH_SEND_FUNCTION, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: await getMimFunctionHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({
         user_ids: targets,
         title: String(title || '').trim() || 'Notifikasi baru',
@@ -3616,7 +3899,12 @@ applyPlatformUiSkin()
 initTopbarAccountMenu()
 initDesktopUpdaterUi()
 
-function logout() {
+async function logout() {
+  try {
+    await window.mimSupabaseClient?.auth?.signOut({ scope: 'local' })
+  } catch (_error) {}
   localStorage.clear()
   location.replace('index.html')
 }
+
+window.performSecureLogout = logout

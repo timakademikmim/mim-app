@@ -20,6 +20,7 @@ import android.print.PrintDocumentInfo
 import android.print.PrintManager
 import com.mim.guruapp.BuildConfig
 import com.mim.guruapp.data.remote.SupabaseRequestAuth
+import com.mim.guruapp.data.remote.SupabaseStorageSigner
 import com.mim.guruapp.data.remote.applySupabaseRequestHeaders
 import androidx.core.content.FileProvider
 import java.io.BufferedReader
@@ -134,7 +135,7 @@ object MonthlyReportExporter {
     } finally {
       connection.disconnect()
     }
-    "${BuildConfig.SUPABASE_URL}/storage/v1/object/public/$BucketName/$storagePath"
+    SupabaseStorageSigner.createSignedUrl(BucketName, storagePath)
   }
 
   fun openWhatsApp(

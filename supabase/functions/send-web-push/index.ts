@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import webpush from "npm:web-push@3.6.7"
+import { enforceActionRateLimit, requireTenantCaller, TenantAuthError, writeAuditLog } from "../_shared/tenant-auth.ts"
 
 const corsHeaders = {
   "access-control-allow-origin": "*",
@@ -82,7 +83,12 @@ function buildTargetUrl(role: string, route: string, threadId: string) {
   return qs ? `${pagePath}?${qs}` : pagePath
 }
 
-function buildNotificationEventRows(rows: SubscriptionRow[], payload: PushPayload) {
+function buildNotificationEventRows(
+  rows: SubscriptionRow[],
+  payload: PushPayload,
+  tenantId: string,
+  sourceUserId: string,
+) {
   if (payload.store_event === false) return []
   const nowIso = new Date().toISOString()
   const route = sanitizeText(payload.route).toLowerCase()
@@ -90,13 +96,13 @@ function buildNotificationEventRows(rows: SubscriptionRow[], payload: PushPayloa
   const scope = sanitizeText(payload.scope || "general").toLowerCase() || "general"
   const eventType = sanitizeText(payload.event_type || "info").toLowerCase() || "info"
   const dedupeKey = sanitizeText(payload.dedupe_key)
-  const sourceUserId = sanitizeText(payload.source_user_id) || null
   const title = sanitizeText(payload.title || "Notifikasi baru") || "Notifikasi baru"
   const body = sanitizeText(payload.body)
   const payloadJson = payload.data && typeof payload.data === "object" ? payload.data : {}
 
   return uniqueStrings(rows.map(row => row.user_id)).map(userId => ({
     user_id: userId,
+    tenant_id: tenantId,
     scope,
     event_type: eventType,
     title,
@@ -104,7 +110,7 @@ function buildNotificationEventRows(rows: SubscriptionRow[], payload: PushPayloa
     route: route || null,
     thread_id: threadId || null,
     payload_json: payloadJson,
-    source_user_id: sourceUserId,
+    source_user_id: sourceUserId || null,
     dedupe_key: dedupeKey || null,
     created_at: nowIso
   }))
@@ -131,6 +137,15 @@ serve(async req => {
     return jsonResponse(405, { ok: false, error: "Method not allowed" })
   }
 
+  let caller
+  try {
+    caller = await requireTenantCaller(req)
+    await enforceActionRateLimit(caller, "tenant.notification.web_push.send", 60, 60)
+  } catch (error) {
+    const status = error instanceof TenantAuthError ? error.status : 401
+    return jsonResponse(status, { ok: false, error: error instanceof Error ? error.message : "Sesi tidak valid" })
+  }
+
   if (!publicKey || !privateKey) {
     return jsonResponse(500, { ok: false, error: "VAPID key belum diset" })
   }
@@ -142,18 +157,33 @@ serve(async req => {
     return jsonResponse(400, { ok: false, error: "Invalid JSON" })
   }
 
-  const userIds = uniqueStrings([
+  const requestedUserIds = uniqueStrings([
     ...(Array.isArray(payload.user_ids) ? payload.user_ids : []),
     payload.user_id
   ])
-  if (!userIds.length) {
+  if (!requestedUserIds.length) {
     return jsonResponse(400, { ok: false, error: "user_id atau user_ids wajib diisi" })
+  }
+
+  const { data: tenantEmployees, error: employeeError } = await supabase
+    .from("karyawan")
+    .select("id_karyawan")
+    .eq("tenant_id", caller.tenantId)
+    .eq("aktif", true)
+  if (employeeError) return jsonResponse(500, { ok: false, error: employeeError.message })
+  const employeeById = new Map(
+    (tenantEmployees || []).map(row => [sanitizeText(row.id_karyawan).toLowerCase(), sanitizeText(row.id_karyawan)]),
+  )
+  const userIds = requestedUserIds.map(userId => employeeById.get(userId.toLowerCase()) || "").filter(Boolean)
+  if (userIds.length !== requestedUserIds.length) {
+    return jsonResponse(403, { ok: false, error: "Semua penerima harus berada dalam unit yang sama" })
   }
 
   const { data: subscriptionRows, error: subscriptionError } = await supabase
     .from("web_push_subscriptions")
     .select("id, user_id, endpoint, p256dh, auth, role")
     .in("user_id", userIds)
+    .eq("tenant_id", caller.tenantId)
     .eq("is_active", true)
 
   if (subscriptionError) {
@@ -240,7 +270,7 @@ serve(async req => {
     await markSubscriptionInactive(inactiveIds)
   }
 
-  const eventRows = buildNotificationEventRows(rows, payload)
+  const eventRows = buildNotificationEventRows(rows, payload, caller.tenantId, caller.employeeLoginId)
   if (eventRows.length) {
     const { error: insertError } = await supabase
       .from("notification_events")
@@ -254,5 +284,9 @@ serve(async req => {
   }
 
   const sent = results.filter(item => item.ok).length
+  await writeAuditLog(caller, caller.tenantId, "tenant.notification.web_push.send", "web_push_subscriptions", null, {
+    target_user_ids: userIds,
+    sent,
+  })
   return jsonResponse(200, { ok: sent > 0, sent, results })
 })

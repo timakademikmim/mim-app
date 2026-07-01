@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { requireTenantCaller, TenantAuthError } from "../_shared/tenant-auth.ts"
 
 const corsHeaders = {
   "access-control-allow-origin": "*",
@@ -43,10 +44,22 @@ serve(async req => {
     return jsonResponse(400, { ok: false, error: "Invalid JSON" })
   }
 
-  const userId = String(payload.user_id || "").trim()
+  let caller
+  try {
+    caller = await requireTenantCaller(req)
+  } catch (error) {
+    const status = error instanceof TenantAuthError ? error.status : 401
+    return jsonResponse(status, { ok: false, error: error instanceof Error ? error.message : "Sesi tidak valid" })
+  }
+
+  const requestedUserId = String(payload.user_id || "").trim()
+  const userId = caller.employeeLoginId
   const token = String(payload.token || "").trim()
-  if (!userId || !token) {
-    return jsonResponse(400, { ok: false, error: "user_id dan token wajib diisi" })
+  if (requestedUserId && requestedUserId.toLowerCase() !== userId.toLowerCase()) {
+    return jsonResponse(403, { ok: false, error: "Token hanya dapat didaftarkan untuk akun sendiri" })
+  }
+  if (!userId || !token || !caller.tenantId) {
+    return jsonResponse(400, { ok: false, error: "Identitas pengguna dan token wajib tersedia" })
   }
 
   const deviceId = String(payload.device_id || "").trim() || null
@@ -58,6 +71,7 @@ serve(async req => {
     .upsert(
       {
         user_id: userId,
+        tenant_id: caller.tenantId,
         token,
         device_id: deviceId,
         platform,
@@ -76,6 +90,7 @@ serve(async req => {
       .from("push_tokens")
       .delete()
       .eq("user_id", userId)
+      .eq("tenant_id", caller.tenantId)
       .eq("device_id", deviceId)
       .neq("token", token)
   }

@@ -85,12 +85,15 @@
 
   function isSupabaseDataEndpoint(urlText) {
     const text = String(urlText || '')
-    return text.includes('/rest/v1/') || text.includes('/storage/v1/')
+    return text.includes('/rest/v1/') || text.includes('/storage/v1/') || text.includes('/functions/v1/')
   }
 
   function buildCacheKey(request) {
     const url = new URL(request.url)
-    return `${request.method.toUpperCase()}::${url.origin}${url.pathname}${url.search}`
+    const tenantId = String(localStorage.getItem('login_tenant_id') || '').trim()
+    const loginId = String(localStorage.getItem('login_id') || '').trim().toLowerCase()
+    const scope = tenantId && loginId ? `${tenantId}:${loginId}` : 'anonymous'
+    return `${scope}::${request.method.toUpperCase()}::${url.origin}${url.pathname}${url.search}`
   }
 
   async function responseToCacheRecord(key, response) {
@@ -115,12 +118,18 @@
     })
   }
 
-  function createDesktopAwareFetch(baseFetch) {
+  function createDesktopAwareFetch(baseFetch, publicAnonKey) {
     return async function desktopAwareFetch(input, init) {
       const req = new Request(input, init)
       const method = String(req.method || 'GET').toUpperCase()
       const isRead = method === 'GET'
       const isSupaData = isSupabaseDataEndpoint(req.url)
+      const authMode = String(localStorage.getItem('login_auth_mode') || '').trim().toLowerCase()
+      const authorization = String(req.headers.get('authorization') || '')
+      const bearerToken = authorization.replace(/^bearer\s+/i, '').trim()
+      if (isSupaData && authMode === 'auth' && (!bearerToken || bearerToken === publicAnonKey)) {
+        return makeOfflineResponse('Sesi login tidak valid. Silakan login kembali.', 401)
+      }
       if (!isDesktopRuntime() || !isSupaData) {
         return baseFetch(req)
       }
@@ -166,12 +175,91 @@
       ...options,
       global: {
         ...globalOptions,
-        fetch: createDesktopAwareFetch(baseFetch)
+        fetch: createDesktopAwareFetch(baseFetch, key)
       }
     }
     return supa.createClient(url, key, mergedOptions)
   }
 
+  function getSharedSupabaseClient(url, key, options = {}) {
+    if (window.mimSupabaseClient) return window.mimSupabaseClient
+    window.mimSupabaseClient = createDesktopAwareSupabaseClient(url, key, options)
+    return window.mimSupabaseClient
+  }
+
+  function getActiveTenantId() {
+    const tenantId = String(localStorage.getItem('login_tenant_id') || '').trim().toLowerCase()
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(tenantId)
+      ? tenantId
+      : ''
+  }
+
+  function buildTenantStoragePath(relativePath) {
+    const cleanPath = String(relativePath || '')
+      .replaceAll('\\', '/')
+      .split('/')
+      .map(part => part.trim())
+      .filter(part => part && part !== '.' && part !== '..')
+      .join('/')
+    if (!cleanPath) throw new Error('Path file Storage tidak valid.')
+
+    const tenantId = getActiveTenantId()
+    if (!tenantId) throw new Error('Unit login tidak valid. Silakan login kembali.')
+    return `${tenantId}/${cleanPath}`
+  }
+
+  function buildStorageObjectReference(bucket, path) {
+    const safeBucket = String(bucket || '').trim()
+    const safePath = String(path || '').replace(/^\/+/, '').trim()
+    if (!safeBucket || !safePath) throw new Error('Referensi file Storage tidak valid.')
+    return `storage://${safeBucket}/${safePath}`
+  }
+
+  function parseStorageObjectReference(value) {
+    const source = String(value || '').trim()
+    if (!source) return null
+    if (source.startsWith('storage://')) {
+      const remainder = source.slice('storage://'.length)
+      const separator = remainder.indexOf('/')
+      if (separator <= 0) return null
+      return { bucket: remainder.slice(0, separator), path: remainder.slice(separator + 1) }
+    }
+    try {
+      const url = new URL(source, window.location.href)
+      const match = url.pathname.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^/]+)\/(.+)$/)
+      if (!match) return null
+      return { bucket: decodeURIComponent(match[1]), path: decodeURIComponent(match[2]) }
+    } catch (_error) {
+      return null
+    }
+  }
+
+  async function createSignedStorageUrl(bucket, path, expiresIn = 604800) {
+    const client = window.mimSupabaseClient
+    if (!client) throw new Error('Sesi Storage belum siap.')
+    const { data, error } = await client.storage
+      .from(String(bucket || '').trim())
+      .createSignedUrl(String(path || '').replace(/^\/+/, ''), Math.max(60, Number(expiresIn || 0)))
+    if (error) throw error
+    const signedUrl = String(data?.signedUrl || data?.signedURL || '').trim()
+    if (!signedUrl) throw new Error('Link aman file tidak tersedia.')
+    return signedUrl
+  }
+
+  async function resolveStorageObjectUrl(value, expiresIn = 3600) {
+    const source = String(value || '').trim()
+    const reference = parseStorageObjectReference(source)
+    if (!reference) return source
+    return createSignedStorageUrl(reference.bucket, reference.path, expiresIn)
+  }
+
   window.createDesktopAwareSupabaseClient = createDesktopAwareSupabaseClient
+  window.getSharedSupabaseClient = getSharedSupabaseClient
+  window.getActiveTenantId = getActiveTenantId
+  window.buildTenantStoragePath = buildTenantStoragePath
+  window.buildStorageObjectReference = buildStorageObjectReference
+  window.parseStorageObjectReference = parseStorageObjectReference
+  window.createSignedStorageUrl = createSignedStorageUrl
+  window.resolveStorageObjectUrl = resolveStorageObjectUrl
   window.__sharedAppUtilsReady = true
 })()

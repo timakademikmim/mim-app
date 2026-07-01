@@ -346,6 +346,16 @@ private fun AdminKaryawanDetailContent(
             readOnly = true,
             modifier = Modifier.padding(top = 10.dp)
           )
+          if (employee.passwordResetRequestedAt.isNotBlank()) {
+            AdminKaryawanInputField(
+              value = "Pengguna meminta reset password",
+              onValueChange = {},
+              label = "Permintaan Reset",
+              placeholder = "",
+              readOnly = true,
+              modifier = Modifier.padding(top = 10.dp)
+            )
+          }
           OutlinedButton(
             onClick = {
               isChangingPassword = !isChangingPassword
@@ -362,7 +372,7 @@ private fun AdminKaryawanDetailContent(
               value = newPassword,
               onValueChange = { newPassword = it },
               label = "Password baru",
-              placeholder = "Minimal 10 karakter",
+              placeholder = "Minimal 12 karakter, huruf besar/kecil, angka, simbol",
               isPassword = true,
               passwordVisible = showPassword,
               onPasswordVisibilityToggle = { showPassword = !showPassword },

@@ -6,6 +6,24 @@ let currentStrukturSekolahId = ''
 let strukturSekolahHasNewColumns = null
 let strukturSekolahKaryawanList = []
 
+function ssUsesAuthenticatedSession() {
+  return String(localStorage.getItem('login_auth_mode') || '').trim().toLowerCase() === 'auth'
+}
+
+async function invokeTenantProfile(body) {
+  const { data, error } = await sb.functions.invoke('manage-tenant-profile', { body })
+  if (!error) return data || {}
+  let message = String(error?.message || '').trim()
+  try {
+    const response = error?.context
+    if (response && typeof response.clone === 'function') {
+      const payload = await response.clone().json()
+      message = String(payload?.error || payload?.message || message).trim()
+    }
+  } catch (_error) {}
+  throw new Error(message || 'Permintaan profil unit gagal.')
+}
+
 function ssEscapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -184,7 +202,16 @@ async function fetchStrukturSekolahRow() {
     .limit(1)
 
   if (error) throw error
-  return data?.[0] || null
+  const structure = data?.[0] || null
+  if (!ssUsesAuthenticatedSession()) return structure
+  const response = await invokeTenantProfile({ action: 'get' })
+  const tenant = response?.profile || null
+  if (!tenant) return structure
+  return {
+    ...(structure || {}),
+    nama_sekolah: String(tenant.official_name || tenant.name || structure?.nama_sekolah || '').trim(),
+    alamat_sekolah: String(tenant.address || structure?.alamat_sekolah || '').trim()
+  }
 }
 
 function renderAutoList(containerId, items, emptyText = '-') {
@@ -304,6 +331,19 @@ async function loadStrukturSekolah(forceRefresh = false) {
 
 async function saveStrukturSekolah() {
   const payload = mapStrukturSekolahRowFromForm()
+  if (ssUsesAuthenticatedSession()) {
+    try {
+      await invokeTenantProfile({
+        action: 'update',
+        name: payload.nama_sekolah,
+        official_name: payload.nama_sekolah,
+        address: payload.alamat_sekolah
+      })
+    } catch (error) {
+      alert(`Gagal menyimpan identitas unit: ${error?.message || 'Unknown error'}`)
+      return
+    }
+  }
   const hasNewColumns = await checkStrukturSekolahNewColumns()
   const finalPayload = hasNewColumns
     ? payload

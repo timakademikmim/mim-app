@@ -1,15 +1,13 @@
 // =======================
 // SUPABASE INIT
 // =======================
-const supabaseUrl = 'https://optucpelkueqmlhwlbej.supabase.co'
-const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9wdHVjcGVsa3VlcW1saHdsYmVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAxOTY4MTgsImV4cCI6MjA4NTc3MjgxOH0.Vqaey9pcnltu9uRbPk0J-AGWaGDZjQLw92pcRv67GNE'
-const sb = window.createDesktopAwareSupabaseClient
-  ? window.createDesktopAwareSupabaseClient(supabaseUrl, supabaseKey)
-  : supabase.createClient(supabaseUrl, supabaseKey)
+const supabaseUrl = window.MIM_SUPABASE_URL
+const supabaseKey = window.MIM_SUPABASE_ANON_KEY
+const sb = window.mimSupabaseClient
 const externalPageHtmlCache = {}
 const externalPageScriptLoaded = {}
 const externalPageScriptLoadPromises = {}
-const EXTERNAL_PAGE_ASSET_VERSION = '20260411-kalender-date-edit-fix-01'
+const EXTERNAL_PAGE_ASSET_VERSION = '20260701-tenant-storage-01'
 const CHAT_MEMBERS_TABLE = 'chat_thread_members'
 const CHAT_MESSAGES_TABLE = 'chat_messages'
 const ADMIN_HISTORY_STATE_PAGE_KEY = 'admin_page'
@@ -344,12 +342,12 @@ document.addEventListener('DOMContentLoaded', () => {
 // =======================
 // LOGOUT
 // =======================
-function logout() {
-  localStorage.removeItem('login_id')
-  localStorage.removeItem('login_name')
-  localStorage.removeItem('admin_force_dashboard_once')
-  localStorage.removeItem('admin_last_page')
-  localStorage.removeItem('admin_last_page_params')
+async function logout() {
+  if (typeof window.performSecureLogout === 'function') {
+    await window.performSecureLogout()
+    return
+  }
+  localStorage.clear()
   location.href = 'index.html'
 }
 

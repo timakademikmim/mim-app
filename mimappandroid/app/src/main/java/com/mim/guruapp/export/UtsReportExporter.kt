@@ -25,6 +25,7 @@ import com.mim.guruapp.BuildConfig
 import com.mim.guruapp.data.model.UtsReportPayload
 import com.mim.guruapp.data.model.UtsReportSubject
 import com.mim.guruapp.data.remote.SupabaseRequestAuth
+import com.mim.guruapp.data.remote.SupabaseStorageSigner
 import com.mim.guruapp.data.remote.applySupabaseRequestHeaders
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -103,7 +104,7 @@ object UtsReportExporter {
     } finally {
       connection.disconnect()
     }
-    "${BuildConfig.SUPABASE_URL}/storage/v1/object/public/$BucketName/$storagePath"
+    SupabaseStorageSigner.createSignedUrl(BucketName, storagePath)
   }
 
   fun sharePdfToWhatsApp(

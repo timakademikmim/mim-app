@@ -20,7 +20,8 @@ data class AdminEmployee(
   val address: String,
   val active: Boolean,
   val authLinked: Boolean = false,
-  val mustChangePassword: Boolean = false
+  val mustChangePassword: Boolean = false,
+  val passwordResetRequestedAt: String = ""
 )
 
 sealed interface AdminEmployeeListResult {
@@ -67,6 +68,21 @@ class AdminKaryawanRemoteDataSource {
     if (normalizedId.isBlank() || normalizedName.isBlank() || normalizedRole.isBlank()) {
       return@withContext AdminEmployeeSaveResult.Error("ID Karyawan, nama, dan role wajib diisi.")
     }
+    if (newPassword.isNotBlank()) {
+      if (newPassword.length < 12) {
+        return@withContext AdminEmployeeSaveResult.Error("Password baru minimal 12 karakter.")
+      }
+      if (
+        newPassword.none(Char::isLowerCase) ||
+        newPassword.none(Char::isUpperCase) ||
+        newPassword.none(Char::isDigit) ||
+        newPassword.none { !it.isLetterOrDigit() }
+      ) {
+        return@withContext AdminEmployeeSaveResult.Error(
+          "Password harus memuat huruf besar, huruf kecil, angka, dan simbol."
+        )
+      }
+    }
 
     try {
       val updateResponse = postAction(
@@ -100,16 +116,8 @@ class AdminKaryawanRemoteDataSource {
           put("employee_id", employee.rowId)
           put("password", newPassword)
         }
-        try {
-          postAction(passwordPayload)
-          saved = saved.copy(authLinked = true, mustChangePassword = true)
-        } catch (error: TenantAdminHttpException) {
-          if (error.statusCode != HttpURLConnection.HTTP_CONFLICT) throw error
-          passwordPayload.put("action", "migrate_auth")
-          val migrationResponse = postAction(passwordPayload)
-          saved = parseEmployee(migrationResponse.optJSONObject("employee"))
-            ?: saved.copy(authLinked = true, mustChangePassword = true)
-        }
+        postAction(passwordPayload)
+        saved = saved.copy(authLinked = true, mustChangePassword = true)
       }
 
       AdminEmployeeSaveResult.Success(saved.copy(password = ""))
@@ -153,7 +161,8 @@ class AdminKaryawanRemoteDataSource {
       address = item.optCleanString("alamat"),
       active = item.optBooleanFlexible("aktif"),
       authLinked = item.optCleanString("auth_user_id").isNotBlank(),
-      mustChangePassword = item.optBooleanFlexible("must_change_password")
+      mustChangePassword = item.optBooleanFlexible("must_change_password"),
+      passwordResetRequestedAt = item.optCleanString("password_reset_requested_at")
     )
   }
 

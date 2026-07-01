@@ -65,6 +65,7 @@ import com.mim.guruapp.ui.i18n.LocalAppLanguage
 import com.mim.guruapp.ui.i18n.t
 import com.mim.guruapp.ui.screens.GuruHomeScreen
 import com.mim.guruapp.ui.screens.LoginScreen
+import com.mim.guruapp.ui.screens.MfaChallengeScreen
 import com.mim.guruapp.ui.screens.RolePickerScreen
 import com.mim.guruapp.ui.screens.WelcomeScreen
 import com.mim.guruapp.ui.theme.AppBackground
@@ -77,6 +78,9 @@ fun GuruAppRoot(
   onTeacherNameChange: (String) -> Unit,
   onPasswordChange: (String) -> Unit,
   onLoginClick: () -> Unit,
+  onForgotPassword: suspend () -> ProfileSaveOutcome,
+  onVerifyMfa: suspend (String) -> ProfileSaveOutcome,
+  onCancelMfa: () -> Unit,
   onUseDemoAccount: () -> Unit,
   onSelectActiveRole: (String) -> Unit,
   onOpenRolePicker: () -> Unit,
@@ -130,6 +134,7 @@ fun GuruAppRoot(
   onPromoteAdminSantri: suspend (AdminSantri) -> AdminSantriSaveResult,
   onGraduateAdminSantri: suspend (AdminSantri) -> AdminSantriSaveResult,
   onSaveProfile: suspend (GuruProfile) -> ProfileSaveOutcome,
+  onChangePassword: suspend (String, String) -> ProfileSaveOutcome,
   onSaveSantri: suspend (WaliSantriProfile) -> SantriSaveOutcome,
   onSaveMonthlyReport: suspend (MonthlyReportItem) -> MonthlyReportSaveOutcome,
   onSaveMonthlyExtracurricularReports: suspend (List<MonthlyExtracurricularReport>) -> MonthlyExtracurricularSaveOutcome,
@@ -173,7 +178,15 @@ fun GuruAppRoot(
           onTeacherNameChange = onTeacherNameChange,
           onPasswordChange = onPasswordChange,
           onLoginClick = onLoginClick,
+          onForgotPassword = onForgotPassword,
           onUseDemoAccount = onUseDemoAccount
+        )
+
+        GuruDestination.Mfa -> MfaChallengeScreen(
+          errorMessage = t(state.loginError),
+          isBusy = state.isBusy,
+          onVerify = onVerifyMfa,
+          onCancel = onCancelMfa
         )
 
         GuruDestination.RolePicker -> RolePickerScreen(
@@ -258,6 +271,7 @@ fun GuruAppRoot(
               onPromoteAdminSantri = onPromoteAdminSantri,
               onGraduateAdminSantri = onGraduateAdminSantri,
               onSaveProfile = onSaveProfile,
+              onChangePassword = onChangePassword,
               onSaveSantri = onSaveSantri,
               onSaveMonthlyReport = onSaveMonthlyReport,
               onSaveMonthlyExtracurricularReports = onSaveMonthlyExtracurricularReports,

@@ -31,19 +31,27 @@
       <p class="login-subtitle">Silakan login untuk melanjutkan ke sistem.</p>
 
       <h2>Login</h2>
+      <label for="tenant_id">Unit Sekolah</label>
+      <select id="tenant_id" disabled>
+        <option value="">Memuat unit sekolah...</option>
+      </select>
+
       <label for="id_karyawan">ID Karyawan</label>
       <input type="text" id="id_karyawan" placeholder="Masukkan ID Karyawan" autocomplete="username">
 
       <label for="password">Password</label>
       <input type="password" id="password" placeholder="Masukkan Password" autocomplete="current-password">
 
-      <button onclick="login()">Masuk</button>
+      <button id="login-button" onclick="login()">Masuk</button>
+      <button type="button" onclick="requestPasswordReset()" style="margin-top:8px;background:transparent;color:#2563eb;box-shadow:none;">Lupa password?</button>
       <p id="error"></p>
     </div>
   </div>
 
   <!-- Supabase -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="login.js?v=20260328-chat-notif-coldstart-01"></script>
+  <script src="shared/app-utils.js?v=20260701-tenant-storage-01"></script>
+  <script src="shared/supabase-config.js?v=20260701-tenant-storage-01"></script>
+  <script src="login.js?v=20260701-tenant-storage-01"></script>
 </body>
 </html>
