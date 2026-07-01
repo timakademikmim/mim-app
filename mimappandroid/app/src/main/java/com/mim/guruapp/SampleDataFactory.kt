@@ -139,11 +139,7 @@ object SampleDataFactory {
       teacherRole = "Guru Mapel",
       greeting = "Selamat datang kembali. Data lokal siap dipakai walau koneksi belum stabil.",
       profile = GuruProfile(
-        name = teacherName,
-        address = "Kompleks Markaz Imam Malik, Makassar",
-        username = "khaerurrahmat",
-        password = "rahasia123",
-        phoneNumber = "81234567890"
+        name = teacherName
       ),
       subjects = listOf(
         SubjectOverview(

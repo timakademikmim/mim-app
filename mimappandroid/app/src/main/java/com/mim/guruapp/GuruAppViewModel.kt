@@ -2887,14 +2887,20 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     session: SessionSnapshot,
     remoteProfile: GuruRemoteProfile? = null
   ): DashboardPayload {
-    val baseProfile = remoteProfile?.toGuruProfile(fallbackTeacherId = session.teacherId) ?: profile
+    val cachedProfile = if (session.usesSupabaseAuth && profile.password.isNotBlank()) {
+      profile.copy(address = "", password = "", phoneNumber = "")
+    } else {
+      profile.copy(password = "")
+    }
+    val baseProfile = remoteProfile?.toGuruProfile(fallbackTeacherId = session.teacherId) ?: cachedProfile
     val resolvedName = baseProfile.name.ifBlank { teacherName.ifBlank { session.teacherName } }
     val resolvedUsername = baseProfile.username.ifBlank { session.teacherId }
     return copy(
       teacherName = resolvedName,
       profile = baseProfile.copy(
         name = resolvedName,
-        username = resolvedUsername
+        username = resolvedUsername,
+        password = ""
       )
     )
   }

@@ -33,16 +33,25 @@ class GuruProfileRemoteDataSource {
     teacherRowId: String,
     teacherKaryawanId: String
   ): GuruRemoteProfile? = withContext(Dispatchers.IO) {
-    if (SupabaseRequestAuth.isAuthenticated()) {
-      return@withContext runCatching {
+    val authenticated = SupabaseRequestAuth.isAuthenticated()
+    if (authenticated) {
+      val protectedProfile = runCatching {
         val response = postSelfProfile(JSONObject().put("action", "get"))
         parseProfile(response.optJSONObject("profile"))
       }.getOrNull()
+      if (protectedProfile != null) return@withContext protectedProfile
     }
-    val selectVariants = listOf(
-      "id,id_karyawan,nama,no_hp,alamat,password,foto_url",
-      "id,id_karyawan,nama,no_hp,alamat,password"
-    )
+    val selectVariants = if (authenticated) {
+      listOf(
+        "id,id_karyawan,nama,no_hp,alamat,foto_url",
+        "id,id_karyawan,nama,no_hp,alamat"
+      )
+    } else {
+      listOf(
+        "id,id_karyawan,nama,no_hp,alamat,password,foto_url",
+        "id,id_karyawan,nama,no_hp,alamat,password"
+      )
+    }
     for (select in selectVariants) {
       try {
         val requestUrl = buildSelectUrl(
@@ -214,14 +223,19 @@ class GuruProfileRemoteDataSource {
     item ?: return null
     return GuruRemoteProfile(
       teacherRowId = item.opt("id")?.toString().orEmpty().trim(),
-      teacherId = item.optString("id_karyawan").trim(),
-      name = item.optString("nama").trim(),
-      phoneNumber = item.optString("no_hp").trim(),
-      address = item.optString("alamat").trim(),
+      teacherId = item.optProfileString("id_karyawan"),
+      name = item.optProfileString("nama"),
+      phoneNumber = item.optProfileString("no_hp"),
+      address = item.optProfileString("alamat"),
       password = "",
-      avatarUrl = item.optString("foto_url").trim()
+      avatarUrl = item.optProfileString("foto_url")
     )
   }
+}
+
+private fun JSONObject.optProfileString(key: String): String {
+  val value = opt(key)
+  return if (value == null || value == JSONObject.NULL) "" else value.toString().trim()
 }
 
 private inline fun <T> HttpURLConnection.useProfileJsonObjectResponse(

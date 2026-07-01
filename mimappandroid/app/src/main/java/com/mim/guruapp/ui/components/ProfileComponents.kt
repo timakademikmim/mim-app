@@ -163,7 +163,7 @@ fun EditProfileScreen(
   var name by rememberSaveable(profile) { mutableStateOf(profile.name) }
   var address by rememberSaveable(profile) { mutableStateOf(profile.address) }
   var username by rememberSaveable(profile) { mutableStateOf(profile.username) }
-  var password by rememberSaveable(profile) { mutableStateOf(profile.password) }
+  var password by rememberSaveable(profile) { mutableStateOf("") }
   var phoneNumber by rememberSaveable(profile) { mutableStateOf(profile.phoneNumber) }
   var showPassword by rememberSaveable { mutableStateOf(false) }
   var isSaving by rememberSaveable { mutableStateOf(false) }
@@ -181,7 +181,7 @@ fun EditProfileScreen(
     name = profile.name
     address = profile.address
     username = profile.username
-    password = profile.password
+    password = ""
     phoneNumber = profile.phoneNumber
     showPassword = false
     activeGuideTitle = null
@@ -196,7 +196,7 @@ fun EditProfileScreen(
     phoneNumber = phoneNumber,
     avatarUri = profile.avatarUri
   )
-  val isDirty = draft != profile
+  val isDirty = draft != profile.copy(password = "")
   val isInformationDetail = activeSection == ProfileSection.Information
   val avatarPickerMessage = t("Pemilih foto profil akan ditambahkan.")
 
@@ -283,6 +283,7 @@ fun EditProfileScreen(
                 scope.launch {
                   isSaving = true
                   val result = onSaveClick(draft)
+                  if (result.success) password = ""
                   isSaving = false
                   snackbarHostState.showSnackbar(result.message)
                 }
@@ -302,7 +303,7 @@ fun EditProfileScreen(
               )
               ProfileSectionCard(
                 title = t("Informasi Umum"),
-                description = t("Edit nama, alamat, username, password, dan nomor HP."),
+                description = t("Edit nama, alamat, username, nomor HP, atau ganti password."),
                 icon = Icons.Outlined.Person,
                 onClick = { activeSectionName = ProfileSection.Information.name }
               )
@@ -370,7 +371,7 @@ fun EditProfileScreen(
                   enabled = false
                 )
                 PasswordField(
-                  label = t("Password"),
+                  label = t("Password baru (opsional)"),
                   value = password,
                   onValueChange = { password = it },
                   visible = showPassword,

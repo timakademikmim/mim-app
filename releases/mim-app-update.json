@@ -1,17 +1,15 @@
 {
-  "versionCode": 1021,
-  "versionName": "0.1.21",
-  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.21/MIM.APP.apk",
-  "releaseNotes": "MIM App Android 0.1.21. Login kini menggunakan unit sekolah dan Supabase Auth yang lebih aman untuk mendukung multitenant.",
+  "versionCode": 1022,
+  "versionName": "0.1.22",
+  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.22/MIM.APP.apk",
+  "releaseNotes": "MIM App Android 0.1.22. Data profil pengguna kini selalu dibaca dari akun dan unit yang benar.",
   "features": [
-    "Layar login kini mewajibkan pemilihan unit sekolah sebelum masuk.",
-    "Akun pengguna kini memakai Supabase Auth dengan sesi yang dapat diperbarui otomatis.",
-    "Pengelolaan profil unit dan akun karyawan kini memakai layanan server yang terlindungi."
+    "Profil pengguna kini memiliki fallback pembacaan langsung yang tetap dilindungi RLS tenant saat layanan profil sedang bermasalah."
   ],
   "fixes": [
-    "Cache dan data lokal kini dipisahkan berdasarkan unit serta akun agar tidak tercampur pada perangkat bersama.",
-    "Token sesi disimpan terenkripsi dan seluruh permintaan data memakai JWT akun aktif.",
-    "Upload laporan dan media kini ditempatkan pada folder Storage khusus tenant."
+    "Alamat dan nomor telepon tidak lagi mengambil nilai contoh dari cache awal aplikasi.",
+    "Kolom password profil kini selalu kosong dan hanya digunakan untuk memasukkan password baru.",
+    "Nilai null dari server tidak lagi ditampilkan sebagai teks pada form profil."
   ],
   "mandatory": true
 }
