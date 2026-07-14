@@ -702,7 +702,7 @@ private fun AdminSantriAcademicActionDialog(
       Text(
         text = t(
           if (isPromote) {
-            "Aplikasi akan membuat data santri baru untuk tahun ajaran berikutnya, lalu menutup data kelas lama sebagai riwayat. Nilai dan absensi lama tetap tersimpan di kelas lama."
+            "Aplikasi akan memindahkan ${student.name.ifBlank { "santri" }} ke kelas tahun ajaran berikutnya tanpa membuat data ganda. Nilai, absensi, dan laporan sebelumnya tetap tersimpan sebagai riwayat."
           } else {
             "Aplikasi akan menandai ${student.name.ifBlank { "santri" }} sebagai lulus dan tidak aktif. Data nilai, absensi, dan laporan sebelumnya tetap disimpan."
           }

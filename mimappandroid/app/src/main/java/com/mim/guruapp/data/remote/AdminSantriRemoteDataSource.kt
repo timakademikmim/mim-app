@@ -11,6 +11,7 @@ import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.URLEncoder
+import java.time.LocalDate
 
 data class AdminSantriSnapshot(
   val students: List<AdminSantri>,
@@ -295,59 +296,68 @@ class AdminSantriRemoteDataSource {
             append(encodeValue(nisn))
             append("&kelas.tahun_ajaran_id=eq.")
             append(encodeValue(nextYearId))
+            append("&id=neq.")
+            append(encodeValue(rowId))
             append("&limit=1")
           }
         )
         if (existingNextYear.isNotEmpty()) {
-          return@withContext AdminSantriSaveResult.Error("Data santri untuk tahun ajaran berikutnya sudah ada.")
+          return@withContext AdminSantriSaveResult.Error("Data santri untuk tahun ajaran berikutnya sudah ada. Gabungkan atau hapus duplikat lama dulu sebelum naik kelas.")
         }
       }
 
-      val insertPayload = linkedMapOf<String, Any?>(
-        "nama" to student.name.trim(),
-        "nisn" to nisn,
-        "jenis_kelamin" to student.gender.trim(),
-        "kelas_id" to targetClass.id,
-        "aktif" to true,
-        "status" to "aktif"
+      val todayIso = LocalDate.now().toString()
+      val oldHistorySaved = upsertClassHistoryRow(
+        linkedMapOf(
+          "santri_id" to rowId,
+          "kelas_id" to currentClass.id,
+          "tahun_ajaran_id" to currentClass.academicYearId,
+          "status" to "naik_kelas",
+          "tanggal_selesai" to todayIso
+        )
       )
-      val insertedRow = try {
-        insertSantriRow(insertPayload)
-      } catch (error: Exception) {
-        val message = error.message.orEmpty()
-        if (message.isMissingColumnMessage("status")) {
-          insertSantriRow(insertPayload - "status")
-        } else {
-          throw error
-        }
+
+      val savedFields = patchSantriFields(
+        rowId,
+        linkedMapOf(
+          "kelas_id" to targetClass.id,
+          "status" to "aktif",
+          "aktif" to true
+        )
+      )
+      if (!savedFields.containsKey("kelas_id")) {
+        return@withContext AdminSantriSaveResult.Error("Gagal memindahkan santri ke kelas baru. Data santri tidak digandakan.")
       }
-      val insertedId = insertedRow.optCleanString("id")
-      if (insertedId.isBlank()) {
-        return@withContext AdminSantriSaveResult.Error("Data kelas baru berhasil dibuat, tetapi ID santri baru tidak terbaca.")
-      }
+
+      val newHistorySaved = upsertClassHistoryRow(
+        linkedMapOf(
+          "santri_id" to rowId,
+          "kelas_id" to targetClass.id,
+          "tahun_ajaran_id" to targetClass.academicYearId,
+          "status" to "aktif",
+          "tanggal_mulai" to todayIso,
+          "tanggal_selesai" to null
+        )
+      )
 
       val promotedStudent = student.copy(
-        rowId = insertedId,
-        historyRowIds = (student.historyRowIds + insertedId).filter { it.isNotBlank() }.distinct(),
+        rowId = rowId,
+        historyRowIds = student.historyRowIds.ifEmpty { listOf(rowId) },
         classId = targetClass.id,
         className = targetClass.name,
         classLevel = targetClass.level,
         academicYearId = targetClass.academicYearId,
         academicYearName = yearNameById[targetClass.academicYearId].orEmpty(),
-        status = "aktif",
-        active = true
+        status = savedFields.cleanString("status", "aktif"),
+        active = savedFields.cleanBoolean("aktif", true)
       )
 
-      val carryResult = updateSantri(promotedStudent)
-      val carriedStudent = if (carryResult is AdminSantriSaveResult.Success) carryResult.student else promotedStudent
-
-      val oldFields = patchSantriFields(rowId, linkedMapOf("aktif" to false, "status" to "naik_kelas"))
-      if (!oldFields.containsKey("aktif") || !oldFields.containsKey("status")) {
-        tryDeleteSantriRow(insertedId)
-        return@withContext AdminSantriSaveResult.Error("Gagal menutup data kelas lama. Data kelas baru dibatalkan agar riwayat tidak ganda.")
+      val message = if (oldHistorySaved && newHistorySaved) {
+        "Santri berhasil dinaikkan ke ${targetClass.name} tanpa membuat data ganda."
+      } else {
+        "Santri berhasil dinaikkan ke ${targetClass.name} tanpa membuat data ganda. Riwayat kelas belum tercatat karena tabel riwayat belum tersedia atau belum menerima data."
       }
-
-      AdminSantriSaveResult.Success(carriedStudent, "Santri berhasil dinaikkan ke ${targetClass.name}.")
+      AdminSantriSaveResult.Success(promotedStudent, message)
     } catch (_: SocketTimeoutException) {
       AdminSantriSaveResult.Error("Koneksi ke server terlalu lama. Coba lagi.")
     } catch (error: Exception) {
@@ -400,25 +410,6 @@ class AdminSantriRemoteDataSource {
     }
   }
 
-  private fun insertSantriRow(fields: Map<String, Any?>): JSONObject {
-    val requestUrl = "${BuildConfig.SUPABASE_URL}/rest/v1/santri?select=*"
-    val connection = createConnection(requestUrl, method = "POST").apply {
-      doOutput = true
-      setRequestProperty("Content-Type", "application/json")
-      setRequestProperty("Prefer", "return=representation")
-    }
-    val payload = JSONObject().apply {
-      fields.forEach { (field, value) -> putPayloadValue(field, value) }
-    }
-    connection.outputStream.use { stream ->
-      stream.write(payload.toString().toByteArray(Charsets.UTF_8))
-      stream.flush()
-    }
-    return connection.useAdminSantriJsonArrayResponse { rows ->
-      rows.optJSONObject(0) ?: JSONObject()
-    }
-  }
-
   private fun patchSantriFields(rowId: String, fields: Map<String, Any?>): Map<String, Any?> {
     val savedFields = linkedMapOf<String, Any?>()
     fields.forEach { (field, value) ->
@@ -446,12 +437,24 @@ class AdminSantriRemoteDataSource {
     return savedFields
   }
 
-  private fun tryDeleteSantriRow(rowId: String) {
-    if (rowId.isBlank()) return
-    runCatching {
-      val requestUrl = "${BuildConfig.SUPABASE_URL}/rest/v1/santri?id=eq.${encodeValue(rowId)}"
-      createConnection(requestUrl, method = "DELETE").useAdminSantriJsonArrayResponse { Unit }
-    }
+  private fun upsertClassHistoryRow(fields: Map<String, Any?>): Boolean {
+    return runCatching {
+      val requestUrl = "${BuildConfig.SUPABASE_URL}/rest/v1/riwayat_kelas_santri" +
+        "?on_conflict=santri_id,kelas_id,tahun_ajaran_id&select=id"
+      val connection = createConnection(requestUrl, method = "POST").apply {
+        doOutput = true
+        setRequestProperty("Content-Type", "application/json")
+        setRequestProperty("Prefer", "resolution=merge-duplicates,return=representation")
+      }
+      val payload = JSONObject().apply {
+        fields.forEach { (field, value) -> putPayloadValue(field, value) }
+      }
+      connection.outputStream.use { stream ->
+        stream.write(payload.toString().toByteArray(Charsets.UTF_8))
+        stream.flush()
+      }
+      connection.useAdminSantriJsonArrayResponse { rows -> rows.length() > 0 }
+    }.getOrDefault(false)
   }
 
   private fun createConnection(requestUrl: String, method: String = "GET"): HttpURLConnection {

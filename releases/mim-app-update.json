@@ -1,17 +1,17 @@
 {
-  "versionCode": 1029,
-  "versionName": "0.1.29",
-  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.29/MIM.APP.apk",
-  "releaseNotes": "MIM App Android 0.1.29. Login Google memakai Google Sign-In native.",
+  "versionCode": 1030,
+  "versionName": "0.1.30",
+  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.30/MIM.APP.apk",
+  "releaseNotes": "MIM App Android 0.1.30. Naik kelas santri kini memindahkan data utama tanpa menggandakan santri.",
   "features": [
-    "Tombol Masuk dengan Google kini membuka pemilih akun native Android.",
-    "Aplikasi mengirim ID token Google langsung ke Supabase untuk membuat sesi login.",
-    "Alur tautkan Google tetap memakai flow browser yang sudah berhasil."
+    "Admin Santri kini memindahkan santri ke kelas tahun ajaran berikutnya dengan ID santri yang sama.",
+    "Riwayat kelas santri dicatat di server agar perjalanan kelas lama tetap tersimpan.",
+    "Dialog naik kelas diperjelas agar admin tahu data santri tidak digandakan."
   ],
   "fixes": [
-    "Memperbaiki login Google yang tertahan di halaman accounts.google.com.",
-    "Menambahkan pesan kode error Google jika konfigurasi OAuth native belum lengkap.",
-    "Login Google tidak lagi bergantung pada redirect browser untuk masuk ke aplikasi."
+    "Mencegah santri terduplikasi saat proses naik kelas.",
+    "Nilai, absensi, dan laporan lama tetap tersambung ke santri yang sama setelah naik kelas.",
+    "Menambahkan pengamanan agar naik kelas ditolak jika duplikat tahun ajaran berikutnya sudah terlanjur ada."
   ],
   "mandatory": true
 }
