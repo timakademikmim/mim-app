@@ -1,17 +1,17 @@
 {
-  "versionCode": 1030,
-  "versionName": "0.1.30",
-  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.30/MIM.APP.apk",
-  "releaseNotes": "MIM App Android 0.1.30. Naik kelas santri kini memindahkan data utama tanpa menggandakan santri.",
+  "versionCode": 1031,
+  "versionName": "0.1.31",
+  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.31/MIM.APP.apk",
+  "releaseNotes": "MIM App Android 0.1.31. Admin kini bisa memilih banyak santri dan menjalankan tindakan massal.",
   "features": [
-    "Admin Santri kini memindahkan santri ke kelas tahun ajaran berikutnya dengan ID santri yang sama.",
-    "Riwayat kelas santri dicatat di server agar perjalanan kelas lama tetap tersimpan.",
-    "Dialog naik kelas diperjelas agar admin tahu data santri tidak digandakan."
+    "Daftar santri admin kini mendukung pilih banyak santri langsung dari card.",
+    "Saat santri dipilih, muncul bar tindakan untuk naik kelas atau meluluskan secara massal.",
+    "Aksi massal menampilkan dialog konfirmasi dan memproses santri satu per satu."
   ],
   "fixes": [
-    "Mencegah santri terduplikasi saat proses naik kelas.",
-    "Nilai, absensi, dan laporan lama tetap tersambung ke santri yang sama setelah naik kelas.",
-    "Menambahkan pengamanan agar naik kelas ditolak jika duplikat tahun ajaran berikutnya sudah terlanjur ada."
+    "Santri yang status akademiknya sudah terkunci tidak bisa ikut dipilih untuk aksi massal.",
+    "Santri yang gagal diproses tetap terseleksi agar admin mudah mengecek dan mengulang.",
+    "Update versi ini tidak wajib agar build dari Android Studio tetap bisa dipakai untuk testing lokal."
   ],
-  "mandatory": true
+  "mandatory": false
 }

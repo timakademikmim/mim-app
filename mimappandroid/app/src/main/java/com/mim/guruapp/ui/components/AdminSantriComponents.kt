@@ -30,11 +30,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -105,6 +107,9 @@ fun AdminSantriScreen(
   var filterStatus by rememberSaveable { mutableStateOf(AdminSantriAllFilterKey) }
   var sortMode by rememberSaveable { mutableStateOf(AdminSantriSortMode.Name.name) }
   var isFilterSortDialogOpen by rememberSaveable { mutableStateOf(false) }
+  var selectedStudentKeys by remember { mutableStateOf<List<String>>(emptyList()) }
+  var pendingBulkAction by remember { mutableStateOf<AdminSantriAcademicAction?>(null) }
+  var isBulkActionRunning by remember { mutableStateOf(false) }
   var activeYearName by remember { mutableStateOf("") }
   var noticeMessage by remember { mutableStateOf("") }
   var isLoading by remember { mutableStateOf(false) }
@@ -124,6 +129,9 @@ fun AdminSantriScreen(
           classOptions = result.snapshot.classes
           activeYearName = result.snapshot.activeAcademicYearName
           noticeMessage = result.snapshot.statusMessage
+          selectedStudentKeys = selectedStudentKeys.filter { selectedKey ->
+            result.snapshot.students.any { it.selectionKey() == selectedKey && !it.isAcademicActionLocked() }
+          }
           selectedStudent = selectedStudent?.let { current ->
             result.snapshot.students.firstOrNull { it.identityKey == current.identityKey } ?: current
           }
@@ -208,6 +216,21 @@ fun AdminSantriScreen(
         }
       )
   }
+  val selectedKeySet = selectedStudentKeys.toSet()
+  val selectedStudents = remember(students, selectedStudentKeys) {
+    val keys = selectedStudentKeys.toSet()
+    students.filter { it.selectionKey() in keys && !it.isAcademicActionLocked() }
+  }
+
+  fun toggleStudentSelection(student: AdminSantri) {
+    if (student.isAcademicActionLocked()) return
+    val key = student.selectionKey()
+    selectedStudentKeys = if (key in selectedStudentKeys) {
+      selectedStudentKeys.filterNot { it == key }
+    } else {
+      (selectedStudentKeys + key).distinct()
+    }
+  }
 
   if (isFilterSortDialogOpen) {
     AdminSantriFilterSortDialog(
@@ -226,6 +249,68 @@ fun AdminSantriScreen(
       onDismiss = { isFilterSortDialogOpen = false }
     )
   }
+  pendingBulkAction?.let { action ->
+    AdminSantriBulkActionDialog(
+      action = action,
+      students = selectedStudents,
+      isSaving = isBulkActionRunning,
+      onConfirm = {
+        scope.launch {
+          val actionStudents = selectedStudents
+          if (actionStudents.isEmpty()) {
+            pendingBulkAction = null
+            selectedStudentKeys = emptyList()
+            snackbarHostState.showSnackbar("Tidak ada santri yang bisa diproses.")
+            return@launch
+          }
+
+          isBulkActionRunning = true
+          var successCount = 0
+          val failedKeys = mutableListOf<String>()
+          val failures = mutableListOf<String>()
+          actionStudents.forEach { student ->
+            val result = when (action) {
+              AdminSantriAcademicAction.Promote -> onPromoteSantri(student)
+              AdminSantriAcademicAction.Graduate -> onGraduateSantri(student)
+            }
+            when (result) {
+              is AdminSantriSaveResult.Success -> {
+                successCount += 1
+                students = students.map { current ->
+                  if (current.identityKey == result.student.identityKey) result.student else current
+                }
+              }
+              is AdminSantriSaveResult.Error -> {
+                failedKeys += student.selectionKey()
+                failures += "${student.name.ifBlank { "Santri" }}: ${result.message}"
+              }
+            }
+          }
+          selectedStudentKeys = failedKeys
+          isBulkActionRunning = false
+          pendingBulkAction = null
+
+          val actionLabel = if (action == AdminSantriAcademicAction.Promote) "naik kelas" else "lulus"
+          val failureText = failures.take(2).joinToString("; ")
+          val message = buildString {
+            append("$successCount santri berhasil diproses $actionLabel.")
+            if (failures.isNotEmpty()) {
+              append(" ${failures.size} gagal")
+              if (failureText.isNotBlank()) append(": $failureText")
+            }
+          }
+          snackbarHostState.showSnackbar(message)
+        }
+      },
+      onDismiss = {
+        if (!isBulkActionRunning) pendingBulkAction = null
+      }
+    )
+  }
+
+  BackHandler(enabled = selectedStudentKeys.isNotEmpty() && !isBulkActionRunning) {
+    selectedStudentKeys = emptyList()
+  }
 
   Scaffold(
     modifier = modifier
@@ -243,10 +328,14 @@ fun AdminSantriScreen(
       verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
       AdminSantriTopBar(
-        title = "Santri",
+        title = if (selectedStudentKeys.isEmpty()) "Santri" else "${selectedStudentKeys.size} dipilih",
         isDetail = false,
+        actionIcon = if (selectedStudentKeys.isEmpty()) null else Icons.Outlined.Close,
+        actionContentDescription = "Batal pilih",
+        actionEnabled = !isBulkActionRunning,
         onMenuClick = onMenuClick,
-        onBackClick = {}
+        onBackClick = {},
+        onActionClick = { selectedStudentKeys = emptyList() }
       )
       AdminSantriSearchBar(
         value = query,
@@ -258,6 +347,22 @@ fun AdminSantriScreen(
         resultCount = filteredStudents.size,
         onClick = { isFilterSortDialogOpen = true }
       )
+      if (selectedStudentKeys.isNotEmpty()) {
+        val selectableVisibleStudents = filteredStudents.filterNot { it.isAcademicActionLocked() }
+        AdminSantriBulkActionBar(
+          selectedCount = selectedStudentKeys.size,
+          visibleCount = selectableVisibleStudents.size,
+          allVisibleSelected = selectableVisibleStudents.isNotEmpty() &&
+            selectableVisibleStudents.all { it.selectionKey() in selectedKeySet },
+          isSaving = isBulkActionRunning,
+          onSelectVisible = {
+            val visibleKeys = selectableVisibleStudents.map { it.selectionKey() }
+            selectedStudentKeys = (selectedStudentKeys + visibleKeys).distinct()
+          },
+          onClearSelection = { selectedStudentKeys = emptyList() },
+          onActionSelected = { action -> pendingBulkAction = action }
+        )
+      }
       PullToRefreshBox(
         isRefreshing = isRefreshing || isLoading,
         onRefresh = { loadStudents(showGlobalRefresh = true) },
@@ -307,7 +412,15 @@ fun AdminSantriScreen(
             items(filteredStudents, key = { it.identityKey.ifBlank { it.rowId } }) { student ->
               AdminSantriCard(
                 student = student,
-                onClick = { selectedStudent = student }
+                selected = student.selectionKey() in selectedKeySet,
+                onClick = {
+                  if (selectedStudentKeys.isEmpty()) {
+                    selectedStudent = student
+                  } else {
+                    toggleStudentSelection(student)
+                  }
+                },
+                onSelectionToggle = { toggleStudentSelection(student) }
               )
             }
           }
@@ -730,6 +843,72 @@ private fun AdminSantriAcademicActionDialog(
 }
 
 @Composable
+private fun AdminSantriBulkActionDialog(
+  action: AdminSantriAcademicAction,
+  students: List<AdminSantri>,
+  isSaving: Boolean,
+  onConfirm: () -> Unit,
+  onDismiss: () -> Unit
+) {
+  val isPromote = action == AdminSantriAcademicAction.Promote
+  val actionTitle = if (isPromote) "Naikkan kelas santri terpilih?" else "Luluskan santri terpilih?"
+  val previewNames = students.take(3).joinToString(", ") { it.name.ifBlank { "Santri" } }
+  val extraCount = students.size - 3
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = {
+      Text(
+        text = t(actionTitle),
+        fontWeight = FontWeight.ExtraBold
+      )
+    },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+          text = t(
+            if (isPromote) {
+              "Aplikasi akan memproses ${students.size} santri satu per satu ke kelas tahun ajaran berikutnya tanpa membuat data ganda."
+            } else {
+              "Aplikasi akan menandai ${students.size} santri sebagai lulus dan tidak aktif."
+            }
+          ),
+          color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface
+        )
+        if (previewNames.isNotBlank()) {
+          Text(
+            text = t(
+              buildString {
+                append("Terpilih: ")
+                append(previewNames)
+                if (extraCount > 0) append(", dan $extraCount lainnya")
+              }
+            ),
+            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+            color = SubtleInk
+          )
+        }
+      }
+    },
+    confirmButton = {
+      Button(
+        onClick = onConfirm,
+        enabled = !isSaving && students.isNotEmpty()
+      ) {
+        Text(t(if (isSaving) "Memproses..." else "Lanjut"))
+      }
+    },
+    dismissButton = {
+      TextButton(
+        onClick = onDismiss,
+        enabled = !isSaving
+      ) {
+        Text(t("Batal"))
+      }
+    }
+  )
+}
+
+@Composable
 private fun AdminSantriTopBar(
   title: String,
   isDetail: Boolean,
@@ -821,6 +1000,85 @@ private fun AdminSantriSearchBar(
     label = { Text(t("Cari santri")) },
     placeholder = { Text(t("Nama, NISN, kelas, atau status")) }
   )
+}
+
+@Composable
+private fun AdminSantriBulkActionBar(
+  selectedCount: Int,
+  visibleCount: Int,
+  allVisibleSelected: Boolean,
+  isSaving: Boolean,
+  onSelectVisible: () -> Unit,
+  onClearSelection: () -> Unit,
+  onActionSelected: (AdminSantriAcademicAction) -> Unit
+) {
+  var menuExpanded by remember { mutableStateOf(false) }
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .shadow(8.dp, RoundedCornerShape(18.dp), ambientColor = Color(0x120F172A), spotColor = Color(0x120F172A))
+      .background(CardBackground.copy(alpha = 0.94f), RoundedCornerShape(18.dp))
+      .border(1.dp, PrimaryBlue.copy(alpha = 0.22f), RoundedCornerShape(18.dp))
+      .padding(horizontal = 12.dp, vertical = 10.dp),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(8.dp)
+  ) {
+    Column(modifier = Modifier.weight(1f)) {
+      Text(
+        text = t("$selectedCount santri dipilih"),
+        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+        color = PrimaryBlueDark,
+        fontWeight = FontWeight.ExtraBold
+      )
+      Text(
+        text = t(if (allVisibleSelected) "Semua hasil tampil sudah dipilih" else "$visibleCount santri bisa dipilih di hasil tampil"),
+        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+        color = SubtleInk,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+      )
+    }
+    TextButton(
+      onClick = onSelectVisible,
+      enabled = !isSaving && !allVisibleSelected && visibleCount > 0
+    ) {
+      Text(t("Pilih semua"))
+    }
+    TextButton(
+      onClick = onClearSelection,
+      enabled = !isSaving
+    ) {
+      Text(t("Batal"))
+    }
+    Box {
+      Button(
+        onClick = { menuExpanded = true },
+        enabled = !isSaving && selectedCount > 0,
+        shape = RoundedCornerShape(14.dp)
+      ) {
+        Text(t(if (isSaving) "Memproses..." else "Tindakan"))
+      }
+      DropdownMenu(
+        expanded = menuExpanded,
+        onDismissRequest = { menuExpanded = false }
+      ) {
+        DropdownMenuItem(
+          text = { Text(t("Naik Kelas")) },
+          onClick = {
+            menuExpanded = false
+            onActionSelected(AdminSantriAcademicAction.Promote)
+          }
+        )
+        DropdownMenuItem(
+          text = { Text(t("Luluskan")) },
+          onClick = {
+            menuExpanded = false
+            onActionSelected(AdminSantriAcademicAction.Graduate)
+          }
+        )
+      }
+    }
+  }
 }
 
 @Composable
@@ -982,15 +1240,21 @@ private fun AdminSantriChoiceRow(
 @Composable
 private fun AdminSantriCard(
   student: AdminSantri,
-  onClick: () -> Unit
+  selected: Boolean,
+  onClick: () -> Unit,
+  onSelectionToggle: () -> Unit
 ) {
+  val selectable = !student.isAcademicActionLocked()
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .shadow(10.dp, RoundedCornerShape(18.dp), ambientColor = Color(0x120F172A), spotColor = Color(0x120F172A))
       .clip(RoundedCornerShape(18.dp))
       .background(Brush.linearGradient(listOf(CardGradientStart, CardGradientEnd)))
-      .border(BorderStroke(1.dp, CardBorder), RoundedCornerShape(18.dp))
+      .border(
+        BorderStroke(if (selected) 2.dp else 1.dp, if (selected) PrimaryBlue else CardBorder),
+        RoundedCornerShape(18.dp)
+      )
       .clickable(onClick = onClick)
       .padding(14.dp),
     verticalAlignment = Alignment.CenterVertically
@@ -1046,6 +1310,14 @@ private fun AdminSantriCard(
         modifier = Modifier.padding(top = 3.dp)
       )
     }
+    Checkbox(
+      checked = selected,
+      onCheckedChange = {
+        onSelectionToggle()
+      },
+      enabled = selectable,
+      modifier = Modifier.padding(start = 8.dp)
+    )
   }
 }
 
@@ -1267,6 +1539,14 @@ private fun AdminSantri.initials(): String {
 
 private fun AdminSantri.displayStatus(): String {
   return status.displayStatusLabel().ifBlank { if (active) "Aktif" else "Nonaktif" }
+}
+
+private fun AdminSantri.selectionKey(): String {
+  return identityKey.ifBlank { rowId }
+}
+
+private fun AdminSantri.isAcademicActionLocked(): Boolean {
+  return status.normalizedStatusKey() in AdminSantriLockedStatusKeys
 }
 
 private fun String.displayStatusLabel(): String {
