@@ -83,8 +83,8 @@ sealed interface GuruGoogleOAuthUrlResult {
 }
 
 class GuruAuthRemoteDataSource {
-  fun buildGoogleLoginUrl(flow: String, state: String): String {
-    val redirectUrl = buildGoogleRedirectUrl(flow, state)
+  fun buildGoogleLoginUrl(): String {
+    val redirectUrl = buildGoogleRedirectUrl()
     return buildString {
       append(BuildConfig.SUPABASE_URL.trimEnd('/'))
       append("/auth/v1/authorize?provider=google")
@@ -94,15 +94,13 @@ class GuruAuthRemoteDataSource {
   }
 
   suspend fun buildGoogleLinkUrl(
-    accessToken: String,
-    flow: String,
-    state: String
+    accessToken: String
   ): GuruGoogleOAuthUrlResult = withContext(Dispatchers.IO) {
     if (accessToken.isBlank()) {
       return@withContext GuruGoogleOAuthUrlResult.Error("Sesi login tidak tersedia. Silakan masuk kembali.")
     }
     try {
-      val redirectUrl = buildGoogleRedirectUrl(flow, state)
+      val redirectUrl = buildGoogleRedirectUrl()
       val requestUrl = buildString {
         append(BuildConfig.SUPABASE_URL.trimEnd('/'))
         append("/auth/v1/user/identities/authorize?provider=google")
@@ -121,8 +119,13 @@ class GuruAuthRemoteDataSource {
       }
     } catch (_: SocketTimeoutException) {
       GuruGoogleOAuthUrlResult.Error("Koneksi ke server terlalu lama. Coba lagi.")
-    } catch (_: HttpResponseException) {
-      GuruGoogleOAuthUrlResult.Error("Tautkan Google belum dapat dimulai. Pastikan Google provider sudah aktif.")
+    } catch (error: HttpResponseException) {
+      GuruGoogleOAuthUrlResult.Error(
+        parseAuthErrorMessage(
+          error,
+          "Tautkan Google belum dapat dimulai. Pastikan Google provider sudah aktif dan redirect URL Android sudah diizinkan."
+        )
+      )
     } catch (_: Exception) {
       GuruGoogleOAuthUrlResult.Error("Tautkan Google belum dapat dibuka.")
     }
@@ -561,14 +564,8 @@ class GuruAuthRemoteDataSource {
     return URLEncoder.encode(value, Charsets.UTF_8.name())
   }
 
-  private fun buildGoogleRedirectUrl(flow: String, state: String): String {
-    return buildString {
-      append("com.mim.guruapp://auth/callback")
-      append("?flow=")
-      append(encodeValue(flow))
-      append("&state=")
-      append(encodeValue(state))
-    }
+  private fun buildGoogleRedirectUrl(): String {
+    return "com.mim.guruapp://auth/callback"
   }
 }
 
@@ -616,4 +613,17 @@ private fun JSONObject.optBooleanFlexible(key: String): Boolean {
   if (value == true || value == 1) return true
   val text = value?.toString().orEmpty().trim().lowercase()
   return text == "true" || text == "t" || text == "1" || text == "yes" || text == "aktif"
+}
+
+private fun parseAuthErrorMessage(error: HttpResponseException, fallback: String): String {
+  val raw = error.message.orEmpty().trim()
+  if (raw.isBlank()) return fallback
+  return runCatching {
+    val json = JSONObject(raw)
+    json.optCleanString("msg")
+      .ifBlank { json.optCleanString("message") }
+      .ifBlank { json.optCleanString("error_description") }
+      .ifBlank { json.optCleanString("error") }
+      .ifBlank { fallback }
+  }.getOrElse { raw.ifBlank { fallback } }
 }

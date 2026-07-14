@@ -235,7 +235,12 @@ fun EditProfileScreen(
     containerColor = Color.Transparent,
     contentWindowInsets = WindowInsets(0, 0, 0, 0),
     snackbarHost = {
-      SnackbarHost(hostState = snackbarHostState)
+      SnackbarHost(
+        hostState = snackbarHostState,
+        modifier = Modifier
+          .navigationBarsPadding()
+          .padding(bottom = 96.dp)
+      )
     }
   ) { innerPadding ->
     Box(

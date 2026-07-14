@@ -445,7 +445,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     pendingGoogleOAuthState = state
     pendingGoogleOAuthFlow = GOOGLE_FLOW_LOGIN
     uiState = uiState.copy(loginError = "")
-    openExternalUrl(authRemoteDataSource.buildGoogleLoginUrl(GOOGLE_FLOW_LOGIN, state))
+    openExternalUrl(authRemoteDataSource.buildGoogleLoginUrl())
   }
 
   suspend fun startGoogleLink(): ProfileSaveOutcome {
@@ -465,7 +465,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     pendingGoogleOAuthState = state
     pendingGoogleOAuthFlow = GOOGLE_FLOW_LINK
     uiState = uiState.copy(syncBanner = SyncBannerState("Membuka tautkan Google...", true))
-    return when (val result = authRemoteDataSource.buildGoogleLinkUrl(session.authAccessToken, GOOGLE_FLOW_LINK, state)) {
+    return when (val result = authRemoteDataSource.buildGoogleLinkUrl(session.authAccessToken)) {
       is GuruGoogleOAuthUrlResult.Success -> {
         if (openExternalUrl(result.url)) {
           uiState = uiState.copy(syncBanner = SyncBannerState("Lanjutkan tautkan akun di Google.", false))
@@ -2160,10 +2160,11 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     val uri = intent.data ?: return false
     if (uri.scheme != "com.mim.guruapp" || uri.host != "auth") return false
     if (!uri.path.orEmpty().contains("callback")) return false
-    val flow = uri.getQueryParameter("flow").orEmpty()
+    val flow = uri.getQueryParameter("flow").orEmpty().ifBlank { pendingGoogleOAuthFlow }
     if (flow != GOOGLE_FLOW_LOGIN && flow != GOOGLE_FLOW_LINK) return false
     val state = uri.getQueryParameter("state").orEmpty()
-    if (pendingGoogleOAuthState.isBlank() || state != pendingGoogleOAuthState || flow != pendingGoogleOAuthFlow) {
+    val stateMismatch = state.isNotBlank() && pendingGoogleOAuthState.isNotBlank() && state != pendingGoogleOAuthState
+    if (pendingGoogleOAuthFlow.isBlank() || flow != pendingGoogleOAuthFlow || stateMismatch) {
       uiState = uiState.copy(
         destination = if (uiState.session.isLoggedIn) uiState.destination else GuruDestination.Login,
         loginError = "Callback Google tidak valid. Coba ulangi login."

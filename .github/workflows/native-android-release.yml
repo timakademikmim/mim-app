@@ -122,16 +122,16 @@ jobs:
             "versionCode": ${MIM_VERSION_CODE},
             "versionName": "${MIM_VERSION_NAME}",
             "apkUrl": "${APK_URL}",
-            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Perbaikan tautkan akun Google.",
+            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Perbaikan redirect tautkan akun Google.",
             "features": [
-              "Login Android kini menyediakan tombol Masuk dengan Google.",
-              "Profil pengguna memiliki menu Akun Google untuk menautkan akun Google.",
-              "Tombol tautkan Google sekarang menampilkan proses dan pesan hasil langsung di halaman profil."
+              "Tautkan Google kini memakai redirect Android yang sama persis dengan konfigurasi Supabase.",
+              "Pesan error tautkan Google dibuat lebih jelas dan tidak tertutup navbar.",
+              "Alur login Google tetap memakai sesi dan role akun yang sudah aktif."
             ],
             "fixes": [
-              "Memperbaiki tombol Tautkan Google yang sebelumnya bisa tidak membuka halaman Google.",
-              "Sesi login diperbarui terlebih dahulu sebelum proses tautkan Google dimulai.",
-              "Endpoint link Google kini meminta URL OAuth tanpa redirect internal agar dapat dibuka oleh aplikasi."
+              "Memperbaiki redirect tautkan Google yang dapat ditolak saat URL callback memakai query tambahan.",
+              "Snackbar profil dinaikkan agar pesan dapat dibaca di atas bottom navbar.",
+              "Error dari Supabase Auth kini ditampilkan langsung agar konfigurasi Google mudah dicek."
             ],
             "mandatory": ${MANDATORY}
           }
