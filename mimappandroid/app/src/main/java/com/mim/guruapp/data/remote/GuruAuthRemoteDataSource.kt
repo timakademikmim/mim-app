@@ -108,6 +108,7 @@ class GuruAuthRemoteDataSource {
         append("/auth/v1/user/identities/authorize?provider=google")
         append("&redirect_to=")
         append(encodeValue(redirectUrl))
+        append("&skip_http_redirect=true")
       }
       val connection = createConnection(requestUrl, "GET", accessToken)
       connection.useJsonObjectResponse { json ->

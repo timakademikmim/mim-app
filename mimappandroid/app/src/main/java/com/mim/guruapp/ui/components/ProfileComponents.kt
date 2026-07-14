@@ -159,7 +159,7 @@ fun EditProfileScreen(
   onApplyThemeMode: (String) -> Unit,
   onSaveClick: suspend (GuruProfile) -> ProfileSaveOutcome,
   onChangePassword: suspend (String, String) -> ProfileSaveOutcome,
-  onLinkGoogleAccount: () -> Unit,
+  onLinkGoogleAccount: suspend () -> ProfileSaveOutcome,
   onStartInteractiveGuide: (String) -> Unit = {},
   openGuideRequest: Int = 0,
   openSettingsRequest: Int = 0,
@@ -427,7 +427,8 @@ fun EditProfileScreen(
               GoogleAccountPanel(
                 profile = profile,
                 onLinkGoogleAccount = onLinkGoogleAccount,
-                onRefresh = onRefresh
+                onRefresh = onRefresh,
+                snackbarHostState = snackbarHostState
               )
             }
           }
@@ -544,9 +545,12 @@ private fun PasswordSecurityPanel(
 @Composable
 private fun GoogleAccountPanel(
   profile: GuruProfile,
-  onLinkGoogleAccount: () -> Unit,
-  onRefresh: () -> Unit
+  onLinkGoogleAccount: suspend () -> ProfileSaveOutcome,
+  onRefresh: () -> Unit,
+  snackbarHostState: SnackbarHostState
 ) {
+  var isLinking by rememberSaveable { mutableStateOf(false) }
+  val scope = rememberCoroutineScope()
   Column(
     modifier = Modifier
       .fillMaxWidth()
@@ -575,11 +579,20 @@ private fun GoogleAccountPanel(
     )
     if (!profile.googleLinked) {
       Button(
-        onClick = onLinkGoogleAccount,
+        onClick = {
+          if (isLinking) return@Button
+          scope.launch {
+            isLinking = true
+            val result = onLinkGoogleAccount()
+            isLinking = false
+            snackbarHostState.showSnackbar(result.message)
+          }
+        },
+        enabled = !isLinking,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp)
       ) {
-        Text(t("Tautkan Google"))
+        Text(if (isLinking) t("Membuka Google...") else t("Tautkan Google"))
       }
     } else {
       Button(

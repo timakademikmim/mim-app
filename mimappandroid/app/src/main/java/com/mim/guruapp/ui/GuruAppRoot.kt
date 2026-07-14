@@ -136,7 +136,7 @@ fun GuruAppRoot(
   onGraduateAdminSantri: suspend (AdminSantri) -> AdminSantriSaveResult,
   onSaveProfile: suspend (GuruProfile) -> ProfileSaveOutcome,
   onChangePassword: suspend (String, String) -> ProfileSaveOutcome,
-  onLinkGoogleAccount: () -> Unit,
+  onLinkGoogleAccount: suspend () -> ProfileSaveOutcome,
   onSaveSantri: suspend (WaliSantriProfile) -> SantriSaveOutcome,
   onSaveMonthlyReport: suspend (MonthlyReportItem) -> MonthlyReportSaveOutcome,
   onSaveMonthlyExtracurricularReports: suspend (List<MonthlyExtracurricularReport>) -> MonthlyExtracurricularSaveOutcome,

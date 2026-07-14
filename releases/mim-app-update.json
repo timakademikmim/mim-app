@@ -1,17 +1,17 @@
 {
-  "versionCode": 1024,
-  "versionName": "0.1.24",
-  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.24/MIM.APP.apk",
-  "releaseNotes": "MIM App Android 0.1.24. Uji coba login dan tautkan akun Google.",
+  "versionCode": 1025,
+  "versionName": "0.1.25",
+  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.25/MIM.APP.apk",
+  "releaseNotes": "MIM App Android 0.1.25. Perbaikan tautkan akun Google.",
   "features": [
     "Login Android kini menyediakan tombol Masuk dengan Google.",
     "Profil pengguna memiliki menu Akun Google untuk menautkan akun Google.",
-    "Akun Google yang sudah tertaut dapat dipakai untuk login cepat tanpa mengetik ID dan password."
+    "Tombol tautkan Google sekarang menampilkan proses dan pesan hasil langsung di halaman profil."
   ],
   "fixes": [
-    "Login Google hanya diterima jika sudah tertaut ke akun karyawan aktif.",
-    "Alur Google tetap mengikuti tenant, role, dan MFA akun yang sudah ada.",
-    "Profil sekarang menampilkan status akun Google tertaut dari server."
+    "Memperbaiki tombol Tautkan Google yang sebelumnya bisa tidak membuka halaman Google.",
+    "Sesi login diperbarui terlebih dahulu sebelum proses tautkan Google dimulai.",
+    "Endpoint link Google kini meminta URL OAuth tanpa redirect internal agar dapat dibuka oleh aplikasi."
   ],
   "mandatory": true
 }

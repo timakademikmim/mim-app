@@ -448,28 +448,37 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     openExternalUrl(authRemoteDataSource.buildGoogleLoginUrl(GOOGLE_FLOW_LOGIN, state))
   }
 
-  fun startGoogleLink() {
-    if (uiState.isBusy) return
-    val session = uiState.session
+  suspend fun startGoogleLink(): ProfileSaveOutcome {
+    if (uiState.isBusy) return ProfileSaveOutcome(false, "Aplikasi masih memproses data. Coba lagi sebentar.")
+    var session = uiState.session
     if (!session.usesSupabaseAuth || session.authAccessToken.isBlank()) {
       uiState = uiState.copy(syncBanner = SyncBannerState("Silakan masuk kembali sebelum menautkan Google.", false))
-      return
+      return ProfileSaveOutcome(false, "Silakan masuk kembali sebelum menautkan Google.")
     }
+    uiState = uiState.copy(syncBanner = SyncBannerState("Memeriksa sesi login...", true))
+    if (!ensureFreshAuthSession()) {
+      uiState = uiState.copy(syncBanner = SyncBannerState("Sesi login belum dapat diperbarui.", false))
+      return ProfileSaveOutcome(false, "Sesi login belum dapat diperbarui. Coba logout lalu login kembali.")
+    }
+    session = uiState.session
     val state = createOAuthState()
     pendingGoogleOAuthState = state
     pendingGoogleOAuthFlow = GOOGLE_FLOW_LINK
-    viewModelScope.launch {
-      uiState = uiState.copy(syncBanner = SyncBannerState("Membuka tautkan Google...", true))
-      when (val result = authRemoteDataSource.buildGoogleLinkUrl(session.authAccessToken, GOOGLE_FLOW_LINK, state)) {
-        is GuruGoogleOAuthUrlResult.Success -> {
+    uiState = uiState.copy(syncBanner = SyncBannerState("Membuka tautkan Google...", true))
+    return when (val result = authRemoteDataSource.buildGoogleLinkUrl(session.authAccessToken, GOOGLE_FLOW_LINK, state)) {
+      is GuruGoogleOAuthUrlResult.Success -> {
+        if (openExternalUrl(result.url)) {
           uiState = uiState.copy(syncBanner = SyncBannerState("Lanjutkan tautkan akun di Google.", false))
-          openExternalUrl(result.url)
+          ProfileSaveOutcome(true, "Google dibuka. Pilih akun Google untuk menautkan.")
+        } else {
+          clearPendingGoogleOAuth()
+          ProfileSaveOutcome(false, "Browser untuk membuka Google tidak tersedia.")
         }
-        is GuruGoogleOAuthUrlResult.Error -> {
-          pendingGoogleOAuthState = ""
-          pendingGoogleOAuthFlow = ""
-          uiState = uiState.copy(syncBanner = SyncBannerState(result.message, false))
-        }
+      }
+      is GuruGoogleOAuthUrlResult.Error -> {
+        clearPendingGoogleOAuth()
+        uiState = uiState.copy(syncBanner = SyncBannerState(result.message, false))
+        ProfileSaveOutcome(false, result.message)
       }
     }
   }
@@ -3867,17 +3876,20 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     pendingGoogleOAuthFlow = ""
   }
 
-  private fun openExternalUrl(url: String) {
+  private fun openExternalUrl(url: String): Boolean {
     val context = getApplication<Application>()
     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
       addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
-    runCatching { context.startActivity(intent) }
-      .onFailure {
+    return runCatching {
+      context.startActivity(intent)
+      true
+    }.getOrElse {
         uiState = uiState.copy(
           loginError = if (uiState.destination == GuruDestination.Login) "Browser untuk login Google tidak tersedia." else uiState.loginError,
           syncBanner = if (uiState.destination != GuruDestination.Login) SyncBannerState("Browser untuk membuka Google tidak tersedia.", false) else uiState.syncBanner
         )
+        false
       }
   }
 
