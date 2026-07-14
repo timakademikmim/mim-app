@@ -23,6 +23,27 @@ type ProfilePayload = {
   new_password?: string
 }
 
+async function getGoogleIdentityInfo(caller: Awaited<ReturnType<typeof requireTenantCaller>>) {
+  let identities = caller.user.identities || []
+  if (!identities.length) {
+    const { data, error } = await caller.admin.auth.admin.getUserById(caller.user.id)
+    if (!error && data?.user?.identities) identities = data.user.identities
+  }
+  const googleIdentity = identities.find((identity) => String(identity.provider || "").toLowerCase() === "google")
+  const identityData = googleIdentity?.identity_data as Record<string, unknown> | undefined
+  return {
+    google_linked: Boolean(googleIdentity),
+    google_email: normalizeText(identityData?.email || ""),
+  }
+}
+
+async function profileResponse(caller: Awaited<ReturnType<typeof requireTenantCaller>>, profile: Record<string, unknown>) {
+  return {
+    ...profile,
+    ...await getGoogleIdentityInfo(caller),
+  }
+}
+
 function nullableText(value: unknown, maxLength: number) {
   const text = normalizeText(value)
   return text ? text.slice(0, maxLength) : null
@@ -48,7 +69,7 @@ serve(async (req) => {
         .eq("tenant_id", caller.tenantId)
         .single()
       if (error) throw new TenantAuthError(500, error.message)
-      return jsonResponse(200, { ok: true, profile: data })
+      return jsonResponse(200, { ok: true, profile: await profileResponse(caller, data) })
     }
 
     if (action === "change_password") {
@@ -127,7 +148,7 @@ serve(async (req) => {
     await writeAuditLog(caller, caller.tenantId, "tenant.employee.profile.update", "karyawan", caller.employeeRowId, {
       password_changed: false,
     })
-    return jsonResponse(200, { ok: true, profile: data })
+    return jsonResponse(200, { ok: true, profile: await profileResponse(caller, data) })
   } catch (error) {
     return handleTenantError(error)
   }

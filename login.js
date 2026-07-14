@@ -240,11 +240,13 @@ let loginTenants = []
 
 function setLoginBusy(busy) {
   const button = document.getElementById('login-button')
+  const googleButton = document.getElementById('google-login-button')
   const tenantSelect = document.getElementById('tenant_id')
   if (button) {
     button.disabled = !!busy
     button.textContent = busy ? 'Memeriksa akun...' : 'Masuk'
   }
+  if (googleButton) googleButton.disabled = !!busy
   if (tenantSelect) tenantSelect.disabled = !!busy || loginTenants.length === 0
 }
 
@@ -346,6 +348,40 @@ async function fetchAuthenticatedEmployee(session, tenant) {
   return data || null
 }
 
+async function fetchActiveEmployeeForAuthUser(session) {
+  if (!session?.user?.id) return null
+  const { data, error } = await sb
+    .from('karyawan')
+    .select('id,id_karyawan,nama,role,aktif,tenant_id,auth_user_id')
+    .eq('auth_user_id', session.user.id)
+    .limit(2)
+  if (error) throw error
+  const activeRows = (Array.isArray(data) ? data : []).filter(row => isActiveValue(row?.aktif))
+  if (activeRows.length > 1) {
+    throw new Error('Akun Google ini terhubung ke lebih dari satu profil aktif. Silakan hubungi admin.')
+  }
+  return activeRows[0] || null
+}
+
+async function fetchTenantById(tenantId) {
+  const id = String(tenantId || '').trim()
+  if (!id) return null
+  const cached = loginTenants.find(item => item.id === id)
+  if (cached) return cached
+  const { data, error } = await sb
+    .from('tenants')
+    .select('id,name,official_name,active')
+    .eq('id', id)
+    .maybeSingle()
+  if (error) throw error
+  if (!data || !isActiveValue(data.active)) return null
+  return {
+    id: String(data.id || '').trim(),
+    name: String(data.name || '').trim(),
+    officialName: String(data.official_name || '').trim()
+  }
+}
+
 async function ensureWebMfaChallenge() {
   const { data: factorsData, error: factorsError } = await sb.auth.mfa.listFactors()
   if (factorsError) throw factorsError
@@ -358,6 +394,24 @@ async function ensureWebMfaChallenge() {
   if (!/^\d{6}$/.test(code)) throw new Error('Kode authenticator wajib berisi 6 digit.')
   const { error } = await sb.auth.mfa.challengeAndVerify({ factorId: factor.id, code })
   if (error) throw new Error('Kode authenticator salah atau sudah kedaluwarsa.')
+}
+
+async function completeGoogleLoginFromCurrentSession() {
+  const { data, error } = await sb.auth.getSession()
+  const session = data?.session || null
+  if (error || !session?.user?.id) return false
+  await ensureWebMfaChallenge()
+  const employee = await fetchActiveEmployeeForAuthUser(session)
+  if (!employee) {
+    await sb.auth.signOut({ scope: 'local' }).catch(() => undefined)
+    throw new Error('Akun Google ini belum ditautkan ke akun karyawan aktif.')
+  }
+  const tenant = await fetchTenantById(employee.tenant_id)
+  if (!tenant) {
+    await sb.auth.signOut({ scope: 'local' }).catch(() => undefined)
+    throw new Error('Unit sekolah untuk akun ini tidak aktif atau tidak ditemukan.')
+  }
+  return completeWebLogin(employee, tenant, 'auth', session.user.id)
 }
 
 async function completeWebLogin(employee, tenant, authMode, authUserId = '') {
@@ -378,6 +432,27 @@ async function completeWebLogin(employee, tenant, authMode, authUserId = '') {
   saveWebLoginState({ employee, roles, selectedRole, tenant, authMode, authUserId })
   location.href = landingPage
   return true
+}
+
+async function loginWithGoogle() {
+  const errorEl = document.getElementById('error')
+  if (errorEl) errorEl.textContent = ''
+  setLoginBusy(true)
+  try {
+    const previousScope = String(localStorage.getItem('login_scope') || '').trim()
+    if (previousScope) localStorage.setItem('last_security_scope', previousScope)
+    clearWebLoginState()
+    await sb.auth.signOut({ scope: 'local' }).catch(() => undefined)
+    const redirectTo = `${window.location.origin}${window.location.pathname}`
+    const { error } = await sb.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo }
+    })
+    if (error) throw error
+  } catch (error) {
+    if (errorEl) errorEl.textContent = String(error?.message || 'Login Google belum dapat dibuka.')
+    setLoginBusy(false)
+  }
 }
 
 async function login() {
@@ -476,6 +551,15 @@ async function resumeSavedAuthSession() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    if (!String(localStorage.getItem('login_id') || '').trim()) {
+      const completedGoogleLogin = await completeGoogleLoginFromCurrentSession()
+      if (completedGoogleLogin) return
+    }
+  } catch (error) {
+    const errorEl = document.getElementById('error')
+    if (errorEl) errorEl.textContent = String(error?.message || 'Login Google gagal.')
+  }
   const canResume = await resumeSavedAuthSession()
   if (!canResume) {
     await loadLoginTenants()

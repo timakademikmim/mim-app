@@ -20,7 +20,9 @@ data class GuruRemoteProfile(
   val phoneNumber: String,
   val address: String,
   val password: String,
-  val avatarUrl: String
+  val avatarUrl: String,
+  val googleLinked: Boolean = false,
+  val googleEmail: String = ""
 )
 
 sealed interface GuruProfileSyncResult {
@@ -184,7 +186,9 @@ class GuruProfileRemoteDataSource {
       phoneNumber = item.optProfileString("no_hp"),
       address = item.optProfileString("alamat"),
       password = "",
-      avatarUrl = item.optProfileString("foto_url")
+      avatarUrl = item.optProfileString("foto_url"),
+      googleLinked = item.optBooleanFlexible("google_linked"),
+      googleEmail = item.optProfileString("google_email")
     )
   }
 }
@@ -192,6 +196,14 @@ class GuruProfileRemoteDataSource {
 private fun JSONObject.optProfileString(key: String): String {
   val value = opt(key)
   return if (value == null || value == JSONObject.NULL) "" else value.toString().trim()
+}
+
+private fun JSONObject.optBooleanFlexible(key: String): Boolean {
+  val value = opt(key) ?: return false
+  if (value == JSONObject.NULL) return false
+  if (value is Boolean) return value
+  if (value is Number) return value.toInt() != 0
+  return value.toString().trim().lowercase() in setOf("true", "t", "1", "yes", "aktif")
 }
 
 private inline fun <T> HttpURLConnection.useProfileJsonObjectResponse(

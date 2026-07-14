@@ -45,6 +45,7 @@ fun LoginScreen(
   onTeacherNameChange: (String) -> Unit,
   onPasswordChange: (String) -> Unit,
   onLoginClick: () -> Unit,
+  onGoogleLoginClick: () -> Unit,
   onForgotPassword: suspend () -> ProfileSaveOutcome,
   onUseDemoAccount: () -> Unit
 ) {
@@ -112,6 +113,16 @@ fun LoginScreen(
           modifier = Modifier.padding(top = 18.dp)
         )
 
+        androidx.compose.material3.OutlinedButton(
+          onClick = onGoogleLoginClick,
+          enabled = !isBusy,
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp)
+        ) {
+          androidx.compose.material3.Text(t("Masuk dengan Google"))
+        }
+
         androidx.compose.material3.TextButton(
           onClick = {
             scope.launch { resetMessage = onForgotPassword().message }
@@ -162,6 +173,7 @@ private fun LoginScreenPreview() {
       onTeacherNameChange = { teacherName = it },
       onPasswordChange = { password = it },
       onLoginClick = {},
+      onGoogleLoginClick = {},
       onForgotPassword = { ProfileSaveOutcome(true, "Permintaan terkirim") },
       onUseDemoAccount = {
         teacherName = "khaerurrahmat"

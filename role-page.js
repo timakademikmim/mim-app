@@ -1331,6 +1331,67 @@ async function openMfaSecurityDialog() {
 
 window.openMfaSecurityDialog = openMfaSecurityDialog
 
+async function openGoogleIdentityDialog() {
+  const client = window.mimSupabaseClient
+  if (!client) return alert('Sesi keamanan belum siap.')
+  document.getElementById('google-identity-overlay')?.remove()
+  const overlay = document.createElement('div')
+  overlay.id = 'google-identity-overlay'
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:15000;background:rgba(15,23,42,.5);display:flex;align-items:center;justify-content:center;padding:16px;'
+  overlay.innerHTML = `
+    <div style="width:min(440px,100%);background:#fff;border-radius:14px;padding:20px;box-shadow:0 24px 60px #0f172a40;">
+      <h3 style="margin:0 0 6px;color:#0f172a;">Akun Google</h3>
+      <p id="google-identity-status" style="margin:0 0 14px;color:#64748b;font-size:13px;line-height:1.45;">Memeriksa status...</p>
+      <div id="google-identity-error" style="min-height:18px;margin-top:8px;color:#b91c1c;font-size:12px;"></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">
+        <button id="google-identity-close" type="button" class="modal-btn">Tutup</button>
+        <button id="google-identity-link" type="button" class="modal-btn modal-btn-primary" style="display:none;">Tautkan Google</button>
+      </div>
+    </div>`
+  document.body.appendChild(overlay)
+  document.getElementById('google-identity-close')?.addEventListener('click', () => overlay.remove())
+  overlay.addEventListener('click', event => { if (event.target === overlay) overlay.remove() })
+
+  const statusEl = document.getElementById('google-identity-status')
+  const errorEl = document.getElementById('google-identity-error')
+  const linkBtn = document.getElementById('google-identity-link')
+  try {
+    const { data, error } = await client.auth.getUserIdentities()
+    if (error) throw error
+    const googleIdentity = (data?.identities || []).find(identity => String(identity?.provider || '').toLowerCase() === 'google')
+    if (googleIdentity) {
+      const email = String(googleIdentity?.identity_data?.email || '').trim()
+      if (statusEl) statusEl.textContent = email
+        ? `Google sudah tertaut: ${email}`
+        : 'Google sudah tertaut ke akun ini.'
+      return
+    }
+    if (statusEl) statusEl.textContent = 'Google belum tertaut. Setelah tertaut, user bisa login cukup dengan tombol Masuk dengan Google.'
+    if (linkBtn) {
+      linkBtn.style.display = 'inline-flex'
+      linkBtn.addEventListener('click', async () => {
+        linkBtn.disabled = true
+        linkBtn.textContent = 'Membuka Google...'
+        const cleanUrl = `${window.location.origin}${window.location.pathname}${window.location.search || ''}`
+        const { error: linkError } = await client.auth.linkIdentity({
+          provider: 'google',
+          options: { redirectTo: cleanUrl }
+        })
+        if (linkError) {
+          if (errorEl) errorEl.textContent = linkError.message || 'Akun Google belum dapat ditautkan.'
+          linkBtn.disabled = false
+          linkBtn.textContent = 'Tautkan Google'
+        }
+      })
+    }
+  } catch (error) {
+    if (statusEl) statusEl.textContent = 'Status akun Google belum dapat dimuat.'
+    if (errorEl) errorEl.textContent = String(error?.message || 'Coba lagi beberapa saat lagi.')
+  }
+}
+
+window.openGoogleIdentityDialog = openGoogleIdentityDialog
+
 function initTopbarAccountMenu() {
   const wrap = document.querySelector('.topbar-user-menu-wrap')
   const trigger = document.querySelector('.topbar-user-trigger')
@@ -1369,6 +1430,19 @@ function initTopbarAccountMenu() {
     const logoutBtn = menu.querySelector('button[onclick*="logout"], button[onclick*="Logout"]')
     if (logoutBtn) logoutBtn.before(mfaBtn)
     else menu.appendChild(mfaBtn)
+  }
+  if (!document.getElementById('topbar-google-btn')) {
+    const googleBtn = document.createElement('button')
+    googleBtn.type = 'button'
+    googleBtn.id = 'topbar-google-btn'
+    googleBtn.textContent = 'Akun Google'
+    googleBtn.addEventListener('click', () => {
+      menu.classList.remove('open')
+      void openGoogleIdentityDialog()
+    })
+    const logoutBtn = menu.querySelector('button[onclick*="logout"], button[onclick*="Logout"]')
+    if (logoutBtn) logoutBtn.before(googleBtn)
+    else menu.appendChild(googleBtn)
   }
 
   let nameEl = document.getElementById('topbar-account-name')

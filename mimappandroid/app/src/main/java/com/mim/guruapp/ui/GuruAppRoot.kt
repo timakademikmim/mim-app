@@ -78,6 +78,7 @@ fun GuruAppRoot(
   onTeacherNameChange: (String) -> Unit,
   onPasswordChange: (String) -> Unit,
   onLoginClick: () -> Unit,
+  onGoogleLoginClick: () -> Unit,
   onForgotPassword: suspend () -> ProfileSaveOutcome,
   onVerifyMfa: suspend (String) -> ProfileSaveOutcome,
   onCancelMfa: () -> Unit,
@@ -135,6 +136,7 @@ fun GuruAppRoot(
   onGraduateAdminSantri: suspend (AdminSantri) -> AdminSantriSaveResult,
   onSaveProfile: suspend (GuruProfile) -> ProfileSaveOutcome,
   onChangePassword: suspend (String, String) -> ProfileSaveOutcome,
+  onLinkGoogleAccount: () -> Unit,
   onSaveSantri: suspend (WaliSantriProfile) -> SantriSaveOutcome,
   onSaveMonthlyReport: suspend (MonthlyReportItem) -> MonthlyReportSaveOutcome,
   onSaveMonthlyExtracurricularReports: suspend (List<MonthlyExtracurricularReport>) -> MonthlyExtracurricularSaveOutcome,
@@ -178,6 +180,7 @@ fun GuruAppRoot(
           onTeacherNameChange = onTeacherNameChange,
           onPasswordChange = onPasswordChange,
           onLoginClick = onLoginClick,
+          onGoogleLoginClick = onGoogleLoginClick,
           onForgotPassword = onForgotPassword,
           onUseDemoAccount = onUseDemoAccount
         )
@@ -272,6 +275,7 @@ fun GuruAppRoot(
               onGraduateAdminSantri = onGraduateAdminSantri,
               onSaveProfile = onSaveProfile,
               onChangePassword = onChangePassword,
+              onLinkGoogleAccount = onLinkGoogleAccount,
               onSaveSantri = onSaveSantri,
               onSaveMonthlyReport = onSaveMonthlyReport,
               onSaveMonthlyExtracurricularReports = onSaveMonthlyExtracurricularReports,

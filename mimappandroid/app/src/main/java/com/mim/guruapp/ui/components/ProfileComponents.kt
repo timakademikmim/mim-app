@@ -105,6 +105,7 @@ private enum class ProfileSection {
   Menu,
   Information,
   PasswordSecurity,
+  GoogleAccount,
   Settings,
   Guide
 }
@@ -158,6 +159,7 @@ fun EditProfileScreen(
   onApplyThemeMode: (String) -> Unit,
   onSaveClick: suspend (GuruProfile) -> ProfileSaveOutcome,
   onChangePassword: suspend (String, String) -> ProfileSaveOutcome,
+  onLinkGoogleAccount: () -> Unit,
   onStartInteractiveGuide: (String) -> Unit = {},
   openGuideRequest: Int = 0,
   openSettingsRequest: Int = 0,
@@ -193,7 +195,9 @@ fun EditProfileScreen(
     username = username,
     password = "",
     phoneNumber = phoneNumber,
-    avatarUri = profile.avatarUri
+    avatarUri = profile.avatarUri,
+    googleLinked = profile.googleLinked,
+    googleEmail = profile.googleEmail
   )
   val isDirty = draft != profile.copy(password = "")
   val isInformationDetail = activeSection == ProfileSection.Information
@@ -258,6 +262,7 @@ fun EditProfileScreen(
               ProfileSection.Menu -> "Profil"
               ProfileSection.Information -> "Informasi Umum"
               ProfileSection.PasswordSecurity -> "Atur Password"
+              ProfileSection.GoogleAccount -> "Akun Google"
               ProfileSection.Settings -> "Pengaturan"
               ProfileSection.Guide -> activeGuide?.title ?: "Panduan Pengguna"
             }.let { t(it) },
@@ -307,6 +312,16 @@ fun EditProfileScreen(
                 description = t("Verifikasi password saat ini lalu buat password baru."),
                 icon = Icons.Outlined.Lock,
                 onClick = { activeSectionName = ProfileSection.PasswordSecurity.name }
+              )
+              ProfileSectionCard(
+                title = t("Akun Google"),
+                description = if (profile.googleLinked) {
+                  t("Google sudah tertaut. Login bisa memakai tombol Masuk dengan Google.")
+                } else {
+                  t("Tautkan akun Google untuk login lebih cepat.")
+                },
+                icon = Icons.Outlined.Sync,
+                onClick = { activeSectionName = ProfileSection.GoogleAccount.name }
               )
               ProfileSectionCard(
                 title = t("Pengaturan"),
@@ -405,6 +420,14 @@ fun EditProfileScreen(
               PasswordSecurityPanel(
                 onChangePassword = onChangePassword,
                 snackbarHostState = snackbarHostState
+              )
+            }
+
+            ProfileSection.GoogleAccount -> {
+              GoogleAccountPanel(
+                profile = profile,
+                onLinkGoogleAccount = onLinkGoogleAccount,
+                onRefresh = onRefresh
               )
             }
           }
@@ -514,6 +537,58 @@ private fun PasswordSecurityPanel(
       shape = RoundedCornerShape(16.dp)
     ) {
       Text(if (isChanging) t("Menyimpan...") else t("Simpan Password"))
+    }
+  }
+}
+
+@Composable
+private fun GoogleAccountPanel(
+  profile: GuruProfile,
+  onLinkGoogleAccount: () -> Unit,
+  onRefresh: () -> Unit
+) {
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .shadow(12.dp, RoundedCornerShape(28.dp), ambientColor = Color(0x140F172A), spotColor = Color(0x140F172A))
+      .clip(RoundedCornerShape(28.dp))
+      .background(CardBackground.copy(alpha = 0.94f))
+      .border(1.dp, CardBorder.copy(alpha = 0.92f), RoundedCornerShape(28.dp))
+      .padding(18.dp),
+    verticalArrangement = Arrangement.spacedBy(14.dp)
+  ) {
+    Text(
+      text = t("Akun Google"),
+      style = MaterialTheme.typography.titleMedium,
+      color = PrimaryBlueDark,
+      fontWeight = FontWeight.ExtraBold
+    )
+    Text(
+      text = if (profile.googleLinked) {
+        profile.googleEmail.ifBlank { t("Google sudah tertaut ke akun ini.") }
+      } else {
+        t("Google belum tertaut. Tautkan akun Google dari sesi login saat ini agar berikutnya bisa masuk dengan tombol Google.")
+      },
+      style = MaterialTheme.typography.bodyMedium,
+      color = if (profile.googleLinked) PrimaryBlueDark else SubtleInk,
+      fontWeight = if (profile.googleLinked) FontWeight.SemiBold else FontWeight.Normal
+    )
+    if (!profile.googleLinked) {
+      Button(
+        onClick = onLinkGoogleAccount,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp)
+      ) {
+        Text(t("Tautkan Google"))
+      }
+    } else {
+      Button(
+        onClick = onRefresh,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp)
+      ) {
+        Text(t("Perbarui Status"))
+      }
     }
   }
 }

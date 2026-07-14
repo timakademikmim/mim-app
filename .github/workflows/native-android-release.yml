@@ -122,16 +122,16 @@ jobs:
             "versionCode": ${MIM_VERSION_CODE},
             "versionName": "${MIM_VERSION_NAME}",
             "apkUrl": "${APK_URL}",
-            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Pembaruan keamanan akun, tenant, dokumen, dan notifikasi.",
+            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Uji coba login dan tautkan akun Google.",
             "features": [
-              "Halaman Atur Password memverifikasi password saat ini dan menerapkan password kuat.",
-              "Login mendukung verifikasi Authenticator MFA bagi akun yang mengaktifkannya.",
-              "Pengguna yang lupa password dapat mengirim permintaan reset kepada admin unit."
+              "Login Android kini menyediakan tombol Masuk dengan Google.",
+              "Profil pengguna memiliki menu Akun Google untuk menautkan akun Google.",
+              "Akun Google yang sudah tertaut dapat dipakai untuk login cepat tanpa mengetik ID dan password."
             ],
             "fixes": [
-              "Login legacy dan penyimpanan password plaintext telah dihapus.",
-              "Laporan yang dikirim menggunakan signed URL dari bucket private.",
-              "Token push dan penerima notifikasi kini dibatasi ke akun serta tenant yang sama."
+              "Login Google hanya diterima jika sudah tertaut ke akun karyawan aktif.",
+              "Alur Google tetap mengikuti tenant, role, dan MFA akun yang sudah ada.",
+              "Profil sekarang menampilkan status akun Google tertaut dari server."
             ],
             "mandatory": ${MANDATORY}
           }

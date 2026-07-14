@@ -44,7 +44,9 @@ data class GuruProfile(
   val username: String = "",
   val password: String = "",
   val phoneNumber: String = "",
-  val avatarUri: String = ""
+  val avatarUri: String = "",
+  val googleLinked: Boolean = false,
+  val googleEmail: String = ""
 )
 
 @Serializable

@@ -30,7 +30,7 @@ data class GuruSupabaseAuthSession(
 )
 
 data class GuruMfaPendingSession(
-  val tenant: TenantLoginOption,
+  val tenant: TenantLoginOption?,
   val teacherId: String,
   val authUserId: String,
   val accessToken: String,
@@ -77,7 +77,56 @@ sealed interface GuruPasswordResetRequestResult {
   data class Error(val message: String) : GuruPasswordResetRequestResult
 }
 
+sealed interface GuruGoogleOAuthUrlResult {
+  data class Success(val url: String) : GuruGoogleOAuthUrlResult
+  data class Error(val message: String) : GuruGoogleOAuthUrlResult
+}
+
 class GuruAuthRemoteDataSource {
+  fun buildGoogleLoginUrl(flow: String, state: String): String {
+    val redirectUrl = buildGoogleRedirectUrl(flow, state)
+    return buildString {
+      append(BuildConfig.SUPABASE_URL.trimEnd('/'))
+      append("/auth/v1/authorize?provider=google")
+      append("&redirect_to=")
+      append(encodeValue(redirectUrl))
+    }
+  }
+
+  suspend fun buildGoogleLinkUrl(
+    accessToken: String,
+    flow: String,
+    state: String
+  ): GuruGoogleOAuthUrlResult = withContext(Dispatchers.IO) {
+    if (accessToken.isBlank()) {
+      return@withContext GuruGoogleOAuthUrlResult.Error("Sesi login tidak tersedia. Silakan masuk kembali.")
+    }
+    try {
+      val redirectUrl = buildGoogleRedirectUrl(flow, state)
+      val requestUrl = buildString {
+        append(BuildConfig.SUPABASE_URL.trimEnd('/'))
+        append("/auth/v1/user/identities/authorize?provider=google")
+        append("&redirect_to=")
+        append(encodeValue(redirectUrl))
+      }
+      val connection = createConnection(requestUrl, "GET", accessToken)
+      connection.useJsonObjectResponse { json ->
+        val url = json.optCleanString("url")
+        if (url.isBlank()) {
+          GuruGoogleOAuthUrlResult.Error("URL tautkan Google belum tersedia.")
+        } else {
+          GuruGoogleOAuthUrlResult.Success(url)
+        }
+      }
+    } catch (_: SocketTimeoutException) {
+      GuruGoogleOAuthUrlResult.Error("Koneksi ke server terlalu lama. Coba lagi.")
+    } catch (_: HttpResponseException) {
+      GuruGoogleOAuthUrlResult.Error("Tautkan Google belum dapat dimulai. Pastikan Google provider sudah aktif.")
+    } catch (_: Exception) {
+      GuruGoogleOAuthUrlResult.Error("Tautkan Google belum dapat dibuka.")
+    }
+  }
+
   suspend fun requestPasswordReset(
     tenantId: String,
     teacherId: String
@@ -153,6 +202,43 @@ class GuruAuthRemoteDataSource {
     loginWithSupabaseAuth(tenant, teacherId, password)
   }
 
+  suspend fun loginWithOAuthSession(
+    accessToken: String,
+    refreshToken: String,
+    expiresAt: Long
+  ): GuruAuthResult = withContext(Dispatchers.IO) {
+    if (accessToken.isBlank()) {
+      return@withContext GuruAuthResult.Error("Sesi Google tidak ditemukan.")
+    }
+    try {
+      val user = fetchAuthUser(accessToken)
+        ?: return@withContext GuruAuthResult.Error("Sesi Google tidak valid.")
+      val authUserId = user.optCleanString("id")
+      if (authUserId.isBlank()) return@withContext GuruAuthResult.Error("Identitas Google tidak valid.")
+      val factorId = findVerifiedTotpFactorId(user)
+      if (factorId.isNotBlank()) {
+        return@withContext GuruAuthResult.MfaRequired(
+          GuruMfaPendingSession(
+            tenant = null,
+            teacherId = "",
+            authUserId = authUserId,
+            accessToken = accessToken,
+            refreshToken = refreshToken,
+            expiresAt = expiresAt,
+            factorId = factorId
+          )
+        )
+      }
+      buildAuthenticatedResultFromAuthUser(authUserId, accessToken, refreshToken, expiresAt)
+    } catch (_: SocketTimeoutException) {
+      GuruAuthResult.Error("Login Google terlalu lama. Periksa koneksi internet.")
+    } catch (_: HttpResponseException) {
+      GuruAuthResult.Error("Login Google gagal atau akun belum ditautkan.")
+    } catch (_: Exception) {
+      GuruAuthResult.Error("Login Google belum dapat diselesaikan.")
+    }
+  }
+
   suspend fun refreshSession(refreshToken: String): GuruAuthRefreshResult = withContext(Dispatchers.IO) {
     if (refreshToken.isBlank()) {
       return@withContext GuruAuthRefreshResult.Error("Sesi login tidak memiliki refresh token.")
@@ -222,14 +308,25 @@ class GuruAuthRemoteDataSource {
         val refreshToken = verified.optCleanString("refresh_token").ifBlank { pending.refreshToken }
         val expiresInSeconds = verified.optLong("expires_in", 3600L).coerceAtLeast(60L)
         if (accessToken.isBlank()) return@useJsonObjectResponse GuruAuthResult.Error("Verifikasi MFA gagal.")
-        buildAuthenticatedResult(
-          tenant = pending.tenant,
-          teacherId = pending.teacherId,
-          authUserId = pending.authUserId,
-          accessToken = accessToken,
-          refreshToken = refreshToken,
-          expiresAt = System.currentTimeMillis() + expiresInSeconds * 1000L
-        )
+        val expiresAt = System.currentTimeMillis() + expiresInSeconds * 1000L
+        val tenant = pending.tenant
+        if (tenant != null) {
+          buildAuthenticatedResult(
+            tenant = tenant,
+            teacherId = pending.teacherId,
+            authUserId = pending.authUserId,
+            accessToken = accessToken,
+            refreshToken = refreshToken,
+            expiresAt = expiresAt
+          )
+        } else {
+          buildAuthenticatedResultFromAuthUser(
+            authUserId = pending.authUserId,
+            accessToken = accessToken,
+            refreshToken = refreshToken,
+            expiresAt = expiresAt
+          )
+        }
       }
     } catch (_: HttpResponseException) {
       GuruAuthResult.Error("Kode authenticator salah atau sudah kedaluwarsa.")
@@ -293,15 +390,37 @@ class GuruAuthRemoteDataSource {
     }
   }
 
+  private fun buildAuthenticatedResultFromAuthUser(
+    authUserId: String,
+    accessToken: String,
+    refreshToken: String,
+    expiresAt: Long
+  ): GuruAuthResult {
+    val employee = fetchActiveEmployeeForAuthUser(accessToken, authUserId)
+      ?: return GuruAuthResult.Error("Akun Google ini belum ditautkan ke akun karyawan aktif.")
+    val tenant = fetchTenantOption(accessToken, employee.optCleanString("tenant_id"))
+      ?: return GuruAuthResult.Error("Unit sekolah untuk akun ini tidak aktif atau tidak ditemukan.")
+    return buildAuthenticatedResult(
+      tenant = tenant,
+      teacherId = employee.optCleanString("id_karyawan"),
+      authUserId = authUserId,
+      accessToken = accessToken,
+      refreshToken = refreshToken,
+      expiresAt = expiresAt,
+      employeeOverride = employee
+    )
+  }
+
   private fun buildAuthenticatedResult(
     tenant: TenantLoginOption,
     teacherId: String,
     authUserId: String,
     accessToken: String,
     refreshToken: String,
-    expiresAt: Long
+    expiresAt: Long,
+    employeeOverride: JSONObject? = null
   ): GuruAuthResult {
-    val employee = fetchAuthenticatedEmployee(accessToken, authUserId, tenant)
+    val employee = employeeOverride ?: fetchAuthenticatedEmployee(accessToken, authUserId, tenant)
       ?: return GuruAuthResult.Error("Akun Auth belum terhubung ke data karyawan unit ini.")
     val roles = parseRoleList(employee.optCleanString("role"))
     if (!employee.optBooleanFlexible("aktif")) {
@@ -323,6 +442,12 @@ class GuruAuthRemoteDataSource {
       ),
       authSession = GuruSupabaseAuthSession(authUserId, accessToken, refreshToken, expiresAt)
     )
+  }
+
+  private fun fetchAuthUser(accessToken: String): JSONObject? {
+    val requestUrl = "${BuildConfig.SUPABASE_URL}/auth/v1/user"
+    val connection = createConnection(requestUrl, "GET", accessToken)
+    return connection.useJsonObjectResponse { it }
   }
 
   private fun findVerifiedTotpFactorId(user: JSONObject?): String {
@@ -353,6 +478,51 @@ class GuruAuthRemoteDataSource {
     }
     val connection = createConnection(requestUrl, "GET", accessToken)
     return connection.useJsonArrayResponse { rows -> rows.optJSONObject(0) }
+  }
+
+  private fun fetchActiveEmployeeForAuthUser(accessToken: String, authUserId: String): JSONObject? {
+    val requestUrl = buildString {
+      append(BuildConfig.SUPABASE_URL)
+      append("/rest/v1/karyawan")
+      append("?select=id,id_karyawan,nama,role,aktif,tenant_id,organization_id,must_change_password")
+      append("&auth_user_id=eq.")
+      append(encodeValue(authUserId))
+      append("&limit=2")
+    }
+    val connection = createConnection(requestUrl, "GET", accessToken)
+    return connection.useJsonArrayResponse { rows ->
+      val activeRows = (0 until rows.length())
+        .mapNotNull { rows.optJSONObject(it) }
+        .filter { it.optBooleanFlexible("aktif") }
+      if (activeRows.size > 1) {
+        throw HttpResponseException(409, "Akun Google terhubung ke lebih dari satu profil aktif.")
+      }
+      activeRows.firstOrNull()
+    }
+  }
+
+  private fun fetchTenantOption(accessToken: String, tenantId: String): TenantLoginOption? {
+    if (tenantId.isBlank()) return null
+    val requestUrl = buildString {
+      append(BuildConfig.SUPABASE_URL)
+      append("/rest/v1/tenants")
+      append("?select=id,code,name,official_name,logo_url,active")
+      append("&id=eq.")
+      append(encodeValue(tenantId))
+      append("&limit=1")
+    }
+    val connection = createConnection(requestUrl, "GET", accessToken)
+    return connection.useJsonArrayResponse { rows ->
+      val row = rows.optJSONObject(0) ?: return@useJsonArrayResponse null
+      if (!row.optBooleanFlexible("active")) return@useJsonArrayResponse null
+      TenantLoginOption(
+        id = row.optCleanString("id"),
+        code = row.optCleanString("code"),
+        name = row.optCleanString("name"),
+        officialName = row.optCleanString("official_name"),
+        logoUrl = row.optCleanString("logo_url")
+      )
+    }
   }
 
   private fun createConnection(
@@ -388,6 +558,16 @@ class GuruAuthRemoteDataSource {
 
   private fun encodeValue(value: String): String {
     return URLEncoder.encode(value, Charsets.UTF_8.name())
+  }
+
+  private fun buildGoogleRedirectUrl(flow: String, state: String): String {
+    return buildString {
+      append("com.mim.guruapp://auth/callback")
+      append("?flow=")
+      append(encodeValue(flow))
+      append("&state=")
+      append(encodeValue(state))
+    }
   }
 }
 
