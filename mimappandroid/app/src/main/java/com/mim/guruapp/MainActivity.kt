@@ -40,6 +40,9 @@ import com.mim.guruapp.ui.theme.AppThemeMode
 import com.mim.guruapp.ui.theme.MimGuruTheme
 import com.mim.guruapp.update.AppUpdateClient
 import com.mim.guruapp.update.AppUpdateInfo
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -59,6 +62,24 @@ class MainActivity : ComponentActivity() {
   ) {
     LessonNotificationNotifier.ensureChannel(this)
   }
+  private val googleLoginLauncher = registerForActivityResult(
+    ActivityResultContracts.StartActivityForResult()
+  ) { result ->
+    val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+    try {
+      val account = task.getResult(ApiException::class.java)
+      val idToken = account.idToken.orEmpty()
+      if (idToken.isBlank()) {
+        viewModel.cancelNativeGoogleLogin("Token Google tidak ditemukan. Coba login ulang.")
+      } else {
+        viewModel.completeGoogleIdTokenLogin(idToken)
+      }
+    } catch (error: ApiException) {
+      viewModel.cancelNativeGoogleLogin("Login Google dibatalkan atau gagal. Kode Google: ${error.statusCode}.")
+    } catch (_: Exception) {
+      viewModel.cancelNativeGoogleLogin("Login Google belum dapat dibuka.")
+    }
+  }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -73,7 +94,7 @@ class MainActivity : ComponentActivity() {
           onTeacherNameChange = viewModel::onTeacherNameChange,
           onPasswordChange = viewModel::onPasswordChange,
           onLoginClick = viewModel::login,
-          onGoogleLoginClick = viewModel::startGoogleLogin,
+          onGoogleLoginClick = ::launchNativeGoogleLogin,
           onForgotPassword = viewModel::requestOwnPasswordReset,
           onVerifyMfa = viewModel::verifyMfaCode,
           onCancelMfa = viewModel::cancelMfa,
@@ -178,6 +199,21 @@ class MainActivity : ComponentActivity() {
     super.onNewIntent(intent)
     setIntent(intent)
     viewModel.handleSystemNavigationIntent(intent)
+  }
+
+  private fun launchNativeGoogleLogin() {
+    viewModel.startNativeGoogleLogin()
+    val googleSignInOptions = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+      .requestEmail()
+      .requestProfile()
+      .requestIdToken(BuildConfig.GOOGLE_WEB_CLIENT_ID)
+      .build()
+    val googleSignInClient = GoogleSignIn.getClient(this, googleSignInOptions)
+    runCatching {
+      googleLoginLauncher.launch(googleSignInClient.signInIntent)
+    }.onFailure {
+      viewModel.cancelNativeGoogleLogin("Login Google belum dapat dibuka.")
+    }
   }
 
   private suspend fun checkForAppUpdate() {

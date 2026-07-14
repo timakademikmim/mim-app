@@ -455,6 +455,52 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     }
   }
 
+  fun startNativeGoogleLogin() {
+    if (uiState.isBusy) return
+    clearPendingGoogleOAuth()
+    uiState = uiState.copy(
+      isBusy = true,
+      loginError = "",
+      splashMessage = "Membuka login Google...",
+      splashProgress = 0.08f
+    )
+  }
+
+  fun cancelNativeGoogleLogin(message: String = "Login Google dibatalkan atau gagal.") {
+    SupabaseRequestAuth.clear()
+    uiState = uiState.copy(
+      destination = GuruDestination.Login,
+      isBusy = false,
+      loginError = message
+    )
+  }
+
+  fun completeGoogleIdTokenLogin(idToken: String) {
+    viewModelScope.launch {
+      uiState = uiState.copy(isBusy = true, loginError = "", splashMessage = "Menyelesaikan login Google...", splashProgress = 0.16f)
+      try {
+        when (val result = authRemoteDataSource.loginWithGoogleIdToken(idToken)) {
+          is GuruAuthResult.Error -> {
+            SupabaseRequestAuth.clear()
+            uiState = uiState.copy(destination = GuruDestination.Login, isBusy = false, loginError = result.message)
+          }
+          is GuruAuthResult.MfaRequired -> {
+            pendingMfaSession = result.pending
+            uiState = uiState.copy(destination = GuruDestination.Mfa, isBusy = false, loginError = "")
+          }
+          is GuruAuthResult.Success -> completeAuthenticatedLogin(result, null)
+        }
+      } catch (_: Exception) {
+        SupabaseRequestAuth.clear()
+        uiState = uiState.copy(
+          destination = GuruDestination.Login,
+          isBusy = false,
+          loginError = "Login Google belum dapat diselesaikan. Coba lagi."
+        )
+      }
+    }
+  }
+
   suspend fun startGoogleLink(): ProfileSaveOutcome {
     if (uiState.isBusy) return ProfileSaveOutcome(false, "Aplikasi masih memproses data. Coba lagi sebentar.")
     var session = uiState.session

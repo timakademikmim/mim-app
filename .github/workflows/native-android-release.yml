@@ -122,16 +122,16 @@ jobs:
             "versionCode": ${MIM_VERSION_CODE},
             "versionName": "${MIM_VERSION_NAME}",
             "apkUrl": "${APK_URL}",
-            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Login Google memakai PKCE native.",
+            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Login Google memakai Google Sign-In native.",
             "features": [
-              "Login Google kini memakai alur PKCE yang lebih sesuai untuk Android.",
-              "Aplikasi menukar kode callback Google menjadi sesi Supabase langsung dari perangkat.",
-              "Alur tautkan Google tetap dipertahankan seperti rilis sebelumnya."
+              "Tombol Masuk dengan Google kini membuka pemilih akun native Android.",
+              "Aplikasi mengirim ID token Google langsung ke Supabase untuk membuat sesi login.",
+              "Alur tautkan Google tetap memakai flow browser yang sudah berhasil."
             ],
             "fixes": [
-              "Memperbaiki login Google yang tertahan di browser setelah memilih akun.",
-              "Callback Google dengan parameter code kini diselesaikan menjadi sesi login.",
-              "Verifier PKCE disimpan sementara agar callback tetap aman setelah kembali dari browser."
+              "Memperbaiki login Google yang tertahan di halaman accounts.google.com.",
+              "Menambahkan pesan kode error Google jika konfigurasi OAuth native belum lengkap.",
+              "Login Google tidak lagi bergantung pada redirect browser untuk masuk ke aplikasi."
             ],
             "mandatory": ${MANDATORY}
           }

@@ -36,6 +36,7 @@ android {
     versionName = appVersionName
     buildConfigField("String", "SUPABASE_URL", "\"https://optucpelkueqmlhwlbej.supabase.co\"")
     buildConfigField("String", "SUPABASE_ANON_KEY", "\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9wdHVjcGVsa3VlcW1saHdsYmVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAxOTY4MTgsImV4cCI6MjA4NTc3MjgxOH0.Vqaey9pcnltu9uRbPk0J-AGWaGDZjQLw92pcRv67GNE\"")
+    buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"1092333370259-os22nf39cc9qogoocesdvdnccctsepq1.apps.googleusercontent.com\"")
     buildConfigField("String", "APP_UPDATE_MANIFEST_URL", "\"$updateManifestUrl\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -111,6 +112,7 @@ dependencies {
   implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
   implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
   implementation("androidx.datastore:datastore-preferences:1.1.1")
+  implementation("com.google.android.gms:play-services-auth:21.2.0")
   implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 
   implementation(composeBom)
