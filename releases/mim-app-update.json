@@ -1,17 +1,17 @@
 {
-  "versionCode": 1027,
-  "versionName": "0.1.27",
-  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.27/MIM.APP.apk",
-  "releaseNotes": "MIM App Android 0.1.27. Perbaikan penyelesaian login Google.",
+  "versionCode": 1028,
+  "versionName": "0.1.28",
+  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.28/MIM.APP.apk",
+  "releaseNotes": "MIM App Android 0.1.28. Login Google memakai PKCE native.",
   "features": [
-    "Login Google kini menyimpan status proses OAuth agar callback tetap dikenali setelah kembali dari browser.",
-    "Callback Google dapat membaca parameter dari query maupun fragment.",
-    "Proses login Google kini memberi pesan jika server atau sesi tidak dapat diselesaikan."
+    "Login Google kini memakai alur PKCE yang lebih sesuai untuk Android.",
+    "Aplikasi menukar kode callback Google menjadi sesi Supabase langsung dari perangkat.",
+    "Alur tautkan Google tetap dipertahankan seperti rilis sebelumnya."
   ],
   "fixes": [
-    "Memperbaiki kondisi login Google yang dapat berhenti di loading setelah memilih akun.",
-    "Mencegah loading login Google menggantung jika penyelesaian sesi gagal.",
-    "Pending OAuth dibersihkan saat browser Google tidak dapat dibuka."
+    "Memperbaiki login Google yang tertahan di browser setelah memilih akun.",
+    "Callback Google dengan parameter code kini diselesaikan menjadi sesi login.",
+    "Verifier PKCE disimpan sementara agar callback tetap aman setelah kembali dari browser."
   ],
   "mandatory": true
 }

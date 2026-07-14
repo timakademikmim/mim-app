@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Base64
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -129,6 +130,8 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.net.URLDecoder
+import java.security.MessageDigest
+import java.security.SecureRandom
 import java.util.Locale
 import java.util.UUID
 import kotlin.math.roundToInt
@@ -443,9 +446,11 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
   fun startGoogleLogin() {
     if (uiState.isBusy) return
     val state = createOAuthState()
-    savePendingGoogleOAuth(GOOGLE_FLOW_LOGIN, state)
+    val codeVerifier = createPkceCodeVerifier()
+    val codeChallenge = createPkceCodeChallenge(codeVerifier)
+    savePendingGoogleOAuth(GOOGLE_FLOW_LOGIN, state, codeVerifier)
     uiState = uiState.copy(loginError = "")
-    if (!openExternalUrl(authRemoteDataSource.buildGoogleLoginUrl())) {
+    if (!openExternalUrl(authRemoteDataSource.buildGoogleLoginUrl(codeChallenge))) {
       clearPendingGoogleOAuth()
     }
   }
@@ -2193,6 +2198,20 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     val accessToken = params["access_token"].orEmpty()
     val refreshToken = params["refresh_token"].orEmpty()
     val authorizationCode = params["code"].orEmpty()
+    if (accessToken.isBlank() && authorizationCode.isNotBlank() && flow == GOOGLE_FLOW_LOGIN) {
+      val codeVerifier = pending.codeVerifier
+      clearPendingGoogleOAuth()
+      if (codeVerifier.isBlank()) {
+        uiState = uiState.copy(
+          destination = GuruDestination.Login,
+          isBusy = false,
+          loginError = "Sesi login Google tidak lengkap. Coba ulangi login Google."
+        )
+      } else {
+        completeGoogleCodeLoginCallback(authorizationCode, codeVerifier)
+      }
+      return true
+    }
     if (accessToken.isBlank()) {
       uiState = uiState.copy(
         destination = if (flow == GOOGLE_FLOW_LOGIN) GuruDestination.Login else uiState.destination,
@@ -2236,6 +2255,32 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
       uiState = uiState.copy(isBusy = true, loginError = "", splashMessage = "Menyelesaikan login Google...", splashProgress = 0.16f)
       try {
         when (val result = authRemoteDataSource.loginWithOAuthSession(accessToken, refreshToken, expiresAt)) {
+          is GuruAuthResult.Error -> {
+            SupabaseRequestAuth.clear()
+            uiState = uiState.copy(destination = GuruDestination.Login, isBusy = false, loginError = result.message)
+          }
+          is GuruAuthResult.MfaRequired -> {
+            pendingMfaSession = result.pending
+            uiState = uiState.copy(destination = GuruDestination.Mfa, isBusy = false, loginError = "")
+          }
+          is GuruAuthResult.Success -> completeAuthenticatedLogin(result, null)
+        }
+      } catch (_: Exception) {
+        SupabaseRequestAuth.clear()
+        uiState = uiState.copy(
+          destination = GuruDestination.Login,
+          isBusy = false,
+          loginError = "Login Google belum dapat diselesaikan. Coba lagi."
+        )
+      }
+    }
+  }
+
+  private fun completeGoogleCodeLoginCallback(authCode: String, codeVerifier: String) {
+    viewModelScope.launch {
+      uiState = uiState.copy(isBusy = true, loginError = "", splashMessage = "Menyelesaikan login Google...", splashProgress = 0.16f)
+      try {
+        when (val result = authRemoteDataSource.loginWithOAuthCode(authCode, codeVerifier)) {
           is GuruAuthResult.Error -> {
             SupabaseRequestAuth.clear()
             uiState = uiState.copy(destination = GuruDestination.Login, isBusy = false, loginError = result.message)
@@ -3904,9 +3949,29 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
 
   private fun createOAuthState(): String = UUID.randomUUID().toString()
 
-  private data class PendingGoogleOAuth(val flow: String, val state: String)
+  private fun createPkceCodeVerifier(): String {
+    val bytes = ByteArray(32)
+    SecureRandom().nextBytes(bytes)
+    return bytes.toBase64Url()
+  }
 
-  private fun savePendingGoogleOAuth(flow: String, state: String) {
+  private fun createPkceCodeChallenge(codeVerifier: String): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+      .digest(codeVerifier.toByteArray(Charsets.US_ASCII))
+    return digest.toBase64Url()
+  }
+
+  private fun ByteArray.toBase64Url(): String {
+    return Base64.encodeToString(this, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+  }
+
+  private data class PendingGoogleOAuth(
+    val flow: String,
+    val state: String,
+    val codeVerifier: String
+  )
+
+  private fun savePendingGoogleOAuth(flow: String, state: String, codeVerifier: String = "") {
     pendingGoogleOAuthFlow = flow
     pendingGoogleOAuthState = state
     getApplication<Application>()
@@ -3914,6 +3979,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
       .edit()
       .putString(GOOGLE_OAUTH_PREF_FLOW, flow)
       .putString(GOOGLE_OAUTH_PREF_STATE, state)
+      .putString(GOOGLE_OAUTH_PREF_CODE_VERIFIER, codeVerifier)
       .apply()
   }
 
@@ -3926,9 +3992,10 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     val state = pendingGoogleOAuthState.ifBlank {
       prefs.getString(GOOGLE_OAUTH_PREF_STATE, "").orEmpty()
     }
+    val codeVerifier = prefs.getString(GOOGLE_OAUTH_PREF_CODE_VERIFIER, "").orEmpty()
     pendingGoogleOAuthFlow = flow
     pendingGoogleOAuthState = state
-    return PendingGoogleOAuth(flow, state)
+    return PendingGoogleOAuth(flow, state, codeVerifier)
   }
 
   private fun clearPendingGoogleOAuth() {
@@ -3939,6 +4006,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
       .edit()
       .remove(GOOGLE_OAUTH_PREF_FLOW)
       .remove(GOOGLE_OAUTH_PREF_STATE)
+      .remove(GOOGLE_OAUTH_PREF_CODE_VERIFIER)
       .apply()
   }
 
@@ -3996,6 +4064,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     const val GOOGLE_OAUTH_PREFS = "mim_guru_google_oauth"
     const val GOOGLE_OAUTH_PREF_FLOW = "flow"
     const val GOOGLE_OAUTH_PREF_STATE = "state"
+    const val GOOGLE_OAUTH_PREF_CODE_VERIFIER = "code_verifier"
   }
 }
 

@@ -83,13 +83,16 @@ sealed interface GuruGoogleOAuthUrlResult {
 }
 
 class GuruAuthRemoteDataSource {
-  fun buildGoogleLoginUrl(): String {
+  fun buildGoogleLoginUrl(codeChallenge: String): String {
     val redirectUrl = buildGoogleRedirectUrl()
     return buildString {
       append(BuildConfig.SUPABASE_URL.trimEnd('/'))
       append("/auth/v1/authorize?provider=google")
       append("&redirect_to=")
       append(encodeValue(redirectUrl))
+      append("&code_challenge=")
+      append(encodeValue(codeChallenge))
+      append("&code_challenge_method=s256")
     }
   }
 
@@ -234,6 +237,61 @@ class GuruAuthRemoteDataSource {
         )
       }
       buildAuthenticatedResultFromAuthUser(authUserId, accessToken, refreshToken, expiresAt)
+    } catch (_: SocketTimeoutException) {
+      GuruAuthResult.Error("Login Google terlalu lama. Periksa koneksi internet.")
+    } catch (_: HttpResponseException) {
+      GuruAuthResult.Error("Login Google gagal atau akun belum ditautkan.")
+    } catch (_: Exception) {
+      GuruAuthResult.Error("Login Google belum dapat diselesaikan.")
+    }
+  }
+
+  suspend fun loginWithOAuthCode(
+    authCode: String,
+    codeVerifier: String
+  ): GuruAuthResult = withContext(Dispatchers.IO) {
+    if (authCode.isBlank() || codeVerifier.isBlank()) {
+      return@withContext GuruAuthResult.Error("Sesi login Google tidak lengkap. Coba login ulang.")
+    }
+    try {
+      val requestUrl = "${BuildConfig.SUPABASE_URL}/auth/v1/token?grant_type=pkce"
+      val connection = createConnection(requestUrl, "POST", BuildConfig.SUPABASE_ANON_KEY).apply {
+        doOutput = true
+        setRequestProperty("Content-Type", "application/json")
+      }
+      val payload = JSONObject().apply {
+        put("auth_code", authCode)
+        put("code_verifier", codeVerifier)
+      }
+      connection.outputStream.use { stream ->
+        stream.write(payload.toString().toByteArray(Charsets.UTF_8))
+      }
+      connection.useJsonObjectResponse { authJson ->
+        val accessToken = authJson.optCleanString("access_token")
+        val refreshToken = authJson.optCleanString("refresh_token")
+        val user = authJson.optJSONObject("user")
+        val authUserId = user?.optCleanString("id").orEmpty()
+        val expiresInSeconds = authJson.optLong("expires_in", 3600L).coerceAtLeast(60L)
+        val expiresAt = System.currentTimeMillis() + expiresInSeconds * 1000L
+        if (accessToken.isBlank() || authUserId.isBlank()) {
+          return@useJsonObjectResponse GuruAuthResult.Error("Sesi Google tidak valid.")
+        }
+        val factorId = findVerifiedTotpFactorId(user)
+        if (factorId.isNotBlank()) {
+          return@useJsonObjectResponse GuruAuthResult.MfaRequired(
+            GuruMfaPendingSession(
+              tenant = null,
+              teacherId = "",
+              authUserId = authUserId,
+              accessToken = accessToken,
+              refreshToken = refreshToken,
+              expiresAt = expiresAt,
+              factorId = factorId
+            )
+          )
+        }
+        buildAuthenticatedResultFromAuthUser(authUserId, accessToken, refreshToken, expiresAt)
+      }
     } catch (_: SocketTimeoutException) {
       GuruAuthResult.Error("Login Google terlalu lama. Periksa koneksi internet.")
     } catch (_: HttpResponseException) {
