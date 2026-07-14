@@ -1,17 +1,17 @@
 {
-  "versionCode": 1026,
-  "versionName": "0.1.26",
-  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.26/MIM.APP.apk",
-  "releaseNotes": "MIM App Android 0.1.26. Perbaikan redirect tautkan akun Google.",
+  "versionCode": 1027,
+  "versionName": "0.1.27",
+  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.27/MIM.APP.apk",
+  "releaseNotes": "MIM App Android 0.1.27. Perbaikan penyelesaian login Google.",
   "features": [
-    "Tautkan Google kini memakai redirect Android yang sama persis dengan konfigurasi Supabase.",
-    "Pesan error tautkan Google dibuat lebih jelas dan tidak tertutup navbar.",
-    "Alur login Google tetap memakai sesi dan role akun yang sudah aktif."
+    "Login Google kini menyimpan status proses OAuth agar callback tetap dikenali setelah kembali dari browser.",
+    "Callback Google dapat membaca parameter dari query maupun fragment.",
+    "Proses login Google kini memberi pesan jika server atau sesi tidak dapat diselesaikan."
   ],
   "fixes": [
-    "Memperbaiki redirect tautkan Google yang dapat ditolak saat URL callback memakai query tambahan.",
-    "Snackbar profil dinaikkan agar pesan dapat dibaca di atas bottom navbar.",
-    "Error dari Supabase Auth kini ditampilkan langsung agar konfigurasi Google mudah dicek."
+    "Memperbaiki kondisi login Google yang dapat berhenti di loading setelah memilih akun.",
+    "Mencegah loading login Google menggantung jika penyelesaian sesi gagal.",
+    "Pending OAuth dibersihkan saat browser Google tidak dapat dibuka."
   ],
   "mandatory": true
 }

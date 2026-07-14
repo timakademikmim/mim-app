@@ -1,6 +1,7 @@
 package com.mim.guruapp
 
 import android.app.Application
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.runtime.getValue
@@ -442,10 +443,11 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
   fun startGoogleLogin() {
     if (uiState.isBusy) return
     val state = createOAuthState()
-    pendingGoogleOAuthState = state
-    pendingGoogleOAuthFlow = GOOGLE_FLOW_LOGIN
+    savePendingGoogleOAuth(GOOGLE_FLOW_LOGIN, state)
     uiState = uiState.copy(loginError = "")
-    openExternalUrl(authRemoteDataSource.buildGoogleLoginUrl())
+    if (!openExternalUrl(authRemoteDataSource.buildGoogleLoginUrl())) {
+      clearPendingGoogleOAuth()
+    }
   }
 
   suspend fun startGoogleLink(): ProfileSaveOutcome {
@@ -462,8 +464,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     }
     session = uiState.session
     val state = createOAuthState()
-    pendingGoogleOAuthState = state
-    pendingGoogleOAuthFlow = GOOGLE_FLOW_LINK
+    savePendingGoogleOAuth(GOOGLE_FLOW_LINK, state)
     uiState = uiState.copy(syncBanner = SyncBannerState("Membuka tautkan Google...", true))
     return when (val result = authRemoteDataSource.buildGoogleLinkUrl(session.authAccessToken)) {
       is GuruGoogleOAuthUrlResult.Success -> {
@@ -2160,11 +2161,16 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     val uri = intent.data ?: return false
     if (uri.scheme != "com.mim.guruapp" || uri.host != "auth") return false
     if (!uri.path.orEmpty().contains("callback")) return false
-    val flow = uri.getQueryParameter("flow").orEmpty().ifBlank { pendingGoogleOAuthFlow }
+    val pending = readPendingGoogleOAuth()
+    val inferredFlow = if (uiState.session.isLoggedIn) GOOGLE_FLOW_LINK else GOOGLE_FLOW_LOGIN
+    val flow = uri.getQueryParameter("flow").orEmpty()
+      .ifBlank { pending.flow }
+      .ifBlank { inferredFlow }
     if (flow != GOOGLE_FLOW_LOGIN && flow != GOOGLE_FLOW_LINK) return false
     val state = uri.getQueryParameter("state").orEmpty()
-    val stateMismatch = state.isNotBlank() && pendingGoogleOAuthState.isNotBlank() && state != pendingGoogleOAuthState
-    if (pendingGoogleOAuthFlow.isBlank() || flow != pendingGoogleOAuthFlow || stateMismatch) {
+    val stateMismatch = state.isNotBlank() && pending.state.isNotBlank() && state != pending.state
+    val flowMismatch = pending.flow.isNotBlank() && flow != pending.flow
+    if (flowMismatch || stateMismatch) {
       uiState = uiState.copy(
         destination = if (uiState.session.isLoggedIn) uiState.destination else GuruDestination.Login,
         loginError = "Callback Google tidak valid. Coba ulangi login."
@@ -2172,7 +2178,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
       clearPendingGoogleOAuth()
       return true
     }
-    val params = parseOAuthFragment(uri.fragment.orEmpty())
+    val params = parseOAuthParams(uri)
     val error = params["error_description"].orEmpty().ifBlank { params["error"].orEmpty() }
     if (error.isNotBlank()) {
       uiState = uiState.copy(
@@ -2186,12 +2192,29 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     }
     val accessToken = params["access_token"].orEmpty()
     val refreshToken = params["refresh_token"].orEmpty()
+    val authorizationCode = params["code"].orEmpty()
     if (accessToken.isBlank()) {
       uiState = uiState.copy(
         destination = if (flow == GOOGLE_FLOW_LOGIN) GuruDestination.Login else uiState.destination,
         isBusy = false,
-        loginError = if (flow == GOOGLE_FLOW_LOGIN) "Token login Google tidak ditemukan." else uiState.loginError,
-        syncBanner = if (flow == GOOGLE_FLOW_LINK) SyncBannerState("Tautkan Google belum selesai. Coba lagi.", false) else uiState.syncBanner
+        loginError = if (flow == GOOGLE_FLOW_LOGIN) {
+          if (authorizationCode.isNotBlank()) {
+            "Callback Google memakai kode OAuth, bukan token. Coba ulangi login Google."
+          } else {
+            "Token login Google tidak ditemukan."
+          }
+        } else {
+          uiState.loginError
+        },
+        syncBanner = if (flow == GOOGLE_FLOW_LINK) {
+          SyncBannerState(
+            if (authorizationCode.isNotBlank()) "Tautkan Google menerima kode OAuth, bukan token. Coba ulangi."
+            else "Tautkan Google belum selesai. Coba lagi.",
+            false
+          )
+        } else {
+          uiState.syncBanner
+        }
       )
       clearPendingGoogleOAuth()
       return true
@@ -2211,16 +2234,25 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
   private fun completeGoogleLoginCallback(accessToken: String, refreshToken: String, expiresAt: Long) {
     viewModelScope.launch {
       uiState = uiState.copy(isBusy = true, loginError = "", splashMessage = "Menyelesaikan login Google...", splashProgress = 0.16f)
-      when (val result = authRemoteDataSource.loginWithOAuthSession(accessToken, refreshToken, expiresAt)) {
-        is GuruAuthResult.Error -> {
-          SupabaseRequestAuth.clear()
-          uiState = uiState.copy(destination = GuruDestination.Login, isBusy = false, loginError = result.message)
+      try {
+        when (val result = authRemoteDataSource.loginWithOAuthSession(accessToken, refreshToken, expiresAt)) {
+          is GuruAuthResult.Error -> {
+            SupabaseRequestAuth.clear()
+            uiState = uiState.copy(destination = GuruDestination.Login, isBusy = false, loginError = result.message)
+          }
+          is GuruAuthResult.MfaRequired -> {
+            pendingMfaSession = result.pending
+            uiState = uiState.copy(destination = GuruDestination.Mfa, isBusy = false, loginError = "")
+          }
+          is GuruAuthResult.Success -> completeAuthenticatedLogin(result, null)
         }
-        is GuruAuthResult.MfaRequired -> {
-          pendingMfaSession = result.pending
-          uiState = uiState.copy(destination = GuruDestination.Mfa, isBusy = false, loginError = "")
-        }
-        is GuruAuthResult.Success -> completeAuthenticatedLogin(result, null)
+      } catch (_: Exception) {
+        SupabaseRequestAuth.clear()
+        uiState = uiState.copy(
+          destination = GuruDestination.Login,
+          isBusy = false,
+          loginError = "Login Google belum dapat diselesaikan. Coba lagi."
+        )
       }
     }
   }
@@ -3872,9 +3904,42 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
 
   private fun createOAuthState(): String = UUID.randomUUID().toString()
 
+  private data class PendingGoogleOAuth(val flow: String, val state: String)
+
+  private fun savePendingGoogleOAuth(flow: String, state: String) {
+    pendingGoogleOAuthFlow = flow
+    pendingGoogleOAuthState = state
+    getApplication<Application>()
+      .getSharedPreferences(GOOGLE_OAUTH_PREFS, Context.MODE_PRIVATE)
+      .edit()
+      .putString(GOOGLE_OAUTH_PREF_FLOW, flow)
+      .putString(GOOGLE_OAUTH_PREF_STATE, state)
+      .apply()
+  }
+
+  private fun readPendingGoogleOAuth(): PendingGoogleOAuth {
+    val prefs = getApplication<Application>()
+      .getSharedPreferences(GOOGLE_OAUTH_PREFS, Context.MODE_PRIVATE)
+    val flow = pendingGoogleOAuthFlow.ifBlank {
+      prefs.getString(GOOGLE_OAUTH_PREF_FLOW, "").orEmpty()
+    }
+    val state = pendingGoogleOAuthState.ifBlank {
+      prefs.getString(GOOGLE_OAUTH_PREF_STATE, "").orEmpty()
+    }
+    pendingGoogleOAuthFlow = flow
+    pendingGoogleOAuthState = state
+    return PendingGoogleOAuth(flow, state)
+  }
+
   private fun clearPendingGoogleOAuth() {
     pendingGoogleOAuthState = ""
     pendingGoogleOAuthFlow = ""
+    getApplication<Application>()
+      .getSharedPreferences(GOOGLE_OAUTH_PREFS, Context.MODE_PRIVATE)
+      .edit()
+      .remove(GOOGLE_OAUTH_PREF_FLOW)
+      .remove(GOOGLE_OAUTH_PREF_STATE)
+      .apply()
   }
 
   private fun openExternalUrl(url: String): Boolean {
@@ -3894,9 +3959,14 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
       }
   }
 
-  private fun parseOAuthFragment(fragment: String): Map<String, String> {
-    if (fragment.isBlank()) return emptyMap()
-    return fragment
+  private fun parseOAuthParams(uri: Uri): Map<String, String> {
+    return parseOAuthParameterString(uri.encodedQuery.orEmpty()) +
+      parseOAuthParameterString(uri.encodedFragment.orEmpty())
+  }
+
+  private fun parseOAuthParameterString(raw: String): Map<String, String> {
+    if (raw.isBlank()) return emptyMap()
+    return raw
       .split('&')
       .mapNotNull { pair ->
         val index = pair.indexOf('=')
@@ -3923,6 +3993,9 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     const val CATEGORY_LIBUR_SEMUA = "libur_semua_kegiatan"
     const val GOOGLE_FLOW_LOGIN = "google-login"
     const val GOOGLE_FLOW_LINK = "google-link"
+    const val GOOGLE_OAUTH_PREFS = "mim_guru_google_oauth"
+    const val GOOGLE_OAUTH_PREF_FLOW = "flow"
+    const val GOOGLE_OAUTH_PREF_STATE = "state"
   }
 }
 
