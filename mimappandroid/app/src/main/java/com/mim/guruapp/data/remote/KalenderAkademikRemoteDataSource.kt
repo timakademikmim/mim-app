@@ -9,6 +9,7 @@ import org.json.JSONObject
 import java.io.BufferedReader
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 
 class KalenderAkademikRemoteDataSource {
   suspend fun fetchCalendarEvents(
@@ -16,24 +17,12 @@ class KalenderAkademikRemoteDataSource {
     teacherKaryawanId: String
   ): List<CalendarEvent>? = withContext(Dispatchers.IO) {
     runCatching {
-      val url = "${BuildConfig.SUPABASE_URL}/rest/v1/kalender_akademik?select=id,judul,mulai,selesai,detail,warna,jenis_kegiatan&order=mulai.asc"
-      val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-        requestMethod = "GET"
-        connectTimeout = 15_000
-        readTimeout = 15_000
-      applySupabaseRequestHeaders()
-        setRequestProperty("Accept", "application/json")
-      }
-
-      try {
-        if (connection.responseCode !in 200..299) return@runCatching emptyList()
-        val payload = connection.inputStream.bufferedReader().use(BufferedReader::readText)
-        val rows = JSONArray(payload.ifBlank { "[]" })
+      val activeTahunAjaranId = resolveActiveTahunAjaranId()
+      val rows = fetchCalendarRows(activeTahunAjaranId)
         val calendarItems = buildList {
-          for (index in 0 until rows.length()) {
-            val item = rows.optJSONObject(index) ?: continue
+          rows.forEachIndexed { index, item ->
             val startDateIso = normalizeDateIso(item.optString("mulai"))
-            if (startDateIso.isBlank()) continue
+            if (startDateIso.isBlank()) return@forEachIndexed
             val endDateIso = normalizeDateIso(item.optString("selesai")).ifBlank { startDateIso }
             val title = item.displayString("judul").ifBlank { "Agenda Akademik" }
             val description = item.displayString("detail")
@@ -57,10 +46,63 @@ class KalenderAkademikRemoteDataSource {
           }
         }
         calendarItems.sortedWith(compareBy<CalendarEvent> { it.startDateIso }.thenBy { it.timeLabel }.thenBy { it.title })
-      } finally {
-        connection.disconnect()
-      }
     }.getOrNull()
+  }
+
+  private fun resolveActiveTahunAjaranId(): String {
+    return runCatching {
+      fetchRows("tahun_ajaran", "select=id,aktif&aktif=eq.true&order=id.desc&limit=1")
+        .firstOrNull()
+        ?.cleanScalar("id")
+        .orEmpty()
+    }.getOrDefault("")
+  }
+
+  private fun fetchCalendarRows(activeTahunAjaranId: String): List<JSONObject> {
+    val selectWithYear = "select=id,judul,mulai,selesai,detail,warna,jenis_kegiatan,tahun_ajaran_id"
+    val selectWithoutYear = "select=id,judul,mulai,selesai,detail,warna,jenis_kegiatan"
+    val activeYearFilter = if (activeTahunAjaranId.isNotBlank()) {
+      "&tahun_ajaran_id=eq.${encodeValue(activeTahunAjaranId)}"
+    } else {
+      ""
+    }
+    return try {
+      fetchRows(
+        table = "kalender_akademik",
+        query = "$selectWithYear$activeYearFilter&order=mulai.asc"
+      )
+    } catch (error: Exception) {
+      if (!error.message.orEmpty().isMissingCalendarYearColumnMessage()) throw error
+      fetchRows(
+        table = "kalender_akademik",
+        query = "$selectWithoutYear&order=mulai.asc"
+      )
+    }
+  }
+
+  private fun fetchRows(table: String, query: String): List<JSONObject> {
+    val url = "${BuildConfig.SUPABASE_URL}/rest/v1/$table?$query"
+    val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+      requestMethod = "GET"
+      connectTimeout = 15_000
+      readTimeout = 15_000
+      applySupabaseRequestHeaders()
+      setRequestProperty("Accept", "application/json")
+    }
+    return try {
+      val success = connection.responseCode in 200..299
+      val stream = if (success) connection.inputStream else connection.errorStream
+      val payload = stream?.bufferedReader()?.use(BufferedReader::readText).orEmpty()
+      if (!success) throw IllegalStateException(payload.ifBlank { "HTTP ${connection.responseCode}" })
+      val rows = JSONArray(payload.ifBlank { "[]" })
+      List(rows.length()) { index -> rows.optJSONObject(index) }.filterNotNull()
+    } finally {
+      connection.disconnect()
+    }
+  }
+
+  private fun encodeValue(value: String): String {
+    return URLEncoder.encode(value, Charsets.UTF_8.name())
   }
 
   private fun JSONObject.displayString(key: String): String {
@@ -146,6 +188,12 @@ class KalenderAkademikRemoteDataSource {
         lower.contains("\\\"text\\\":\\\"$token\\\"") ||
         lower.contains("\\\"text\\\": \\\"$token\\\"")
     }
+  }
+
+  private fun String.isMissingCalendarYearColumnMessage(): Boolean {
+    val lower = lowercase()
+    return lower.contains("tahun_ajaran_id") &&
+      (lower.contains("column") || lower.contains("pgrst"))
   }
 
   private fun normalizeDateIso(value: String?): String {

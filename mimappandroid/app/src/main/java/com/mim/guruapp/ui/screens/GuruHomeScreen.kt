@@ -123,9 +123,29 @@ import com.mim.guruapp.data.remote.GuruAiGenerateResult
 import com.mim.guruapp.data.remote.GuruAiTokenWallet
 import com.mim.guruapp.data.remote.GuruExamQuestionItem
 import com.mim.guruapp.data.remote.GuruExamQuestionSnapshot
+import com.mim.guruapp.data.remote.AdminAcademicCalendarEvent
+import com.mim.guruapp.data.remote.AdminAcademicCalendarLoadResult
+import com.mim.guruapp.data.remote.AdminAcademicCalendarSaveResult
+import com.mim.guruapp.data.remote.AdminAcademicCalendarSnapshot
+import com.mim.guruapp.data.remote.AdminAcademicPeriodLoadResult
+import com.mim.guruapp.data.remote.AdminAcademicPeriodSaveResult
+import com.mim.guruapp.data.remote.AdminAcademicPeriodSnapshot
+import com.mim.guruapp.data.remote.AdminAcademicSemester
+import com.mim.guruapp.data.remote.AdminAcademicYear
 import com.mim.guruapp.data.remote.AdminEmployee
 import com.mim.guruapp.data.remote.AdminEmployeeListResult
 import com.mim.guruapp.data.remote.AdminEmployeeSaveResult
+import com.mim.guruapp.data.remote.AdminKelas
+import com.mim.guruapp.data.remote.AdminKelasAssignStudentsResult
+import com.mim.guruapp.data.remote.AdminKelasLoadResult
+import com.mim.guruapp.data.remote.AdminKelasSaveResult
+import com.mim.guruapp.data.remote.AdminKelasSnapshot
+import com.mim.guruapp.data.remote.AdminLessonSlot
+import com.mim.guruapp.data.remote.AdminMapelDistribution
+import com.mim.guruapp.data.remote.AdminMapelLoadResult
+import com.mim.guruapp.data.remote.AdminMapelSaveResult
+import com.mim.guruapp.data.remote.AdminMapelSnapshot
+import com.mim.guruapp.data.remote.AdminMapelSubject
 import com.mim.guruapp.data.remote.AdminSchoolProfile
 import com.mim.guruapp.data.remote.AdminSchoolProfileLoadResult
 import com.mim.guruapp.data.remote.AdminSchoolProfileSaveResult
@@ -134,10 +154,19 @@ import com.mim.guruapp.data.remote.AdminSantri
 import com.mim.guruapp.data.remote.AdminSantriLoadResult
 import com.mim.guruapp.data.remote.AdminSantriSaveResult
 import com.mim.guruapp.data.remote.AdminSantriSnapshot
+import com.mim.guruapp.data.remote.AdminTeachingScheduleLoadResult
+import com.mim.guruapp.data.remote.AdminTeachingScheduleRow
+import com.mim.guruapp.data.remote.AdminTeachingScheduleSaveResult
+import com.mim.guruapp.data.remote.AdminTeachingScheduleSnapshot
 import com.mim.guruapp.ui.components.AgendaCard
+import com.mim.guruapp.ui.components.AdminAcademicCalendarScreen
+import com.mim.guruapp.ui.components.AdminAcademicPeriodScreen
+import com.mim.guruapp.ui.components.AdminKelasScreen
 import com.mim.guruapp.ui.components.AdminKaryawanScreen
+import com.mim.guruapp.ui.components.AdminMapelScreen
 import com.mim.guruapp.ui.components.AdminSantriScreen
 import com.mim.guruapp.ui.components.AdminSchoolProfileScreen
+import com.mim.guruapp.ui.components.AdminTeachingScheduleScreen
 import com.mim.guruapp.ui.components.AttendanceApprovalPopup
 import com.mim.guruapp.ui.components.AvailableMapelPanel
 import com.mim.guruapp.ui.components.BottomNavBar
@@ -857,8 +886,10 @@ private fun GuruHomeContentTarget.transitionOrder(): Int {
     GuruSidebarDestination.Perizinan,
     GuruSidebarDestination.AdminKaryawan,
     GuruSidebarDestination.AdminProfilSekolah,
+    GuruSidebarDestination.AdminKalenderAkademik,
     GuruSidebarDestination.AdminKalenderTahunAjaran,
-    GuruSidebarDestination.AdminKelasMapel,
+    GuruSidebarDestination.AdminKelas,
+    GuruSidebarDestination.AdminMapel,
     GuruSidebarDestination.AdminSantri,
     GuruSidebarDestination.AdminJadwalUjian,
     GuruSidebarDestination.AdminEkstrakurikuler,
@@ -938,10 +969,29 @@ fun GuruHomeScreen(
   onSaveExamQuestions: suspend (GuruExamQuestionItem, String) -> QuestionSaveOutcome,
   onLoadAiTokenBalance: suspend () -> GuruAiTokenWallet?,
   onGenerateAiContent: suspend (GuruAiGenerateRequest) -> GuruAiGenerateResult,
+  onLoadAdminAcademicCalendar: suspend () -> AdminAcademicCalendarLoadResult,
+  onSaveAdminAcademicCalendarEvent: suspend (AdminAcademicCalendarEvent) -> AdminAcademicCalendarSaveResult,
+  onDeleteAdminAcademicCalendarEvent: suspend (String) -> AdminAcademicCalendarSaveResult,
+  onLoadAdminAcademicPeriods: suspend () -> AdminAcademicPeriodLoadResult,
+  onSaveAdminAcademicYear: suspend (AdminAcademicYear) -> AdminAcademicPeriodSaveResult,
+  onSaveAdminSemester: suspend (AdminAcademicSemester) -> AdminAcademicPeriodSaveResult,
+  onSetActiveAdminAcademicYear: suspend (String) -> AdminAcademicPeriodSaveResult,
+  onSetActiveAdminSemester: suspend (String) -> AdminAcademicPeriodSaveResult,
   onLoadAdminEmployees: suspend () -> AdminEmployeeListResult,
   onSaveAdminEmployee: suspend (AdminEmployee, String) -> AdminEmployeeSaveResult,
   onLoadAdminSchoolProfile: suspend () -> AdminSchoolProfileLoadResult,
   onSaveAdminSchoolProfile: suspend (AdminSchoolProfile) -> AdminSchoolProfileSaveResult,
+  onLoadAdminKelas: suspend () -> AdminKelasLoadResult,
+  onSaveAdminKelas: suspend (AdminKelas) -> AdminKelasSaveResult,
+  onAssignAdminKelasStudents: suspend (AdminKelas, List<String>) -> AdminKelasAssignStudentsResult,
+  onLoadAdminMapel: suspend () -> AdminMapelLoadResult,
+  onSaveAdminMapelSubject: suspend (AdminMapelSubject) -> AdminMapelSaveResult,
+  onSaveAdminMapelDistribution: suspend (AdminMapelDistribution) -> AdminMapelSaveResult,
+  onLoadAdminTeachingSchedule: suspend () -> AdminTeachingScheduleLoadResult,
+  onSaveAdminTeachingSchedule: suspend (AdminTeachingScheduleRow) -> AdminTeachingScheduleSaveResult,
+  onDeleteAdminTeachingSchedule: suspend (String) -> AdminTeachingScheduleSaveResult,
+  onSaveAdminLessonSlot: suspend (AdminLessonSlot) -> AdminTeachingScheduleSaveResult,
+  onDeleteAdminLessonSlot: suspend (String) -> AdminTeachingScheduleSaveResult,
   onLoadAdminSantri: suspend () -> AdminSantriLoadResult,
   onSaveAdminSantri: suspend (AdminSantri) -> AdminSantriSaveResult,
   onPromoteAdminSantri: suspend (AdminSantri) -> AdminSantriSaveResult,
@@ -1431,6 +1481,60 @@ fun GuruHomeScreen(
         onRefresh = onRefreshClick,
         onLoadSnapshot = onLoadAdminSchoolProfile,
         onSaveProfile = onSaveAdminSchoolProfile,
+        modifier = Modifier.fillMaxSize()
+      )
+    } else if (targetDestination == GuruSidebarDestination.AdminKalenderAkademik) {
+      AdminAcademicCalendarScreen(
+        isRefreshing = syncBanner.isSyncing,
+        onMenuClick = onToggleSidebar,
+        onRefresh = onRefreshClick,
+        onLoadSnapshot = onLoadAdminAcademicCalendar,
+        onSaveEvent = onSaveAdminAcademicCalendarEvent,
+        onDeleteEvent = onDeleteAdminAcademicCalendarEvent,
+        modifier = Modifier.fillMaxSize()
+      )
+    } else if (targetDestination == GuruSidebarDestination.AdminKalenderTahunAjaran) {
+      AdminAcademicPeriodScreen(
+        isRefreshing = syncBanner.isSyncing,
+        onMenuClick = onToggleSidebar,
+        onRefresh = onRefreshClick,
+        onLoadSnapshot = onLoadAdminAcademicPeriods,
+        onSaveAcademicYear = onSaveAdminAcademicYear,
+        onSaveSemester = onSaveAdminSemester,
+        onSetActiveAcademicYear = onSetActiveAdminAcademicYear,
+        onSetActiveSemester = onSetActiveAdminSemester,
+        modifier = Modifier.fillMaxSize()
+      )
+    } else if (targetDestination == GuruSidebarDestination.AdminKelas) {
+      AdminKelasScreen(
+        isRefreshing = syncBanner.isSyncing,
+        onMenuClick = onToggleSidebar,
+        onRefresh = onRefreshClick,
+        onLoadKelas = onLoadAdminKelas,
+        onSaveKelas = onSaveAdminKelas,
+        onAssignStudents = onAssignAdminKelasStudents,
+        modifier = Modifier.fillMaxSize()
+      )
+    } else if (targetDestination == GuruSidebarDestination.AdminMapel) {
+      AdminMapelScreen(
+        isRefreshing = syncBanner.isSyncing,
+        onMenuClick = onToggleSidebar,
+        onRefresh = onRefreshClick,
+        onLoadMapel = onLoadAdminMapel,
+        onSaveSubject = onSaveAdminMapelSubject,
+        onSaveDistribution = onSaveAdminMapelDistribution,
+        modifier = Modifier.fillMaxSize()
+      )
+    } else if (targetDestination == GuruSidebarDestination.AdminJadwalUjian) {
+      AdminTeachingScheduleScreen(
+        isRefreshing = syncBanner.isSyncing,
+        onMenuClick = onToggleSidebar,
+        onRefresh = onRefreshClick,
+        onLoadSnapshot = onLoadAdminTeachingSchedule,
+        onSaveSchedule = onSaveAdminTeachingSchedule,
+        onDeleteSchedule = onDeleteAdminTeachingSchedule,
+        onSaveLessonSlot = onSaveAdminLessonSlot,
+        onDeleteLessonSlot = onDeleteAdminLessonSlot,
         modifier = Modifier.fillMaxSize()
       )
     } else if (targetDestination == GuruSidebarDestination.AdminKaryawan) {
@@ -2356,6 +2460,30 @@ private fun GuruHomeScreenPreview() {
       onSaveExamQuestions = { _, _ -> QuestionSaveOutcome(true, "OK") },
       onLoadAiTokenBalance = { null },
       onGenerateAiContent = { GuruAiGenerateResult.Error("AI tidak tersedia di preview.") },
+      onLoadAdminAcademicCalendar = {
+        AdminAcademicCalendarLoadResult.Success(AdminAcademicCalendarSnapshot(emptyList(), emptyList()))
+      },
+      onSaveAdminAcademicCalendarEvent = { event ->
+        AdminAcademicCalendarSaveResult.Success(AdminAcademicCalendarSnapshot(listOf(event), emptyList()), "OK")
+      },
+      onDeleteAdminAcademicCalendarEvent = {
+        AdminAcademicCalendarSaveResult.Success(AdminAcademicCalendarSnapshot(emptyList(), emptyList()), "OK")
+      },
+      onLoadAdminAcademicPeriods = {
+        AdminAcademicPeriodLoadResult.Success(AdminAcademicPeriodSnapshot(emptyList(), emptyList()))
+      },
+      onSaveAdminAcademicYear = { year ->
+        AdminAcademicPeriodSaveResult.Success(AdminAcademicPeriodSnapshot(listOf(year), emptyList()), "OK")
+      },
+      onSaveAdminSemester = { semester ->
+        AdminAcademicPeriodSaveResult.Success(AdminAcademicPeriodSnapshot(emptyList(), listOf(semester)), "OK")
+      },
+      onSetActiveAdminAcademicYear = {
+        AdminAcademicPeriodSaveResult.Success(AdminAcademicPeriodSnapshot(emptyList(), emptyList()), "OK")
+      },
+      onSetActiveAdminSemester = {
+        AdminAcademicPeriodSaveResult.Success(AdminAcademicPeriodSnapshot(emptyList(), emptyList()), "OK")
+      },
       onLoadAdminEmployees = { AdminEmployeeListResult.Success(emptyList()) },
       onSaveAdminEmployee = { employee, _ -> AdminEmployeeSaveResult.Success(employee) },
       onLoadAdminSchoolProfile = {
@@ -2384,6 +2512,33 @@ private fun GuruHomeScreenPreview() {
         )
       },
       onLoadAdminSantri = { AdminSantriLoadResult.Success(AdminSantriSnapshot(emptyList())) },
+      onLoadAdminKelas = { AdminKelasLoadResult.Success(AdminKelasSnapshot(emptyList(), emptyList(), emptyList(), emptyList())) },
+      onSaveAdminKelas = { kelas -> AdminKelasSaveResult.Success(kelas, "OK") },
+      onAssignAdminKelasStudents = { _, ids -> AdminKelasAssignStudentsResult.Success(ids.size, "OK") },
+      onLoadAdminMapel = {
+        AdminMapelLoadResult.Success(AdminMapelSnapshot(emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList()))
+      },
+      onSaveAdminMapelSubject = { subject ->
+        AdminMapelSaveResult.Success(AdminMapelSnapshot(listOf(subject), emptyList(), emptyList(), emptyList(), emptyList(), emptyList()), "OK")
+      },
+      onSaveAdminMapelDistribution = { distribution ->
+        AdminMapelSaveResult.Success(AdminMapelSnapshot(emptyList(), listOf(distribution), emptyList(), emptyList(), emptyList(), emptyList()), "OK")
+      },
+      onLoadAdminTeachingSchedule = {
+        AdminTeachingScheduleLoadResult.Success(AdminTeachingScheduleSnapshot(emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList()))
+      },
+      onSaveAdminTeachingSchedule = { row ->
+        AdminTeachingScheduleSaveResult.Success(AdminTeachingScheduleSnapshot(listOf(row), emptyList(), emptyList(), emptyList(), emptyList(), emptyList()), "OK")
+      },
+      onDeleteAdminTeachingSchedule = {
+        AdminTeachingScheduleSaveResult.Success(AdminTeachingScheduleSnapshot(emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList()), "OK")
+      },
+      onSaveAdminLessonSlot = { slot ->
+        AdminTeachingScheduleSaveResult.Success(AdminTeachingScheduleSnapshot(emptyList(), listOf(slot), emptyList(), emptyList(), emptyList(), emptyList()), "OK")
+      },
+      onDeleteAdminLessonSlot = {
+        AdminTeachingScheduleSaveResult.Success(AdminTeachingScheduleSnapshot(emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList()), "OK")
+      },
       onSaveAdminSantri = { student -> AdminSantriSaveResult.Success(student, "OK") },
       onPromoteAdminSantri = { student -> AdminSantriSaveResult.Success(student, "OK") },
       onGraduateAdminSantri = { student -> AdminSantriSaveResult.Success(student, "OK") },

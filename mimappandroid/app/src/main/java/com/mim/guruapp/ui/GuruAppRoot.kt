@@ -50,15 +50,34 @@ import com.mim.guruapp.data.remote.GuruAiGenerateResult
 import com.mim.guruapp.data.remote.GuruAiTokenWallet
 import com.mim.guruapp.data.remote.GuruExamQuestionItem
 import com.mim.guruapp.data.remote.GuruExamQuestionSnapshot
+import com.mim.guruapp.data.remote.AdminAcademicCalendarEvent
+import com.mim.guruapp.data.remote.AdminAcademicCalendarLoadResult
+import com.mim.guruapp.data.remote.AdminAcademicCalendarSaveResult
+import com.mim.guruapp.data.remote.AdminAcademicPeriodLoadResult
+import com.mim.guruapp.data.remote.AdminAcademicPeriodSaveResult
+import com.mim.guruapp.data.remote.AdminAcademicSemester
+import com.mim.guruapp.data.remote.AdminAcademicYear
 import com.mim.guruapp.data.remote.AdminEmployee
 import com.mim.guruapp.data.remote.AdminEmployeeListResult
 import com.mim.guruapp.data.remote.AdminEmployeeSaveResult
+import com.mim.guruapp.data.remote.AdminKelas
+import com.mim.guruapp.data.remote.AdminKelasAssignStudentsResult
+import com.mim.guruapp.data.remote.AdminKelasLoadResult
+import com.mim.guruapp.data.remote.AdminKelasSaveResult
+import com.mim.guruapp.data.remote.AdminLessonSlot
+import com.mim.guruapp.data.remote.AdminMapelDistribution
+import com.mim.guruapp.data.remote.AdminMapelLoadResult
+import com.mim.guruapp.data.remote.AdminMapelSaveResult
+import com.mim.guruapp.data.remote.AdminMapelSubject
 import com.mim.guruapp.data.remote.AdminSchoolProfile
 import com.mim.guruapp.data.remote.AdminSchoolProfileLoadResult
 import com.mim.guruapp.data.remote.AdminSchoolProfileSaveResult
 import com.mim.guruapp.data.remote.AdminSantri
 import com.mim.guruapp.data.remote.AdminSantriLoadResult
 import com.mim.guruapp.data.remote.AdminSantriSaveResult
+import com.mim.guruapp.data.remote.AdminTeachingScheduleLoadResult
+import com.mim.guruapp.data.remote.AdminTeachingScheduleRow
+import com.mim.guruapp.data.remote.AdminTeachingScheduleSaveResult
 import com.mim.guruapp.ui.components.clearFocusOnOutsideTap
 import com.mim.guruapp.ui.i18n.AppLanguage
 import com.mim.guruapp.ui.i18n.LocalAppLanguage
@@ -126,10 +145,29 @@ fun GuruAppRoot(
   onSaveExamQuestions: suspend (GuruExamQuestionItem, String) -> QuestionSaveOutcome,
   onLoadAiTokenBalance: suspend () -> GuruAiTokenWallet?,
   onGenerateAiContent: suspend (GuruAiGenerateRequest) -> GuruAiGenerateResult,
+  onLoadAdminAcademicCalendar: suspend () -> AdminAcademicCalendarLoadResult,
+  onSaveAdminAcademicCalendarEvent: suspend (AdminAcademicCalendarEvent) -> AdminAcademicCalendarSaveResult,
+  onDeleteAdminAcademicCalendarEvent: suspend (String) -> AdminAcademicCalendarSaveResult,
+  onLoadAdminAcademicPeriods: suspend () -> AdminAcademicPeriodLoadResult,
+  onSaveAdminAcademicYear: suspend (AdminAcademicYear) -> AdminAcademicPeriodSaveResult,
+  onSaveAdminSemester: suspend (AdminAcademicSemester) -> AdminAcademicPeriodSaveResult,
+  onSetActiveAdminAcademicYear: suspend (String) -> AdminAcademicPeriodSaveResult,
+  onSetActiveAdminSemester: suspend (String) -> AdminAcademicPeriodSaveResult,
   onLoadAdminEmployees: suspend () -> AdminEmployeeListResult,
   onSaveAdminEmployee: suspend (AdminEmployee, String) -> AdminEmployeeSaveResult,
   onLoadAdminSchoolProfile: suspend () -> AdminSchoolProfileLoadResult,
   onSaveAdminSchoolProfile: suspend (AdminSchoolProfile) -> AdminSchoolProfileSaveResult,
+  onLoadAdminKelas: suspend () -> AdminKelasLoadResult,
+  onSaveAdminKelas: suspend (AdminKelas) -> AdminKelasSaveResult,
+  onAssignAdminKelasStudents: suspend (AdminKelas, List<String>) -> AdminKelasAssignStudentsResult,
+  onLoadAdminMapel: suspend () -> AdminMapelLoadResult,
+  onSaveAdminMapelSubject: suspend (AdminMapelSubject) -> AdminMapelSaveResult,
+  onSaveAdminMapelDistribution: suspend (AdminMapelDistribution) -> AdminMapelSaveResult,
+  onLoadAdminTeachingSchedule: suspend () -> AdminTeachingScheduleLoadResult,
+  onSaveAdminTeachingSchedule: suspend (AdminTeachingScheduleRow) -> AdminTeachingScheduleSaveResult,
+  onDeleteAdminTeachingSchedule: suspend (String) -> AdminTeachingScheduleSaveResult,
+  onSaveAdminLessonSlot: suspend (AdminLessonSlot) -> AdminTeachingScheduleSaveResult,
+  onDeleteAdminLessonSlot: suspend (String) -> AdminTeachingScheduleSaveResult,
   onLoadAdminSantri: suspend () -> AdminSantriLoadResult,
   onSaveAdminSantri: suspend (AdminSantri) -> AdminSantriSaveResult,
   onPromoteAdminSantri: suspend (AdminSantri) -> AdminSantriSaveResult,
@@ -265,10 +303,29 @@ fun GuruAppRoot(
               onSaveExamQuestions = onSaveExamQuestions,
               onLoadAiTokenBalance = onLoadAiTokenBalance,
               onGenerateAiContent = onGenerateAiContent,
+              onLoadAdminAcademicCalendar = onLoadAdminAcademicCalendar,
+              onSaveAdminAcademicCalendarEvent = onSaveAdminAcademicCalendarEvent,
+              onDeleteAdminAcademicCalendarEvent = onDeleteAdminAcademicCalendarEvent,
+              onLoadAdminAcademicPeriods = onLoadAdminAcademicPeriods,
+              onSaveAdminAcademicYear = onSaveAdminAcademicYear,
+              onSaveAdminSemester = onSaveAdminSemester,
+              onSetActiveAdminAcademicYear = onSetActiveAdminAcademicYear,
+              onSetActiveAdminSemester = onSetActiveAdminSemester,
               onLoadAdminEmployees = onLoadAdminEmployees,
               onSaveAdminEmployee = onSaveAdminEmployee,
               onLoadAdminSchoolProfile = onLoadAdminSchoolProfile,
               onSaveAdminSchoolProfile = onSaveAdminSchoolProfile,
+              onLoadAdminKelas = onLoadAdminKelas,
+              onSaveAdminKelas = onSaveAdminKelas,
+              onAssignAdminKelasStudents = onAssignAdminKelasStudents,
+              onLoadAdminMapel = onLoadAdminMapel,
+              onSaveAdminMapelSubject = onSaveAdminMapelSubject,
+              onSaveAdminMapelDistribution = onSaveAdminMapelDistribution,
+              onLoadAdminTeachingSchedule = onLoadAdminTeachingSchedule,
+              onSaveAdminTeachingSchedule = onSaveAdminTeachingSchedule,
+              onDeleteAdminTeachingSchedule = onDeleteAdminTeachingSchedule,
+              onSaveAdminLessonSlot = onSaveAdminLessonSlot,
+              onDeleteAdminLessonSlot = onDeleteAdminLessonSlot,
               onLoadAdminSantri = onLoadAdminSantri,
               onSaveAdminSantri = onSaveAdminSantri,
               onPromoteAdminSantri = onPromoteAdminSantri,

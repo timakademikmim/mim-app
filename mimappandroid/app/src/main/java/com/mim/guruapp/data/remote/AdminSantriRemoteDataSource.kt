@@ -136,14 +136,14 @@ class AdminSantriRemoteDataSource {
   suspend fun updateSantri(student: AdminSantri): AdminSantriSaveResult = withContext(Dispatchers.IO) {
     val rowId = student.rowId.trim()
     val name = student.name.trim()
-    if (rowId.isBlank()) {
-      return@withContext AdminSantriSaveResult.Error("ID santri tidak ditemukan.")
-    }
     if (name.isBlank()) {
       return@withContext AdminSantriSaveResult.Error("Nama santri wajib diisi.")
     }
 
     val normalizedStatus = student.status.trim().ifBlank { if (student.active) "aktif" else "tidak_aktif" }
+    if (rowId.isBlank()) {
+      return@withContext createSantri(student, name, normalizedStatus)
+    }
     val fields = linkedMapOf<String, Any?>(
       "nama" to name,
       "nisn" to student.nisn.trim(),
@@ -232,6 +232,85 @@ class AdminSantriRemoteDataSource {
       "Data santri berhasil disimpan. Beberapa kolom belum tersedia: ${unsupportedFields.joinToString(", ")}."
     }
     AdminSantriSaveResult.Success(saved, message)
+  }
+
+  private fun createSantri(
+    student: AdminSantri,
+    name: String,
+    normalizedStatus: String
+  ): AdminSantriSaveResult {
+    val fields = linkedMapOf<String, Any?>(
+      "nama" to name,
+      "nisn" to student.nisn.trim(),
+      "jenis_kelamin" to student.gender.trim(),
+      "kelas_id" to student.classId.trim(),
+      "status" to normalizedStatus,
+      "aktif" to normalizedStatus.statusMeansActive(),
+      "no_hp" to student.studentPhone.trim(),
+      "ayah" to student.fatherName.trim(),
+      "no_hp_ayah" to student.fatherPhone.trim(),
+      "ibu" to student.motherName.trim(),
+      "no_hp_ibu" to student.motherPhone.trim(),
+      "wali" to student.guardianName.trim(),
+      "no_hp_wali" to student.guardianPhone.trim(),
+      "alamat" to student.address.trim(),
+      "catatan" to student.note.trim(),
+      "kamar" to student.room.trim(),
+      "halaqah" to student.halaqah.trim()
+    )
+
+    return try {
+      val yearRows = fetchRows("tahun_ajaran", "select=*&order=id.desc")
+      val yearNameById = yearRows.associate { row ->
+        row.optCleanString("id") to row.academicYearName()
+      }
+      val classInfos = fetchRows("kelas", "select=*&order=nama_kelas.asc")
+        .mapNotNull { it.toClassInfo() }
+      val classById = classInfos.associateBy { it.id }
+
+      val insertResult = insertSantriFields(fields)
+      val raw = insertResult.row.toRawSantriRow(classById, yearNameById)
+      val saved = raw?.toAdminSantri(listOf(raw)) ?: student.copy(
+        rowId = insertResult.row.optCleanString("id"),
+        identityKey = buildSantriIdentityKey(
+          nisn = student.nisn.trim(),
+          idSantri = insertResult.row.optCleanString("id_santri"),
+          noInduk = insertResult.row.optCleanString("no_induk").ifBlank { insertResult.row.optCleanString("nomor_induk") },
+          rowId = insertResult.row.optCleanString("id")
+        ),
+        name = name,
+        status = normalizedStatus,
+        active = normalizedStatus.statusMeansActive()
+      )
+      val savedAcademicYearId = saved.academicYearId
+        .ifBlank { classById[saved.classId]?.academicYearId.orEmpty() }
+      if (saved.rowId.isNotBlank() && saved.classId.isNotBlank()) {
+        upsertClassHistoryRow(
+          linkedMapOf(
+            "santri_id" to saved.rowId,
+            "kelas_id" to saved.classId,
+            "tahun_ajaran_id" to savedAcademicYearId.ifBlank { null },
+            "status" to normalizedStatus,
+            "tanggal_mulai" to LocalDate.now().toString(),
+            "tanggal_selesai" to null
+          )
+        )
+      }
+      val message = if (insertResult.unsupportedFields.isEmpty()) {
+        "Santri baru berhasil ditambahkan."
+      } else {
+        "Santri baru berhasil ditambahkan. Beberapa kolom belum tersedia: ${insertResult.unsupportedFields.joinToString(", ")}."
+      }
+      AdminSantriSaveResult.Success(saved, message)
+    } catch (_: SocketTimeoutException) {
+      AdminSantriSaveResult.Error("Koneksi ke server terlalu lama. Coba lagi.")
+    } catch (error: Exception) {
+      if (error.message.orEmpty().isUniqueViolationMessage()) {
+        AdminSantriSaveResult.Error("Data santri belum bisa ditambahkan karena ada data unik yang sama, misalnya NISN.")
+      } else {
+        AdminSantriSaveResult.Error("Gagal menambahkan santri baru.")
+      }
+    }
   }
 
   suspend fun promoteSantri(student: AdminSantri): AdminSantriSaveResult = withContext(Dispatchers.IO) {
@@ -457,6 +536,77 @@ class AdminSantriRemoteDataSource {
     }.getOrDefault(false)
   }
 
+  private fun insertSantriFields(fields: Map<String, Any?>): AdminSantriInsertResult {
+    val requiredCandidates = listOf(
+      linkedMapOf<String, Any?>().apply {
+        fields.forEach { (field, value) -> this[field] = value }
+      },
+      linkedMapOf(
+        "nama" to fields["nama"],
+        "nisn" to fields["nisn"],
+        "jenis_kelamin" to fields["jenis_kelamin"],
+        "kelas_id" to fields["kelas_id"],
+        "status" to fields["status"],
+        "aktif" to fields["aktif"]
+      ),
+      linkedMapOf(
+        "nama" to fields["nama"],
+        "kelas_id" to fields["kelas_id"],
+        "status" to fields["status"],
+        "aktif" to fields["aktif"]
+      ),
+      linkedMapOf("nama" to fields["nama"])
+    )
+    var currentFields = requiredCandidates.first().toMutableMap()
+    val unsupportedFields = linkedSetOf<String>()
+    var fallbackIndex = 0
+
+    repeat(28) {
+      try {
+        val row = postSantriFields(currentFields)
+        return AdminSantriInsertResult(row = row, unsupportedFields = unsupportedFields)
+      } catch (error: Exception) {
+        val message = error.message.orEmpty()
+        val missingField = currentFields.keys.firstOrNull { field ->
+          message.isMissingColumnMessage(field)
+        }
+        if (missingField != null && currentFields.size > 1) {
+          unsupportedFields += missingField
+          currentFields.remove(missingField)
+        } else if (message.isMissingColumnMessage() && fallbackIndex < requiredCandidates.lastIndex) {
+          fallbackIndex += 1
+          currentFields = requiredCandidates[fallbackIndex]
+            .filterKeys { it !in unsupportedFields }
+            .toMutableMap()
+        } else {
+          throw error
+        }
+      }
+    }
+    throw IllegalStateException("Gagal menambahkan santri baru setelah menyesuaikan kolom.")
+  }
+
+  private fun postSantriFields(fields: Map<String, Any?>): JSONObject {
+    val selectColumns = (listOf("id") + fields.keys).distinct().joinToString(separator = ",")
+    val requestUrl = "${BuildConfig.SUPABASE_URL}/rest/v1/santri" +
+      "?select=${encodeValue(selectColumns)}"
+    val connection = createConnection(requestUrl, method = "POST").apply {
+      doOutput = true
+      setRequestProperty("Content-Type", "application/json")
+      setRequestProperty("Prefer", "return=representation")
+    }
+    val payload = JSONObject().apply {
+      fields.forEach { (field, value) -> putPayloadValue(field, value) }
+    }
+    connection.outputStream.use { stream ->
+      stream.write(payload.toString().toByteArray(Charsets.UTF_8))
+      stream.flush()
+    }
+    return connection.useAdminSantriJsonArrayResponse { rows ->
+      rows.optJSONObject(0) ?: JSONObject()
+    }
+  }
+
   private fun createConnection(requestUrl: String, method: String = "GET"): HttpURLConnection {
     return (URL(requestUrl).openConnection() as HttpURLConnection).apply {
       requestMethod = method
@@ -478,6 +628,11 @@ private data class AdminClassInfo(
   val name: String,
   val academicYearId: String,
   val level: String
+)
+
+private data class AdminSantriInsertResult(
+  val row: JSONObject,
+  val unsupportedFields: Set<String>
 )
 
 private data class RawSantriRow(

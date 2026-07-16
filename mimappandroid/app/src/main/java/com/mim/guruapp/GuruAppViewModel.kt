@@ -14,10 +14,30 @@ import com.mim.guruapp.alarm.LessonNotificationScheduler
 import com.mim.guruapp.alarm.TeachingReminderNotifier
 import com.mim.guruapp.alarm.TeachingReminderReceiver
 import com.mim.guruapp.alarm.TeachingReminderScheduler
+import com.mim.guruapp.data.remote.AdminAcademicCalendarEvent
+import com.mim.guruapp.data.remote.AdminAcademicCalendarLoadResult
+import com.mim.guruapp.data.remote.AdminAcademicCalendarRemoteDataSource
+import com.mim.guruapp.data.remote.AdminAcademicCalendarSaveResult
+import com.mim.guruapp.data.remote.AdminAcademicPeriodLoadResult
+import com.mim.guruapp.data.remote.AdminAcademicPeriodRemoteDataSource
+import com.mim.guruapp.data.remote.AdminAcademicPeriodSaveResult
+import com.mim.guruapp.data.remote.AdminAcademicSemester
+import com.mim.guruapp.data.remote.AdminAcademicYear
 import com.mim.guruapp.data.remote.AdminEmployee
 import com.mim.guruapp.data.remote.AdminEmployeeListResult
 import com.mim.guruapp.data.remote.AdminEmployeeSaveResult
+import com.mim.guruapp.data.remote.AdminKelas
+import com.mim.guruapp.data.remote.AdminKelasAssignStudentsResult
+import com.mim.guruapp.data.remote.AdminKelasLoadResult
+import com.mim.guruapp.data.remote.AdminKelasRemoteDataSource
+import com.mim.guruapp.data.remote.AdminKelasSaveResult
 import com.mim.guruapp.data.remote.AdminKaryawanRemoteDataSource
+import com.mim.guruapp.data.remote.AdminLessonSlot
+import com.mim.guruapp.data.remote.AdminMapelDistribution
+import com.mim.guruapp.data.remote.AdminMapelLoadResult
+import com.mim.guruapp.data.remote.AdminMapelRemoteDataSource
+import com.mim.guruapp.data.remote.AdminMapelSaveResult
+import com.mim.guruapp.data.remote.AdminMapelSubject
 import com.mim.guruapp.data.remote.AdminSchoolProfile
 import com.mim.guruapp.data.remote.AdminSchoolProfileLoadResult
 import com.mim.guruapp.data.remote.AdminSchoolProfileRemoteDataSource
@@ -26,6 +46,10 @@ import com.mim.guruapp.data.remote.AdminSantri
 import com.mim.guruapp.data.remote.AdminSantriLoadResult
 import com.mim.guruapp.data.remote.AdminSantriRemoteDataSource
 import com.mim.guruapp.data.remote.AdminSantriSaveResult
+import com.mim.guruapp.data.remote.AdminTeachingScheduleLoadResult
+import com.mim.guruapp.data.remote.AdminTeachingScheduleRemoteDataSource
+import com.mim.guruapp.data.remote.AdminTeachingScheduleRow
+import com.mim.guruapp.data.remote.AdminTeachingScheduleSaveResult
 import com.mim.guruapp.data.remote.GuruAuthRemoteDataSource
 import com.mim.guruapp.data.remote.GuruAuthRefreshResult
 import com.mim.guruapp.data.remote.GuruGoogleOAuthUrlResult
@@ -164,8 +188,10 @@ enum class GuruSidebarDestination(val title: String) {
   WakasekNilaiSiswa("Nilai Siswa"),
   WakasekPerizinan("Perizinan Wakasek"),
   AdminProfilSekolah("Profil Sekolah"),
-  AdminKalenderTahunAjaran("Kalender & Tahun Ajaran"),
-  AdminKelasMapel("Kelas & Mapel"),
+  AdminKalenderAkademik("Kalender Akademik"),
+  AdminKalenderTahunAjaran("Tahun Ajaran"),
+  AdminKelas("Kelas"),
+  AdminMapel("Mapel"),
   AdminSantri("Santri"),
   AdminJadwalUjian("Jadwal & Ujian"),
   AdminEkstrakurikuler("Ekstrakurikuler"),
@@ -195,8 +221,10 @@ fun GuruSidebarDestination.isAdminRoleDestination(): Boolean {
   return when (this) {
     GuruSidebarDestination.Dashboard,
     GuruSidebarDestination.AdminProfilSekolah,
+    GuruSidebarDestination.AdminKalenderAkademik,
     GuruSidebarDestination.AdminKalenderTahunAjaran,
-    GuruSidebarDestination.AdminKelasMapel,
+    GuruSidebarDestination.AdminKelas,
+    GuruSidebarDestination.AdminMapel,
     GuruSidebarDestination.AdminSantri,
     GuruSidebarDestination.AdminJadwalUjian,
     GuruSidebarDestination.AdminEkstrakurikuler,
@@ -213,8 +241,10 @@ fun GuruSidebarDestination.isAdminRoleDestination(): Boolean {
 fun GuruSidebarDestination.adminSidebarParent(): GuruSidebarParent? {
   return when (this) {
     GuruSidebarDestination.AdminProfilSekolah,
+    GuruSidebarDestination.AdminKalenderAkademik,
     GuruSidebarDestination.AdminKalenderTahunAjaran -> GuruSidebarParent.AdminSekolah
-    GuruSidebarDestination.AdminKelasMapel,
+    GuruSidebarDestination.AdminKelas,
+    GuruSidebarDestination.AdminMapel,
     GuruSidebarDestination.AdminSantri,
     GuruSidebarDestination.AdminJadwalUjian,
     GuruSidebarDestination.AdminEkstrakurikuler -> GuruSidebarParent.AdminAkademik
@@ -340,8 +370,13 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
   private val teachingReminderScheduler = TeachingReminderScheduler(application.applicationContext, teachingReminderStore)
   private val lessonNotificationStore = LessonNotificationStore(application.applicationContext)
   private val lessonNotificationScheduler = LessonNotificationScheduler(application.applicationContext, lessonNotificationStore)
+  private val adminAcademicCalendarRemoteDataSource = AdminAcademicCalendarRemoteDataSource()
+  private val adminAcademicPeriodRemoteDataSource = AdminAcademicPeriodRemoteDataSource()
   private val adminKaryawanRemoteDataSource = AdminKaryawanRemoteDataSource()
   private val adminSchoolProfileRemoteDataSource = AdminSchoolProfileRemoteDataSource()
+  private val adminKelasRemoteDataSource = AdminKelasRemoteDataSource()
+  private val adminMapelRemoteDataSource = AdminMapelRemoteDataSource()
+  private val adminTeachingScheduleRemoteDataSource = AdminTeachingScheduleRemoteDataSource()
   private val adminSantriRemoteDataSource = AdminSantriRemoteDataSource()
   private val authRemoteDataSource = GuruAuthRemoteDataSource()
   private val mapelRemoteDataSource = GuruMapelRemoteDataSource()
@@ -825,8 +860,10 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
       isSidebarOpen = false,
       expandedSidebarParent = when (resolvedDestination) {
         GuruSidebarDestination.AdminProfilSekolah,
+        GuruSidebarDestination.AdminKalenderAkademik,
         GuruSidebarDestination.AdminKalenderTahunAjaran,
-        GuruSidebarDestination.AdminKelasMapel,
+        GuruSidebarDestination.AdminKelas,
+        GuruSidebarDestination.AdminMapel,
         GuruSidebarDestination.AdminSantri,
         GuruSidebarDestination.AdminJadwalUjian,
         GuruSidebarDestination.AdminEkstrakurikuler,
@@ -2443,11 +2480,171 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     return adminKaryawanRemoteDataSource.fetchEmployees()
   }
 
+  suspend fun loadAdminAcademicCalendar(): AdminAcademicCalendarLoadResult {
+    if (uiState.session.activeRole != APP_ROLE_ADMIN) {
+      return AdminAcademicCalendarLoadResult.Error("Mode admin belum aktif.")
+    }
+    return adminAcademicCalendarRemoteDataSource.fetchSnapshot()
+  }
+
+  suspend fun saveAdminAcademicCalendarEvent(event: AdminAcademicCalendarEvent): AdminAcademicCalendarSaveResult {
+    if (uiState.session.activeRole != APP_ROLE_ADMIN) {
+      return AdminAcademicCalendarSaveResult.Error("Mode admin belum aktif.")
+    }
+    val result = adminAcademicCalendarRemoteDataSource.saveEvent(event)
+    if (result is AdminAcademicCalendarSaveResult.Success) {
+      refreshFromServer(force = true)
+    }
+    return result
+  }
+
+  suspend fun deleteAdminAcademicCalendarEvent(rowId: String): AdminAcademicCalendarSaveResult {
+    if (uiState.session.activeRole != APP_ROLE_ADMIN) {
+      return AdminAcademicCalendarSaveResult.Error("Mode admin belum aktif.")
+    }
+    val result = adminAcademicCalendarRemoteDataSource.deleteEvent(rowId)
+    if (result is AdminAcademicCalendarSaveResult.Success) {
+      refreshFromServer(force = true)
+    }
+    return result
+  }
+
+  suspend fun loadAdminAcademicPeriods(): AdminAcademicPeriodLoadResult {
+    if (uiState.session.activeRole != APP_ROLE_ADMIN) {
+      return AdminAcademicPeriodLoadResult.Error("Mode admin belum aktif.")
+    }
+    return adminAcademicPeriodRemoteDataSource.fetchSnapshot()
+  }
+
+  suspend fun saveAdminAcademicYear(year: AdminAcademicYear): AdminAcademicPeriodSaveResult {
+    if (uiState.session.activeRole != APP_ROLE_ADMIN) {
+      return AdminAcademicPeriodSaveResult.Error("Mode admin belum aktif.")
+    }
+    return adminAcademicPeriodRemoteDataSource.saveAcademicYear(year)
+  }
+
+  suspend fun saveAdminSemester(semester: AdminAcademicSemester): AdminAcademicPeriodSaveResult {
+    if (uiState.session.activeRole != APP_ROLE_ADMIN) {
+      return AdminAcademicPeriodSaveResult.Error("Mode admin belum aktif.")
+    }
+    return adminAcademicPeriodRemoteDataSource.saveSemester(semester)
+  }
+
+  suspend fun setActiveAdminAcademicYear(rowId: String): AdminAcademicPeriodSaveResult {
+    if (uiState.session.activeRole != APP_ROLE_ADMIN) {
+      return AdminAcademicPeriodSaveResult.Error("Mode admin belum aktif.")
+    }
+    return adminAcademicPeriodRemoteDataSource.setActiveAcademicYear(rowId)
+  }
+
+  suspend fun setActiveAdminSemester(rowId: String): AdminAcademicPeriodSaveResult {
+    if (uiState.session.activeRole != APP_ROLE_ADMIN) {
+      return AdminAcademicPeriodSaveResult.Error("Mode admin belum aktif.")
+    }
+    return adminAcademicPeriodRemoteDataSource.setActiveSemester(rowId)
+  }
+
   suspend fun loadAdminSantri(): AdminSantriLoadResult {
     if (uiState.session.activeRole != APP_ROLE_ADMIN) {
       return AdminSantriLoadResult.Error("Mode admin belum aktif.")
     }
     return adminSantriRemoteDataSource.fetchSantri()
+  }
+
+  suspend fun loadAdminKelas(): AdminKelasLoadResult {
+    if (uiState.session.activeRole != APP_ROLE_ADMIN) {
+      return AdminKelasLoadResult.Error("Mode admin belum aktif.")
+    }
+    return adminKelasRemoteDataSource.fetchKelas()
+  }
+
+  suspend fun saveAdminKelas(kelas: AdminKelas): AdminKelasSaveResult {
+    if (uiState.session.activeRole != APP_ROLE_ADMIN) {
+      return AdminKelasSaveResult.Error("Mode admin belum aktif.")
+    }
+    return adminKelasRemoteDataSource.saveKelas(kelas)
+  }
+
+  suspend fun assignAdminKelasStudents(
+    kelas: AdminKelas,
+    studentIds: List<String>
+  ): AdminKelasAssignStudentsResult {
+    if (uiState.session.activeRole != APP_ROLE_ADMIN) {
+      return AdminKelasAssignStudentsResult.Error("Mode admin belum aktif.")
+    }
+    return adminKelasRemoteDataSource.assignStudentsToKelas(kelas, studentIds)
+  }
+
+  suspend fun loadAdminMapel(): AdminMapelLoadResult {
+    if (uiState.session.activeRole != APP_ROLE_ADMIN) {
+      return AdminMapelLoadResult.Error("Mode admin belum aktif.")
+    }
+    return adminMapelRemoteDataSource.fetchSnapshot()
+  }
+
+  suspend fun saveAdminMapelSubject(subject: AdminMapelSubject): AdminMapelSaveResult {
+    if (uiState.session.activeRole != APP_ROLE_ADMIN) {
+      return AdminMapelSaveResult.Error("Mode admin belum aktif.")
+    }
+    return adminMapelRemoteDataSource.saveSubject(subject)
+  }
+
+  suspend fun saveAdminMapelDistribution(distribution: AdminMapelDistribution): AdminMapelSaveResult {
+    if (uiState.session.activeRole != APP_ROLE_ADMIN) {
+      return AdminMapelSaveResult.Error("Mode admin belum aktif.")
+    }
+    return adminMapelRemoteDataSource.saveDistribution(distribution)
+  }
+
+  suspend fun loadAdminTeachingSchedule(): AdminTeachingScheduleLoadResult {
+    if (uiState.session.activeRole != APP_ROLE_ADMIN) {
+      return AdminTeachingScheduleLoadResult.Error("Mode admin belum aktif.")
+    }
+    return adminTeachingScheduleRemoteDataSource.fetchSnapshot()
+  }
+
+  suspend fun saveAdminTeachingSchedule(row: AdminTeachingScheduleRow): AdminTeachingScheduleSaveResult {
+    if (uiState.session.activeRole != APP_ROLE_ADMIN) {
+      return AdminTeachingScheduleSaveResult.Error("Mode admin belum aktif.")
+    }
+    val result = adminTeachingScheduleRemoteDataSource.saveSchedule(row)
+    if (result is AdminTeachingScheduleSaveResult.Success) {
+      refreshFromServer(force = true)
+    }
+    return result
+  }
+
+  suspend fun deleteAdminTeachingSchedule(rowId: String): AdminTeachingScheduleSaveResult {
+    if (uiState.session.activeRole != APP_ROLE_ADMIN) {
+      return AdminTeachingScheduleSaveResult.Error("Mode admin belum aktif.")
+    }
+    val result = adminTeachingScheduleRemoteDataSource.deleteSchedule(rowId)
+    if (result is AdminTeachingScheduleSaveResult.Success) {
+      refreshFromServer(force = true)
+    }
+    return result
+  }
+
+  suspend fun saveAdminLessonSlot(slot: AdminLessonSlot): AdminTeachingScheduleSaveResult {
+    if (uiState.session.activeRole != APP_ROLE_ADMIN) {
+      return AdminTeachingScheduleSaveResult.Error("Mode admin belum aktif.")
+    }
+    val result = adminTeachingScheduleRemoteDataSource.saveLessonSlot(slot)
+    if (result is AdminTeachingScheduleSaveResult.Success) {
+      refreshFromServer(force = true)
+    }
+    return result
+  }
+
+  suspend fun deleteAdminLessonSlot(rowId: String): AdminTeachingScheduleSaveResult {
+    if (uiState.session.activeRole != APP_ROLE_ADMIN) {
+      return AdminTeachingScheduleSaveResult.Error("Mode admin belum aktif.")
+    }
+    val result = adminTeachingScheduleRemoteDataSource.deleteLessonSlot(rowId)
+    if (result is AdminTeachingScheduleSaveResult.Success) {
+      refreshFromServer(force = true)
+    }
+    return result
   }
 
   suspend fun saveAdminSantri(student: AdminSantri): AdminSantriSaveResult {

@@ -614,7 +614,8 @@ fun buildAdminSidebarContent(
         icon = Icons.Outlined.Book,
         children = listOf(
           SidebarLeafItem(GuruSidebarDestination.AdminProfilSekolah, "Profil Sekolah", Icons.Outlined.AccountCircle),
-          SidebarLeafItem(GuruSidebarDestination.AdminKalenderTahunAjaran, "Kalender & Tahun Ajaran", Icons.Outlined.CalendarMonth)
+          SidebarLeafItem(GuruSidebarDestination.AdminKalenderAkademik, "Kalender Akademik", Icons.Outlined.CalendarMonth),
+          SidebarLeafItem(GuruSidebarDestination.AdminKalenderTahunAjaran, "Tahun Ajaran", Icons.Outlined.CalendarMonth)
         )
       ),
       SidebarParentItem(
@@ -622,7 +623,8 @@ fun buildAdminSidebarContent(
         label = "Akademik",
         icon = Icons.Outlined.Book,
         children = listOf(
-          SidebarLeafItem(GuruSidebarDestination.AdminKelasMapel, "Kelas & Mapel", Icons.Outlined.Dashboard),
+          SidebarLeafItem(GuruSidebarDestination.AdminKelas, "Kelas", Icons.Outlined.Dashboard),
+          SidebarLeafItem(GuruSidebarDestination.AdminMapel, "Mapel", Icons.Outlined.Book),
           SidebarLeafItem(GuruSidebarDestination.AdminSantri, "Santri", Icons.Outlined.Groups),
           SidebarLeafItem(GuruSidebarDestination.AdminJadwalUjian, "Jadwal & Ujian", Icons.Outlined.Quiz),
           SidebarLeafItem(GuruSidebarDestination.AdminEkstrakurikuler, "Ekstrakurikuler", Icons.Outlined.Grade)

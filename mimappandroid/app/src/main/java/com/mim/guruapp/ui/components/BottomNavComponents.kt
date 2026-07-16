@@ -422,8 +422,10 @@ private fun bottomNavEntryForDestination(destination: GuruSidebarDestination): B
     GuruSidebarDestination.AdminKaryawan -> BottomNavEntry(destination, "Karyawan", Icons.Outlined.Groups, "Data Karyawan")
     GuruSidebarDestination.Profil -> BottomNavEntry(destination, "Profil", Icons.Outlined.PersonOutline)
     GuruSidebarDestination.AdminProfilSekolah,
+    GuruSidebarDestination.AdminKalenderAkademik,
     GuruSidebarDestination.AdminKalenderTahunAjaran,
-    GuruSidebarDestination.AdminKelasMapel,
+    GuruSidebarDestination.AdminKelas,
+    GuruSidebarDestination.AdminMapel,
     GuruSidebarDestination.AdminSantri,
     GuruSidebarDestination.AdminJadwalUjian,
     GuruSidebarDestination.AdminEkstrakurikuler,

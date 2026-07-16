@@ -122,15 +122,15 @@ jobs:
             "versionCode": ${MIM_VERSION_CODE},
             "versionName": "${MIM_VERSION_NAME}",
             "apkUrl": "${APK_URL}",
-            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Admin kini bisa memilih banyak santri dan menjalankan tindakan massal.",
+            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Admin kini bisa mengatur jadwal pelajaran, kelas, mapel, tahun ajaran, dan kalender akademik dari aplikasi Android.",
             "features": [
-              "Daftar santri admin kini mendukung pilih banyak santri langsung dari card.",
-              "Saat santri dipilih, muncul bar tindakan untuk naik kelas atau meluluskan secara massal.",
-              "Aksi massal menampilkan dialog konfirmasi dan memproses santri satu per satu."
+              "Menu admin kini memiliki halaman Jadwal Pelajaran dengan filter tahun ajaran, semester, kelas, hari, dan pencarian.",
+              "Admin bisa menambah, mengedit, dan menghapus jadwal pelajaran berdasarkan distribusi kelas, mapel, guru, hari, dan slot jam.",
+              "Admin bisa mengelola slot Jam Pelajaran langsung dari Android."
             ],
             "fixes": [
-              "Santri yang status akademiknya sudah terkunci tidak bisa ikut dipilih untuk aksi massal.",
-              "Santri yang gagal diproses tetap terseleksi agar admin mudah mengecek dan mengulang.",
+              "Dashboard, agenda, dan jadwal guru kini lebih konsisten mengikuti tahun ajaran aktif.",
+              "Menu mapel guru mendapatkan pencarian agar daftar mapel lebih mudah ditemukan.",
               "Update versi ini tidak wajib agar build dari Android Studio tetap bisa dipakai untuk testing lokal."
             ],
             "mandatory": ${MANDATORY}

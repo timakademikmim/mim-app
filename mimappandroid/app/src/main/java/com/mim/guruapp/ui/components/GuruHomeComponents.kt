@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -134,8 +135,24 @@ fun AvailableMapelPanel(
   selectedIds: Set<String>,
   onToggleSubject: (String) -> Unit,
   onClearSelection: () -> Unit,
-  onClaimSelectedSubjects: () -> Unit
+  onClaimSelectedSubjects: () -> Unit,
+  searchQuery: String = "",
+  onSearchQueryChange: ((String) -> Unit)? = null
 ) {
+  val normalizedQuery = searchQuery.trim().lowercase()
+  val filteredSubjects = if (normalizedQuery.isBlank()) {
+    subjects
+  } else {
+    subjects.filter { subject ->
+      buildString {
+        append(subject.title)
+        append(' ')
+        append(subject.className)
+        append(' ')
+        append(subject.semester)
+      }.lowercase().contains(normalizedQuery)
+    }
+  }
   Column(
     modifier = Modifier
       .fillMaxWidth()
@@ -149,16 +166,33 @@ fun AvailableMapelPanel(
       style = MaterialTheme.typography.titleSmall,
       fontWeight = FontWeight.Bold
     )
+    if (onSearchQueryChange != null) {
+      OutlinedTextField(
+        value = searchQuery,
+        onValueChange = onSearchQueryChange,
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(top = 12.dp),
+        singleLine = true,
+        shape = RoundedCornerShape(16.dp),
+        label = { Text(t("Cari Mapel")) },
+        placeholder = { Text(t("Cari nama mapel, kelas, atau semester")) }
+      )
+    }
     Column(
       modifier = Modifier.padding(top = 12.dp),
       verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-      subjects.forEach { subject ->
-        AvailableMapelCard(
-          subject = subject,
-          checked = selectedIds.contains(subject.id),
-          onToggle = { onToggleSubject(subject.id) }
-        )
+      if (filteredSubjects.isEmpty()) {
+        EmptyPlaceholderCard("Tidak ada mapel tersedia yang cocok dengan pencarian.")
+      } else {
+        filteredSubjects.forEach { subject ->
+          AvailableMapelCard(
+            subject = subject,
+            checked = selectedIds.contains(subject.id),
+            onToggle = { onToggleSubject(subject.id) }
+          )
+        }
       }
     }
     Row(

@@ -83,6 +83,7 @@ import androidx.compose.material.icons.outlined.Quiz
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Science
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.TaskAlt
 import androidx.compose.material.icons.outlined.TextFields
@@ -95,6 +96,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedTextField
@@ -239,9 +241,14 @@ fun MapelScreen(
   var selectedSubjectId by rememberSaveable { mutableStateOf<String?>(null) }
   var selectedDetailSectionKey by rememberSaveable { mutableStateOf(MapelDetailSection.Absensi.name) }
   var showUnavailableMapelMessage by rememberSaveable { mutableStateOf(false) }
+  var mapelSearchQuery by rememberSaveable { mutableStateOf("") }
+  var availableMapelSearchQuery by rememberSaveable { mutableStateOf("") }
   val selectedDetailSection = remember(selectedDetailSectionKey) {
     runCatching { MapelDetailSection.valueOf(selectedDetailSectionKey) }
       .getOrDefault(MapelDetailSection.Absensi)
+  }
+  val filteredSubjects = remember(subjects, mapelSearchQuery) {
+    subjects.filterMapelSearch(mapelSearchQuery)
   }
 
   LaunchedEffect(selectedSubjectId) {
@@ -337,6 +344,17 @@ fun MapelScreen(
               )
             }
 
+            if (subjects.isNotEmpty() || mapelSearchQuery.isNotBlank()) {
+              item(span = { GridItemSpan(2) }) {
+                MapelSearchField(
+                  value = mapelSearchQuery,
+                  onValueChange = { mapelSearchQuery = it },
+                  label = "Cari Mapel",
+                  placeholder = "Cari nama mapel, kelas, atau semester"
+                )
+              }
+            }
+
             if (showUnavailableMapelMessage && availableSubjects.isEmpty()) {
               item(span = { GridItemSpan(2) }) {
                 MapelUnavailableInfoBox(
@@ -353,7 +371,9 @@ fun MapelScreen(
                   selectedIds = selectedClaimSubjectIds,
                   onToggleSubject = onToggleClaimSubject,
                   onClearSelection = onClearClaimSelection,
-                  onClaimSelectedSubjects = onClaimSelectedSubjects
+                  onClaimSelectedSubjects = onClaimSelectedSubjects,
+                  searchQuery = availableMapelSearchQuery,
+                  onSearchQueryChange = { availableMapelSearchQuery = it }
                 )
               }
             }
@@ -362,8 +382,12 @@ fun MapelScreen(
               item(span = { GridItemSpan(2) }) {
                 EmptyPlaceholderCard("Belum ada data mapel untuk guru ini.")
               }
+            } else if (filteredSubjects.isEmpty()) {
+              item(span = { GridItemSpan(2) }) {
+                EmptyPlaceholderCard("Tidak ada mapel yang cocok dengan pencarian.")
+              }
             } else {
-              items(subjects, key = { it.id }) { subject ->
+              items(filteredSubjects, key = { it.id }) { subject ->
                 SubjectGridCard(
                   subject = subject,
                   onClick = { selectedSubjectId = subject.id }
@@ -1191,6 +1215,43 @@ private fun MapelUnavailableInfoBox(
       )
     }
   }
+}
+
+@Composable
+private fun MapelSearchField(
+  value: String,
+  onValueChange: (String) -> Unit,
+  label: String,
+  placeholder: String,
+  modifier: Modifier = Modifier
+) {
+  OutlinedTextField(
+    value = value,
+    onValueChange = onValueChange,
+    modifier = modifier.fillMaxWidth(),
+    singleLine = true,
+    shape = RoundedCornerShape(18.dp),
+    leadingIcon = {
+      Icon(
+        imageVector = Icons.Outlined.Search,
+        contentDescription = null,
+        tint = PrimaryBlue
+      )
+    },
+    trailingIcon = {
+      if (value.isNotBlank()) {
+        IconButton(onClick = { onValueChange("") }) {
+          Icon(
+            imageVector = Icons.Outlined.Close,
+            contentDescription = t("Bersihkan pencarian"),
+            tint = SubtleInk
+          )
+        }
+      }
+    },
+    label = { Text(t(label)) },
+    placeholder = { Text(t(placeholder)) }
+  )
 }
 
 @Composable
@@ -11516,6 +11577,22 @@ private fun buildMapelDescription(subject: SubjectOverview): String {
     append(" • ")
     append("${subject.materialCount} materi")
   }
+}
+
+private fun List<SubjectOverview>.filterMapelSearch(query: String): List<SubjectOverview> {
+  val normalizedQuery = query.trim().lowercase()
+  if (normalizedQuery.isBlank()) return this
+  return filter { subject -> subject.matchesMapelSearch(normalizedQuery) }
+}
+
+private fun SubjectOverview.matchesMapelSearch(query: String): Boolean {
+  return buildString {
+    append(title)
+    append(' ')
+    append(className)
+    append(' ')
+    append(semester)
+  }.lowercase().contains(query)
 }
 
 private val Int.absoluteValue: Int

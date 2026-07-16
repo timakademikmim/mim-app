@@ -128,6 +128,7 @@ class GuruTeachingScheduleRemoteDataSource {
     teacherRowId: String,
     teacherKaryawanId: String
   ): List<DistribusiRow> {
+    val activeTahunAjaranId = resolveActiveTahunAjaranId()
     val queries = buildList {
       if (teacherRowId.isNotBlank()) {
         add("select=id,kelas_id,mapel_id,guru_id,semester_id&guru_id=eq.${URLEncoder.encode(teacherRowId, Charsets.UTF_8.name())}")
@@ -140,13 +141,53 @@ class GuruTeachingScheduleRemoteDataSource {
       val found = fetchRows("distribusi_mapel", query)
       found.takeIf { it.isNotEmpty() }
     } ?: emptyList()
-    return rows.mapNotNull { row ->
+    val filteredRows = filterDistribusiRowsByActiveYear(rows, activeTahunAjaranId)
+    return filteredRows.mapNotNull { row ->
       val id = row.opt("id")?.toString().orEmpty().trim()
       val kelasId = row.optString("kelas_id").trim()
       val mapelId = row.optString("mapel_id").trim()
       if (id.isBlank() || kelasId.isBlank() || mapelId.isBlank()) null
-      else DistribusiRow(id = id, kelasId = kelasId, mapelId = mapelId)
+      else DistribusiRow(
+        id = id,
+        kelasId = kelasId,
+        mapelId = mapelId,
+        semesterId = row.optString("semester_id").trim()
+      )
     }
+  }
+
+  private fun filterDistribusiRowsByActiveYear(
+    rows: List<JSONObject>,
+    activeTahunAjaranId: String
+  ): List<JSONObject> {
+    if (activeTahunAjaranId.isBlank()) return rows
+    val semesterIds = rows.mapNotNull { row ->
+      row.optString("semester_id").trim().takeIf(String::isNotBlank)
+    }.distinct()
+    if (semesterIds.isEmpty()) return rows
+    val semesterMap = fetchSemesterMap(semesterIds)
+    if (semesterMap.isEmpty()) return rows
+    return rows.filter { row ->
+      val semesterId = row.optString("semester_id").trim()
+      semesterMap[semesterId]?.optString("tahun_ajaran_id").orEmpty().trim() == activeTahunAjaranId
+    }
+  }
+
+  private fun resolveActiveTahunAjaranId(): String {
+    return fetchRows("tahun_ajaran", "select=id,aktif&aktif=eq.true&order=id.desc&limit=1")
+      .firstOrNull()
+      ?.opt("id")
+      ?.toString()
+      .orEmpty()
+      .trim()
+  }
+
+  private fun fetchSemesterMap(ids: List<String>): Map<String, JSONObject> {
+    if (ids.isEmpty()) return emptyMap()
+    val inClause = ids.distinct().joinToString(",") { "\"${it}\"" }
+    return fetchRows("semester", "select=id,tahun_ajaran_id&id=in.($inClause)")
+      .associateBy { row -> row.opt("id")?.toString().orEmpty().trim() }
+      .filterKeys { it.isNotBlank() }
   }
 
   private fun fetchJadwalRows(distribusiIds: List<String>): List<JadwalRow> {
@@ -273,7 +314,8 @@ class GuruTeachingScheduleRemoteDataSource {
   private data class DistribusiRow(
     val id: String,
     val kelasId: String,
-    val mapelId: String
+    val mapelId: String,
+    val semesterId: String
   )
 
   private data class JadwalRow(

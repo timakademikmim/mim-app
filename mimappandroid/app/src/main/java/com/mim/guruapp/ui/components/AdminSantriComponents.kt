@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
@@ -155,8 +156,26 @@ fun AdminSantriScreen(
       onPromoteStudent = onPromoteSantri,
       onGraduateStudent = onGraduateSantri,
       onStudentSaved = { saved ->
-        students = students.map { current ->
-          if (current.identityKey == saved.identityKey) saved else current
+        val hasExistingStudent = students.any { current ->
+          current.rowId == saved.rowId ||
+            (saved.identityKey.isNotBlank() && current.identityKey == saved.identityKey)
+        }
+        students = if (hasExistingStudent) {
+          students.map { current ->
+            if (
+              current.rowId == saved.rowId ||
+              (saved.identityKey.isNotBlank() && current.identityKey == saved.identityKey)
+            ) {
+              saved
+            } else {
+              current
+            }
+          }
+        } else {
+          (students + saved).sortedWith(
+            compareBy<AdminSantri> { it.className.sortableText() }
+              .thenBy { it.name.sortableText() }
+          )
         }
         selectedStudent = saved
       },
@@ -330,12 +349,18 @@ fun AdminSantriScreen(
       AdminSantriTopBar(
         title = if (selectedStudentKeys.isEmpty()) "Santri" else "${selectedStudentKeys.size} dipilih",
         isDetail = false,
-        actionIcon = if (selectedStudentKeys.isEmpty()) null else Icons.Outlined.Close,
-        actionContentDescription = "Batal pilih",
+        actionIcon = if (selectedStudentKeys.isEmpty()) Icons.Outlined.Add else Icons.Outlined.Close,
+        actionContentDescription = if (selectedStudentKeys.isEmpty()) "Tambah santri" else "Batal pilih",
         actionEnabled = !isBulkActionRunning,
         onMenuClick = onMenuClick,
         onBackClick = {},
-        onActionClick = { selectedStudentKeys = emptyList() }
+        onActionClick = {
+          if (selectedStudentKeys.isEmpty()) {
+            selectedStudent = effectiveClassOptions.newSantriDraft(activeYearName)
+          } else {
+            selectedStudentKeys = emptyList()
+          }
+        }
       )
       AdminSantriSearchBar(
         value = query,
@@ -442,7 +467,8 @@ private fun AdminSantriDetailContent(
   snackbarHostState: SnackbarHostState,
   modifier: Modifier = Modifier
 ) {
-  var isEditing by rememberSaveable(student.rowId) { mutableStateOf(false) }
+  val isNewStudent = student.rowId.isBlank()
+  var isEditing by rememberSaveable(student.rowId) { mutableStateOf(isNewStudent) }
   var isSaving by remember { mutableStateOf(false) }
   var pendingAction by remember { mutableStateOf<AdminSantriAcademicAction?>(null) }
   var name by rememberSaveable(student.rowId, student.name) { mutableStateOf(student.name) }
@@ -522,7 +548,7 @@ private fun AdminSantriDetailContent(
   }
 
   BackHandler(enabled = true) {
-    if (isEditing && !isSaving) {
+    if (isEditing && !isSaving && !isNewStudent) {
       isEditing = false
     } else if (!isSaving) {
       onBackClick()
@@ -545,14 +571,14 @@ private fun AdminSantriDetailContent(
       verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
       AdminSantriTopBar(
-        title = "Detail Santri",
+        title = if (isNewStudent) "Tambah Santri" else "Detail Santri",
         isDetail = true,
         actionIcon = if (isEditing) Icons.Outlined.Check else Icons.Outlined.Edit,
-        actionContentDescription = if (isEditing) "Simpan perubahan" else "Edit santri",
+        actionContentDescription = if (isEditing) "Simpan santri" else "Edit santri",
         actionEnabled = !isSaving && (!isEditing || isDirty),
         onMenuClick = {},
         onBackClick = {
-          if (isEditing && !isSaving) {
+          if (isEditing && !isSaving && !isNewStudent) {
             isEditing = false
           } else if (!isSaving) {
             onBackClick()
@@ -1547,6 +1573,40 @@ private fun AdminSantri.selectionKey(): String {
 
 private fun AdminSantri.isAcademicActionLocked(): Boolean {
   return status.normalizedStatusKey() in AdminSantriLockedStatusKeys
+}
+
+private fun List<AdminSantriClassOption>.newSantriDraft(activeYearName: String): AdminSantri {
+  val selectedClass = firstOrNull { option ->
+    activeYearName.isNotBlank() && option.academicYearName == activeYearName
+  } ?: firstOrNull()
+  return AdminSantri(
+    rowId = "",
+    identityKey = "__new_santri__",
+    historyRowIds = emptyList(),
+    name = "",
+    nisn = "",
+    gender = "",
+    classId = selectedClass?.id.orEmpty(),
+    className = selectedClass?.name.orEmpty(),
+    classLevel = selectedClass?.level.orEmpty(),
+    academicYearId = selectedClass?.academicYearId.orEmpty(),
+    academicYearName = selectedClass?.academicYearName.orEmpty(),
+    status = "aktif",
+    active = true,
+    studentPhone = "",
+    fatherName = "",
+    fatherPhone = "",
+    motherName = "",
+    motherPhone = "",
+    guardianName = "",
+    guardianPhone = "",
+    address = "",
+    note = "",
+    room = "",
+    halaqah = "",
+    createdAt = "",
+    updatedAt = ""
+  )
 }
 
 private fun String.displayStatusLabel(): String {
