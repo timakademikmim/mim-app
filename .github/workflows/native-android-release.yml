@@ -122,15 +122,15 @@ jobs:
             "versionCode": ${MIM_VERSION_CODE},
             "versionName": "${MIM_VERSION_NAME}",
             "apkUrl": "${APK_URL}",
-            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Admin kini bisa mengatur jadwal pelajaran, kelas, mapel, tahun ajaran, dan kalender akademik dari aplikasi Android.",
+            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Input absensi kini lebih kuat mengambil data santri langsung dari server dan jadwal mengajar mulai terhubung ke sesi mengajar.",
             "features": [
-              "Menu admin kini memiliki halaman Jadwal Pelajaran dengan filter tahun ajaran, semester, kelas, hari, dan pencarian.",
-              "Admin bisa menambah, mengedit, dan menghapus jadwal pelajaran berdasarkan distribusi kelas, mapel, guru, hari, dan slot jam.",
-              "Admin bisa mengelola slot Jam Pelajaran langsung dari Android."
+              "Jadwal mengajar kini bisa dibuka sebagai sesi mengajar terpusat untuk memilih materi, mengisi absensi, mencatat isi materi, menambah penilaian, dan menulis tugas.",
+              "Sesi mengajar dapat disimpan sebagai draft atau tersimpan, lalu status ringkasnya muncul kembali di kartu jadwal.",
+              "Data sesi mengajar disiapkan untuk tersimpan di server agar bisa ditelusuri lagi pada pertemuan berikutnya."
             ],
             "fixes": [
-              "Dashboard, agenda, dan jadwal guru kini lebih konsisten mengikuti tahun ajaran aktif.",
-              "Menu mapel guru mendapatkan pencarian agar daftar mapel lebih mudah ditemukan.",
+              "Input absensi sekarang mengambil daftar santri langsung dari Supabase saat mapel dibuka, sehingga tidak bergantung pada cache kosong lama.",
+              "Roster absensi kini membaca santri aktif dari kolom status atau aktif, serta dapat memakai riwayat kelas santri jika kelas aktif tersimpan di tabel riwayat.",
               "Update versi ini tidak wajib agar build dari Android Studio tetap bisa dipakai untuk testing lokal."
             ],
             "mandatory": ${MANDATORY}

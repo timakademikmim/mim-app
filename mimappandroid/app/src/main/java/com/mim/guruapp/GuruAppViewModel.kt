@@ -99,6 +99,9 @@ import com.mim.guruapp.data.remote.GuruRemoteProfile
 import com.mim.guruapp.data.remote.KalenderAkademikRemoteDataSource
 import com.mim.guruapp.data.remote.GuruNotificationRemoteDataSource
 import com.mim.guruapp.data.remote.GuruTeacherOptionsRemoteDataSource
+import com.mim.guruapp.data.remote.GuruTeachingSessionRecord
+import com.mim.guruapp.data.remote.GuruTeachingSessionRemoteDataSource
+import com.mim.guruapp.data.remote.GuruTeachingSessionSaveResult
 import com.mim.guruapp.data.remote.GuruTeachingScheduleRemoteDataSource
 import com.mim.guruapp.data.remote.GuruWaliSantriSaveResult
 import com.mim.guruapp.data.remote.GuruWaliSantriRemoteDataSource
@@ -335,6 +338,12 @@ data class PatronMateriSaveOutcome(
   val message: String
 )
 
+data class TeachingSessionSaveOutcome(
+  val success: Boolean,
+  val message: String,
+  val record: GuruTeachingSessionRecord? = null
+)
+
 data class QuestionSaveOutcome(
   val success: Boolean,
   val message: String
@@ -383,6 +392,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
   private val mapelAttendanceRemoteDataSource = GuruMapelAttendanceRemoteDataSource()
   private val mapelScoreRemoteDataSource = GuruMapelScoreRemoteDataSource()
   private val mapelPatronMateriRemoteDataSource = GuruMapelPatronMateriRemoteDataSource()
+  private val teachingSessionRemoteDataSource = GuruTeachingSessionRemoteDataSource()
   private val mapelQuestionRemoteDataSource = GuruMapelQuestionRemoteDataSource()
   private val mapelRaporDescriptionRemoteDataSource = GuruMapelRaporDescriptionRemoteDataSource()
   private val examQuestionRemoteDataSource = GuruExamQuestionRemoteDataSource()
@@ -1616,7 +1626,6 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
   ): MapelAttendanceSnapshot? {
     val dashboard = uiState.dashboard ?: return null
     val cachedSnapshot = dashboard.attendanceSnapshots.firstOrNull { it.distribusiId == distribusiId }
-    if (cachedSnapshot != null && isAttendanceSnapshotComplete(cachedSnapshot)) return cachedSnapshot
 
     val remoteSnapshot = mapelAttendanceRemoteDataSource.fetchAttendanceSnapshot(
       distribusiId = distribusiId,
@@ -2171,6 +2180,44 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     }
 
     return PatronMateriSaveOutcome(true, "Patron materi berhasil diperbarui.")
+  }
+
+  suspend fun loadTeachingSession(
+    distribusiId: String,
+    lessonSlotId: String,
+    dateIso: String
+  ): GuruTeachingSessionRecord? {
+    return teachingSessionRemoteDataSource.fetchSession(
+      distribusiId = distribusiId,
+      lessonSlotId = lessonSlotId,
+      dateIso = dateIso
+    )
+  }
+
+  suspend fun saveTeachingSession(
+    record: GuruTeachingSessionRecord
+  ): TeachingSessionSaveOutcome {
+    val result = teachingSessionRemoteDataSource.saveSession(
+      record = record,
+      guruId = uiState.session.teacherRowId.ifBlank { uiState.session.teacherId }
+    )
+    return when (result) {
+      is GuruTeachingSessionSaveResult.Error -> {
+        TeachingSessionSaveOutcome(false, result.message)
+      }
+
+      is GuruTeachingSessionSaveResult.Success -> {
+        TeachingSessionSaveOutcome(
+          success = true,
+          message = if (result.record.status == "saved") {
+            "Sesi mengajar berhasil disimpan."
+          } else {
+            "Draft sesi mengajar berhasil disimpan."
+          },
+          record = result.record
+        )
+      }
+    }
   }
 
   suspend fun loadMapelQuestionJson(
@@ -3802,6 +3849,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
 
   private fun isAttendanceSnapshotComplete(snapshot: MapelAttendanceSnapshot): Boolean {
     if (!snapshot.supportsPatronMateri) return false
+    if (snapshot.students.isEmpty()) return false
     return snapshot.students.none { student ->
       student.history.isEmpty() && listOf(
         student.hadirPercent,

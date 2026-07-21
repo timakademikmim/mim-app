@@ -51,14 +51,9 @@ class GuruMapelAttendanceRemoteDataSource {
       val semesterId = distribusiRow.optString("semester_id").trim()
       if (kelasId.isBlank() || mapelId.isBlank()) return@withContext null
 
-      val santriRows = fetchRows(
-        table = "santri",
-        query = buildString {
-          append("select=id,nama,kelas_id,aktif")
-          append("&kelas_id=eq.")
-          append(encodeValue(kelasId))
-          append("&aktif=eq.true&order=nama.asc")
-        }
+      val santriRows = fetchAttendanceStudentRows(
+        kelasId = kelasId,
+        semesterId = semesterId
       )
 
       val absensiByDistribusiRows = fetchAttendanceRowsWithOptionalMaterial(
@@ -1000,6 +995,133 @@ class GuruMapelAttendanceRemoteDataSource {
       table = "absensi_santri",
       query = "select=id,tanggal,santri_id,status,kelas_id,mapel_id,semester_id,distribusi_id$queryTail"
     )
+  }
+
+  private fun fetchAttendanceStudentRows(
+    kelasId: String,
+    semesterId: String
+  ): List<JSONObject> {
+    val normalizedKelasId = kelasId.trim()
+    if (normalizedKelasId.isBlank()) return emptyList()
+
+    val directRows = fetchSantriRowsByClass(normalizedKelasId)
+      .filter { it.isActiveAttendanceStudent() }
+    val academicYearId = resolveAcademicYearIdForSemester(semesterId)
+    val historyStudentIds = fetchClassHistoryRows(
+      kelasId = normalizedKelasId,
+      academicYearId = academicYearId
+    )
+      .filter { it.isActiveAttendanceHistoryRow() }
+      .mapNotNull { it.cleanString("santri_id").takeIf(String::isNotBlank) }
+      .distinct()
+    val historyRows = fetchSantriRowsByIds(historyStudentIds)
+      .filter { it.isActiveAttendanceStudent() }
+
+    return (directRows + historyRows)
+      .distinctBy { it.cleanString("id") }
+      .sortedWith(compareBy<JSONObject> { it.cleanString("nama").lowercase(Locale.getDefault()) })
+  }
+
+  private fun fetchSantriRowsByClass(kelasId: String): List<JSONObject> {
+    val encodedClassId = encodeValue(kelasId)
+    return listOf(
+      "select=id,nama,kelas_id,aktif,status&kelas_id=eq.$encodedClassId&order=nama.asc",
+      "select=id,nama,kelas_id,aktif&kelas_id=eq.$encodedClassId&order=nama.asc",
+      "select=id,nama,kelas_id&kelas_id=eq.$encodedClassId&order=nama.asc"
+    )
+      .firstNotEmptyRows("santri")
+  }
+
+  private fun fetchSantriRowsByIds(ids: List<String>): List<JSONObject> {
+    val normalizedIds = ids.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+    if (normalizedIds.isEmpty()) return emptyList()
+    val inClause = normalizedIds.joinToString(",") { "\"${it}\"" }
+    return listOf(
+      "select=id,nama,kelas_id,aktif,status&id=in.($inClause)&order=nama.asc",
+      "select=id,nama,kelas_id,aktif&id=in.($inClause)&order=nama.asc",
+      "select=id,nama,kelas_id&id=in.($inClause)&order=nama.asc"
+    )
+      .firstNotEmptyRows("santri")
+  }
+
+  private fun fetchClassHistoryRows(
+    kelasId: String,
+    academicYearId: String
+  ): List<JSONObject> {
+    fun queryWithColumns(columns: String, includeAcademicYear: Boolean): String = buildString {
+      append("select=")
+      append(columns)
+      append("&kelas_id=eq.")
+      append(encodeValue(kelasId))
+      if (includeAcademicYear && academicYearId.isNotBlank()) {
+        append("&tahun_ajaran_id=eq.")
+        append(encodeValue(academicYearId))
+      }
+    }
+
+    val detailedColumns = "id,santri_id,kelas_id,tahun_ajaran_id,status,tanggal_selesai"
+    val minimalColumns = "id,santri_id,kelas_id,tahun_ajaran_id"
+    val queries = buildList {
+      if (academicYearId.isNotBlank()) {
+        add(queryWithColumns(detailedColumns, includeAcademicYear = true) + "&order=updated_at.desc")
+        add(queryWithColumns(minimalColumns, includeAcademicYear = true))
+      }
+      add(queryWithColumns(detailedColumns, includeAcademicYear = false) + "&order=updated_at.desc")
+      add(queryWithColumns(minimalColumns, includeAcademicYear = false))
+    }
+    return queries.firstNotEmptyRows("riwayat_kelas_santri")
+  }
+
+  private fun resolveAcademicYearIdForSemester(semesterId: String): String {
+    val normalizedSemesterId = semesterId.trim()
+    if (normalizedSemesterId.isBlank()) return ""
+    return fetchRows(
+      table = "semester",
+      query = "select=id,tahun_ajaran_id&id=eq.${encodeValue(normalizedSemesterId)}&limit=1"
+    )
+      .firstOrNull()
+      ?.cleanString("tahun_ajaran_id")
+      .orEmpty()
+  }
+
+  private fun List<String>.firstNotEmptyRows(table: String): List<JSONObject> {
+    for (query in this) {
+      val rows = fetchRows(table, query)
+      if (rows.isNotEmpty()) return rows
+    }
+    return emptyList()
+  }
+
+  private fun JSONObject.isActiveAttendanceStudent(): Boolean {
+    val status = cleanString("status").lowercase(Locale.getDefault())
+    val inactiveByStatus = status in setOf(
+      "tidak_aktif",
+      "nonaktif",
+      "inactive",
+      "naik_kelas",
+      "lulus"
+    )
+    if (inactiveByStatus) return false
+    return optBooleanFlexibleOrNull("aktif") ?: true
+  }
+
+  private fun JSONObject.isActiveAttendanceHistoryRow(): Boolean {
+    val status = cleanString("status").lowercase(Locale.getDefault())
+    if (status in setOf("tidak_aktif", "nonaktif", "inactive", "lulus")) return false
+    if (cleanString("tanggal_selesai").isNotBlank()) return false
+    return true
+  }
+
+  private fun JSONObject.optBooleanFlexibleOrNull(key: String): Boolean? {
+    if (!has(key) || isNull(key)) return null
+    val value = opt(key)
+    if (value == true || value == 1) return true
+    if (value == false || value == 0) return false
+    return when (value?.toString().orEmpty().trim().lowercase(Locale.getDefault())) {
+      "true", "t", "1", "yes", "aktif", "active" -> true
+      "false", "f", "0", "no", "tidak_aktif", "nonaktif", "inactive", "lulus" -> false
+      else -> null
+    }
   }
 
   private fun normalizeSubmissionRow(row: JSONObject): AttendanceSubmissionRow {

@@ -134,6 +134,8 @@ class MainActivity : ComponentActivity() {
           onSaveMapelScoresBatch = viewModel::saveMapelScoreChangesBatch,
           onLoadMapelPatronMateri = viewModel::loadMapelPatronMateri,
           onSaveMapelPatronMateri = viewModel::saveMapelPatronMateri,
+          onLoadTeachingSession = viewModel::loadTeachingSession,
+          onSaveTeachingSession = viewModel::saveTeachingSession,
           onLoadMapelQuestions = viewModel::loadMapelQuestionJson,
           onSaveMapelQuestions = viewModel::saveMapelQuestionJson,
           onLoadMapelRaporDescriptions = viewModel::loadMapelRaporDescriptionJson,

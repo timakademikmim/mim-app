@@ -118,6 +118,18 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.mim.guruapp.AttendanceSaveOutcome
+import com.mim.guruapp.PatronMateriSaveOutcome
+import com.mim.guruapp.ScoreSaveOutcome
+import com.mim.guruapp.TeachingSessionSaveOutcome
+import com.mim.guruapp.data.model.AttendanceHistoryEntry
+import com.mim.guruapp.data.model.MapelAttendanceSnapshot
+import com.mim.guruapp.data.model.MapelPatronMateriSnapshot
+import com.mim.guruapp.data.model.MapelScoreSnapshot
+import com.mim.guruapp.data.model.PatronMateriItem
+import com.mim.guruapp.data.model.ScoreStudent
+import com.mim.guruapp.data.model.SubjectOverview
+import com.mim.guruapp.data.remote.GuruTeachingSessionRecord
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.YearMonth
@@ -262,6 +274,10 @@ fun CalendarScreen(
 fun TeachingScheduleScreen(
   selectedDate: LocalDate,
   events: List<CalendarEvent>,
+  subjects: List<SubjectOverview> = emptyList(),
+  attendanceSnapshots: List<MapelAttendanceSnapshot> = emptyList(),
+  scoreSnapshots: List<MapelScoreSnapshot> = emptyList(),
+  patronMateriSnapshots: List<MapelPatronMateriSnapshot> = emptyList(),
   reminderSettings: TeachingReminderSettings,
   isRefreshing: Boolean,
   onSelectDate: (LocalDate) -> Unit,
@@ -269,6 +285,22 @@ fun TeachingScheduleScreen(
   onRefresh: () -> Unit,
   onMenuClick: () -> Unit,
   onReminderSettingsChange: (TeachingReminderSettings) -> Unit,
+  onLoadAttendance: suspend (String, SubjectOverview) -> MapelAttendanceSnapshot? = { _, _ -> null },
+  onSaveAttendanceBatch: suspend (String, SubjectOverview, Map<String, List<AttendanceHistoryEntry>>, String, String) -> AttendanceSaveOutcome = { _, _, _, _, _ ->
+    AttendanceSaveOutcome(false, "Absensi sesi belum tersedia.")
+  },
+  onLoadScores: suspend (String, SubjectOverview) -> MapelScoreSnapshot? = { _, _ -> null },
+  onSaveScoresBatch: suspend (String, SubjectOverview, List<ScoreStudent>) -> ScoreSaveOutcome = { _, _, _ ->
+    ScoreSaveOutcome(false, "Penilaian sesi belum tersedia.")
+  },
+  onLoadPatronMateri: suspend (String, SubjectOverview) -> MapelPatronMateriSnapshot? = { _, _ -> null },
+  onSavePatronMateri: suspend (String, SubjectOverview, List<PatronMateriItem>) -> PatronMateriSaveOutcome = { _, _, _ ->
+    PatronMateriSaveOutcome(false, "Patron materi belum tersedia.")
+  },
+  onLoadTeachingSession: suspend (String, String, String) -> GuruTeachingSessionRecord? = { _, _, _ -> null },
+  onSaveTeachingSession: suspend (GuruTeachingSessionRecord) -> TeachingSessionSaveOutcome = { record ->
+    TeachingSessionSaveOutcome(false, "Sesi mengajar belum tersedia.", record)
+  },
   openReminderSettingsRequest: Int = 0,
   onSelectedDayPositioned: (Rect) -> Unit = {},
   onTodayButtonPositioned: (Rect) -> Unit = {},
@@ -288,6 +320,26 @@ fun TeachingScheduleScreen(
   }
   val accentColor = remember {
     Color(0xFF60A5FA)
+  }
+  var activeSessionEvent by remember { mutableStateOf<CalendarEvent?>(null) }
+  var localSessionSummaries by remember { mutableStateOf<Map<String, TeachingSessionSummary>>(emptyMap()) }
+  val sessionSummaries = remember(
+    selectedDate,
+    selectedEvents,
+    attendanceSnapshots,
+    scoreSnapshots,
+    localSessionSummaries
+  ) {
+    selectedEvents.associate { event ->
+      val key = teachingSessionKey(event, selectedDate)
+      key to buildTeachingSessionSummary(
+        event = event,
+        dateIso = selectedDate.toString(),
+        attendanceSnapshots = attendanceSnapshots,
+        scoreSnapshots = scoreSnapshots,
+        localSummary = localSessionSummaries[key]
+      )
+    }
   }
   val context = LocalContext.current
   val lifecycleOwner = LocalLifecycleOwner.current
@@ -365,6 +417,36 @@ fun TeachingScheduleScreen(
     onDispose {
       lifecycleOwner.lifecycle.removeObserver(observer)
     }
+  }
+
+  activeSessionEvent?.let { event ->
+    val subject = subjects.firstOrNull { it.id == event.distribusiId }
+      ?: event.toTeachingSessionSubjectFallback()
+    TeachingSessionScreen(
+      event = event,
+      selectedDate = selectedDate,
+      subject = subject,
+      attendanceSnapshot = attendanceSnapshots.firstOrNull { it.distribusiId == subject.id },
+      scoreSnapshot = scoreSnapshots.firstOrNull { it.distribusiId == subject.id },
+      patronMateriSnapshot = patronMateriSnapshots.firstOrNull { it.distribusiId == subject.id },
+      onBack = { activeSessionEvent = null },
+      onLoadAttendance = onLoadAttendance,
+      onSaveAttendanceBatch = onSaveAttendanceBatch,
+      onLoadScores = onLoadScores,
+      onSaveScoresBatch = onSaveScoresBatch,
+      onLoadPatronMateri = onLoadPatronMateri,
+      onSavePatronMateri = onSavePatronMateri,
+      onLoadTeachingSession = onLoadTeachingSession,
+      onSaveTeachingSession = onSaveTeachingSession,
+      onSessionSummaryChange = { summary ->
+        val key = teachingSessionKey(event, selectedDate)
+        localSessionSummaries = localSessionSummaries.toMutableMap().apply {
+          put(key, summary)
+        }
+      },
+      modifier = modifier
+    )
+    return
   }
 
   if (showReminderSettingsDialog) {
@@ -460,6 +542,13 @@ fun TeachingScheduleScreen(
             events = selectedEvents,
             accentColor = accentColor,
             emptyMessage = "Belum ada jadwal mengajar pada tanggal ini.",
+            sessionSummaries = sessionSummaries,
+            sessionDate = selectedDate,
+            onEventClick = { event ->
+              if (event.distribusiId.isNotBlank()) {
+                activeSessionEvent = event
+              }
+            },
             modifier = Modifier.onGloballyPositioned { onTimelinePositioned(it.boundsInRoot()) }
           )
         }
@@ -1514,6 +1603,9 @@ fun EventTimeline(
   events: List<CalendarEvent>,
   accentColor: Color,
   emptyMessage: String = "Belum ada agenda pada tanggal ini.",
+  sessionSummaries: Map<String, TeachingSessionSummary> = emptyMap(),
+  sessionDate: LocalDate? = null,
+  onEventClick: ((CalendarEvent) -> Unit)? = null,
   modifier: Modifier = Modifier
 ) {
   if (events.isEmpty()) {
@@ -1538,10 +1630,13 @@ fun EventTimeline(
     verticalArrangement = Arrangement.spacedBy(12.dp)
   ) {
     events.forEachIndexed { index, event ->
+      val sessionKey = sessionDate?.let { teachingSessionKey(event, it) }.orEmpty()
       TimelineRow(
         event = event,
         isLast = index == events.lastIndex,
-        accentColor = accentColor
+        accentColor = accentColor,
+        sessionSummary = sessionSummaries[sessionKey],
+        onEventClick = onEventClick
       )
     }
   }
@@ -1551,7 +1646,9 @@ fun EventTimeline(
 private fun TimelineRow(
   event: CalendarEvent,
   isLast: Boolean,
-  accentColor: Color
+  accentColor: Color,
+  sessionSummary: TeachingSessionSummary? = null,
+  onEventClick: ((CalendarEvent) -> Unit)? = null
 ) {
   Row(
     modifier = Modifier.fillMaxWidth(),
@@ -1579,6 +1676,8 @@ private fun TimelineRow(
 
     EventCard(
       event = event,
+      sessionSummary = sessionSummary,
+      onClick = onEventClick?.let { click -> { click(event) } },
       modifier = Modifier.weight(1f)
     )
   }
@@ -1587,6 +1686,8 @@ private fun TimelineRow(
 @Composable
 fun EventCard(
   event: CalendarEvent,
+  sessionSummary: TeachingSessionSummary? = null,
+  onClick: (() -> Unit)? = null,
   modifier: Modifier = Modifier
 ) {
   val tint = parseCalendarColor(event.colorHex)
@@ -1603,6 +1704,7 @@ fun EventCard(
         .fillMaxWidth()
         .shadow(10.dp, RoundedCornerShape(22.dp), ambientColor = Color(0x140F172A), spotColor = Color(0x140F172A))
         .clip(RoundedCornerShape(22.dp))
+        .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
         .border(1.dp, CardBorder.copy(alpha = 0.78f), RoundedCornerShape(22.dp))
     ) {
       CalendarGlassBackground(tint = tint)
@@ -1628,6 +1730,9 @@ fun EventCard(
             style = MaterialTheme.typography.bodySmall,
             color = SubtleInk
           )
+        }
+        if (sessionSummary != null && sessionSummary.hasVisibleContent) {
+          TeachingSessionCardBadges(summary = sessionSummary)
         }
       }
     }

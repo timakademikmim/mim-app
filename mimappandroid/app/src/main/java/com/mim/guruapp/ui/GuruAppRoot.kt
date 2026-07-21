@@ -16,6 +16,7 @@ import com.mim.guruapp.LeaveRequestSaveOutcome
 import com.mim.guruapp.PatronMateriSaveOutcome
 import com.mim.guruapp.QuestionSaveOutcome
 import com.mim.guruapp.ScoreSaveOutcome
+import com.mim.guruapp.TeachingSessionSaveOutcome
 import com.mim.guruapp.ProfileSaveOutcome
 import com.mim.guruapp.SantriSaveOutcome
 import com.mim.guruapp.MutabaahSaveOutcome
@@ -50,6 +51,7 @@ import com.mim.guruapp.data.remote.GuruAiGenerateResult
 import com.mim.guruapp.data.remote.GuruAiTokenWallet
 import com.mim.guruapp.data.remote.GuruExamQuestionItem
 import com.mim.guruapp.data.remote.GuruExamQuestionSnapshot
+import com.mim.guruapp.data.remote.GuruTeachingSessionRecord
 import com.mim.guruapp.data.remote.AdminAcademicCalendarEvent
 import com.mim.guruapp.data.remote.AdminAcademicCalendarLoadResult
 import com.mim.guruapp.data.remote.AdminAcademicCalendarSaveResult
@@ -137,6 +139,8 @@ fun GuruAppRoot(
   onSaveMapelScoresBatch: suspend (String, SubjectOverview, List<ScoreStudent>) -> ScoreSaveOutcome,
   onLoadMapelPatronMateri: suspend (String, SubjectOverview) -> MapelPatronMateriSnapshot?,
   onSaveMapelPatronMateri: suspend (String, SubjectOverview, List<PatronMateriItem>) -> PatronMateriSaveOutcome,
+  onLoadTeachingSession: suspend (String, String, String) -> GuruTeachingSessionRecord?,
+  onSaveTeachingSession: suspend (GuruTeachingSessionRecord) -> TeachingSessionSaveOutcome,
   onLoadMapelQuestions: suspend (String, SubjectOverview) -> String?,
   onSaveMapelQuestions: suspend (String, SubjectOverview, String) -> QuestionSaveOutcome,
   onLoadMapelRaporDescriptions: suspend (String, SubjectOverview) -> String?,
@@ -295,6 +299,8 @@ fun GuruAppRoot(
               onSaveMapelScoresBatch = onSaveMapelScoresBatch,
               onLoadMapelPatronMateri = onLoadMapelPatronMateri,
               onSaveMapelPatronMateri = onSaveMapelPatronMateri,
+              onLoadTeachingSession = onLoadTeachingSession,
+              onSaveTeachingSession = onSaveTeachingSession,
               onLoadMapelQuestions = onLoadMapelQuestions,
               onSaveMapelQuestions = onSaveMapelQuestions,
               onLoadMapelRaporDescriptions = onLoadMapelRaporDescriptions,
