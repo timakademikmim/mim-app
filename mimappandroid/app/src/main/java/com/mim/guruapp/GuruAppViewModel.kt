@@ -67,6 +67,10 @@ import com.mim.guruapp.data.remote.GuruMapelAttendanceReviewResult
 import com.mim.guruapp.data.remote.GuruMapelAttendanceSaveResult
 import com.mim.guruapp.data.remote.GuruLeaveRequestRemoteDataSource
 import com.mim.guruapp.data.remote.GuruLeaveRequestSaveResult
+import com.mim.guruapp.data.remote.GuruLocationAttendanceRemoteDataSource
+import com.mim.guruapp.data.remote.GuruLocationAttendanceSaveResult
+import com.mim.guruapp.data.remote.GuruLocationAttendanceSnapshot
+import com.mim.guruapp.data.remote.GuruLocationAttendanceSubmission
 import com.mim.guruapp.data.remote.GuruMapelPatronMateriRemoteDataSource
 import com.mim.guruapp.data.remote.GuruMapelPatronMateriSaveResult
 import com.mim.guruapp.data.remote.GuruMapelQuestionRemoteDataSource
@@ -174,6 +178,7 @@ enum class GuruDestination {
 enum class GuruSidebarDestination(val title: String) {
   Dashboard("Dashboard"),
   Tugas("Tugas"),
+  AbsensiGuru("Absensi Guru"),
   Perizinan("Perizinan"),
   Jadwal("Jadwal"),
   Mapel("Mapel"),
@@ -187,6 +192,7 @@ enum class GuruSidebarDestination(val title: String) {
   Rapor("Rapor"),
   Santri("Santri"),
   WakasekMonitoringGuru("Monitoring Guru"),
+  WakasekAbsensiGuru("Absensi Guru"),
   WakasekMonitoringSiswa("Monitoring Siswa"),
   WakasekNilaiSiswa("Nilai Siswa"),
   WakasekPerizinan("Perizinan Wakasek"),
@@ -318,6 +324,12 @@ data class LeaveRequestSaveOutcome(
   val message: String
 )
 
+data class LocationAttendanceSaveOutcome(
+  val success: Boolean,
+  val message: String,
+  val snapshot: GuruLocationAttendanceSnapshot? = null
+)
+
 data class WakasekReviewOutcome(
   val success: Boolean,
   val message: String
@@ -399,6 +411,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
   private val aiRemoteDataSource = GuruAiRemoteDataSource()
   private val mutabaahRemoteDataSource = GuruMutabaahRemoteDataSource()
   private val leaveRequestRemoteDataSource = GuruLeaveRequestRemoteDataSource()
+  private val locationAttendanceRemoteDataSource = GuruLocationAttendanceRemoteDataSource()
   private val monthlyReportRemoteDataSource = GuruMonthlyReportRemoteDataSource()
   private val utsReportRemoteDataSource = GuruUtsReportRemoteDataSource()
   private val profileRemoteDataSource = GuruProfileRemoteDataSource()
@@ -889,6 +902,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
         GuruSidebarDestination.Mapel,
         GuruSidebarDestination.Ujian -> GuruSidebarParent.Akademik
 
+        GuruSidebarDestination.AbsensiGuru,
         GuruSidebarDestination.InputNilai,
         GuruSidebarDestination.InputAbsensi,
         GuruSidebarDestination.Perizinan -> GuruSidebarParent.AktivitasHarian
@@ -901,6 +915,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
         GuruSidebarDestination.Rapor -> GuruSidebarParent.KelasSaya
 
         GuruSidebarDestination.WakasekMonitoringGuru,
+        GuruSidebarDestination.WakasekAbsensiGuru,
         GuruSidebarDestination.WakasekMonitoringSiswa,
         GuruSidebarDestination.WakasekNilaiSiswa,
         GuruSidebarDestination.WakasekPerizinan -> GuruSidebarParent.WakasekKurikulum
@@ -1475,6 +1490,50 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     )
     cacheStore.writeDashboard(nextDashboard)
     uiState = uiState.copy(dashboard = nextDashboard)
+  }
+
+  suspend fun loadLocationAttendanceSnapshot(): GuruLocationAttendanceSnapshot {
+    val session = uiState.session
+    if (!session.usesSupabaseAuth || session.authAccessToken.isBlank()) {
+      return GuruLocationAttendanceSnapshot(
+        errorMessage = "Absensi lokasi membutuhkan akun yang sudah tertaut ke server. Silakan login ulang atau tautkan akun Google."
+      )
+    }
+    return locationAttendanceRemoteDataSource.fetchSnapshot(
+      tenantId = session.tenantId,
+      teacherRowId = session.teacherRowId,
+      teacherKaryawanId = session.teacherId
+    )
+  }
+
+  suspend fun submitLocationAttendance(
+    submission: GuruLocationAttendanceSubmission
+  ): LocationAttendanceSaveOutcome {
+    val session = uiState.session
+    if (!session.usesSupabaseAuth || session.authAccessToken.isBlank()) {
+      return LocationAttendanceSaveOutcome(
+        success = false,
+        message = "Absensi lokasi membutuhkan akun yang sudah tertaut ke server. Silakan login ulang atau tautkan akun Google."
+      )
+    }
+    return when (
+      val result = locationAttendanceRemoteDataSource.submitAttendance(
+        tenantId = session.tenantId,
+        teacherRowId = session.teacherRowId,
+        teacherKaryawanId = session.teacherId,
+        submission = submission
+      )
+    ) {
+      is GuruLocationAttendanceSaveResult.Error -> {
+        uiState = uiState.copy(syncBanner = SyncBannerState(result.message, false))
+        LocationAttendanceSaveOutcome(false, result.message)
+      }
+
+      is GuruLocationAttendanceSaveResult.Success -> {
+        uiState = uiState.copy(syncBanner = SyncBannerState(result.message, false))
+        LocationAttendanceSaveOutcome(true, result.message, result.snapshot)
+      }
+    }
   }
 
   suspend fun loadLeaveRequestSnapshot(): LeaveRequestSnapshot? {
@@ -3306,6 +3365,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
 
   private fun GuruSidebarDestination.requiresWakasekKurikulumAccess(): Boolean {
     return this == GuruSidebarDestination.WakasekMonitoringGuru ||
+      this == GuruSidebarDestination.WakasekAbsensiGuru ||
       this == GuruSidebarDestination.WakasekMonitoringSiswa ||
       this == GuruSidebarDestination.WakasekNilaiSiswa ||
       this == GuruSidebarDestination.WakasekPerizinan
@@ -3824,6 +3884,7 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
 
   private fun isScoreSnapshotMissingDetailRows(snapshot: MapelScoreSnapshot): Boolean {
     if (!snapshot.supportsMaterialHistory) return true
+    if (snapshot.students.isEmpty()) return true
     return snapshot.students.any { student ->
       listOf(
         "nilai_tugas" to student.nilaiTugas,

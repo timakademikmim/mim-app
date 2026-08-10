@@ -85,6 +85,7 @@ import com.mim.guruapp.data.model.ScoreStudent
 import com.mim.guruapp.data.model.SubjectOverview
 import com.mim.guruapp.data.model.WakasekKurikulumSnapshot
 import com.mim.guruapp.data.model.WakasekStudentMonitoringRow
+import com.mim.guruapp.data.model.WakasekTeacherLocationAttendanceRow
 import com.mim.guruapp.data.model.WakasekTeacherMonitoringRow
 import com.mim.guruapp.export.WakasekScoreExcelExporter
 import com.mim.guruapp.ui.i18n.t
@@ -98,8 +99,10 @@ import com.mim.guruapp.ui.theme.SoftPanel
 import com.mim.guruapp.ui.theme.SubtleInk
 import com.mim.guruapp.ui.theme.SuccessTint
 import com.mim.guruapp.ui.theme.WarmAccent
+import java.time.Instant
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
@@ -110,6 +113,7 @@ import kotlinx.coroutines.launch
 
 enum class WakasekKurikulumPage(val title: String, val subtitle: String) {
   Teacher("Monitoring Guru", "Pantau kehadiran guru berdasarkan jadwal dan absensi"),
+  LocationAttendance("Absensi Guru", "Pantau kedatangan dan kepulangan guru"),
   Student("Monitoring Siswa", "Lihat santri sakit, izin, terlambat, dan alpa"),
   StudentScores("Nilai Siswa", "Pantau nilai santri per kelas dan mapel"),
   Permission("Perizinan", "Tinjau pengajuan izin guru")
@@ -148,6 +152,17 @@ private data class TeacherMonitorSummary(
   val substitute: Int,
   val absent: Int,
   val details: List<WakasekTeacherMonitoringRow>
+)
+
+private data class TeacherLocationAttendanceSummary(
+  val teacherId: String,
+  val teacherName: String,
+  val total: Int,
+  val datang: Int,
+  val pulang: Int,
+  val belumMasuk: Int,
+  val tidakMasuk: Int,
+  val details: List<WakasekTeacherLocationAttendanceRow>
 )
 
 private data class StudentStatusSummary(
@@ -261,6 +276,7 @@ fun WakasekKurikulumScreen(
   var reviewChoiceTarget by remember { mutableStateOf<LeaveRequestItem?>(null) }
   var processingReviewId by rememberSaveable { mutableStateOf("") }
   var expandedTeacherId by rememberSaveable { mutableStateOf("") }
+  var expandedLocationTeacherId by rememberSaveable { mutableStateOf("") }
   var expandedStudentKey by rememberSaveable { mutableStateOf("") }
   var selectedScoreClassName by rememberSaveable { mutableStateOf("") }
   var selectedScoreSubjectId by rememberSaveable { mutableStateOf("") }
@@ -275,8 +291,12 @@ fun WakasekKurikulumScreen(
   val selectedDate = parseIsoDate(selectedDateIso) ?: LocalDate.now()
   val selectedWeekStart = parseIsoDate(selectedWeekStartIso) ?: startOfWeek(LocalDate.now())
   val selectedMonth = runCatching { YearMonth.parse(selectedMonthIso) }.getOrElse { YearMonth.now() }
-  val semesterOptions = remember(snapshot.teacherRows, snapshot.studentRows) {
-    buildSemesterOptions(snapshot.teacherRows.map { it.periodKey } + snapshot.studentRows.map { it.dateIso })
+  val semesterOptions = remember(snapshot.teacherRows, snapshot.teacherLocationRows, snapshot.studentRows) {
+    buildSemesterOptions(
+      snapshot.teacherRows.map { it.periodKey } +
+        snapshot.teacherLocationRows.map { it.periodKey } +
+        snapshot.studentRows.map { it.dateIso }
+    )
   }
   val selectedSemester = semesterOptions.firstOrNull { it.key == selectedSemesterKey } ?: semesterOptionFor(LocalDate.now())
   val activeFilter = remember(selectedPeriod, selectedDate, selectedWeekStart, selectedMonth, selectedSemester) {
@@ -290,6 +310,9 @@ fun WakasekKurikulumScreen(
   }
   val teacherRows = remember(snapshot.teacherRows, activeFilter) {
     summarizeTeacherRows(snapshot.teacherRows, activeFilter)
+  }
+  val teacherLocationRows = remember(snapshot.teacherLocationRows, activeFilter) {
+    summarizeTeacherLocationRows(snapshot.teacherLocationRows, activeFilter)
   }
   val studentRows = remember(snapshot.studentRows, activeFilter) {
     filterStudentRows(snapshot.studentRows, activeFilter)
@@ -411,7 +434,11 @@ fun WakasekKurikulumScreen(
             scoreActionsProcessing = isExportingScores,
             onScoreActionSelected = { scoreExportAction = it }
           )
-          if (page == WakasekKurikulumPage.Teacher || page == WakasekKurikulumPage.Student) {
+          if (
+            page == WakasekKurikulumPage.Teacher ||
+            page == WakasekKurikulumPage.LocationAttendance ||
+            page == WakasekKurikulumPage.Student
+          ) {
             WakasekPeriodContextSelector(
               filter = activeFilter,
               semesterOptions = semesterOptions,
@@ -461,6 +488,29 @@ fun WakasekKurikulumScreen(
                         expanded = expandedTeacherId == key,
                         onClick = {
                           expandedTeacherId = if (expandedTeacherId == key) "" else key
+                        }
+                      )
+                    }
+                  }
+                }
+
+                WakasekKurikulumPage.LocationAttendance -> {
+                  item {
+                    TeacherLocationAttendanceChartCard(
+                      rows = teacherLocationRows,
+                      label = activeFilter.label
+                    )
+                  }
+                  if (teacherLocationRows.isEmpty()) {
+                    item { EmptyPlaceholderCard("Belum ada data absensi guru pada rentang ini.") }
+                  } else {
+                    items(teacherLocationRows, key = { it.teacherId.ifBlank { it.teacherName } }) { row ->
+                      val key = row.teacherId.ifBlank { row.teacherName }
+                      TeacherLocationAttendanceCard(
+                        row = row,
+                        expanded = expandedLocationTeacherId == key,
+                        onClick = {
+                          expandedLocationTeacherId = if (expandedLocationTeacherId == key) "" else key
                         }
                       )
                     }
@@ -825,6 +875,7 @@ private fun WakasekDaySelector(
   onJumpToToday: () -> Unit,
   onDateChange: (LocalDate) -> Unit
 ) {
+  val today = LocalDate.now()
   val weekStart = startOfWeek(selectedDate)
   val dates = remember(weekStart) { List(7) { weekStart.plusDays(it.toLong()) } }
   val selectedIndex = dates.indexOf(selectedDate).coerceAtLeast(0)
@@ -835,15 +886,21 @@ private fun WakasekDaySelector(
     onPeriodClick = onPeriodClick,
     onJumpToToday = onJumpToToday,
     onPrevious = { onDateChange(selectedDate.minusWeeks(1)) },
-    onNext = { onDateChange(selectedDate.plusWeeks(1)) }
+    onNext = {
+      val nextDate = selectedDate.plusWeeks(1)
+      onDateChange(if (nextDate.isAfter(today)) today else nextDate)
+    },
+    nextEnabled = selectedDate.isBefore(today)
   ) {
     WakasekCenteredChoiceRow(items = dates, selectedIndex = selectedIndex, key = { it.toString() }) { date ->
       val selected = date == selectedDate
+      val enabled = !date.isAfter(today)
       WakasekChoiceChip(
         overline = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.forLanguageTag("id-ID")),
         main = date.dayOfMonth.toString(),
         selected = selected,
-        onClick = { onDateChange(date) }
+        enabled = enabled,
+        onClick = { if (enabled) onDateChange(date) }
       )
     }
   }
@@ -966,6 +1023,7 @@ private fun WakasekSelectorShell(
   onJumpToToday: () -> Unit,
   onPrevious: () -> Unit,
   onNext: () -> Unit,
+  nextEnabled: Boolean = true,
   content: @Composable () -> Unit
 ) {
   var expanded by remember { mutableStateOf(false) }
@@ -1066,7 +1124,7 @@ private fun WakasekSelectorShell(
           )
         }
       }
-      WakasekSmallCircleButton(Icons.Outlined.ChevronRight, "Berikutnya", onNext)
+      WakasekSmallCircleButton(Icons.Outlined.ChevronRight, "Berikutnya", onNext, enabled = nextEnabled)
     }
     content()
   }
@@ -1101,18 +1159,24 @@ private fun <T> WakasekCenteredChoiceRow(
 private fun WakasekSmallCircleButton(
   icon: androidx.compose.ui.graphics.vector.ImageVector,
   contentDescription: String,
-  onClick: () -> Unit
+  onClick: () -> Unit,
+  enabled: Boolean = true
 ) {
   Box(
     modifier = Modifier
       .size(38.dp)
       .clip(CircleShape)
-      .background(CardBackground.copy(alpha = 0.9f))
+      .background(CardBackground.copy(alpha = if (enabled) 0.9f else 0.42f))
       .border(1.dp, CardBorder, CircleShape)
-      .clickable(onClick = onClick),
+      .clickable(enabled = enabled, onClick = onClick),
     contentAlignment = Alignment.Center
   ) {
-    Icon(icon, contentDescription = t(contentDescription), tint = PrimaryBlueDark, modifier = Modifier.size(20.dp))
+    Icon(
+      icon,
+      contentDescription = t(contentDescription),
+      tint = if (enabled) PrimaryBlueDark else SubtleInk.copy(alpha = 0.45f),
+      modifier = Modifier.size(20.dp)
+    )
   }
 }
 
@@ -1122,22 +1186,39 @@ private fun WakasekChoiceChip(
   main: String,
   supporting: String = "",
   selected: Boolean,
+  enabled: Boolean = true,
   onClick: () -> Unit
 ) {
+  val backgroundColor = when {
+    selected -> Color(0xFF60A5FA)
+    enabled -> CardBackground.copy(alpha = 0.88f)
+    else -> SoftPanel.copy(alpha = 0.54f)
+  }
+  val primaryTextColor = when {
+    selected -> Color.White
+    enabled -> PrimaryBlueDark
+    else -> SubtleInk.copy(alpha = 0.48f)
+  }
+  val secondaryTextColor = when {
+    selected -> Color.White.copy(alpha = 0.88f)
+    enabled -> SubtleInk
+    else -> SubtleInk.copy(alpha = 0.42f)
+  }
   Column(
     modifier = Modifier
       .width(74.dp)
       .clip(RoundedCornerShape(22.dp))
-      .background(if (selected) Color(0xFF60A5FA) else CardBackground.copy(alpha = 0.88f))
+      .background(backgroundColor)
       .border(
         1.dp,
         when {
           selected -> Color(0xFF93C5FD)
+          !enabled -> CardBorder.copy(alpha = 0.38f)
           else -> CardBorder.copy(alpha = 0.86f)
         },
         RoundedCornerShape(22.dp)
       )
-      .clickable(onClick = onClick)
+      .clickable(enabled = enabled, onClick = onClick)
       .padding(vertical = 14.dp),
     horizontalAlignment = Alignment.CenterHorizontally,
     verticalArrangement = Arrangement.Center
@@ -1145,7 +1226,7 @@ private fun WakasekChoiceChip(
     Text(
       overline,
       style = MaterialTheme.typography.labelSmall,
-      color = if (selected) Color.White else SubtleInk,
+      color = secondaryTextColor,
       fontWeight = FontWeight.SemiBold,
       maxLines = 1,
       overflow = TextOverflow.Ellipsis
@@ -1153,7 +1234,7 @@ private fun WakasekChoiceChip(
     Text(
       main,
       style = MaterialTheme.typography.titleMedium,
-      color = if (selected) Color.White else PrimaryBlueDark,
+      color = primaryTextColor,
       fontWeight = FontWeight.ExtraBold,
       maxLines = 1,
       overflow = TextOverflow.Ellipsis,
@@ -1163,7 +1244,7 @@ private fun WakasekChoiceChip(
       Text(
         supporting,
         style = MaterialTheme.typography.labelSmall,
-        color = if (selected) Color.White.copy(alpha = 0.88f) else SubtleInk,
+        color = secondaryTextColor,
         fontWeight = FontWeight.SemiBold,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -1278,6 +1359,62 @@ private fun AttendanceBarRow(
           .background(color)
       )
     }
+  }
+}
+
+@Composable
+private fun TeacherLocationAttendanceChartCard(
+  rows: List<TeacherLocationAttendanceSummary>,
+  label: String
+) {
+  val total = rows.sumOf { it.total }
+  val belumMasuk = rows.sumOf { it.belumMasuk }
+  val datang = rows.sumOf { it.datang }
+  val pulang = rows.sumOf { it.pulang }
+  val tidakMasuk = rows.sumOf { it.tidakMasuk }
+  val pulangPercent = if (total > 0) ((pulang * 100f) / total).toInt() else 0
+  val datangPercent = if (total > 0) ((datang * 100f) / total).toInt() else 0
+  val belumMasukPercent = if (total > 0) ((belumMasuk * 100f) / total).toInt() else 0
+  val tidakMasukPercent = if (total > 0) ((tidakMasuk * 100f) / total).toInt() else 0
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(22.dp))
+      .background(CardBackground.copy(alpha = 0.9f))
+      .border(1.dp, CardBorder, RoundedCornerShape(22.dp))
+      .padding(16.dp),
+    verticalArrangement = Arrangement.spacedBy(12.dp)
+  ) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      Column(modifier = Modifier.weight(1f)) {
+        Text(
+          text = t("Absensi Guru"),
+          style = MaterialTheme.typography.titleMedium,
+          color = PrimaryBlueDark,
+          fontWeight = FontWeight.ExtraBold
+        )
+        Text(
+          text = "${rows.size} ${t("guru pada")} ${label.lowercase()}",
+          style = MaterialTheme.typography.bodySmall,
+          color = SubtleInk,
+          modifier = Modifier.padding(top = 3.dp)
+        )
+      }
+      Text(
+        text = "$total ${t("hari")}",
+        style = MaterialTheme.typography.labelMedium,
+        color = PrimaryBlueDark,
+        fontWeight = FontWeight.ExtraBold,
+        modifier = Modifier
+          .clip(RoundedCornerShape(999.dp))
+          .background(HighlightCard.copy(alpha = 0.16f))
+          .padding(horizontal = 10.dp, vertical = 7.dp)
+      )
+    }
+    AttendanceBarRow("Belum masuk", belumMasuk, belumMasukPercent, Color(0xFFFB7185))
+    AttendanceBarRow("Sudah masuk", datang, datangPercent, Color(0xFF22C55E))
+    AttendanceBarRow("Sudah pulang", pulang, pulangPercent, Color(0xFF38BDF8))
+    AttendanceBarRow("Tidak masuk", tidakMasuk, tidakMasukPercent, Color(0xFF94A3B8))
   }
 }
 
@@ -2090,6 +2227,120 @@ private fun TeacherMonitoringCard(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
+private fun TeacherLocationAttendanceCard(
+  row: TeacherLocationAttendanceSummary,
+  expanded: Boolean,
+  onClick: () -> Unit
+) {
+  val success = SuccessTint
+  val primaryDark = PrimaryBlueDark
+  val stats = remember(row, success, primaryDark) {
+    buildTeacherLocationSummaryChips(row, success, primaryDark)
+  }
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .shadow(8.dp, RoundedCornerShape(20.dp), ambientColor = Color(0x100F172A), spotColor = Color(0x100F172A))
+      .clip(RoundedCornerShape(20.dp))
+      .background(CardBackground.copy(alpha = 0.94f))
+      .border(1.dp, CardBorder.copy(alpha = 0.94f), RoundedCornerShape(20.dp))
+      .clickable(onClick = onClick)
+      .animateContentSize()
+      .padding(horizontal = 14.dp, vertical = 12.dp)
+  ) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      Column(modifier = Modifier.weight(1f)) {
+        Text(
+          text = row.teacherName,
+          style = MaterialTheme.typography.titleSmall,
+          color = PrimaryBlueDark,
+          fontWeight = FontWeight.SemiBold,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis
+        )
+      }
+      Icon(
+        imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+        contentDescription = null,
+        tint = SubtleInk
+      )
+    }
+    if (stats.isNotEmpty()) {
+      FlowRow(
+        modifier = Modifier.padding(top = 9.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp)
+      ) {
+        stats.forEach { stat -> MonitoringStatItem(stat) }
+      }
+    }
+    if (expanded) {
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(top = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp)
+      ) {
+        row.details.forEach { detail ->
+          TeacherLocationAttendanceDetailRow(detail)
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun TeacherLocationAttendanceDetailRow(row: WakasekTeacherLocationAttendanceRow) {
+  val palette = locationAttendancePalette(row.status)
+  val lateNote = row.lateMinutes
+    .takeIf { it > 0 }
+    ?.let { "Telat ${formatDurationMinutes(it)}" }
+  val meta = listOfNotNull(
+    row.periodLabel.ifBlank { formatShortDate(row.periodKey) },
+    "Datang ${formatInstantTime(row.datangAt)}",
+    "Pulang ${formatInstantTime(row.pulangAt)}",
+    lateNote
+  ).joinToString(" | ")
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(14.dp))
+      .background(SoftPanel)
+      .border(1.dp, CardBorder.copy(alpha = 0.62f), RoundedCornerShape(14.dp))
+      .padding(horizontal = 11.dp, vertical = 9.dp),
+    verticalAlignment = Alignment.CenterVertically
+  ) {
+    Box(
+      modifier = Modifier
+        .size(8.dp)
+        .background(palette.first, CircleShape)
+    )
+    Column(
+      modifier = Modifier
+        .weight(1f)
+        .padding(start = 10.dp)
+    ) {
+      Text(
+        text = row.status.ifBlank { "Belum Masuk" },
+        style = MaterialTheme.typography.labelMedium,
+        color = palette.second,
+        fontWeight = FontWeight.ExtraBold,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+      )
+      Text(
+        text = meta,
+        style = MaterialTheme.typography.labelSmall,
+        color = SubtleInk,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis
+      )
+    }
+  }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
 private fun TeacherSessionRow(row: WakasekTeacherMonitoringRow) {
   val palette = statusPalette(row.status)
   val subject = displayValueOrNull(row.subjectName)
@@ -2204,6 +2455,20 @@ private fun buildTeacherSummaryChips(
     if (row.leave > 0) add(TeacherSummaryChip("Izin", row.leave, Color(0xFFF59E0B), Color(0xFF92400E)))
     if (row.substitute > 0) add(TeacherSummaryChip("Diganti", row.substitute, Color(0xFF38BDF8), Color(0xFF0369A1)))
     if (row.absent > 0) add(TeacherSummaryChip("Tidak Masuk", row.absent, Color(0xFFFB7185), Color(0xFFBE123C)))
+  }
+}
+
+private fun buildTeacherLocationSummaryChips(
+  row: TeacherLocationAttendanceSummary,
+  success: Color,
+  primaryDark: Color
+): List<TeacherSummaryChip> {
+  return buildList {
+    if (row.total > 0) add(TeacherSummaryChip("Total", row.total, primaryDark.copy(alpha = 0.35f), primaryDark))
+    if (row.belumMasuk > 0) add(TeacherSummaryChip("Belum Masuk", row.belumMasuk, Color(0xFFFB7185), Color(0xFFBE123C)))
+    if (row.datang > 0) add(TeacherSummaryChip("Sudah Masuk", row.datang, success, Color(0xFF166534)))
+    if (row.pulang > 0) add(TeacherSummaryChip("Sudah Pulang", row.pulang, Color(0xFF38BDF8), Color(0xFF0369A1)))
+    if (row.tidakMasuk > 0) add(TeacherSummaryChip("Tidak Masuk", row.tidakMasuk, Color(0xFF94A3B8), Color(0xFF475569)))
   }
 }
 
@@ -2536,6 +2801,29 @@ private fun summarizeTeacherRows(
     .sortedBy { it.teacherName.lowercase() }
 }
 
+private fun summarizeTeacherLocationRows(
+  rows: List<WakasekTeacherLocationAttendanceRow>,
+  filter: WakasekPeriodFilter
+): List<TeacherLocationAttendanceSummary> {
+  val filtered = rows.filter { isDateInFilter(it.periodKey, filter) }
+  return filtered
+    .groupBy { it.teacherId.ifBlank { it.teacherName } }
+    .map { (teacherKey, group) ->
+      val details = group.sortedByDescending { it.periodKey }
+      TeacherLocationAttendanceSummary(
+        teacherId = teacherKey,
+        teacherName = group.firstOrNull()?.teacherName.orEmpty().ifBlank { "Guru" },
+        total = group.sumOf { it.totalDays },
+        datang = group.sumOf { it.datangCount },
+        pulang = group.sumOf { it.pulangCount },
+        belumMasuk = group.sumOf { it.belumMasukCount },
+        tidakMasuk = group.sumOf { it.tidakMasukCount },
+        details = details
+      )
+    }
+    .sortedBy { it.teacherName.lowercase() }
+}
+
 private fun filterStudentRows(
   rows: List<WakasekStudentMonitoringRow>,
   filter: WakasekPeriodFilter
@@ -2822,6 +3110,32 @@ private fun statusPalette(status: String): Pair<Color, Color> {
     normalized.contains("ganti") -> Color(0xFF38BDF8) to Color(0xFF0369A1)
     else -> Color(0xFFFB7185) to Color(0xFFBE123C)
   }
+}
+
+private fun locationAttendancePalette(status: String): Pair<Color, Color> {
+  val normalized = status.lowercase()
+  return when {
+    normalized.contains("pulang") -> Color(0xFF38BDF8) to Color(0xFF0369A1)
+    normalized.contains("tidak") -> Color(0xFF94A3B8) to Color(0xFF475569)
+    normalized.contains("sudah") || normalized.contains("datang") || normalized.contains("masuk") && !normalized.contains("belum") ->
+      Color(0xFF22C55E) to Color(0xFF166534)
+    else -> Color(0xFFFB7185) to Color(0xFFBE123C)
+  }
+}
+
+private fun formatInstantTime(value: String): String {
+  if (value.isBlank()) return "-"
+  return runCatching {
+    Instant.parse(value)
+      .atZone(ZoneId.systemDefault())
+      .format(DateTimeFormatter.ofPattern("HH:mm", Locale.forLanguageTag("id-ID")))
+  }.getOrDefault("-")
+}
+
+private fun formatDurationMinutes(minutes: Int): String {
+  val hours = minutes / 60
+  val remainder = minutes % 60
+  return "$hours jam $remainder menit"
 }
 
 private fun formatShortDate(dateIso: String): String {

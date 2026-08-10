@@ -114,6 +114,7 @@ data class LeaveRequestItem(
 data class WakasekKurikulumSnapshot(
   val isWakasekKurikulum: Boolean = false,
   val teacherRows: List<WakasekTeacherMonitoringRow> = emptyList(),
+  val teacherLocationRows: List<WakasekTeacherLocationAttendanceRow> = emptyList(),
   val studentRows: List<WakasekStudentMonitoringRow> = emptyList(),
   val scoreSubjects: List<SubjectOverview> = emptyList(),
   val leaveRequests: List<LeaveRequestItem> = emptyList(),
@@ -136,6 +137,23 @@ data class WakasekTeacherMonitoringRow(
   val substituteCount: Int = 0,
   val leaveCount: Int = 0,
   val absentCount: Int = 0
+)
+
+@Serializable
+data class WakasekTeacherLocationAttendanceRow(
+  val teacherId: String,
+  val teacherName: String,
+  val periodKey: String,
+  val periodLabel: String,
+  val datangAt: String = "",
+  val pulangAt: String = "",
+  val status: String = "",
+  val lateMinutes: Int = 0,
+  val totalDays: Int = 0,
+  val datangCount: Int = 0,
+  val pulangCount: Int = 0,
+  val belumMasukCount: Int = 0,
+  val tidakMasukCount: Int = 0
 )
 
 @Serializable

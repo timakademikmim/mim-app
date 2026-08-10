@@ -111,8 +111,8 @@ fun InputNilaiScreen(
   var selectedMetricKey by rememberSaveable { mutableStateOf(InputNilaiMetricOptions.first().key) }
   var materiText by rememberSaveable { mutableStateOf("") }
   var isMateriEditedByUser by rememberSaveable { mutableStateOf(false) }
-  var scoreSnapshot by remember(selectedSubjectId, scoreSnapshots) {
-    mutableStateOf(scoreSnapshots.firstOrNull { it.distribusiId == selectedSubjectId })
+  var scoreSnapshot by remember(selectedSubjectId) {
+    mutableStateOf<MapelScoreSnapshot?>(null)
   }
   var patronMateriSnapshot by remember(selectedSubjectId, patronMateriSnapshots) {
     mutableStateOf(patronMateriSnapshots.firstOrNull { it.distribusiId == selectedSubjectId })
@@ -162,16 +162,23 @@ fun InputNilaiScreen(
     if (selectedSubjectId != nextSubjectId) selectedSubjectId = nextSubjectId
   }
 
-  LaunchedEffect(selectedSubjectId, subjects) {
-    val subject = subjects.firstOrNull { it.id == selectedSubjectId }
+  LaunchedEffect(
+    selectedSubject?.id,
+    selectedSubject?.title,
+    selectedSubject?.className
+  ) {
+    val subject = selectedSubject
     if (subject == null) {
       scoreSnapshot = null
       isLoadingStudents = false
       return@LaunchedEffect
     }
     isLoadingStudents = true
-    scoreSnapshot = scoreSnapshots.firstOrNull { it.distribusiId == selectedSubjectId }
-    scoreSnapshot = onLoadScores(subject.id, subject) ?: scoreSnapshot
+    val cachedSnapshot = scoreSnapshots
+      .firstOrNull { it.distribusiId == subject.id }
+      ?.takeIf { it.students.isNotEmpty() }
+    scoreSnapshot = cachedSnapshot
+    scoreSnapshot = onLoadScores(subject.id, subject) ?: cachedSnapshot
     isLoadingStudents = false
   }
 
@@ -242,8 +249,16 @@ fun InputNilaiScreen(
             },
             classValue = selectedClassName.ifBlank { "Pilih kelas" },
             classOptions = classOptions,
-            onClassSelect = {
-              selectedClassName = it
+            onClassSelect = { className ->
+              selectedClassName = className
+              val nextSubject = subjects
+                .filter { subject -> subject.className == className }
+                .distinctBy { subject -> subject.id }
+                .sortedWith(compareBy<SubjectOverview> { subject -> subject.title.lowercase() }.thenBy { subject -> subject.semester.lowercase() })
+                .firstOrNull()
+              selectedSubjectId = nextSubject?.id.orEmpty()
+              scoreSnapshot = null
+              draftValues = emptyMap()
               materiText = ""
               isMateriEditedByUser = false
               feedbackMessage = null
@@ -253,6 +268,8 @@ fun InputNilaiScreen(
             onSubjectSelect = {
               selectedSubjectId = it.id
               selectedClassName = it.className
+              scoreSnapshot = null
+              draftValues = emptyMap()
               materiText = ""
               isMateriEditedByUser = false
               feedbackMessage = null
@@ -382,7 +399,7 @@ fun InputNilaiScreen(
 
           students.isEmpty() -> {
             item {
-              EmptyPlaceholderCard("Belum ada data santri untuk kelas/mapel ini. Tarik refresh saat koneksi aktif.")
+              EmptyPlaceholderCard("Server belum mengirim data santri untuk kelas/mapel ini. Coba muat ulang saat koneksi aktif.")
             }
           }
 

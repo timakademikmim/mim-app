@@ -82,6 +82,7 @@ import com.mim.guruapp.GuruSidebarDestination
 import com.mim.guruapp.APP_ROLE_ADMIN
 import com.mim.guruapp.AttendanceSaveOutcome
 import com.mim.guruapp.LeaveRequestSaveOutcome
+import com.mim.guruapp.LocationAttendanceSaveOutcome
 import com.mim.guruapp.PatronMateriSaveOutcome
 import com.mim.guruapp.QuestionSaveOutcome
 import com.mim.guruapp.ScoreSaveOutcome
@@ -124,6 +125,8 @@ import com.mim.guruapp.data.remote.GuruAiGenerateResult
 import com.mim.guruapp.data.remote.GuruAiTokenWallet
 import com.mim.guruapp.data.remote.GuruExamQuestionItem
 import com.mim.guruapp.data.remote.GuruExamQuestionSnapshot
+import com.mim.guruapp.data.remote.GuruLocationAttendanceSnapshot
+import com.mim.guruapp.data.remote.GuruLocationAttendanceSubmission
 import com.mim.guruapp.data.remote.GuruTeachingSessionRecord
 import com.mim.guruapp.data.remote.AdminAcademicCalendarEvent
 import com.mim.guruapp.data.remote.AdminAcademicCalendarLoadResult
@@ -180,6 +183,7 @@ import com.mim.guruapp.ui.components.EmptyPlaceholderCard
 import com.mim.guruapp.ui.components.HomeHeroCard
 import com.mim.guruapp.ui.components.InputAbsensiScreen
 import com.mim.guruapp.ui.components.InputNilaiScreen
+import com.mim.guruapp.ui.components.GuruLocationAttendanceScreen
 import com.mim.guruapp.ui.components.LaporanAbsensiScreen
 import com.mim.guruapp.ui.components.LaporanBulananScreen
 import com.mim.guruapp.ui.components.LaporanUtsScreen
@@ -883,6 +887,7 @@ private fun GuruHomeContentTarget.transitionOrder(): Int {
     GuruSidebarDestination.Tugas -> 2
     GuruSidebarDestination.Mapel -> 2
     GuruSidebarDestination.Jadwal -> 3
+    GuruSidebarDestination.AbsensiGuru,
     GuruSidebarDestination.InputNilai,
     GuruSidebarDestination.InputAbsensi -> 4
     GuruSidebarDestination.Perizinan,
@@ -903,6 +908,7 @@ private fun GuruHomeContentTarget.transitionOrder(): Int {
     GuruSidebarDestination.Pesan,
     GuruSidebarDestination.Notifikasi -> 5
     GuruSidebarDestination.WakasekMonitoringGuru,
+    GuruSidebarDestination.WakasekAbsensiGuru,
     GuruSidebarDestination.WakasekMonitoringSiswa,
     GuruSidebarDestination.WakasekNilaiSiswa,
     GuruSidebarDestination.WakasekPerizinan -> 6
@@ -1015,6 +1021,8 @@ fun GuruHomeScreen(
   onLoadLeaveRequests: suspend () -> LeaveRequestSnapshot?,
   onSubmitLeaveRequest: suspend (String, String, String) -> LeaveRequestSaveOutcome,
   onDeleteLeaveRequest: suspend (String) -> LeaveRequestSaveOutcome,
+  onLoadLocationAttendance: suspend () -> GuruLocationAttendanceSnapshot,
+  onSubmitLocationAttendance: suspend (GuruLocationAttendanceSubmission) -> LocationAttendanceSaveOutcome,
   onReviewWakasekLeaveRequest: suspend (String, Boolean, String) -> WakasekReviewOutcome,
   onApplyLanguage: (String) -> Unit,
   onApplyThemeMode: (String) -> Unit,
@@ -1215,6 +1223,7 @@ fun GuruHomeScreen(
     when (selectedDestination) {
       GuruSidebarDestination.Dashboard -> !isCalendarScreenOpen
       GuruSidebarDestination.Tugas,
+      GuruSidebarDestination.AbsensiGuru,
       GuruSidebarDestination.Jadwal,
       GuruSidebarDestination.Perizinan,
       GuruSidebarDestination.LaporanBulanan,
@@ -1471,6 +1480,17 @@ fun GuruHomeScreen(
         modifier = Modifier
           .fillMaxSize()
       )
+    } else if (targetDestination == GuruSidebarDestination.AbsensiGuru) {
+      GuruLocationAttendanceScreen(
+        teacherName = dashboard.teacherName,
+        isRefreshing = syncBanner.isSyncing,
+        onMenuClick = onToggleSidebar,
+        onRefresh = onRefreshClick,
+        onLoadSnapshot = onLoadLocationAttendance,
+        onSubmitAttendance = onSubmitLocationAttendance,
+        modifier = Modifier
+          .fillMaxSize()
+      )
     } else if (targetDestination == GuruSidebarDestination.Profil) {
       EditProfileScreen(
         profile = dashboard.profile,
@@ -1708,12 +1728,14 @@ fun GuruHomeScreen(
       )
     } else if (
       targetDestination == GuruSidebarDestination.WakasekMonitoringGuru ||
+      targetDestination == GuruSidebarDestination.WakasekAbsensiGuru ||
       targetDestination == GuruSidebarDestination.WakasekMonitoringSiswa ||
       targetDestination == GuruSidebarDestination.WakasekNilaiSiswa ||
       targetDestination == GuruSidebarDestination.WakasekPerizinan
     ) {
       WakasekKurikulumScreen(
         page = when (targetDestination) {
+          GuruSidebarDestination.WakasekAbsensiGuru -> WakasekKurikulumPage.LocationAttendance
           GuruSidebarDestination.WakasekMonitoringSiswa -> WakasekKurikulumPage.Student
           GuruSidebarDestination.WakasekNilaiSiswa -> WakasekKurikulumPage.StudentScores
           GuruSidebarDestination.WakasekPerizinan -> WakasekKurikulumPage.Permission
@@ -2417,7 +2439,7 @@ private fun GuruHomeTopBar(
 private fun GuruHomeScreenPreview() {
   MimGuruTheme {
     GuruHomeScreen(
-      dashboard = SampleDataFactory.createDashboard("Ustadz Fulan"),
+      dashboard = SampleDataFactory.createDashboard("Ustadz Ahmad"),
       activeRole = "guru",
       availableRoles = listOf("guru", "admin"),
       syncBanner = SyncBannerState("Data lokal siap. Sinkronisasi akan berjalan otomatis di background.", false),
@@ -2575,6 +2597,8 @@ private fun GuruHomeScreenPreview() {
       onLoadLeaveRequests = { null },
       onSubmitLeaveRequest = { _, _, _ -> LeaveRequestSaveOutcome(true, "OK") },
       onDeleteLeaveRequest = { _ -> LeaveRequestSaveOutcome(true, "OK") },
+      onLoadLocationAttendance = { GuruLocationAttendanceSnapshot(errorMessage = "Preview") },
+      onSubmitLocationAttendance = { LocationAttendanceSaveOutcome(true, "OK") },
       onReviewWakasekLeaveRequest = { _, _, _ -> WakasekReviewOutcome(true, "OK") },
       onApplyLanguage = {},
       onApplyThemeMode = {},

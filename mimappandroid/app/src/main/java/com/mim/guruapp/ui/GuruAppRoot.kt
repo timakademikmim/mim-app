@@ -13,6 +13,7 @@ import com.mim.guruapp.GuruSidebarParent
 import com.mim.guruapp.GuruSidebarDestination
 import com.mim.guruapp.AttendanceSaveOutcome
 import com.mim.guruapp.LeaveRequestSaveOutcome
+import com.mim.guruapp.LocationAttendanceSaveOutcome
 import com.mim.guruapp.PatronMateriSaveOutcome
 import com.mim.guruapp.QuestionSaveOutcome
 import com.mim.guruapp.ScoreSaveOutcome
@@ -51,6 +52,8 @@ import com.mim.guruapp.data.remote.GuruAiGenerateResult
 import com.mim.guruapp.data.remote.GuruAiTokenWallet
 import com.mim.guruapp.data.remote.GuruExamQuestionItem
 import com.mim.guruapp.data.remote.GuruExamQuestionSnapshot
+import com.mim.guruapp.data.remote.GuruLocationAttendanceSnapshot
+import com.mim.guruapp.data.remote.GuruLocationAttendanceSubmission
 import com.mim.guruapp.data.remote.GuruTeachingSessionRecord
 import com.mim.guruapp.data.remote.AdminAcademicCalendarEvent
 import com.mim.guruapp.data.remote.AdminAcademicCalendarLoadResult
@@ -191,6 +194,8 @@ fun GuruAppRoot(
   onLoadLeaveRequests: suspend () -> LeaveRequestSnapshot?,
   onSubmitLeaveRequest: suspend (String, String, String) -> LeaveRequestSaveOutcome,
   onDeleteLeaveRequest: suspend (String) -> LeaveRequestSaveOutcome,
+  onLoadLocationAttendance: suspend () -> GuruLocationAttendanceSnapshot,
+  onSubmitLocationAttendance: suspend (GuruLocationAttendanceSubmission) -> LocationAttendanceSaveOutcome,
   onReviewWakasekLeaveRequest: suspend (String, Boolean, String) -> WakasekReviewOutcome,
   onApplyLanguage: (String) -> Unit,
   onApplyThemeMode: (String) -> Unit,
@@ -351,6 +356,8 @@ fun GuruAppRoot(
               onLoadLeaveRequests = onLoadLeaveRequests,
               onSubmitLeaveRequest = onSubmitLeaveRequest,
               onDeleteLeaveRequest = onDeleteLeaveRequest,
+              onLoadLocationAttendance = onLoadLocationAttendance,
+              onSubmitLocationAttendance = onSubmitLocationAttendance,
               onReviewWakasekLeaveRequest = onReviewWakasekLeaveRequest,
               onApplyLanguage = onApplyLanguage,
               onApplyThemeMode = onApplyThemeMode,

@@ -40,6 +40,7 @@ import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Grade
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.NoteAlt
+import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.Quiz
 import androidx.compose.material.icons.outlined.Report
 import androidx.compose.material.icons.outlined.SwapHoriz
@@ -557,6 +558,7 @@ fun buildGuruSidebarContent(
           label = "Aktivitas Harian",
           icon = Icons.Outlined.NoteAlt,
           children = listOf(
+            SidebarLeafItem(GuruSidebarDestination.AbsensiGuru, "Absensi Guru", Icons.Outlined.Place),
             SidebarLeafItem(GuruSidebarDestination.InputAbsensi, "Input Absen", Icons.Outlined.AssignmentTurnedIn),
             SidebarLeafItem(GuruSidebarDestination.InputNilai, "Input Nilai", Icons.Outlined.NoteAlt),
             SidebarLeafItem(GuruSidebarDestination.Perizinan, "Perizinan", Icons.Outlined.TaskAlt)
@@ -587,6 +589,7 @@ fun buildGuruSidebarContent(
             icon = Icons.Outlined.AssignmentTurnedIn,
             children = listOf(
               SidebarLeafItem(GuruSidebarDestination.WakasekMonitoringGuru, "Monitoring Guru", Icons.Outlined.Dashboard),
+              SidebarLeafItem(GuruSidebarDestination.WakasekAbsensiGuru, "Absensi Guru", Icons.Outlined.Place),
               SidebarLeafItem(GuruSidebarDestination.WakasekMonitoringSiswa, "Monitoring Siswa", Icons.Outlined.Groups),
               SidebarLeafItem(GuruSidebarDestination.WakasekNilaiSiswa, "Nilai Siswa", Icons.Outlined.Grade),
               SidebarLeafItem(GuruSidebarDestination.WakasekPerizinan, "Perizinan", Icons.Outlined.TaskAlt)

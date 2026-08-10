@@ -5,6 +5,7 @@ import com.mim.guruapp.data.model.LeaveRequestItem
 import com.mim.guruapp.data.model.SubjectOverview
 import com.mim.guruapp.data.model.WakasekKurikulumSnapshot
 import com.mim.guruapp.data.model.WakasekStudentMonitoringRow
+import com.mim.guruapp.data.model.WakasekTeacherLocationAttendanceRow
 import com.mim.guruapp.data.model.WakasekTeacherMonitoringRow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -15,8 +16,11 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.time.DayOfWeek
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.temporal.WeekFields
@@ -51,7 +55,9 @@ class GuruWakasekKurikulumRemoteDataSource {
 
       val startDate = referenceDate.minusMonths(6).withDayOfMonth(1)
       val endDate = referenceDate.plusDays(7)
-      val attendanceRows = fetchAttendanceRows(startDate, endDate)
+      val rawAttendanceRows = fetchAttendanceRows(startDate, endDate)
+      val rawLocationAttendanceRows = fetchLocationAttendanceRows(startDate, referenceDate)
+      val activeTeacherRows = fetchActiveTeacherRows()
       val leaveRows = fetchRows(
         table = "izin_karyawan",
         query = buildString {
@@ -59,15 +65,36 @@ class GuruWakasekKurikulumRemoteDataSource {
           append("&order=created_at.desc")
         }
       )
-      val distribusiRows = fetchRows(
+      val rawDistribusiRows = fetchRows(
         table = "distribusi_mapel",
         query = "select=id,kelas_id,mapel_id,guru_id,semester_id"
       )
-      val jadwalRows = fetchJadwalRows()
+      val semesterIds = rawDistribusiRows.map { it.cleanString("semester_id") }
+        .filter(String::isNotBlank)
+        .distinct()
+      val semesterMap = fetchSemesterMap(semesterIds)
+      val activeTahunAjaranId = resolveActiveTahunAjaranId()
+      val activeSemesterId = resolveActiveSemesterId(activeTahunAjaranId)
+      val distribusiRows = filterDistribusiRowsByActivePeriod(
+        rows = rawDistribusiRows,
+        semesterMap = semesterMap,
+        activeTahunAjaranId = activeTahunAjaranId,
+        activeSemesterId = activeSemesterId
+      )
+      val activeDistribusiIds = distribusiRows.map { it.cleanString("id") }.filter(String::isNotBlank).toSet()
+      val attendanceRows = filterAttendanceRowsByActivePeriod(
+        rows = rawAttendanceRows,
+        activeDistribusiIds = activeDistribusiIds,
+        activeSemesterId = activeSemesterId
+      )
+      val jadwalRows = fetchJadwalRows(activeDistribusiIds.toList())
       val jamRows = fetchJamRows()
       val teacherIds = (attendanceRows.flatMap { row ->
         listOf(row.cleanString("guru_id"), row.cleanString("guru_pengganti_id"))
-      } + leaveRows.map { it.cleanString("guru_id") } + distribusiRows.map { it.cleanString("guru_id") })
+      } + leaveRows.map { it.cleanString("guru_id") } +
+        distribusiRows.map { it.cleanString("guru_id") } +
+        rawLocationAttendanceRows.map { it.cleanString("guru_id") } +
+        activeTeacherRows.map { it.cleanString("id") })
         .map(String::trim)
         .filter(String::isNotBlank)
         .distinct()
@@ -78,16 +105,17 @@ class GuruWakasekKurikulumRemoteDataSource {
       val subjectIds = (attendanceRows.map { it.cleanString("mapel_id") } + distribusiRows.map { it.cleanString("mapel_id") })
         .filter(String::isNotBlank)
         .distinct()
-      val semesterIds = distribusiRows.map { it.cleanString("semester_id") }
-        .filter(String::isNotBlank)
-        .distinct()
-
-      val teacherMap = fetchNameMap("karyawan", "nama", teacherIds)
+      val teacherMap = fetchNameMap("karyawan", "nama", teacherIds) +
+        activeTeacherRows
+          .mapNotNull { row ->
+            val id = row.cleanString("id")
+            val name = row.cleanString("nama")
+            if (id.isBlank() || name.isBlank()) null else id to name
+          }
+          .toMap()
       val studentMap = fetchNameMap("santri", "nama", studentIds)
       val classMap = fetchNameMap("kelas", "nama_kelas", classIds)
       val subjectMap = fetchNameMap("mapel", "nama", subjectIds)
-      val semesterMap = fetchSemesterMap(semesterIds)
-      val activeSemesterId = resolveActiveSemesterId()
       val calendarRows = fetchCalendarRows()
 
       WakasekKurikulumSnapshot(
@@ -102,6 +130,13 @@ class GuruWakasekKurikulumRemoteDataSource {
           teacherMap = teacherMap,
           classMap = classMap,
           subjectMap = subjectMap,
+          startDate = startDate,
+          endDate = referenceDate
+        ),
+        teacherLocationRows = buildTeacherLocationAttendanceRows(
+          teacherRows = activeTeacherRows,
+          locationRows = rawLocationAttendanceRows,
+          teacherMap = teacherMap,
           startDate = startDate,
           endDate = referenceDate
         ),
@@ -495,6 +530,95 @@ class GuruWakasekKurikulumRemoteDataSource {
       .sortedWith(compareByDescending<WakasekStudentMonitoringRow> { it.dateIso }.thenBy { it.studentName })
   }
 
+  private fun buildTeacherLocationAttendanceRows(
+    teacherRows: List<JSONObject>,
+    locationRows: List<JSONObject>,
+    teacherMap: Map<String, String>,
+    startDate: LocalDate,
+    endDate: LocalDate
+  ): List<WakasekTeacherLocationAttendanceRow> {
+    val localZone = ZoneId.systemDefault()
+    val now = LocalDateTime.now(localZone)
+    val workStart = LocalTime.of(8, 0)
+    val absenceCutoff = LocalTime.of(15, 0)
+    val directory = teacherRows
+      .mapNotNull { row ->
+        val id = row.cleanString("id")
+        if (id.isBlank()) null else TeacherDirectoryRow(
+          id = id,
+          name = row.cleanString("nama").ifBlank { teacherMap[id].orEmpty().ifBlank { id } }
+        )
+      }
+      .ifEmpty {
+        locationRows
+          .map { it.cleanString("guru_id") }
+          .filter(String::isNotBlank)
+          .distinct()
+          .map { id -> TeacherDirectoryRow(id = id, name = teacherMap[id].orEmpty().ifBlank { id }) }
+      }
+    if (directory.isEmpty()) return emptyList()
+
+    val recordsByKey = locationRows
+      .filter { it.cleanString("guru_id").isNotBlank() && it.cleanString("tanggal").isNotBlank() }
+      .associateBy { "${it.cleanString("tanggal").take(10)}|${it.cleanString("guru_id")}" }
+
+    val rows = mutableListOf<WakasekTeacherLocationAttendanceRow>()
+    var cursor = startDate
+    while (!cursor.isAfter(endDate)) {
+      if (cursor.dayOfWeek != DayOfWeek.SUNDAY) {
+        val dateIso = cursor.toString()
+        directory.forEach { teacher ->
+          val record = recordsByKey["$dateIso|${teacher.id}"]
+          val datangAt = record?.cleanString("datang_at").orEmpty()
+          val pulangAt = record?.cleanString("pulang_at").orEmpty()
+          val datangTime = parseInstantLocalTime(datangAt, localZone)
+          val lateMinutes = datangTime
+            ?.let { time -> java.time.Duration.between(workStart, time).toMinutes().coerceAtLeast(0).toInt() }
+            ?: 0
+          val status = when {
+            datangAt.isBlank() && shouldMarkTeacherAbsent(cursor, now, absenceCutoff) -> "Tidak Masuk"
+            datangAt.isBlank() -> "Belum Masuk"
+            pulangAt.isBlank() -> "Sudah Masuk"
+            else -> "Sudah Pulang"
+          }
+          rows += WakasekTeacherLocationAttendanceRow(
+            teacherId = teacher.id,
+            teacherName = teacher.name.ifBlank { teacherMap[teacher.id].orEmpty().ifBlank { teacher.id } },
+            periodKey = dateIso,
+            periodLabel = formatDateLabel(dateIso),
+            datangAt = datangAt,
+            pulangAt = pulangAt,
+            status = status,
+            lateMinutes = lateMinutes,
+            totalDays = 1,
+            datangCount = if (status == "Sudah Masuk") 1 else 0,
+            pulangCount = if (status == "Sudah Pulang") 1 else 0,
+            belumMasukCount = if (status == "Belum Masuk") 1 else 0,
+            tidakMasukCount = if (status == "Tidak Masuk") 1 else 0
+          )
+        }
+      }
+      cursor = cursor.plusDays(1)
+    }
+    return rows.sortedWith(
+      compareByDescending<WakasekTeacherLocationAttendanceRow> { it.periodKey }
+        .thenBy { it.teacherName.lowercase(Locale.ROOT) }
+    )
+  }
+
+  private fun shouldMarkTeacherAbsent(date: LocalDate, now: LocalDateTime, absenceCutoff: LocalTime): Boolean {
+    return date.isBefore(now.toLocalDate()) || (date == now.toLocalDate() && !now.toLocalTime().isBefore(absenceCutoff))
+  }
+
+  private fun parseInstantLocalTime(value: String, zoneId: ZoneId): LocalTime? {
+    if (value.isBlank()) return null
+    return runCatching {
+      Instant.parse(value).atZone(zoneId).toLocalTime()
+    }.getOrElse {
+      runCatching { LocalDateTime.parse(value.take(19).replace(' ', 'T')).toLocalTime() }.getOrNull()
+    }
+  }
+
   private fun buildWakasekScoreSubjects(
     distribusiRows: List<JSONObject>,
     classMap: Map<String, String>,
@@ -572,18 +696,52 @@ class GuruWakasekKurikulumRemoteDataSource {
     }
   }
 
-  private fun fetchJadwalRows(): List<JSONObject> {
+  private fun fetchLocationAttendanceRows(startDate: LocalDate, endDate: LocalDate): List<JSONObject> {
+    val dateFilter = buildString {
+      append("&tanggal=gte.")
+      append(encodeValue(startDate.toString()))
+      append("&tanggal=lte.")
+      append(encodeValue(endDate.toString()))
+      append("&order=tanggal.desc")
+    }
     return runCatching {
       fetchRows(
-        table = "jadwal_pelajaran",
-        query = "select=id,distribusi_id,hari,jam_mulai,jam_selesai,jam_pelajaran_id"
+        table = "absensi_karyawan_lokasi",
+        query = "select=id,guru_id,tanggal,datang_at,pulang_at,status$dateFilter"
       )
-    }.getOrElse { error ->
-      if (!shouldRetryWithFallbackSelect(error)) throw error
+    }.getOrDefault(emptyList())
+  }
+
+  private fun fetchActiveTeacherRows(): List<JSONObject> {
+    val rows = runCatching {
       fetchRows(
-        table = "jadwal_pelajaran",
-        query = "select=id,distribusi_id,hari,jam_mulai,jam_selesai"
+        table = "karyawan",
+        query = "select=id,nama,role,aktif&aktif=eq.true&order=nama.asc"
       )
+    }.getOrDefault(emptyList())
+    val teacherRows = rows.filter { row -> isTeacherLikeRole(row.cleanString("role")) }
+    return teacherRows.ifEmpty { rows }
+  }
+
+  private fun fetchJadwalRows(distribusiIds: List<String>): List<JSONObject> {
+    val normalizedIds = distribusiIds.map { it.trim() }.filter(String::isNotBlank).distinct()
+    if (normalizedIds.isEmpty()) return emptyList()
+
+    return normalizedIds.chunked(100).flatMap { chunk ->
+      val inClause = chunk.joinToString(",") { "\"${it}\"" }
+      val filter = "&distribusi_id=in.($inClause)"
+      runCatching {
+        fetchRows(
+          table = "jadwal_pelajaran",
+          query = "select=id,distribusi_id,hari,jam_mulai,jam_selesai,jam_pelajaran_id$filter"
+        )
+      }.getOrElse { error ->
+        if (!shouldRetryWithFallbackSelect(error)) throw error
+        fetchRows(
+          table = "jadwal_pelajaran",
+          query = "select=id,distribusi_id,hari,jam_mulai,jam_selesai$filter"
+        )
+      }
     }
   }
 
@@ -710,13 +868,67 @@ class GuruWakasekKurikulumRemoteDataSource {
       .filterKeys(String::isNotBlank)
   }
 
-  private fun resolveActiveSemesterId(): String {
+  private fun resolveActiveTahunAjaranId(): String {
     return runCatching {
       fetchRows(
-        table = "semester",
-        query = "select=id,nama,aktif,tahun_ajaran_id&aktif=eq.true&order=id.desc&limit=1"
+        table = "tahun_ajaran",
+        query = "select=id,aktif&aktif=eq.true&order=id.desc&limit=1"
       ).firstOrNull()?.cleanString("id").orEmpty()
     }.getOrDefault("")
+  }
+
+  private fun resolveActiveSemesterId(activeTahunAjaranId: String): String {
+    return runCatching {
+      val query = buildString {
+        append("select=id,nama,aktif,tahun_ajaran_id&aktif=eq.true&order=id.desc&limit=1")
+        if (activeTahunAjaranId.isNotBlank()) {
+          append("&tahun_ajaran_id=eq.")
+          append(encodeValue(activeTahunAjaranId))
+        }
+      }
+      fetchRows(
+        table = "semester",
+        query = query
+      ).firstOrNull()?.cleanString("id").orEmpty()
+    }.getOrDefault("")
+  }
+
+  private fun filterDistribusiRowsByActivePeriod(
+    rows: List<JSONObject>,
+    semesterMap: Map<String, JSONObject>,
+    activeTahunAjaranId: String,
+    activeSemesterId: String
+  ): List<JSONObject> {
+    if (rows.isEmpty()) return emptyList()
+    if (activeSemesterId.isNotBlank()) {
+      val semesterRows = rows.filter { it.cleanString("semester_id") == activeSemesterId }
+      if (semesterRows.isNotEmpty()) return semesterRows
+    }
+    if (activeTahunAjaranId.isNotBlank()) {
+      val yearRows = rows.filter { row ->
+        val semesterId = row.cleanString("semester_id")
+        semesterMap[semesterId]?.cleanString("tahun_ajaran_id") == activeTahunAjaranId
+      }
+      if (yearRows.isNotEmpty()) return yearRows
+    }
+    return rows
+  }
+
+  private fun filterAttendanceRowsByActivePeriod(
+    rows: List<JSONObject>,
+    activeDistribusiIds: Set<String>,
+    activeSemesterId: String
+  ): List<JSONObject> {
+    if (activeDistribusiIds.isEmpty() && activeSemesterId.isBlank()) return rows
+    return rows.filter { row ->
+      val distribusiId = row.cleanString("distribusi_id")
+      val semesterId = row.cleanString("semester_id")
+      when {
+        distribusiId.isNotBlank() -> activeDistribusiIds.contains(distribusiId)
+        activeSemesterId.isNotBlank() && semesterId.isNotBlank() -> semesterId == activeSemesterId
+        else -> true
+      }
+    }
   }
 
   private fun fetchRows(table: String, query: String): List<JSONObject> {
@@ -784,6 +996,17 @@ class GuruWakasekKurikulumRemoteDataSource {
       compact == "wakasekkurikulum" ||
       compact == "wakasekbidangkurikulum" ||
       (clean.contains("wakasek") && (clean.contains("akademik") || clean.contains("kurikulum")))
+  }
+
+  private fun isTeacherLikeRole(value: String): Boolean {
+    val clean = value.trim().lowercase()
+      .replace("_", " ")
+      .replace("-", " ")
+      .replace(Regex("\\s+"), " ")
+    return clean.contains("guru") ||
+      clean.contains("ustadz") ||
+      clean.contains("pengajar") ||
+      isWakasekKurikulumRole(clean)
   }
 
   private fun normalizeStudentStatus(value: String): String {
@@ -966,6 +1189,11 @@ private data class DistribusiMonitorRow(
 private data class JamMonitorRow(
   val start: String,
   val end: String
+)
+
+private data class TeacherDirectoryRow(
+  val id: String,
+  val name: String
 )
 
 private const val NoJamMarker = "__NO_JAM__"

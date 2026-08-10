@@ -34,6 +34,7 @@ import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.NoteAlt
 import androidx.compose.material.icons.outlined.PersonOutline
+import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.Quiz
 import androidx.compose.material.icons.outlined.Report
 import androidx.compose.material.icons.outlined.TaskAlt
@@ -214,6 +215,7 @@ fun buildAvailableBottomNavShortcutItems(
     add(GuruSidebarDestination.Jadwal)
     add(GuruSidebarDestination.Mapel)
     add(GuruSidebarDestination.Ujian)
+    add(GuruSidebarDestination.AbsensiGuru)
     add(GuruSidebarDestination.InputAbsensi)
     add(GuruSidebarDestination.InputNilai)
     add(GuruSidebarDestination.Perizinan)
@@ -226,6 +228,7 @@ fun buildAvailableBottomNavShortcutItems(
     }
     if (isWakasekKurikulum) {
       add(GuruSidebarDestination.WakasekMonitoringGuru)
+      add(GuruSidebarDestination.WakasekAbsensiGuru)
       add(GuruSidebarDestination.WakasekMonitoringSiswa)
       add(GuruSidebarDestination.WakasekNilaiSiswa)
       add(GuruSidebarDestination.WakasekPerizinan)
@@ -403,6 +406,7 @@ private fun bottomNavEntryForDestination(destination: GuruSidebarDestination): B
   return when (destination) {
     GuruSidebarDestination.Dashboard -> BottomNavEntry(destination, "Dashboard", Icons.Outlined.DashboardCustomize)
     GuruSidebarDestination.Tugas -> BottomNavEntry(destination, "Mutabaah", Icons.Outlined.TaskAlt)
+    GuruSidebarDestination.AbsensiGuru -> BottomNavEntry(destination, "Guru", Icons.Outlined.Place, "Absensi Guru")
     GuruSidebarDestination.Perizinan -> BottomNavEntry(destination, "Izin", Icons.Outlined.TaskAlt, "Perizinan")
     GuruSidebarDestination.Jadwal -> BottomNavEntry(destination, "Jadwal", Icons.Outlined.Today)
     GuruSidebarDestination.Mapel -> BottomNavEntry(destination, "Mapel", Icons.AutoMirrored.Outlined.MenuBook)
@@ -416,6 +420,7 @@ private fun bottomNavEntryForDestination(destination: GuruSidebarDestination): B
     GuruSidebarDestination.Rapor -> BottomNavEntry(destination, "Rapor", Icons.Outlined.Grade)
     GuruSidebarDestination.Santri -> BottomNavEntry(destination, "Santri", Icons.Outlined.Groups)
     GuruSidebarDestination.WakasekMonitoringGuru -> BottomNavEntry(destination, "Guru", Icons.Outlined.DashboardCustomize, "Monitoring Guru")
+    GuruSidebarDestination.WakasekAbsensiGuru -> BottomNavEntry(destination, "Absen", Icons.Outlined.Place, "Absensi Guru")
     GuruSidebarDestination.WakasekMonitoringSiswa -> BottomNavEntry(destination, "Siswa", Icons.Outlined.Groups, "Monitoring Siswa")
     GuruSidebarDestination.WakasekNilaiSiswa -> BottomNavEntry(destination, "Nilai", Icons.Outlined.Grade, "Nilai Siswa")
     GuruSidebarDestination.WakasekPerizinan -> BottomNavEntry(destination, "W-Izin", Icons.Outlined.AssignmentTurnedIn, "Perizinan Wakasek")

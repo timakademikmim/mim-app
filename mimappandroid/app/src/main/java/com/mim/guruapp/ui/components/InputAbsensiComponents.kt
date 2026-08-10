@@ -129,8 +129,8 @@ fun InputAbsensiScreen(
   var substituteTeacherId by rememberSaveable { mutableStateOf("") }
   var sourceTeacherId by rememberSaveable { mutableStateOf("") }
   var substituteNote by rememberSaveable { mutableStateOf("") }
-  var attendanceSnapshot by remember(selectedSubjectId, attendanceSnapshots) {
-    mutableStateOf(attendanceSnapshots.firstOrNull { it.distribusiId == selectedSubjectId })
+  var attendanceSnapshot by remember(selectedSubjectId) {
+    mutableStateOf<MapelAttendanceSnapshot?>(null)
   }
   var patronMateriSnapshot by remember(selectedSubjectId, patronMateriSnapshots) {
     mutableStateOf(patronMateriSnapshots.firstOrNull { it.distribusiId == selectedSubjectId })
@@ -253,16 +253,25 @@ fun InputAbsensiScreen(
     if (jamPelajaran2 != nextJam2) jamPelajaran2 = nextJam2
   }
 
-  LaunchedEffect(selectedSubjectId, activeSubjects) {
-    val subject = activeSubjects.firstOrNull { it.id == selectedSubjectId }
+  LaunchedEffect(
+    selectedSubject?.id,
+    selectedSubject?.title,
+    selectedSubject?.className,
+    dateIso,
+    fillAsSubstituteTeacher
+  ) {
+    val subject = selectedSubject
     if (subject == null) {
       attendanceSnapshot = null
       isLoadingStudents = false
       return@LaunchedEffect
     }
     isLoadingStudents = true
-    attendanceSnapshot = attendanceSnapshots.firstOrNull { it.distribusiId == selectedSubjectId }
-    attendanceSnapshot = onLoadAttendance(subject.id, subject) ?: attendanceSnapshot
+    val cachedSnapshot = attendanceSnapshots
+      .firstOrNull { it.distribusiId == subject.id }
+      ?.takeIf { it.students.isNotEmpty() }
+    attendanceSnapshot = cachedSnapshot
+    attendanceSnapshot = onLoadAttendance(subject.id, subject) ?: cachedSnapshot
     isLoadingStudents = false
   }
 
@@ -411,8 +420,24 @@ fun InputAbsensiScreen(
             },
             classValue = selectedClassName.ifBlank { "Pilih kelas" },
             classOptions = classOptions,
-            onClassSelect = {
-              selectedClassName = it
+            onClassSelect = { className ->
+              selectedClassName = className
+              val nextSubject = scheduleOptionsForDate
+                .filter { option -> option.subject.className == className }
+                .map { option -> option.subject }
+                .distinctBy { subject -> subject.id }
+                .sortedWith(compareBy<SubjectOverview> { subject -> subject.title.lowercase() }.thenBy { subject -> subject.semester.lowercase() })
+                .firstOrNull()
+              selectedSubjectId = nextSubject?.id.orEmpty()
+              val nextJamOptions = scheduleOptionsForDate
+                .filter { option -> option.subject.id == nextSubject?.id }
+                .map { option -> option.timeLabel }
+                .filter { option -> option.isNotBlank() }
+                .distinct()
+              jamPelajaran1 = nextJamOptions.firstOrNull().orEmpty()
+              jamPelajaran2 = nextJamOptions.drop(1).firstOrNull().orEmpty()
+              attendanceSnapshot = null
+              draftStatuses = emptyMap()
               feedbackMessage = null
             },
             subjectValue = selectedSubject?.title ?: "Pilih mapel",
@@ -427,6 +452,8 @@ fun InputAbsensiScreen(
                 .distinct()
               jamPelajaran1 = nextJamOptions.firstOrNull().orEmpty()
               jamPelajaran2 = nextJamOptions.drop(1).firstOrNull().orEmpty()
+              attendanceSnapshot = null
+              draftStatuses = emptyMap()
               feedbackMessage = null
             },
             jam1 = jamPelajaran1.ifBlank { "Tidak dipilih" },
@@ -651,7 +678,7 @@ fun InputAbsensiScreen(
 
           students.isEmpty() -> {
             item {
-              EmptyPlaceholderCard("Belum ada data santri untuk kelas/mapel ini. Tarik refresh saat koneksi aktif.")
+              EmptyPlaceholderCard("Server belum mengirim data santri untuk kelas/mapel ini. Coba muat ulang saat koneksi aktif.")
             }
           }
 

@@ -14,7 +14,7 @@ import java.time.LocalDate
 @Composable
 fun CalendarScreenPreviewHost() {
   var selectedDate by remember { mutableStateOf(LocalDate.now()) }
-  val dashboard = remember { SampleDataFactory.createDashboard("Ustadz Fulan") }
+  val dashboard = remember { SampleDataFactory.createDashboard("Ustadz Ahmad") }
 
   CalendarScreen(
     selectedDate = selectedDate,

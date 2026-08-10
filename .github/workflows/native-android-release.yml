@@ -122,16 +122,16 @@ jobs:
             "versionCode": ${MIM_VERSION_CODE},
             "versionName": "${MIM_VERSION_NAME}",
             "apkUrl": "${APK_URL}",
-            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Input absensi kini lebih kuat mengambil data santri langsung dari server dan jadwal mengajar mulai terhubung ke sesi mengajar.",
+            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Absensi guru berbasis lokasi kini lebih rapi, otomatis membaca area, dan bisa dipantau Wakasek.",
             "features": [
-              "Jadwal mengajar kini bisa dibuka sebagai sesi mengajar terpusat untuk memilih materi, mengisi absensi, mencatat isi materi, menambah penilaian, dan menulis tugas.",
-              "Sesi mengajar dapat disimpan sebagai draft atau tersimpan, lalu status ringkasnya muncul kembali di kartu jadwal.",
-              "Data sesi mengajar disiapkan untuk tersimpan di server agar bisa ditelusuri lagi pada pertemuan berikutnya."
+              "Guru kini dapat mengisi absensi kantor berbasis lokasi dengan tampilan baru yang mengikuti gaya Mutabaah.",
+              "Lokasi absensi dibaca otomatis saat halaman dibuka, lalu guru cukup menekan Datang atau Pulang ketika sudah berada dalam area.",
+              "Wakasek dapat memantau status absensi guru, jam kedatangan, jam kepulangan, keterlambatan, dan rekap harian."
             ],
             "fixes": [
-              "Input absensi sekarang mengambil daftar santri langsung dari Supabase saat mapel dibuka, sehingga tidak bergantung pada cache kosong lama.",
-              "Roster absensi kini membaca santri aktif dari kolom status atau aktif, serta dapat memakai riwayat kelas santri jika kelas aktif tersimpan di tabel riwayat.",
-              "Update versi ini tidak wajib agar build dari Android Studio tetap bisa dipakai untuk testing lokal."
+              "Tampilan absensi guru dipadatkan agar tidak terlalu banyak card dan lebih selaras dengan tema aplikasi.",
+              "Monitoring Wakasek kini menampilkan semua guru aktif secara default, termasuk yang belum melakukan absen.",
+              "Tanggal absensi guru diberi warna kondisi: biru hadir, kuning terlambat atau belum lengkap, dan merah tidak hadir."
             ],
             "mandatory": ${MANDATORY}
           }
