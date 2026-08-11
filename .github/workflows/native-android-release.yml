@@ -122,16 +122,12 @@ jobs:
             "versionCode": ${MIM_VERSION_CODE},
             "versionName": "${MIM_VERSION_NAME}",
             "apkUrl": "${APK_URL}",
-            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Absensi guru berbasis lokasi kini lebih rapi, otomatis membaca area, dan bisa dipantau Wakasek.",
+            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Nama santri panjang di input absensi kini tampil bersusun agar tidak terpotong.",
             "features": [
-              "Guru kini dapat mengisi absensi kantor berbasis lokasi dengan tampilan baru yang mengikuti gaya Mutabaah.",
-              "Lokasi absensi dibaca otomatis saat halaman dibuka, lalu guru cukup menekan Datang atau Pulang ketika sudah berada dalam area.",
-              "Wakasek dapat memantau status absensi guru, jam kedatangan, jam kepulangan, keterlambatan, dan rekap harian."
+              "Nama santri panjang di daftar input absensi kini bisa turun baris mengikuti tinggi card."
             ],
             "fixes": [
-              "Tampilan absensi guru dipadatkan agar tidak terlalu banyak card dan lebih selaras dengan tema aplikasi.",
-              "Monitoring Wakasek kini menampilkan semua guru aktif secara default, termasuk yang belum melakukan absen.",
-              "Tanggal absensi guru diberi warna kondisi: biru hadir, kuning terlambat atau belum lengkap, dan merah tidak hadir."
+              "Card santri input absensi tidak lagi memotong nama panjang dengan tanda titik-titik."
             ],
             "mandatory": ${MANDATORY}
           }

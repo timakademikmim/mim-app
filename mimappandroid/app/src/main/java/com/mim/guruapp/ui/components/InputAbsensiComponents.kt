@@ -1345,8 +1345,7 @@ private fun InputAbsensiStudentCard(
           style = MaterialTheme.typography.titleSmall,
           color = PrimaryBlueDark,
           fontWeight = FontWeight.SemiBold,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis
+          softWrap = true
         )
         Text(
           text = "${t("Status hari ini")}: ${t(status)}",
@@ -1435,8 +1434,7 @@ private fun InputAbsensiStudentCompactCard(
       style = MaterialTheme.typography.bodyLarge,
       color = PrimaryBlueDark,
       fontWeight = FontWeight.SemiBold,
-      maxLines = 1,
-      overflow = TextOverflow.Ellipsis,
+      softWrap = true,
       modifier = Modifier.weight(1f)
     )
     InputAbsensiStatusDropdown(
