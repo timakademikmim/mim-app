@@ -254,6 +254,7 @@ fun InputAbsensiScreen(
   }
 
   LaunchedEffect(
+    selectedSubjectId,
     selectedSubject?.id,
     selectedSubject?.title,
     selectedSubject?.className,
@@ -271,8 +272,13 @@ fun InputAbsensiScreen(
       .firstOrNull { it.distribusiId == subject.id }
       ?.takeIf { it.students.isNotEmpty() }
     attendanceSnapshot = cachedSnapshot
-    attendanceSnapshot = onLoadAttendance(subject.id, subject) ?: cachedSnapshot
-    isLoadingStudents = false
+    attendanceSnapshot = try {
+      onLoadAttendance(subject.id, subject) ?: cachedSnapshot
+    } catch (_: Exception) {
+      cachedSnapshot
+    } finally {
+      isLoadingStudents = false
+    }
   }
 
   LaunchedEffect(selectedSubjectId, activeSubjects) {
