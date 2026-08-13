@@ -1506,6 +1506,32 @@ class GuruAppViewModel(application: Application) : AndroidViewModel(application)
     )
   }
 
+  suspend fun loadWakasekKurikulumSnapshot(): WakasekKurikulumSnapshot? {
+    val dashboard = uiState.dashboard ?: return null
+    val session = uiState.session
+    uiState = uiState.copy(syncBanner = SyncBannerState("Memuat absensi guru terbaru...", true))
+    val snapshot = wakasekKurikulumRemoteDataSource.fetchSnapshot(
+      teacherRowId = session.teacherRowId,
+      teacherKaryawanId = session.teacherId,
+      teacherName = dashboard.teacherName.ifBlank { session.teacherName },
+      roles = session.roles
+    )
+    if (snapshot == null) {
+      uiState = uiState.copy(syncBanner = SyncBannerState("Gagal memuat absensi guru terbaru.", false))
+      return null
+    }
+
+    val nextDashboard = dashboard
+      .withWakasekKurikulumSnapshot(snapshot)
+      .recalculatePendingSyncCount()
+    cacheStore.writeDashboard(nextDashboard)
+    uiState = uiState.copy(
+      dashboard = nextDashboard,
+      syncBanner = SyncBannerState("Absensi guru diperbarui.", false)
+    )
+    return snapshot
+  }
+
   suspend fun submitLocationAttendance(
     submission: GuruLocationAttendanceSubmission
   ): LocationAttendanceSaveOutcome {

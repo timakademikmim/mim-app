@@ -259,6 +259,7 @@ fun WakasekKurikulumScreen(
   isRefreshing: Boolean,
   onMenuClick: () -> Unit,
   onRefresh: () -> Unit,
+  onLoadSnapshot: suspend () -> WakasekKurikulumSnapshot? = { null },
   onLoadScores: suspend (String, SubjectOverview) -> MapelScoreSnapshot? = { _, _ -> null },
   onReviewLeaveRequest: suspend (String, Boolean, String) -> WakasekReviewOutcome,
   modifier: Modifier = Modifier
@@ -360,6 +361,11 @@ fun WakasekKurikulumScreen(
     isLoadingScores = true
     scoreSnapshot = onLoadScores(subject.id, subject)
     isLoadingScores = false
+  }
+  LaunchedEffect(page) {
+    if (page == WakasekKurikulumPage.LocationAttendance) {
+      runCatching { onLoadSnapshot() }
+    }
   }
 
   fun exportScores(action: WakasekScoreExportAction, subjects: List<SubjectOverview>) {

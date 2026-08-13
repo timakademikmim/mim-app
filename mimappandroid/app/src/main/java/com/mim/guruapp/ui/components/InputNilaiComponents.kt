@@ -923,8 +923,7 @@ private fun InputNilaiStudentCard(
         style = MaterialTheme.typography.bodyLarge,
         color = PrimaryBlueDark,
         fontWeight = FontWeight.SemiBold,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis
+        softWrap = true
       )
     }
     OutlinedTextField(

@@ -120,6 +120,7 @@ import com.mim.guruapp.data.model.TeachingReminderSettings
 import com.mim.guruapp.data.model.UtsReportOverride
 import com.mim.guruapp.data.model.WaliAttendanceDetailSnapshot
 import com.mim.guruapp.data.model.WaliSantriProfile
+import com.mim.guruapp.data.model.WakasekKurikulumSnapshot
 import com.mim.guruapp.data.remote.GuruAiGenerateRequest
 import com.mim.guruapp.data.remote.GuruAiGenerateResult
 import com.mim.guruapp.data.remote.GuruAiTokenWallet
@@ -1023,6 +1024,7 @@ fun GuruHomeScreen(
   onDeleteLeaveRequest: suspend (String) -> LeaveRequestSaveOutcome,
   onLoadLocationAttendance: suspend () -> GuruLocationAttendanceSnapshot,
   onSubmitLocationAttendance: suspend (GuruLocationAttendanceSubmission) -> LocationAttendanceSaveOutcome,
+  onLoadWakasekKurikulum: suspend () -> WakasekKurikulumSnapshot?,
   onReviewWakasekLeaveRequest: suspend (String, Boolean, String) -> WakasekReviewOutcome,
   onApplyLanguage: (String) -> Unit,
   onApplyThemeMode: (String) -> Unit,
@@ -1746,6 +1748,7 @@ fun GuruHomeScreen(
         isRefreshing = syncBanner.isSyncing,
         onMenuClick = onToggleSidebar,
         onRefresh = onRefreshClick,
+        onLoadSnapshot = onLoadWakasekKurikulum,
         onLoadScores = onLoadMapelScores,
         onReviewLeaveRequest = onReviewWakasekLeaveRequest,
         modifier = Modifier.fillMaxSize()
@@ -2599,6 +2602,7 @@ private fun GuruHomeScreenPreview() {
       onDeleteLeaveRequest = { _ -> LeaveRequestSaveOutcome(true, "OK") },
       onLoadLocationAttendance = { GuruLocationAttendanceSnapshot(errorMessage = "Preview") },
       onSubmitLocationAttendance = { LocationAttendanceSaveOutcome(true, "OK") },
+      onLoadWakasekKurikulum = { null },
       onReviewWakasekLeaveRequest = { _, _, _ -> WakasekReviewOutcome(true, "OK") },
       onApplyLanguage = {},
       onApplyThemeMode = {},

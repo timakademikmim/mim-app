@@ -122,12 +122,14 @@ jobs:
             "versionCode": ${MIM_VERSION_CODE},
             "versionName": "${MIM_VERSION_NAME}",
             "apkUrl": "${APK_URL}",
-            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Input absensi kini selalu memuat ulang daftar santri saat kelas dan mapel siap.",
+            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Input nilai lebih rapi dan Wakasek Absensi Guru langsung memuat data terbaru saat dibuka.",
             "features": [
-              "Daftar santri input absensi otomatis dimuat ulang setelah pilihan kelas dan mapel terbentuk."
+              "Nama siswa panjang di Input Nilai kini bisa turun baris mengikuti tinggi card.",
+              "Wakasek Absensi Guru otomatis mengambil snapshot terbaru dari server saat halaman dibuka."
             ],
             "fixes": [
-              "Memperbaiki kondisi saat input absensi pertama dibuka dan daftar santri masih kosong sampai guru mengganti kelas."
+              "Nama siswa di Input Nilai tidak lagi dipotong dengan tanda titik-titik.",
+              "Data Absensi Guru Wakasek tidak lagi menunggu pull refresh untuk diperbarui."
             ],
             "mandatory": ${MANDATORY}
           }

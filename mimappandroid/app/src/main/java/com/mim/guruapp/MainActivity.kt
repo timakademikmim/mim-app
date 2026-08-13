@@ -188,6 +188,7 @@ class MainActivity : ComponentActivity() {
           onDeleteLeaveRequest = viewModel::deleteLeaveRequest,
           onLoadLocationAttendance = viewModel::loadLocationAttendanceSnapshot,
           onSubmitLocationAttendance = viewModel::submitLocationAttendance,
+          onLoadWakasekKurikulum = viewModel::loadWakasekKurikulumSnapshot,
           onReviewWakasekLeaveRequest = viewModel::reviewWakasekLeaveRequest,
           onApplyLanguage = viewModel::updateLanguage,
           onApplyThemeMode = viewModel::updateThemeMode,
