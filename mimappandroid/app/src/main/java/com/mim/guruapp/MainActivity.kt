@@ -39,6 +39,7 @@ import com.mim.guruapp.ui.GuruAppRoot
 import com.mim.guruapp.ui.theme.AppThemeMode
 import com.mim.guruapp.ui.theme.MimGuruTheme
 import com.mim.guruapp.update.AppUpdateClient
+import com.mim.guruapp.update.AppServiceNotice
 import com.mim.guruapp.update.AppUpdateInfo
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
@@ -54,6 +55,7 @@ class MainActivity : ComponentActivity() {
   private val viewModel: GuruAppViewModel by viewModels()
   private val appUpdateClient = AppUpdateClient()
   private var pendingUpdateInfo by mutableStateOf<AppUpdateInfo?>(null)
+  private var pendingServiceNotice by mutableStateOf<AppServiceNotice?>(null)
   private var dismissedUpdateVersionCode by mutableStateOf<Int?>(null)
   private var isDownloadingUpdate by mutableStateOf(false)
   private var updateStatusMessage by mutableStateOf("")
@@ -195,26 +197,45 @@ class MainActivity : ComponentActivity() {
           onRefreshClick = { viewModel.refreshFromServer(force = true) },
           onLogoutClick = viewModel::logout
         )
-        pendingUpdateInfo
-          ?.takeIf { dismissedUpdateVersionCode != it.versionCode }
-          ?.let { updateInfo ->
-            AppUpdateDialog(
-              updateInfo = updateInfo,
-              isDownloading = isDownloadingUpdate,
-              statusMessage = updateStatusMessage,
-              onDismiss = {
-                if (!updateInfo.mandatory && !isDownloadingUpdate) {
-                  dismissedUpdateVersionCode = updateInfo.versionCode
-                }
-              },
-              onDownload = { downloadAndInstallUpdate(updateInfo) }
-            )
+        val serviceNotice = pendingServiceNotice
+        when {
+          serviceNotice != null -> {
+            if (serviceNotice.isBlockingAt()) {
+              AppServiceBlockedDialog(
+                notice = serviceNotice,
+                onCloseApp = ::closeForServiceNotice
+              )
+            } else {
+              AppServiceNoticeDialog(
+                notice = serviceNotice,
+                onAcknowledge = { acknowledgeServiceNotice(serviceNotice) }
+              )
+            }
           }
+
+          else -> {
+            pendingUpdateInfo
+              ?.takeIf { dismissedUpdateVersionCode != it.versionCode }
+              ?.let { updateInfo ->
+                AppUpdateDialog(
+                  updateInfo = updateInfo,
+                  isDownloading = isDownloadingUpdate,
+                  statusMessage = updateStatusMessage,
+                  onDismiss = {
+                    if (!updateInfo.mandatory && !isDownloadingUpdate) {
+                      dismissedUpdateVersionCode = updateInfo.versionCode
+                    }
+                  },
+                  onDownload = { downloadAndInstallUpdate(updateInfo) }
+                )
+              }
+          }
+        }
       }
     }
 
     lifecycleScope.launch {
-      checkForAppUpdate()
+      checkForRemoteAppConfig()
     }
     requestNotificationPermissionIfNeeded()
   }
@@ -240,12 +261,33 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  private suspend fun checkForAppUpdate() {
-    val updateInfo = appUpdateClient.checkForUpdate(BuildConfig.APP_UPDATE_MANIFEST_URL)
-    if (updateInfo != null) {
+  private suspend fun checkForRemoteAppConfig() {
+    val remoteConfig = appUpdateClient.checkForRemoteConfig(BuildConfig.APP_UPDATE_MANIFEST_URL)
+      ?: return
+    remoteConfig.updateInfo?.let { updateInfo ->
       updateStatusMessage = ""
       pendingUpdateInfo = updateInfo
     }
+    remoteConfig.serviceNotice
+      ?.takeIf { notice -> notice.shouldDisplayAt() }
+      ?.takeIf { notice -> notice.isBlockingAt() || !isServiceNoticeAcknowledged(notice.id) }
+      ?.let { notice -> pendingServiceNotice = notice }
+  }
+
+  private fun acknowledgeServiceNotice(notice: AppServiceNotice) {
+    getSharedPreferences(SERVICE_NOTICE_PREFS, MODE_PRIVATE)
+      .edit()
+      .putString(SERVICE_NOTICE_ACKNOWLEDGED_ID, notice.id)
+      .apply()
+    pendingServiceNotice = null
+  }
+
+  private fun isServiceNoticeAcknowledged(noticeId: String): Boolean =
+    getSharedPreferences(SERVICE_NOTICE_PREFS, MODE_PRIVATE)
+      .getString(SERVICE_NOTICE_ACKNOWLEDGED_ID, null) == noticeId
+
+  private fun closeForServiceNotice() {
+    finishAndRemoveTask()
   }
 
   private fun requestNotificationPermissionIfNeeded() {
@@ -371,10 +413,69 @@ class MainActivity : ComponentActivity() {
   }
 }
 
+private const val SERVICE_NOTICE_PREFS = "mim_guru_service_notice"
+private const val SERVICE_NOTICE_ACKNOWLEDGED_ID = "acknowledged_notice_id"
+
 private data class ApkDownloadResult(
   val file: File? = null,
   val message: String = ""
 )
+
+@Composable
+private fun AppServiceNoticeDialog(
+  notice: AppServiceNotice,
+  onAcknowledge: () -> Unit
+) {
+  AlertDialog(
+    onDismissRequest = {},
+    title = {
+      Text(
+        text = notice.title,
+        style = MaterialTheme.typography.titleLarge,
+        fontWeight = FontWeight.ExtraBold
+      )
+    },
+    text = {
+      Text(
+        text = notice.message,
+        style = MaterialTheme.typography.bodyMedium
+      )
+    },
+    confirmButton = {
+      Button(onClick = onAcknowledge) {
+        Text(notice.acknowledgementLabel)
+      }
+    }
+  )
+}
+
+@Composable
+private fun AppServiceBlockedDialog(
+  notice: AppServiceNotice,
+  onCloseApp: () -> Unit
+) {
+  AlertDialog(
+    onDismissRequest = {},
+    title = {
+      Text(
+        text = notice.title,
+        style = MaterialTheme.typography.titleLarge,
+        fontWeight = FontWeight.ExtraBold
+      )
+    },
+    text = {
+      Text(
+        text = notice.message,
+        style = MaterialTheme.typography.bodyMedium
+      )
+    },
+    confirmButton = {
+      Button(onClick = onCloseApp) {
+        Text("Tutup aplikasi")
+      }
+    }
+  )
+}
 
 @Composable
 private fun AppUpdateDialog(

@@ -11,5 +11,15 @@
     "Nama siswa di Input Nilai tidak lagi dipotong dengan tanda titik-titik.",
     "Data Absensi Guru Wakasek tidak lagi menunggu pull refresh untuk diperbarui."
   ],
-  "mandatory": false
+  "mandatory": false,
+  "serviceNotice": {
+    "enabled": true,
+    "id": "uji-pengumuman-layanan-2026-09-10",
+    "title": "Pengumuman Layanan",
+    "message": "Fitur pengumuman layanan MIM App sedang diuji. Pesan ini hanya untuk pengujian dan tidak memengaruhi penggunaan aplikasi.",
+    "acknowledgementLabel": "Saya mengerti",
+    "startsAt": "",
+    "endsAt": "",
+    "blockAt": ""
+  }
 }

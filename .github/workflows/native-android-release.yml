@@ -117,6 +117,7 @@ jobs:
           else
             MANDATORY="$(jq -r '.mandatory // false' releases/mim-app-update.json)"
           fi
+          SERVICE_NOTICE="$(jq -c '.serviceNotice // {"enabled":false,"id":"","title":"","message":"","acknowledgementLabel":"Saya mengerti","startsAt":"","endsAt":"","blockAt":""}' releases/mim-app-update.json)"
           cat > "$OUTPUT_DIR/mim-app-update.json" <<EOF
           {
             "versionCode": ${MIM_VERSION_CODE},
@@ -131,7 +132,8 @@ jobs:
               "Nama siswa di Input Nilai tidak lagi dipotong dengan tanda titik-titik.",
               "Data Absensi Guru Wakasek tidak lagi menunggu pull refresh untuk diperbarui."
             ],
-            "mandatory": ${MANDATORY}
+            "mandatory": ${MANDATORY},
+            "serviceNotice": ${SERVICE_NOTICE}
           }
           EOF
           cp "$OUTPUT_DIR/mim-app-update.json" /tmp/mim-app-update.json
