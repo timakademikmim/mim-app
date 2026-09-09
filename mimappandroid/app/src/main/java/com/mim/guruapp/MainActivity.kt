@@ -208,7 +208,7 @@ class MainActivity : ComponentActivity() {
             } else {
               AppServiceNoticeDialog(
                 notice = serviceNotice,
-                onAcknowledge = { acknowledgeServiceNotice(serviceNotice) }
+                onAcknowledge = ::dismissServiceNotice
               )
             }
           }
@@ -270,21 +270,12 @@ class MainActivity : ComponentActivity() {
     }
     remoteConfig.serviceNotice
       ?.takeIf { notice -> notice.shouldDisplayAt() }
-      ?.takeIf { notice -> notice.isBlockingAt() || !isServiceNoticeAcknowledged(notice.id) }
       ?.let { notice -> pendingServiceNotice = notice }
   }
 
-  private fun acknowledgeServiceNotice(notice: AppServiceNotice) {
-    getSharedPreferences(SERVICE_NOTICE_PREFS, MODE_PRIVATE)
-      .edit()
-      .putString(SERVICE_NOTICE_ACKNOWLEDGED_ID, notice.id)
-      .apply()
+  private fun dismissServiceNotice() {
     pendingServiceNotice = null
   }
-
-  private fun isServiceNoticeAcknowledged(noticeId: String): Boolean =
-    getSharedPreferences(SERVICE_NOTICE_PREFS, MODE_PRIVATE)
-      .getString(SERVICE_NOTICE_ACKNOWLEDGED_ID, null) == noticeId
 
   private fun closeForServiceNotice() {
     finishAndRemoveTask()
@@ -412,9 +403,6 @@ class MainActivity : ComponentActivity() {
     startActivity(installIntent)
   }
 }
-
-private const val SERVICE_NOTICE_PREFS = "mim_guru_service_notice"
-private const val SERVICE_NOTICE_ACKNOWLEDGED_ID = "acknowledged_notice_id"
 
 private data class ApkDownloadResult(
   val file: File? = null,

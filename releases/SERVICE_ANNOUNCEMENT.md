@@ -20,14 +20,18 @@ Contoh pengumuman penghentian layanan:
 ```
 
 - `enabled`: aktifkan atau matikan pengumuman.
-- `id`: wajib unik untuk setiap isi pengumuman baru. Pengguna yang sudah
-  menekan tombol konfirmasi tidak akan melihat pengumuman dengan ID yang sama.
+- `id`: wajib unik untuk setiap isi pengumuman baru agar konfigurasi mudah
+  dilacak dan tidak tercampur dengan pesan sebelumnya.
 - `startsAt`: waktu mulai tampil. Kosong berarti langsung tampil.
 - `endsAt`: waktu berhenti tampil untuk pengumuman biasa. Kosong berarti tetap
-  tampil untuk pengguna yang belum mengonfirmasi.
+  aktif.
 - `blockAt`: waktu aplikasi ditutup dari akses. Kosongkan bila hanya ingin
   memberi informasi.
 
 Gunakan format waktu ISO dengan zona Makassar `+08:00`. Perangkat yang sedang
 offline tidak dapat mengambil pesan baru; untuk penghentian layanan, tetap
 gunakan pengumuman WhatsApp atau kanal resmi lain sebagai pendamping.
+
+Pengumuman aktif akan tampil lagi setiap kali aplikasi ditutup penuh lalu
+dibuka kembali. Tombol konfirmasi hanya menutup pengumuman selama sesi aplikasi
+saat itu.

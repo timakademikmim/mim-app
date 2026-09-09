@@ -123,15 +123,7 @@ jobs:
             "versionCode": ${MIM_VERSION_CODE},
             "versionName": "${MIM_VERSION_NAME}",
             "apkUrl": "${APK_URL}",
-            "releaseNotes": "MIM App Android ${MIM_VERSION_NAME}. Input nilai lebih rapi dan Wakasek Absensi Guru langsung memuat data terbaru saat dibuka.",
-            "features": [
-              "Nama siswa panjang di Input Nilai kini bisa turun baris mengikuti tinggi card.",
-              "Wakasek Absensi Guru otomatis mengambil snapshot terbaru dari server saat halaman dibuka."
-            ],
-            "fixes": [
-              "Nama siswa di Input Nilai tidak lagi dipotong dengan tanda titik-titik.",
-              "Data Absensi Guru Wakasek tidak lagi menunggu pull refresh untuk diperbarui."
-            ],
+            "releaseNotes": "MIM App ${MIM_VERSION_NAME} adalah pembaruan terakhir. Setelah versi ini tidak akan ada pembaruan aplikasi lagi.",
             "mandatory": ${MANDATORY},
             "serviceNotice": ${SERVICE_NOTICE}
           }
