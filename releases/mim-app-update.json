@@ -4,14 +4,5 @@
   "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.38/MIM.APP.apk",
   "releaseNotes": "MIM App 0.1.38 adalah pembaruan terakhir. Setelah versi ini tidak akan ada pembaruan aplikasi lagi.",
   "mandatory": false,
-  "serviceNotice": {
-    "enabled": false,
-    "id": "",
-    "title": "",
-    "message": "",
-    "acknowledgementLabel": "Saya mengerti",
-    "startsAt": "",
-    "endsAt": "",
-    "blockAt": ""
-  }
+  "serviceNotice": {"enabled":false,"id":"","title":"","message":"","acknowledgementLabel":"Saya mengerti","startsAt":"","endsAt":"","blockAt":""}
 }
