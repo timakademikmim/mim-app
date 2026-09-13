@@ -4,5 +4,14 @@
   "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.38/MIM.APP.apk",
   "releaseNotes": "MIM App 0.1.38 adalah pembaruan terakhir. Setelah versi ini tidak akan ada pembaruan aplikasi lagi.",
   "mandatory": false,
-  "serviceNotice": {"enabled":false,"id":"","title":"","message":"","acknowledgementLabel":"Saya mengerti","startsAt":"","endsAt":"","blockAt":""}
+  "serviceNotice": {
+    "enabled": true,
+    "id": "pengakhiran-layanan-2026-10-11",
+    "title": "Pemberitahuan Akhir Layanan",
+    "message": "Assalamu'alaikum warahmatullahi wabarakatuh.\n\nLayanan aktif MIM App tersedia hingga 11 Oktober 2026.\n\nSetelah mempertimbangkan keberlanjutan pengelolaan aplikasi, kebutuhan pembiayaan operasional, pengembangan, dan pemeliharaan sistem, serta ketersediaan waktu untuk memberikan dukungan yang layak, kami memutuskan untuk mengakhiri layanan aktif aplikasi ini.\n\nSetelah 11 Oktober 2026, aplikasi tetap dapat digunakan untuk melihat dan mengakses data yang sudah tersimpan. Namun, penambahan, perubahan, dan penghapusan data tidak lagi tersedia.\n\nTerima kasih atas kepercayaan dan dukungan yang telah diberikan. Mohon maaf atas segala keterbatasan.",
+    "acknowledgementLabel": "Saya mengerti",
+    "startsAt": "2026-09-13T00:00:00+08:00",
+    "endsAt": "",
+    "blockAt": ""
+  }
 }
