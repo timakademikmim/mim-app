@@ -3,6 +3,8 @@ begin;
 -- The application is retained as a historical archive after 11 October 2026.
 -- Keep every existing record readable, but reject every data mutation at the
 -- database boundary so legacy Android/web clients cannot bypass the closure.
+create schema if not exists private;
+
 create or replace function private.reject_writes_after_service_end()
 returns trigger
 language plpgsql
