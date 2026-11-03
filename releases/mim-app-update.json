@@ -2,15 +2,15 @@
   "versionCode": 1038,
   "versionName": "0.1.38",
   "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.38/MIM.APP.apk",
-  "releaseNotes": "MIM App 0.1.38 adalah pembaruan terakhir. Setelah versi ini tidak akan ada pembaruan aplikasi lagi.",
+  "releaseNotes": "Layanan MIM App kembali aktif.",
   "mandatory": false,
   "serviceNotice": {
-    "enabled": true,
-    "id": "layanan-dihentikan-2026-10-12",
-    "title": "Layanan MIM App Dihentikan",
-    "message": "Assalamu'alaikum warahmatullahi wabarakatuh.\n\nPer hari ini, 12 Oktober 2026, layanan aktif MIM App resmi dihentikan.\n\nAplikasi tidak lagi menerima penyimpanan data baru, perubahan data, penghapusan data, maupun unggahan berkas baru.\n\nData yang sudah tersimpan tetap dapat dilihat dan digunakan untuk membuat maupun mengirim laporan.\n\nTerima kasih atas kepercayaan dan dukungan yang telah diberikan. Mohon maaf atas segala keterbatasan.",
+    "enabled": false,
+    "id": "",
+    "title": "",
+    "message": "",
     "acknowledgementLabel": "Saya mengerti",
-    "startsAt": "2026-09-13T00:00:00+08:00",
+    "startsAt": "",
     "endsAt": "",
     "blockAt": ""
   }
