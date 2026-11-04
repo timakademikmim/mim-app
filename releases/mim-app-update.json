@@ -2,7 +2,7 @@
   "versionCode": 1038,
   "versionName": "0.1.38",
   "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.38/MIM.APP.apk",
-  "releaseNotes": "Layanan MIM App kembali aktif.",
+  "releaseNotes": "Perbaikan import laporan bulanan, termasuk data ekstrakurikuler.",
   "mandatory": false,
   "serviceNotice": {
     "enabled": false,

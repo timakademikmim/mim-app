@@ -228,7 +228,7 @@ class GuruMonthlyReportRemoteDataSource {
         append(BuildConfig.SUPABASE_URL)
         append("/rest/v1/")
         append(EKSKUL_MONTHLY_TABLE)
-        append("?on_conflict=periode,ekskul_id,santri_id&select=id,periode,ekskul_id,santri_id,kehadiran_persen,catatan_pj,updated_at")
+        append("?on_conflict=periode,ekskul_id,santri_id&select=id,periode,ekskul_id,santri_id,nama_kegiatan,penanggung_jawab,no_hp_pj,kehadiran_persen,catatan_pj,updated_at")
       }
       val payload = JSONArray().apply {
         drafts.forEach { report ->
@@ -236,6 +236,9 @@ class GuruMonthlyReportRemoteDataSource {
             putNullableString("periode", report.period)
             putNullableString("ekskul_id", report.activityId)
             putNullableString("santri_id", report.studentId)
+            putNullableString("nama_kegiatan", report.activityName)
+            putNullableString("penanggung_jawab", report.pjName)
+            putNullableString("no_hp_pj", report.pjPhone)
             putNullableNumber("kehadiran_persen", report.attendanceLabel.removeSuffix("%"))
             putNullableString("catatan_pj", report.note)
             putNullableString("updated_by", updatedBy)
@@ -264,14 +267,26 @@ class GuruMonthlyReportRemoteDataSource {
               val source = drafts.firstOrNull {
                 it.period == period && it.studentId == studentId && it.activityId == activityId
               }
+              val savedActivityName = row.cleanString("nama_kegiatan")
+              val savedPjName = row.cleanString("penanggung_jawab")
+              val savedPjPhone = row.cleanString("no_hp_pj")
               val savedPercent = row.cleanString("kehadiran_persen")
               val savedNote = row.cleanString("catatan_pj")
-              source?.copy(
-                id = row.cleanString("id"),
-                attendanceLabel = savedPercent.withPercentSuffix(),
-                note = savedNote,
-                hasMonthlyOverride = savedPercent.isNotBlank() || savedNote.isNotBlank()
-              )
+              source?.let { original ->
+                original.copy(
+                  id = row.cleanString("id"),
+                  activityName = savedActivityName.ifBlank { original.activityName },
+                  pjName = savedPjName.ifBlank { original.pjName },
+                  pjPhone = savedPjPhone.ifBlank { original.pjPhone },
+                  attendanceLabel = savedPercent.withPercentSuffix(),
+                  note = savedNote,
+                  hasMonthlyOverride = savedActivityName.isNotBlank() ||
+                    savedPjName.isNotBlank() ||
+                    savedPjPhone.isNotBlank() ||
+                    savedPercent.isNotBlank() ||
+                    savedNote.isNotBlank()
+                )
+              }
             }
           }
       }
@@ -456,7 +471,7 @@ class GuruMonthlyReportRemoteDataSource {
       fetchRows(
         table = EKSKUL_MONTHLY_TABLE,
         query = buildString {
-          append("select=id,periode,ekskul_id,santri_id,kehadiran_persen,catatan_pj,updated_at")
+          append("select=id,periode,ekskul_id,santri_id,nama_kegiatan,penanggung_jawab,no_hp_pj,kehadiran_persen,catatan_pj,updated_at")
           append("&santri_id=in.(")
           append(studentIds.joinToString(",") { "\"${encodeValue(it)}\"" })
           append(")&ekskul_id=in.(")
@@ -500,6 +515,9 @@ class GuruMonthlyReportRemoteDataSource {
           val key = Triple(period, studentId, ekskulId)
           val progress = progressByKey[key] ?: (0 to "")
           val monthly = monthlyByKey[key]
+          val monthlyActivityName = monthly?.cleanString("nama_kegiatan").orEmpty()
+          val monthlyPjName = monthly?.cleanString("penanggung_jawab").orEmpty()
+          val monthlyPjPhone = monthly?.cleanString("no_hp_pj").orEmpty()
           val monthlyPercent = monthly?.cleanString("kehadiran_persen").orEmpty()
           val monthlyNote = monthly?.cleanString("catatan_pj").orEmpty()
           val pjRows = listOf(
@@ -518,9 +536,9 @@ class GuruMonthlyReportRemoteDataSource {
             period = period,
             studentId = studentId,
             activityId = ekskulId,
-            activityName = ekskul.cleanString("nama").ifBlank { "-" },
-            pjName = pjNames.joinToString(" / ").ifBlank { "-" },
-            pjPhone = pjPhones.joinToString(" / ").ifBlank { "-" },
+            activityName = monthlyActivityName.ifBlank { ekskul.cleanString("nama").ifBlank { "-" } },
+            pjName = monthlyPjName.ifBlank { pjNames.joinToString(" / ").ifBlank { "-" } },
+            pjPhone = monthlyPjPhone.ifBlank { pjPhones.joinToString(" / ").ifBlank { "-" } },
             attendanceLabel = if (monthlyPercent.isNotBlank()) {
               monthlyPercent.withPercentSuffix()
             } else if (progress.first > 0) {
@@ -529,7 +547,11 @@ class GuruMonthlyReportRemoteDataSource {
               "-"
             },
             note = monthlyNote.ifBlank { progress.second.ifBlank { "-" } },
-            hasMonthlyOverride = monthlyPercent.isNotBlank() || monthlyNote.isNotBlank()
+            hasMonthlyOverride = monthlyActivityName.isNotBlank() ||
+              monthlyPjName.isNotBlank() ||
+              monthlyPjPhone.isNotBlank() ||
+              monthlyPercent.isNotBlank() ||
+              monthlyNote.isNotBlank()
           )
         }
       }

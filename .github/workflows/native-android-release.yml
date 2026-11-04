@@ -118,16 +118,16 @@ jobs:
             MANDATORY="$(jq -r '.mandatory // false' releases/mim-app-update.json)"
           fi
           SERVICE_NOTICE="$(jq -c '.serviceNotice // {"enabled":false,"id":"","title":"","message":"","acknowledgementLabel":"Saya mengerti","startsAt":"","endsAt":"","blockAt":""}' releases/mim-app-update.json)"
-          cat > "$OUTPUT_DIR/mim-app-update.json" <<EOF
-          {
-            "versionCode": ${MIM_VERSION_CODE},
-            "versionName": "${MIM_VERSION_NAME}",
-            "apkUrl": "${APK_URL}",
-            "releaseNotes": "MIM App ${MIM_VERSION_NAME} adalah pembaruan terakhir. Setelah versi ini tidak akan ada pembaruan aplikasi lagi.",
-            "mandatory": ${MANDATORY},
-            "serviceNotice": ${SERVICE_NOTICE}
-          }
-          EOF
+          RELEASE_NOTES="$(jq -r '.releaseNotes // "Pembaruan MIM App."' releases/mim-app-update.json)"
+          jq -n \
+            --argjson versionCode "${MIM_VERSION_CODE}" \
+            --arg versionName "${MIM_VERSION_NAME}" \
+            --arg apkUrl "${APK_URL}" \
+            --arg releaseNotes "${RELEASE_NOTES}" \
+            --argjson mandatory "${MANDATORY}" \
+            --argjson serviceNotice "${SERVICE_NOTICE}" \
+            '{versionCode: $versionCode, versionName: $versionName, apkUrl: $apkUrl, releaseNotes: $releaseNotes, mandatory: $mandatory, serviceNotice: $serviceNotice}' \
+            > "$OUTPUT_DIR/mim-app-update.json"
           cp "$OUTPUT_DIR/mim-app-update.json" /tmp/mim-app-update.json
 
       - name: Upload APK and manifest to GitHub Release

@@ -1987,6 +1987,11 @@ private fun MonthlyBulkImportDialog(
           style = MaterialTheme.typography.bodySmall,
           color = SubtleInk
         )
+        Text(
+          text = "Kolom ekskul: Kegiatan Ekskul, Penanggung Jawab, NO HP PJ, Kehadiran, Catatan PJ.",
+          style = MaterialTheme.typography.bodySmall,
+          color = SubtleInk
+        )
         EditTextField(
           value = spreadsheetUrl,
           onValueChange = {
@@ -2761,6 +2766,12 @@ private val monthlyBulkFields = listOf(
 )
 
 private val monthlyBulkExtracurricularFields = listOf(
+  MonthlyBulkExtracurricularField("Penanggung jawab ekskul", listOf("penanggung jawab", "penanggungjawab", "pj", "nama pj", "nama penanggung jawab", "pj ekskul")) { item, value ->
+    item.copy(pjName = value)
+  },
+  MonthlyBulkExtracurricularField("No HP PJ ekskul", listOf("no hp pj", "hp pj", "nomor hp pj", "nomor telepon pj", "nomor telp pj", "telepon pj", "telp pj", "wa pj", "whatsapp pj")) { item, value ->
+    item.copy(pjPhone = value)
+  },
   MonthlyBulkExtracurricularField("Kehadiran ekskul", listOf("kehadiran", "kehadiran ekskul", "kehadiran ekstrakurikuler", "persen ekskul", "persentase ekskul", "nilai ekskul")) { item, value ->
     item.copy(attendanceLabel = value)
   },
@@ -2954,7 +2965,9 @@ private suspend fun buildMonthlyBulkImportPreview(
       field.aliases.any { alias -> normalizeSpreadsheetKey(alias) == normalizeSpreadsheetKey(header) }
     }?.let { index to it }
   }
-  if (fieldColumns.isEmpty() && extracurricularFieldColumns.isEmpty()) error("Belum ada kolom laporan yang dikenali.")
+  if (fieldColumns.isEmpty() && extracurricularFieldColumns.isEmpty() && extracurricularNameColumn < 0) {
+    error("Belum ada kolom laporan yang dikenali.")
+  }
   val knownIndexes = buildSet {
     if (nameColumn >= 0) add(nameColumn)
     if (nisnColumn >= 0) add(nisnColumn)
@@ -3022,6 +3035,10 @@ private suspend fun buildMonthlyBulkImportPreview(
         val extracurricularDrafts = extracurricularTargets.mapNotNull { existingExtracurricular ->
           var draft = existingExtracurricular.copy(period = period, studentId = student.id)
           val changedForItem = mutableListOf<String>()
+          if (sourceActivity.isNotBlank() && draft.activityName != sourceActivity) {
+            draft = draft.copy(activityName = sourceActivity)
+            changedForItem += "Kegiatan ekskul"
+          }
           extracurricularFieldColumns.forEach { (index, field) ->
             val value = cells.getOrNull(index).orEmpty().trim()
             if (value.isNotBlank()) {
