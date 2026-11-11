@@ -1,8 +1,8 @@
 {
-  "versionCode": 1040,
-  "versionName": "0.1.40",
-  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.40/MIM.APP.apk",
-  "releaseNotes": "Perbaikan import laporan bulanan, termasuk data ekstrakurikuler.",
+  "versionCode": 1041,
+  "versionName": "0.1.41",
+  "apkUrl": "https://github.com/timakademikmim/mim-app/releases/download/native-android-v0.1.41/MIM.APP.apk",
+  "releaseNotes": "Perbaikan laporan bulanan ekstrakurikuler. Data kini mengikuti hasil import spreadsheet.",
   "mandatory": false,
   "serviceNotice": {
     "enabled": false,

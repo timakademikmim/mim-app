@@ -339,12 +339,6 @@ private fun LaporanBulananListContent(
         )
       }
   }
-  val systemResetExtracurricularDrafts = remember(extracurricularByStudent) {
-    extracurricularByStudent.values
-      .flatten()
-      .filter { it.hasMonthlyOverride }
-      .map { it.copy(attendanceLabel = "", note = "", hasMonthlyOverride = false) }
-  }
   val quickActionSantri = students.firstOrNull { it.id == selectedQuickActionSantriId }
   val quickActionExportData = remember(
     quickActionSantri,
@@ -429,10 +423,10 @@ private fun LaporanBulananListContent(
         )
       }
 
-      if (systemResetReportDrafts.isNotEmpty() || systemResetExtracurricularDrafts.isNotEmpty()) {
+      if (systemResetReportDrafts.isNotEmpty()) {
         item {
           MonthlyBulkResetCard(
-            count = systemResetReportDrafts.size + systemResetExtracurricularDrafts.size,
+            count = systemResetReportDrafts.size,
             isBusy = isExporting,
             onClick = {
               scope.launch {
@@ -444,14 +438,6 @@ private fun LaporanBulananListContent(
                   if (result.success) {
                     successCount += 1
                   } else if (failedMessage.isBlank()) {
-                    failedMessage = result.message
-                  }
-                }
-                if (failedMessage.isBlank() && systemResetExtracurricularDrafts.isNotEmpty()) {
-                  val result = onSaveExtracurricularReports(systemResetExtracurricularDrafts)
-                  if (result.success) {
-                    successCount += result.reports.size
-                  } else {
                     failedMessage = result.message
                   }
                 }
@@ -1067,7 +1053,7 @@ private fun LaporanBulananDetailContent(
           if (extracurricularReports.isEmpty()) {
             NoteCard(
               title = "Belum ada laporan ekstrakurikuler",
-              note = "Santri belum tercatat sebagai anggota ekskul atau laporan ekskul bulan ini belum tersedia."
+              note = "Belum ada data ekstrakurikuler hasil import spreadsheet pada bulan ini."
             )
           } else {
             extracurricularReports.forEach { item ->
@@ -2968,6 +2954,9 @@ private suspend fun buildMonthlyBulkImportPreview(
   if (fieldColumns.isEmpty() && extracurricularFieldColumns.isEmpty() && extracurricularNameColumn < 0) {
     error("Belum ada kolom laporan yang dikenali.")
   }
+  if (extracurricularFieldColumns.isNotEmpty() && extracurricularNameColumn < 0) {
+    error("Kolom Kegiatan Ekskul wajib ada untuk mengimpor data ekstrakurikuler.")
+  }
   val knownIndexes = buildSet {
     if (nameColumn >= 0) add(nameColumn)
     if (nisnColumn >= 0) add(nisnColumn)
@@ -3024,18 +3013,23 @@ private suspend fun buildMonthlyBulkImportPreview(
         next = next.withAutomaticGradeDescriptions()
         val extracurricularChanged = mutableListOf<String>()
         val sourceActivity = cells.getOrNull(extracurricularNameColumn).orEmpty().trim()
-        val extracurricularTargets = if (extracurricularFieldColumns.isEmpty()) {
+        val activityKey = sourceActivity.toMonthlyBulkExtracurricularKey()
+        val existingExtracurricular = extracurricularByStudent[student.id]
+          .orEmpty()
+          .firstOrNull { it.activityId == activityKey }
+        val extracurricularDrafts = if (sourceActivity.isBlank()) {
           emptyList()
         } else {
-          findMonthlyBulkExtracurricularTargets(
-            sourceActivity = sourceActivity,
-            reports = extracurricularByStudent[student.id].orEmpty()
-          )
-        }
-        val extracurricularDrafts = extracurricularTargets.mapNotNull { existingExtracurricular ->
-          var draft = existingExtracurricular.copy(period = period, studentId = student.id)
+          var draft = existingExtracurricular?.copy(period = period, studentId = student.id)
+            ?: MonthlyExtracurricularReport(
+              period = period,
+              studentId = student.id,
+              activityId = activityKey,
+              activityName = sourceActivity,
+              hasMonthlyOverride = true
+            )
           val changedForItem = mutableListOf<String>()
-          if (sourceActivity.isNotBlank() && draft.activityName != sourceActivity) {
+          if (existingExtracurricular == null || draft.activityName != sourceActivity) {
             draft = draft.copy(activityName = sourceActivity)
             changedForItem += "Kegiatan ekskul"
           }
@@ -3048,10 +3042,10 @@ private suspend fun buildMonthlyBulkImportPreview(
             }
           }
           if (changedForItem.isEmpty()) {
-            null
+            emptyList()
           } else {
-            extracurricularChanged += changedForItem.map { "${existingExtracurricular.activityName}: $it" }
-            draft
+            extracurricularChanged += changedForItem.map { "$sourceActivity: $it" }
+            listOf(draft.copy(hasMonthlyOverride = true))
           }
         }
         val allChanged = (changed.distinct() + extracurricularChanged.distinct())
@@ -3060,12 +3054,15 @@ private suspend fun buildMonthlyBulkImportPreview(
           match.status == MonthlyBulkImportStatus.NeedsReview -> MonthlyBulkImportStatus.NeedsReview
           else -> MonthlyBulkImportStatus.Ready
         }
+        val previewExtracurricularReports = extracurricularByStudent[student.id]
+          .orEmpty()
+          .filterNot { existing -> extracurricularDrafts.any { it.activityId == existing.activityId } } + extracurricularDrafts
         val exportData = buildMonthlyReportExportData(
           santri = student,
           period = period,
           report = next,
           attendanceSummary = attendanceByStudent[student.id],
-          extracurricularReports = extracurricularByStudent[student.id].orEmpty(),
+          extracurricularReports = previewExtracurricularReports,
           waliName = waliName,
           waliPhone = waliPhone
         )
@@ -3077,8 +3074,8 @@ private suspend fun buildMonthlyBulkImportPreview(
             MonthlyBulkImportStatus.Ready -> "Cocok dengan ${student.name}. PDF preview siap untuk ${exportData.periodLabel}."
             MonthlyBulkImportStatus.NeedsReview -> "${match.message} Tekan Setujui jika benar."
             MonthlyBulkImportStatus.NoChanges ->
-              if (extracurricularFieldColumns.isNotEmpty() && extracurricularTargets.isEmpty()) {
-                "Cocok dengan ${student.name}, tetapi kegiatan ekskul belum ditemukan untuk baris ini."
+              if (extracurricularFieldColumns.isNotEmpty() && sourceActivity.isBlank()) {
+                "Cocok dengan ${student.name}, tetapi kolom Kegiatan Ekskul kosong sehingga data ekskul tidak diimpor."
               } else {
                 "Cocok dengan ${student.name}, tetapi tidak ada nilai baru pada kolom yang dikenali."
               }
@@ -3096,23 +3093,11 @@ private suspend fun buildMonthlyBulkImportPreview(
   return MonthlyBulkImportPreview(fetchResult.sheetLabel, rows, unknownColumns)
 }
 
-private fun findMonthlyBulkExtracurricularTargets(
-  sourceActivity: String,
-  reports: List<MonthlyExtracurricularReport>
-): List<MonthlyExtracurricularReport> {
-  if (reports.isEmpty()) return emptyList()
-  val normalizedActivity = normalizeSpreadsheetKey(sourceActivity)
-  if (normalizedActivity.isBlank()) {
-    return if (reports.size == 1) reports else emptyList()
-  }
-  val exact = reports.filter { normalizeSpreadsheetKey(it.activityName) == normalizedActivity }
-  if (exact.isNotEmpty()) return exact
-  return reports
-    .map { it to similarityScore(normalizedActivity, normalizeSpreadsheetKey(it.activityName)) }
-    .filter { it.second >= 0.78 }
-    .maxByOrNull { it.second }
-    ?.let { listOf(it.first) }
-    .orEmpty()
+private fun String.toMonthlyBulkExtracurricularKey(): String {
+  return trim()
+    .lowercase(Locale.ROOT)
+    .replace(Regex("""[^\p{L}\p{N}]+"""), "-")
+    .trim('-')
 }
 
 private data class MonthlyBulkFetchResult(val sheetLabel: String, val csv: String)

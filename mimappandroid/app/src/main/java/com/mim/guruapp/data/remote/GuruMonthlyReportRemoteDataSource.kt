@@ -217,8 +217,25 @@ class GuruMonthlyReportRemoteDataSource {
     reports: List<MonthlyExtracurricularReport>,
     updatedBy: String
   ): GuruMonthlyExtracurricularSaveResult = withContext(Dispatchers.IO) {
-    val drafts = reports.filter {
-      it.period.isNotBlank() && it.studentId.isNotBlank() && it.activityId.isNotBlank()
+    val drafts = reports.map { report ->
+      report.copy(
+        period = report.period.trim(),
+        studentId = report.studentId.trim(),
+        activityId = report.activityId.trim().ifBlank {
+          report.activityName.toMonthlyImportedActivityKey()
+        },
+        activityName = report.activityName.trim(),
+        pjName = report.pjName.trim(),
+        pjPhone = report.pjPhone.trim(),
+        attendanceLabel = report.attendanceLabel.trim(),
+        note = report.note.trim(),
+        hasMonthlyOverride = true
+      )
+    }.filter {
+      it.period.isNotBlank() &&
+        it.studentId.isNotBlank() &&
+        it.activityId.isNotBlank() &&
+        it.activityName.isNotBlank()
     }
     if (drafts.isEmpty()) {
       return@withContext GuruMonthlyExtracurricularSaveResult.Success(emptyList(), "Tidak ada laporan ekskul yang perlu disimpan.")
@@ -227,19 +244,19 @@ class GuruMonthlyReportRemoteDataSource {
       val requestUrl = buildString {
         append(BuildConfig.SUPABASE_URL)
         append("/rest/v1/")
-        append(EKSKUL_MONTHLY_TABLE)
-        append("?on_conflict=periode,ekskul_id,santri_id&select=id,periode,ekskul_id,santri_id,nama_kegiatan,penanggung_jawab,no_hp_pj,kehadiran_persen,catatan_pj,updated_at")
+        append(MONTHLY_IMPORTED_EKSKUL_TABLE)
+        append("?on_conflict=periode,santri_id,kegiatan_key&select=id,periode,santri_id,kegiatan_key,kegiatan_ekskul,penanggung_jawab,no_hp_pj,kehadiran,catatan_pj,updated_at")
       }
       val payload = JSONArray().apply {
         drafts.forEach { report ->
           put(JSONObject().apply {
             putNullableString("periode", report.period)
-            putNullableString("ekskul_id", report.activityId)
             putNullableString("santri_id", report.studentId)
-            putNullableString("nama_kegiatan", report.activityName)
+            putNullableString("kegiatan_key", report.activityId)
+            putNullableString("kegiatan_ekskul", report.activityName)
             putNullableString("penanggung_jawab", report.pjName)
             putNullableString("no_hp_pj", report.pjPhone)
-            putNullableNumber("kehadiran_persen", report.attendanceLabel.removeSuffix("%"))
+            putNullableString("kehadiran", report.attendanceLabel)
             putNullableString("catatan_pj", report.note)
             putNullableString("updated_by", updatedBy)
             putNullableString("updated_at", java.time.OffsetDateTime.now().toString())
@@ -261,30 +278,27 @@ class GuruMonthlyReportRemoteDataSource {
           .mapNotNull { row ->
             val period = row.cleanString("periode")
             val studentId = row.cleanString("santri_id")
-            val activityId = row.cleanString("ekskul_id")
+            val activityId = row.cleanString("kegiatan_key")
             if (period.isBlank() || studentId.isBlank() || activityId.isBlank()) null
             else {
               val source = drafts.firstOrNull {
                 it.period == period && it.studentId == studentId && it.activityId == activityId
               }
-              val savedActivityName = row.cleanString("nama_kegiatan")
+              val savedActivityName = row.cleanString("kegiatan_ekskul")
               val savedPjName = row.cleanString("penanggung_jawab")
               val savedPjPhone = row.cleanString("no_hp_pj")
-              val savedPercent = row.cleanString("kehadiran_persen")
+              val savedAttendance = row.cleanString("kehadiran")
               val savedNote = row.cleanString("catatan_pj")
               source?.let { original ->
                 original.copy(
                   id = row.cleanString("id"),
+                  activityId = activityId,
                   activityName = savedActivityName.ifBlank { original.activityName },
                   pjName = savedPjName.ifBlank { original.pjName },
                   pjPhone = savedPjPhone.ifBlank { original.pjPhone },
-                  attendanceLabel = savedPercent.withPercentSuffix(),
+                  attendanceLabel = savedAttendance.ifBlank { "-" },
                   note = savedNote,
-                  hasMonthlyOverride = savedActivityName.isNotBlank() ||
-                    savedPjName.isNotBlank() ||
-                    savedPjPhone.isNotBlank() ||
-                    savedPercent.isNotBlank() ||
-                    savedNote.isNotBlank()
+                  hasMonthlyOverride = true
                 )
               }
             }
@@ -294,7 +308,7 @@ class GuruMonthlyReportRemoteDataSource {
     }.getOrElse { error ->
       val message = when {
         error is SocketTimeoutException -> "Koneksi ke server terlalu lama. Coba lagi."
-        isMissingTableError(error) -> "Tabel laporan bulanan ekskul belum tersedia atau belum bisa diakses."
+        isMissingImportedExtracurricularTableError(error) -> "Tabel import laporan ekskul belum tersedia atau belum bisa diakses."
         else -> "Gagal menyimpan laporan bulanan ekskul."
       }
       GuruMonthlyExtracurricularSaveResult.Error(message)
@@ -426,222 +440,42 @@ class GuruMonthlyReportRemoteDataSource {
     studentIds: List<String>
   ): List<MonthlyExtracurricularReport> {
     if (periods.isEmpty() || studentIds.isEmpty()) return emptyList()
-    val memberRows = runCatching {
+    val importedRows = runCatching {
       fetchRows(
-        table = EKSKUL_MEMBER_TABLE,
+        table = MONTHLY_IMPORTED_EKSKUL_TABLE,
         query = buildString {
-          append("select=ekskul_id,santri_id")
+          append("select=id,periode,santri_id,kegiatan_key,kegiatan_ekskul,penanggung_jawab,no_hp_pj,kehadiran,catatan_pj,updated_at")
           append("&santri_id=in.(")
           append(studentIds.joinToString(",") { "\"${encodeValue(it)}\"" })
-          append(")")
-        }
-      )
-    }.getOrDefault(emptyList())
-    if (memberRows.isEmpty()) return emptyList()
-
-    val ekskulIds = memberRows.map { it.cleanString("ekskul_id") }.filter { it.isNotBlank() }.distinct()
-    if (ekskulIds.isEmpty()) return emptyList()
-
-    val ekskulRows = fetchExtracurricularRows(ekskulIds)
-    if (ekskulRows.isEmpty()) return emptyList()
-
-    val sortedPeriods = periods.mapNotNull { runCatching { YearMonth.parse(it) }.getOrNull() }.sorted()
-    val start = sortedPeriods.firstOrNull()?.atDay(1) ?: return emptyList()
-    val end = sortedPeriods.lastOrNull()?.atEndOfMonth() ?: return emptyList()
-
-    val progressRows = runCatching {
-      fetchRows(
-        table = EKSKUL_PROGRESS_TABLE,
-        query = buildString {
-          append("select=ekskul_id,santri_id,tanggal,catatan,created_at")
-          append("&santri_id=in.(")
-          append(studentIds.joinToString(",") { "\"${encodeValue(it)}\"" })
-          append(")&ekskul_id=in.(")
-          append(ekskulIds.joinToString(",") { "\"${encodeValue(it)}\"" })
-          append(")&tanggal=gte.")
-          append(start)
-          append("&tanggal=lte.")
-          append(end)
-          append("&order=tanggal.desc&order=created_at.desc")
-        }
-      )
-    }.getOrDefault(emptyList())
-
-    val monthlyRows = runCatching {
-      fetchRows(
-        table = EKSKUL_MONTHLY_TABLE,
-        query = buildString {
-          append("select=id,periode,ekskul_id,santri_id,nama_kegiatan,penanggung_jawab,no_hp_pj,kehadiran_persen,catatan_pj,updated_at")
-          append("&santri_id=in.(")
-          append(studentIds.joinToString(",") { "\"${encodeValue(it)}\"" })
-          append(")&ekskul_id=in.(")
-          append(ekskulIds.joinToString(",") { "\"${encodeValue(it)}\"" })
           append(")&periode=in.(")
           append(periods.joinToString(",") { "\"${encodeValue(it)}\"" })
-          append(")")
+          append(")&order=periode.asc,kegiatan_ekskul.asc")
         }
       )
     }.getOrDefault(emptyList())
-
-    val pjIds = ekskulRows.flatMap { row ->
-      listOf(row.cleanString("pj_karyawan_id"), row.cleanString("pj_karyawan_id_2"))
-    }.filter { it.isNotBlank() }.distinct()
-    val karyawanRows = if (pjIds.isEmpty()) emptyList() else fetchActiveKaryawanRows()
-    val pjByToken = buildPjLookup(karyawanRows)
-
-    val ekskulById = ekskulRows.associateBy { it.cleanString("id") }
-    val membersByStudent = memberRows.groupBy { it.cleanString("santri_id") }
-    val progressByKey = linkedMapOf<Triple<String, String, String>, Pair<Int, String>>()
-    progressRows.forEach { row ->
+    return importedRows.mapNotNull { row ->
+      val period = row.cleanString("periode")
       val studentId = row.cleanString("santri_id")
-      val ekskulId = row.cleanString("ekskul_id")
-      val date = row.cleanString("tanggal").take(10)
-      val period = runCatching { YearMonth.from(LocalDate.parse(date)).toString() }.getOrNull().orEmpty()
-      if (studentId.isBlank() || ekskulId.isBlank() || period !in periods) return@forEach
-      val key = Triple(period, studentId, ekskulId)
-      val current = progressByKey[key] ?: (0 to "")
-      val note = current.second.ifBlank { row.cleanString("catatan") }
-      progressByKey[key] = (current.first + 1) to note
-    }
-    val monthlyByKey = monthlyRows.associateBy {
-      Triple(it.cleanString("periode"), it.cleanString("santri_id"), it.cleanString("ekskul_id"))
-    }
-
-    return periods.flatMap { period ->
-      studentIds.flatMap { studentId ->
-        membersByStudent[studentId].orEmpty().mapNotNull { member ->
-          val ekskulId = member.cleanString("ekskul_id")
-          val ekskul = ekskulById[ekskulId] ?: return@mapNotNull null
-          val key = Triple(period, studentId, ekskulId)
-          val progress = progressByKey[key] ?: (0 to "")
-          val monthly = monthlyByKey[key]
-          val monthlyActivityName = monthly?.cleanString("nama_kegiatan").orEmpty()
-          val monthlyPjName = monthly?.cleanString("penanggung_jawab").orEmpty()
-          val monthlyPjPhone = monthly?.cleanString("no_hp_pj").orEmpty()
-          val monthlyPercent = monthly?.cleanString("kehadiran_persen").orEmpty()
-          val monthlyNote = monthly?.cleanString("catatan_pj").orEmpty()
-          val pjRows = listOf(
-            resolvePj(ekskul.cleanString("pj_karyawan_id"), pjByToken),
-            resolvePj(ekskul.cleanString("pj_karyawan_id_2"), pjByToken)
-          )
-          val rawPjNames = listOf(ekskul.cleanString("pj_karyawan_id"), ekskul.cleanString("pj_karyawan_id_2"))
-          val pjNames = pjRows.mapIndexedNotNull { index, row ->
-            row?.cleanString("nama")?.takeIf { it.isNotBlank() } ?: rawPjNames.getOrNull(index)?.takeIf { it.isNotBlank() }
-          }.distinct()
-          val pjPhones = pjRows.mapNotNull { row ->
-            row?.let { pickFirst(it, "no_hp", "hp", "no_telp", "nomor_hp", "telepon") }
-          }.filter { it.isNotBlank() }.distinct()
-          MonthlyExtracurricularReport(
-            id = monthly?.cleanString("id").orEmpty(),
-            period = period,
-            studentId = studentId,
-            activityId = ekskulId,
-            activityName = monthlyActivityName.ifBlank { ekskul.cleanString("nama").ifBlank { "-" } },
-            pjName = monthlyPjName.ifBlank { pjNames.joinToString(" / ").ifBlank { "-" } },
-            pjPhone = monthlyPjPhone.ifBlank { pjPhones.joinToString(" / ").ifBlank { "-" } },
-            attendanceLabel = if (monthlyPercent.isNotBlank()) {
-              monthlyPercent.withPercentSuffix()
-            } else if (progress.first > 0) {
-              "${progress.first} kali"
-            } else {
-              "-"
-            },
-            note = monthlyNote.ifBlank { progress.second.ifBlank { "-" } },
-            hasMonthlyOverride = monthlyActivityName.isNotBlank() ||
-              monthlyPjName.isNotBlank() ||
-              monthlyPjPhone.isNotBlank() ||
-              monthlyPercent.isNotBlank() ||
-              monthlyNote.isNotBlank()
-          )
-        }
-      }
+      val activityId = row.cleanString("kegiatan_key")
+      val activityName = row.cleanString("kegiatan_ekskul")
+      if (period.isBlank() || studentId.isBlank() || activityId.isBlank() || activityName.isBlank()) null
+      else MonthlyExtracurricularReport(
+        id = row.cleanString("id"),
+        period = period,
+        studentId = studentId,
+        activityId = activityId,
+        activityName = activityName,
+        pjName = row.cleanString("penanggung_jawab").ifBlank { "-" },
+        pjPhone = row.cleanString("no_hp_pj").ifBlank { "-" },
+        attendanceLabel = row.cleanString("kehadiran").ifBlank { "-" },
+        note = row.cleanString("catatan_pj").ifBlank { "-" },
+        hasMonthlyOverride = true
+      )
     }.sortedWith(
       compareBy<MonthlyExtracurricularReport> { it.period }
         .thenBy { it.activityName.lowercase() }
         .thenBy { it.studentId }
     )
-  }
-
-  private fun fetchExtracurricularRows(ekskulIds: List<String>): List<JSONObject> {
-    return runCatching {
-      fetchRows(
-        table = EKSKUL_TABLE,
-        query = buildString {
-          append("select=id,nama,pj_karyawan_id,pj_karyawan_id_2")
-          append("&id=in.(")
-          append(ekskulIds.joinToString(",") { "\"${encodeValue(it)}\"" })
-          append(")&order=nama.asc")
-        }
-      )
-    }.getOrElse { error ->
-      if (!error.message.orEmpty().contains("pj_karyawan_id_2", ignoreCase = true)) return emptyList()
-      runCatching {
-        fetchRows(
-          table = EKSKUL_TABLE,
-          query = buildString {
-            append("select=id,nama,pj_karyawan_id")
-            append("&id=in.(")
-            append(ekskulIds.joinToString(",") { "\"${encodeValue(it)}\"" })
-            append(")&order=nama.asc")
-          }
-        )
-      }.getOrDefault(emptyList())
-    }
-  }
-
-  private fun fetchActiveKaryawanRows(): List<JSONObject> {
-    val variants = listOf(
-      "id,id_karyawan,nama,no_hp,hp,no_telp,nomor_hp,telepon,aktif",
-      "id,id_karyawan,nama,no_hp,hp,aktif",
-      "id,id_karyawan,nama,no_hp,hp",
-      "id,id_karyawan,nama,no_hp",
-      "id,id_karyawan,nama",
-      "id,nama"
-    )
-    variants.forEach { select ->
-      val rows = runCatching {
-        fetchRows(
-          table = "karyawan",
-          query = "select=$select&aktif=eq.true"
-        )
-      }.getOrNull()
-      if (rows != null) return rows
-    }
-    return emptyList()
-  }
-
-  private fun buildPjLookup(rows: List<JSONObject>): Map<String, JSONObject> {
-    val result = linkedMapOf<String, JSONObject>()
-    rows.forEach { row ->
-      listOf(
-        row.cleanString("id"),
-        row.cleanString("id_karyawan"),
-        normalizePersonName(row.cleanString("nama"))
-      ).filter { it.isNotBlank() }.forEach { token ->
-        result[token] = row
-      }
-    }
-    return result
-  }
-
-  private fun resolvePj(
-    rawToken: String,
-    lookup: Map<String, JSONObject>
-  ): JSONObject? {
-    val token = rawToken.trim()
-    if (token.isBlank()) return null
-    return lookup[token] ?: lookup[normalizePersonName(token)]
-  }
-
-  private fun normalizePersonName(value: String): String {
-    return value.trim().replace(Regex("\\s+"), " ").lowercase()
-  }
-
-  private fun pickFirst(
-    row: JSONObject,
-    vararg keys: String
-  ): String {
-    return keys.firstNotNullOfOrNull { key -> row.cleanString(key).takeIf { it.isNotBlank() } }.orEmpty()
   }
 
   private fun fetchMapelLabelMap(subjectIds: List<String>): Map<String, String> {
@@ -1160,6 +994,14 @@ class GuruMonthlyReportRemoteDataSource {
         message.contains("42P01", ignoreCase = true))
   }
 
+  private fun isMissingImportedExtracurricularTableError(error: Throwable): Boolean {
+    val message = error.message.orEmpty()
+    return message.contains(MONTHLY_IMPORTED_EKSKUL_TABLE, ignoreCase = true) &&
+      (message.contains("does not exist", ignoreCase = true) ||
+        message.contains("relation", ignoreCase = true) ||
+        message.contains("42P01", ignoreCase = true))
+  }
+
   private fun isMissingColumnError(error: Throwable): Boolean {
     val message = error.message.orEmpty()
     return message.contains("column", ignoreCase = true) ||
@@ -1169,10 +1011,7 @@ class GuruMonthlyReportRemoteDataSource {
 
   private companion object {
     const val MONTHLY_REPORT_TABLE = "laporan_bulanan_wali"
-    const val EKSKUL_TABLE = "ekstrakurikuler"
-    const val EKSKUL_MEMBER_TABLE = "ekstrakurikuler_anggota"
-    const val EKSKUL_PROGRESS_TABLE = "ekstrakurikuler_progres"
-    const val EKSKUL_MONTHLY_TABLE = "ekstrakurikuler_laporan_bulanan"
+    const val MONTHLY_IMPORTED_EKSKUL_TABLE = "laporan_bulanan_ekskul_import"
     const val MONTHLY_REPORT_SELECT_LEGACY = "id,periode,guru_id,kelas_id,santri_id,nilai_akhlak,predikat,catatan_wali"
     const val MONTHLY_REPORT_SELECT_WITH_OPTIONAL_TEXT =
       "id,periode,guru_id,kelas_id,santri_id,nilai_akhlak,predikat,catatan_wali,muhaffiz,no_hp_muhaffiz,nilai_kehadiran_halaqah,sakit_halaqah,izin_halaqah,nilai_akhlak_halaqah,keterangan_akhlak_halaqah,nilai_ujian_bulanan,keterangan_ujian_bulanan,nilai_target_hafalan,keterangan_target_hafalan,nilai_capaian_hafalan_bulanan,keterangan_capaian_hafalan_bulanan,keterangan_jumlah_hafalan_bulanan,nilai_jumlah_hafalan_halaman,nilai_jumlah_hafalan_juz,catatan_muhaffiz,musyrif,no_hp_musyrif,nilai_kehadiran_liqa_muhasabah,sakit_liqa_muhasabah,izin_liqa_muhasabah,nilai_ibadah,keterangan_ibadah,nilai_kedisiplinan,keterangan_kedisiplinan,nilai_kebersihan,keterangan_kebersihan,nilai_adab,keterangan_adab,prestasi_kesantrian,pelanggaran_kesantrian,catatan_musyrif"
@@ -1208,8 +1047,9 @@ private fun JSONObject.cleanString(key: String): String {
   return value.toString().trim().takeUnless { it == "null" }.orEmpty()
 }
 
-private fun String.withPercentSuffix(): String {
-  val value = trim()
-  if (value.isBlank()) return "-"
-  return if (value.endsWith("%")) value else "$value%"
+private fun String.toMonthlyImportedActivityKey(): String {
+  return trim()
+    .lowercase()
+    .replace(Regex("""[^\p{L}\p{N}]+"""), "-")
+    .trim('-')
 }
