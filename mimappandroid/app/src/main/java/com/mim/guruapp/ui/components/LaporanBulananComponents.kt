@@ -204,7 +204,7 @@ fun LaporanBulananScreen(
   }
   val extracurricularByStudent = remember(monthlyReportSnapshot.extracurricularReports, selectedPeriod) {
     monthlyReportSnapshot.extracurricularReports
-      .filter { it.period == selectedPeriod }
+      .filter { it.period == selectedPeriod && it.isSpreadsheetImport }
       .groupBy { it.studentId }
   }
   val showSkeleton = (students.isEmpty() && (isRefreshing || waliSantriSnapshot.updatedAt <= 0L)) || isAttendanceLoading
@@ -283,6 +283,15 @@ fun LaporanBulananScreen(
           onSaveReport = { draft ->
             isSaving = true
             val result = onSaveReport(draft)
+            isSaving = false
+            snackbarScope.launch {
+              snackbarHostState.showSnackbar(result.message)
+            }
+            result
+          },
+          onSaveExtracurricularReports = { drafts ->
+            isSaving = true
+            val result = onSaveExtracurricularReports(drafts)
             isSaving = false
             snackbarScope.launch {
               snackbarHostState.showSnackbar(result.message)
@@ -618,7 +627,8 @@ private fun LaporanBulananDetailContent(
   isSaving: Boolean,
   onBackClick: () -> Unit,
   showMessage: (String) -> Unit,
-  onSaveReport: suspend (MonthlyReportItem) -> MonthlyReportSaveOutcome
+  onSaveReport: suspend (MonthlyReportItem) -> MonthlyReportSaveOutcome,
+  onSaveExtracurricularReports: suspend (List<MonthlyExtracurricularReport>) -> MonthlyExtracurricularSaveOutcome
 ) {
   val context = LocalContext.current
   val baseReport = remember(report, santri.id, santri.classId, period, guruId) {
@@ -629,14 +639,30 @@ private fun LaporanBulananDetailContent(
       studentId = santri.id
     )
   }
+  val baseExtracurricularReports = remember(extracurricularReports) {
+    extracurricularReports.sortedWith(
+      compareBy<MonthlyExtracurricularReport> { it.activityName.lowercase(Locale.ROOT) }
+        .thenBy { it.activityId }
+    )
+  }
   var isEditing by rememberSaveable(santri.id, period) { mutableStateOf(false) }
   var draftReport by remember(baseReport) { mutableStateOf(baseReport) }
+  var draftExtracurricularReports by remember(baseExtracurricularReports) {
+    mutableStateOf(baseExtracurricularReports)
+  }
   var isExporting by rememberSaveable { mutableStateOf(false) }
   var isWaDialogOpen by rememberSaveable { mutableStateOf(false) }
   var waTargetNumber by rememberSaveable { mutableStateOf("") }
   val scope = rememberCoroutineScope()
-  val isDirty = draftReport != baseReport
+  val isReportDirty = draftReport != baseReport
+  val isExtracurricularDirty = draftExtracurricularReports != baseExtracurricularReports
+  val isDirty = isReportDirty || isExtracurricularDirty
   val visibleReport = (if (isEditing) draftReport else baseReport).withAutomaticGradeDescriptions()
+  val visibleExtracurricularReports = if (isEditing) {
+    draftExtracurricularReports
+  } else {
+    baseExtracurricularReports
+  }
   val resetSourceReport = baseReport.toSystemResetReport(
     period = period,
     guruId = guruId,
@@ -650,22 +676,23 @@ private fun LaporanBulananDetailContent(
     waliPhone,
     visibleReport,
     attendanceSummary,
-    extracurricularReports
+    visibleExtracurricularReports
   ) {
     buildMonthlyReportExportData(
       santri = santri,
       period = period,
       report = visibleReport,
       attendanceSummary = attendanceSummary,
-      extracurricularReports = extracurricularReports,
+      extracurricularReports = visibleExtracurricularReports,
       waliName = waliName,
       waliPhone = waliPhone
     )
   }
 
-  LaunchedEffect(baseReport, isEditing) {
+  LaunchedEffect(baseReport, baseExtracurricularReports, isEditing) {
     if (!isEditing) {
       draftReport = baseReport
+      draftExtracurricularReports = baseExtracurricularReports
     }
   }
 
@@ -696,18 +723,36 @@ private fun LaporanBulananDetailContent(
           isEditing = false
           return@LaporanBulananTopBar
         }
-        val normalizedDraft = draftReport.copy(
-          period = period,
-          guruId = draftReport.guruId.ifBlank { guruId },
-          classId = draftReport.classId.ifBlank { santri.classId },
-          studentId = santri.id,
-          predikat = akhlakDescriptionFromValue(draftReport.nilaiAkhlak)
-        )
         scope.launch {
-          val result = onSaveReport(normalizedDraft)
-          if (result.success) {
-            isEditing = false
+          if (isExtracurricularDirty && draftExtracurricularReports.any { it.activityName.isBlank() }) {
+            showMessage("Kegiatan ekskul tidak boleh kosong.")
+            return@launch
           }
+          if (isReportDirty) {
+            val normalizedDraft = draftReport.copy(
+              period = period,
+              guruId = draftReport.guruId.ifBlank { guruId },
+              classId = draftReport.classId.ifBlank { santri.classId },
+              studentId = santri.id,
+              predikat = akhlakDescriptionFromValue(draftReport.nilaiAkhlak)
+            )
+            val reportResult = onSaveReport(normalizedDraft)
+            if (!reportResult.success) return@launch
+          }
+          if (isExtracurricularDirty) {
+            val extracurricularResult = onSaveExtracurricularReports(
+              draftExtracurricularReports.map { item ->
+                item.copy(
+                  period = period,
+                  studentId = santri.id,
+                  hasMonthlyOverride = true,
+                  isSpreadsheetImport = true
+                )
+              }
+            )
+            if (!extracurricularResult.success) return@launch
+          }
+          isEditing = false
         }
       }
     )
@@ -743,6 +788,7 @@ private fun LaporanBulananDetailContent(
         onResetClick = {
           if (isEditing) {
             draftReport = resetSourceReport
+            draftExtracurricularReports = baseExtracurricularReports
           } else {
             scope.launch {
               onSaveReport(resetSourceReport)
@@ -1050,14 +1096,25 @@ private fun LaporanBulananDetailContent(
           title = "Ekstrakurikuler",
           subtitle = "Laporan kegiatan tambahan bulan ini"
         ) {
-          if (extracurricularReports.isEmpty()) {
+          if (visibleExtracurricularReports.isEmpty()) {
             NoteCard(
               title = "Belum ada laporan ekstrakurikuler",
               note = "Belum ada data ekstrakurikuler hasil import spreadsheet pada bulan ini."
             )
           } else {
-            extracurricularReports.forEach { item ->
-              ExtracurricularReportCard(item)
+            visibleExtracurricularReports.forEach { item ->
+              if (isEditing) {
+                EditableExtracurricularReportCard(
+                  item = item,
+                  onChange = { updated ->
+                    draftExtracurricularReports = draftExtracurricularReports.map { current ->
+                      if (current.activityId == item.activityId) updated else current
+                    }
+                  }
+                )
+              } else {
+                ExtracurricularReportCard(item)
+              }
             }
           }
         }
@@ -2519,6 +2576,59 @@ private fun NoteCard(
 }
 
 @Composable
+private fun EditableExtracurricularReportCard(
+  item: MonthlyExtracurricularReport,
+  onChange: (MonthlyExtracurricularReport) -> Unit
+) {
+  Column(
+    modifier = Modifier
+      .fillMaxWidth()
+      .background(CardBackground.copy(alpha = 0.72f), RoundedCornerShape(16.dp))
+      .border(1.dp, CardBorder.copy(alpha = 0.74f), RoundedCornerShape(16.dp))
+      .padding(12.dp),
+    verticalArrangement = Arrangement.spacedBy(10.dp)
+  ) {
+    Text(
+      text = t("Data Ekstrakurikuler"),
+      style = MaterialTheme.typography.labelLarge,
+      color = PrimaryBlueDark,
+      fontWeight = FontWeight.ExtraBold
+    )
+    EditTextField(
+      value = item.activityName,
+      onValueChange = { onChange(item.copy(activityName = it)) },
+      label = "Kegiatan Ekskul",
+      modifier = Modifier.fillMaxWidth()
+    )
+    EditTextField(
+      value = item.pjName,
+      onValueChange = { onChange(item.copy(pjName = it)) },
+      label = "Penanggung Jawab",
+      modifier = Modifier.fillMaxWidth()
+    )
+    EditTextField(
+      value = item.pjPhone,
+      onValueChange = { onChange(item.copy(pjPhone = it)) },
+      label = "NO HP PJ",
+      modifier = Modifier.fillMaxWidth()
+    )
+    EditTextField(
+      value = item.attendanceLabel,
+      onValueChange = { onChange(item.copy(attendanceLabel = it)) },
+      label = "Kehadiran",
+      modifier = Modifier.fillMaxWidth()
+    )
+    EditTextField(
+      value = item.note,
+      onValueChange = { onChange(item.copy(note = it)) },
+      label = "Catatan PJ",
+      minLines = 2,
+      modifier = Modifier.fillMaxWidth()
+    )
+  }
+}
+
+@Composable
 private fun ExtracurricularReportCard(item: MonthlyExtracurricularReport) {
   Column(
     modifier = Modifier
@@ -3014,9 +3124,12 @@ private suspend fun buildMonthlyBulkImportPreview(
         val extracurricularChanged = mutableListOf<String>()
         val sourceActivity = cells.getOrNull(extracurricularNameColumn).orEmpty().trim()
         val activityKey = sourceActivity.toMonthlyBulkExtracurricularKey()
-        val existingExtracurricular = extracurricularByStudent[student.id]
-          .orEmpty()
+        val existingExtracurricularRows = extracurricularByStudent[student.id].orEmpty()
+        val existingExtracurricular = existingExtracurricularRows
           .firstOrNull { it.activityId == activityKey }
+          ?: existingExtracurricularRows.firstOrNull {
+            it.activityName.toMonthlyBulkExtracurricularKey() == activityKey
+          }
         val extracurricularDrafts = if (sourceActivity.isBlank()) {
           emptyList()
         } else {
@@ -3026,7 +3139,8 @@ private suspend fun buildMonthlyBulkImportPreview(
               studentId = student.id,
               activityId = activityKey,
               activityName = sourceActivity,
-              hasMonthlyOverride = true
+              hasMonthlyOverride = true,
+              isSpreadsheetImport = true
             )
           val changedForItem = mutableListOf<String>()
           if (existingExtracurricular == null || draft.activityName != sourceActivity) {
@@ -3045,7 +3159,7 @@ private suspend fun buildMonthlyBulkImportPreview(
             emptyList()
           } else {
             extracurricularChanged += changedForItem.map { "$sourceActivity: $it" }
-            listOf(draft.copy(hasMonthlyOverride = true))
+            listOf(draft.copy(hasMonthlyOverride = true, isSpreadsheetImport = true))
           }
         }
         val allChanged = (changed.distinct() + extracurricularChanged.distinct())

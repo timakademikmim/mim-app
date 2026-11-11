@@ -224,7 +224,8 @@ data class MonthlyExtracurricularReport(
   val pjPhone: String = "",
   val attendanceLabel: String = "",
   val note: String = "",
-  val hasMonthlyOverride: Boolean = false
+  val hasMonthlyOverride: Boolean = false,
+  val isSpreadsheetImport: Boolean = false
 )
 
 @Serializable

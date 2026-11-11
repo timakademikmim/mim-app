@@ -229,7 +229,8 @@ class GuruMonthlyReportRemoteDataSource {
         pjPhone = report.pjPhone.trim(),
         attendanceLabel = report.attendanceLabel.trim(),
         note = report.note.trim(),
-        hasMonthlyOverride = true
+        hasMonthlyOverride = true,
+        isSpreadsheetImport = true
       )
     }.filter {
       it.period.isNotBlank() &&
@@ -298,7 +299,8 @@ class GuruMonthlyReportRemoteDataSource {
                   pjPhone = savedPjPhone.ifBlank { original.pjPhone },
                   attendanceLabel = savedAttendance.ifBlank { "-" },
                   note = savedNote,
-                  hasMonthlyOverride = true
+                  hasMonthlyOverride = true,
+                  isSpreadsheetImport = true
                 )
               }
             }
@@ -469,7 +471,8 @@ class GuruMonthlyReportRemoteDataSource {
         pjPhone = row.cleanString("no_hp_pj").ifBlank { "-" },
         attendanceLabel = row.cleanString("kehadiran").ifBlank { "-" },
         note = row.cleanString("catatan_pj").ifBlank { "-" },
-        hasMonthlyOverride = true
+        hasMonthlyOverride = true,
+        isSpreadsheetImport = true
       )
     }.sortedWith(
       compareBy<MonthlyExtracurricularReport> { it.period }
